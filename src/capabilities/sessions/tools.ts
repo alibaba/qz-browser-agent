@@ -334,4 +334,17 @@ function runtimeUnavailable(action: string, details: Record<string, unknown> = {
 export default ((host) => {
   registerSessionTools(host);
   registerGoalTools(host);
+  host.registerTool({
+    name: "get_location",
+    get title() { return t("getLocation"); },
+    get description() { return modelT("getLocation"); },
+    parameters: { type: "object", properties: {} },
+    model: { pageContext: false },
+    timeout: 0,
+    execute: (_args, signal, context) => {
+      const request = host.getToolRuntimeDependencies(context).requestLocation;
+      if (!request) throw new host.ToolExecutionError("LOCATION_UNAVAILABLE", t("locationUnavailable"));
+      return request(context, signal);
+    },
+  });
 }) satisfies ToolExtension;

@@ -34,6 +34,7 @@ interface TaskInput {
   operationName?: string; swallowErrors?: boolean;
 }
 interface SessionCommandsDependencies {
+  assertDataConsent?(): void;
   runtime: Readonly<
     Pick<Runtime, "normalizeCurrentTool" | "set" | "persist" | "normalizePendingFollowUps"
       | "normalizeLoadedSkillNames" | "loadedSkillNames" | "remove">
@@ -124,6 +125,7 @@ function traceMessageDelivery(phase: string, sessionId: string, clientMessageId:
 
 export function createSessionCommands(deps: SessionCommandsDependencies) {
   const {
+    assertDataConsent = () => {},
     sessionRuntimeReady,
     sessionSupervisor,
     sessionRepository,
@@ -577,6 +579,7 @@ function createSessionAgentTaskSpec({
   operationName = "prompt",
   swallowErrors = false,
 }: TaskInput = {}) {
+  assertDataConsent();
   const id = requireExplicitSessionId(sessionId, operationName);
   if (typeof operation !== "function") throw new TypeError(`${operationName} requires an operation`);
   const startedAt = nowBeijingDateTime();

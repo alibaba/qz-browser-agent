@@ -229,6 +229,7 @@ async function createFixture(t, { secondaryPeer = SECONDARY } = {}) {
   await put(root, "tests/support/static-server.mjs", await readFile(new URL("../support/static-server.mjs", import.meta.url), "utf8"));
   for (const path of [
     PRIMARY, SECONDARY, ...MEASUREMENTS,
+    "tests/background/provider-header-rules-e2e.mjs",
     "tests/background/extension-e2e.mjs",
     "tests/background/mcp-tab-ownership-e2e.mjs",
     "tests/data-grid/extension-page.mjs",
@@ -265,7 +266,7 @@ async function createFixture(t, { secondaryPeer = SECONDARY } = {}) {
       child.stdout.on("data", chunk => { output += chunk; });
       child.stderr.on("data", chunk => { output += chunk; });
       const completion = new Promise((resolve, reject) => {
-        // This is a deadlock guard, not a speed assertion: the fixture starts 14 nested
+        // This is a deadlock guard, not a speed assertion: the fixture starts nested
         // Node commands while the full coverage/browser run competes for CPU.
         const timeout = setTimeout(() => { child.kill("SIGTERM"); reject(new Error(`fixture runner timed out\n${output}`)); }, 60_000);
         child.once("error", reject);

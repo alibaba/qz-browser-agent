@@ -1,3 +1,4 @@
+import { acceptDataDisclosure } from "./data-consent.mjs";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -45,6 +46,7 @@ export async function launchIsolatedExtensionMcp({
       if (message.type() === "error") diagnostics.push(message.text());
     });
     await page.goto(`chrome-extension://${extensionId}/sidepanel/sidepanel.html`);
+  await acceptDataDisclosure(page);
     await page.waitForSelector("#input", { state: "attached" });
     await page.evaluate(async config => {
       await chrome.storage.local.set({ _qingzhou_mcp_bridge: config });

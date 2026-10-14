@@ -1,4 +1,6 @@
 {
+  "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "Autorisation du navigateur requise",
+  "backend.toolError.BROWSER_PERMISSION_DENIED.label": "Autorisation du navigateur non accordée",
   "backend.model.reviewAttachments": "Veuillez examiner les pièces jointes.",
   "backend.toolError.ABORTED.label": "Arrêté",
   "backend.toolError.ABORTED.message": "L’utilisateur a arrêté l’appel d’outil ; aucun résultat n’a été renvoyé.",
@@ -298,5 +300,10 @@
   "backend.toolError.INVALID_IMAGE_URL.message": "URL d’image invalide.",
   "backend.toolError.INVALID_REGEX.message": "Expression régulière invalide.",
   "backend.toolError.NETWORK_REQUEST_NOT_FOUND.message": "Requête réseau introuvable.",
-  "backend.toolError.NO_ACTIVE_TAB.message": "Aucun onglet actif disponible."
+  "backend.toolError.NO_ACTIVE_TAB.message": "Aucun onglet actif disponible.",
+  "backend.dataConsentRequired": "Ouvrez le panneau latéral et acceptez les conditions d’utilisation des données avant d’utiliser qz.",
+  "backend.locationTitle": "Autoriser la localisation ?",
+  "backend.locationDisclosure": "Pour fournir des informations locales, qz obtiendra vos coordonnées, leur précision et l’heure du relevé, puis les enverra au service de modèles configuré. Si vous acceptez, cette autorisation sera réutilisée sans nouvelle demande.",
+  "backend.locationRequired": "Votre accord est nécessaire pour la localisation. Confirmez dans le panneau latéral ou indiquez une ville ou une zone.",
+  "backend.locationUnavailable": "Localisation impossible. Ouvrez le panneau latéral et vérifiez les paramètres de localisation de votre appareil, ou indiquez une ville ou une zone."
 }

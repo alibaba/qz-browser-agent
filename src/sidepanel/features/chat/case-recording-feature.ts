@@ -1,3 +1,4 @@
+import { requestBrowserPermission, permissionT } from "../../ui/browser-permissions.js";
 import { t } from "../../i18n/index.js";
 interface RecordingOptions {
   button?: HTMLButtonElement | null;
@@ -18,13 +19,17 @@ export function createCaseRecordingFeature(options: RecordingOptions = {}) {
   let caseRecordingStartedAt = 0;
 
 async function toggleCaseRecording() {
-  if (!button) return;
+  if (!button || button.disabled) return;
   button.disabled = true;
   try {
     if (caseRecordingStatus === "recording") {
       const result = await stopCaseRecording();
       showToast(result.filename ? t("recordingSaved", { filename: result.filename }) : t("recordingStopped"));
     } else {
+      if (!await requestBrowserPermission("desktopCapture")) {
+        showToast(permissionT("denied", { permission: permissionT("name.desktopCapture") }));
+        return;
+      }
       const capture = await chooseCaseRecordingSource();
       if (capture.error) {
         showToast(capture.error, { tone: "error" });

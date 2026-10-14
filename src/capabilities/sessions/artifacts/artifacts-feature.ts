@@ -1,3 +1,4 @@
+import { requestBrowserPermission, permissionT } from "#sdk/sidepanel/browser-permissions";
 import { escapeHtmlAttribute } from "#sdk/sidepanel/dom";
 import { t } from "../i18n.js";
 import type { UiExtensionAPI } from "#sdk/sidepanel";
@@ -787,7 +788,19 @@ async function getDownloadItem(downloadId = 0) {
 async function openArtifactFile(actionEl: HTMLElement) {
   const downloadId = Number(actionEl?.dataset?.downloadId || 0);
   if (Number.isFinite(downloadId) && downloadId > 0) {
+    try {
+      const allowed = await requestBrowserPermission("downloads.open");
+      if (lifetime?.aborted) return;
+      if (!allowed) {
+        showArtifactToast(permissionT("denied", { permission: permissionT("name.downloads.open") }), actionEl);
+        return;
+      }
+    } catch (error) {
+      if (!lifetime?.aborted) showArtifactToast(error instanceof Error ? error.message : String(error), actionEl);
+      return;
+    }
     const downloadItem = await getDownloadItem(downloadId);
+    if (lifetime?.aborted) return;
     if (downloadItem && downloadItem.exists === false) {
       const fallbackUrl = String(actionEl?.dataset?.url || downloadItem.finalUrl || downloadItem.url || "").trim();
       if (fallbackUrl) {

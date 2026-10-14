@@ -1,6 +1,15 @@
 import { defineMessages } from "../../shared/i18n/definition.js";
 
 export default defineMessages("core", {
+  dataConsentTitle: { en: "Start using {brand}", "zh-CN": "开始使用{brand}" },
+  dataConsentModel: { en: "To carry out a task, qz sends your input and the information it uses to your configured model service. This can include page content, screenshots, files, tab titles and URLs, and authorized bookmark or history results.", "zh-CN": "为执行任务，轻舟会将你的输入和任务使用的信息发送至你配置的模型服务，包括网页内容、截图、文件、标签页标题和网址，以及授权读取的书签或历史记录。" },
+  dataConsentLocation: { en: "When you need local information, qz can get your coordinates, accuracy, and location timestamp and send them to your configured model service. It asks for your permission the first time.", "zh-CN": "当你需要获取本地信息时，轻舟可获取经纬度、精度和定位时间，并发送至你配置的模型服务。首次调用时会征求你的同意。" },
+  dataConsentStorage: { en: "Chats, Skills, and collected data are stored in your browser.", "zh-CN": "会话、Skill 和采集的数据保存在浏览器中。" },
+  dataConsentServices: { en: "Skills and MCP connections can also exchange task data with services you configure.", "zh-CN": "Skill 和 MCP 连接也可能与你配置的服务交换任务数据。" },
+  dataConsentDetails: { en: "Privacy and permissions", "zh-CN": "隐私与权限说明" },
+  dataConsentAccept: { en: "Agree and continue", "zh-CN": "同意并继续" },
+  dataConsentLater: { en: "Maybe later", "zh-CN": "稍后再说" },
+  dataConsentSaveFailed: { en: "Could not save your choice. Try again.", "zh-CN": "未能保存你的选择，请重试。" },
   saving: { "zh-CN": "保存中…", en: "Saving…" },
   save: { "zh-CN": "保存", en: "Save" },
   settingsFailed: { "zh-CN": "设置操作失败，请重试", en: "Could not update settings. Try again." },

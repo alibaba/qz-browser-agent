@@ -184,3 +184,117 @@ test("choice validation clears on change and empty forms send a plain continue c
     { type: "continue_task", sessionId: "session-a", waitId: "wait-a" },
   ]);
 });
+
+for (const outcome of ["grant", "deny", "error", "dispose", "switch", "resolve"]) {
+  test(`browser permission card: ${outcome}`, async ({ page }) => {
+    await page.evaluate(() => {
+      const f = window.waitFixture;
+      window.chrome ??= {};
+      chrome.permissions = { request(input) {
+        f.permissionRequest = { input, userGesture: navigator.userActivation.isActive };
+        return new Promise((resolve, reject) => { f.permissionReply = { resolve, reject }; });
+      } };
+      f.entry = { ...f.entry, form: { browserPermission: "history" } };
+      f.cards.patch(f.el, f.entry, "session-a");
+    });
+    const button = page.locator('[data-wait-action="continue"]');
+    await button.click();
+    expect(await page.evaluate(() => window.waitFixture.permissionRequest)).toEqual({ input: { permissions: ["history"] }, userGesture: true });
+    expect(await page.evaluate(() => window.waitFixture.state.commands)).toEqual([]);
+    await expect(button).toBeDisabled();
+    await page.evaluate(outcome => {
+      const f = window.waitFixture;
+      if (outcome === "dispose") f.cards.dispose(f.el);
+      if (outcome === "switch") f.state.sessionId = "session-b";
+      if (outcome === "resolve") f.cards.patch(f.el, { ...f.entry, status: "aborted" }, "session-a");
+      if (outcome === "error") f.permissionReply.reject(new Error("permission service unavailable"));
+      else f.permissionReply.resolve(outcome !== "deny");
+    }, outcome);
+    if (outcome === "error") {
+      await expect(button).toBeEnabled();
+      await button.click();
+      await page.evaluate(() => window.waitFixture.permissionReply.resolve(true));
+    }
+    expect(await page.evaluate(() => window.waitFixture.state.commands.map(command => command.type)))
+      .toEqual(["grant", "error"].includes(outcome) ? ["continue_task"] : outcome === "deny" ? ["cancel_wait"] : []);
+  });
+}
+
+test("location consent is saved before continuing, with retry on save failure", async ({ page }) => {
+  await page.evaluate(() => {
+    const { cards, el, entry } = window.waitFixture;
+    window.__locationConsentRequests = [];
+    window.chrome = { runtime: { sendMessage: async message => {
+      window.__locationConsentRequests.push(message);
+      return { ok: window.__locationConsentRequests.length > 1, accepted: true };
+    } } };
+    cards.patch(el, { ...entry, form: { locationConsent: true, title: "允许获取位置？" } }, "session-a");
+  });
+  await expect(page.locator('[data-wait-action="continue"]')).toHaveText("同意并继续");
+  await page.locator('[data-wait-action="continue"]').click();
+  await expect(page.locator('[data-wait-action="continue"]')).toBeEnabled();
+  expect(await page.evaluate(() => window.waitFixture.state.commands)).toEqual([]);
+  await page.locator('[data-wait-action="continue"]').click();
+  expect(await page.evaluate(() => window.__locationConsentRequests)).toHaveLength(2);
+  expect(await page.evaluate(() => window.waitFixture.state.commands)).toEqual([{ type: "continue_task", sessionId: "session-a", waitId: "wait-a" }]);
+});
+
+for (const kind of ["bookmarks", "history", "location"]) {
+  test(`${kind} approval translates persisted copy when rendered in another language`, async ({ page }) => {
+    const original = await page.evaluate(async kind => {
+      const { withLanguage } = await import("/extension/shared/i18n/index.js");
+      const { t } = await import("/extension/shared/i18n/backend.js");
+      const { permissionT } = await import("/extension/shared/browser-permissions.js");
+      const f = window.waitFixture;
+      f.entry = withLanguage("zh-CN", () => ({
+        type: "wait", waitId: "approval", runId: "run-a", status: "waiting",
+        message: kind === "location" ? t("locationDisclosure") : permissionT(kind),
+        form: kind === "location" ? { locationConsent: true, title: t("locationTitle") }
+          : { browserPermission: kind, title: permissionT("title") },
+      }));
+      withLanguage("zh-CN", () => f.cards.patch(f.el, f.entry, "session-a"));
+      return JSON.stringify(f.entry);
+    }, kind);
+    await expect(page.locator(".waiting-message")).toHaveText(JSON.parse(original).message);
+    await page.evaluate(async () => {
+      const { withLanguage } = await import("/extension/shared/i18n/index.js");
+      const f = window.waitFixture;
+      withLanguage("en", () => f.cards.patch(f.el, f.entry, "session-a"));
+    });
+    await expect(page.locator(".waiting-title")).toHaveText(kind === "location" ? "Use your location?" : "Browser permission required");
+    await expect(page.locator(".waiting-message")).toContainText("configured model service");
+    await expect(page.locator(".waiting-message")).not.toContainText(JSON.parse(original).message);
+    await expect(page.locator('[data-wait-action="continue"]')).toHaveText(kind === "location" ? "Agree and continue" : "Allow and continue");
+    const englishMessage = await page.locator(".waiting-message").textContent();
+    for (const [status, title] of [["submitted", "Resumed"], ["cancelled", "Canceled"]]) {
+      await page.evaluate(async status => {
+        const { withLanguage } = await import("/extension/shared/i18n/index.js");
+        const f = window.waitFixture;
+        f.cards.reset();
+        const restored = JSON.parse(JSON.stringify({ ...f.entry, status }));
+        f.el = withLanguage("en", () => f.cards.create(restored, "session-a"));
+        document.querySelector("#messages").replaceChildren(f.el);
+      }, status);
+      await expect(page.locator(".waiting-title")).toHaveText(title);
+      await expect(page.locator(".waiting-message")).toHaveText(englishMessage);
+      await expect(page.locator(".waiting-actions")).toHaveCount(0);
+    }
+    expect(await page.evaluate(() => JSON.stringify(window.waitFixture.entry))).toBe(original);
+    expect(await page.evaluate(() => window.waitFixture.state.commands)).toEqual([]);
+  });
+}
+
+test("language changes preserve model-authored questions and form labels", async ({ page }) => {
+  await page.evaluate(async () => {
+    const { withLanguage } = await import("/extension/shared/i18n/index.js");
+    const f = window.waitFixture;
+    f.cards.reset();
+    f.el = withLanguage("en", () => f.cards.create(JSON.parse(JSON.stringify(f.entry)), "session-a"));
+    document.querySelector("#messages").replaceChildren(f.el);
+  });
+  await expect(page.locator(".waiting-title")).toHaveText("确认方案");
+  await expect(page.locator(".waiting-message")).toHaveText("请填写以下信息");
+  await expect(page.locator('[data-wait-action="continue"]')).toHaveText("确认");
+  await expect(page.locator('input[data-field-id="name"]')).toHaveValue("原始名称");
+  await expect(page.locator('[data-wait-action="cancel"]')).toHaveText("Cancel");
+});

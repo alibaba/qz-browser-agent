@@ -26,8 +26,11 @@ https://github.com/user-attachments/assets/26ee85fd-540f-4427-af59-c196fadfa221
 ## Privacy and data flow
 
 Sessions, Skills, and collected data are stored in your browser. Model requests include your input
-and any page or file content added to the task context. Skills and MCP connections may also exchange
-data with services you configure. See [permissions and data flow](docs/permissions.md).
+and task context, including page or file content, screenshots, tab information, and results from
+authorized bookmark or history tools. When a task needs local information, the
+`get_location` tool can send coordinates, accuracy, and the location timestamp to the model. It asks for consent on first use.
+Skills and MCP connections may also exchange data with services you configure.
+See the [privacy policy and browser permissions](docs/permissions.md).
 
 ## Quick start
 

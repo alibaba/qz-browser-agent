@@ -1,3 +1,4 @@
+import { acceptDataDisclosure } from "../support/data-consent.mjs";
 import { assertPublicReleasePackage } from "./public-package.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -29,9 +30,10 @@ try {
     join(ROOT, "scripts/publish-release.py"),
     "--version", version,
     "--source", "worktree",
+    "--target", "webstore",
     "--output-dir", output,
   ], { cwd: ROOT, stdio: "pipe" });
-  const zipPath = join(output, version, `qz-browser-agent-extension-${version}.zip`);
+  const zipPath = join(output, version, "webstore", `qz-browser-agent-extension-${version}.webstore.zip`);
   assertPublicReleasePackage(zipPath);
   execFileSync("python3", [
     "-c",
@@ -39,7 +41,7 @@ try {
     zipPath,
     extracted,
   ]);
-  let extensionPath = join(extracted, "qz-browser-agent-extension");
+  let extensionPath = extracted;
   await checkDependencyAssets({ extensionDir: extensionPath });
 
   context = await launchExtension(extensionPath);
@@ -65,6 +67,7 @@ try {
     if (message.type() === "error") pageErrors.push(message.text());
   });
   await page.goto(`chrome-extension://${extensionId}/sidepanel/sidepanel.html`);
+  await acceptDataDisclosure(page);
   await page.waitForSelector("#input", { state: "attached" });
   await page.waitForFunction(() => document.activeElement?.id === "input", null, { timeout: 10_000 });
 

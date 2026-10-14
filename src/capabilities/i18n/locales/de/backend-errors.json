@@ -1,4 +1,6 @@
 {
+  "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "Browserberechtigung erforderlich",
+  "backend.toolError.BROWSER_PERMISSION_DENIED.label": "Browserberechtigung nicht erteilt",
   "backend.model.reviewAttachments": "Bitte die Anhänge prüfen.",
   "backend.toolError.ABORTED.label": "Gestoppt",
   "backend.toolError.ABORTED.message": "Der Nutzer hat den Werkzeugaufruf gestoppt; es wurde kein Ergebnis zurückgegeben.",
@@ -298,5 +300,10 @@
   "backend.toolError.INVALID_IMAGE_URL.message": "Ungültige Bild-URL.",
   "backend.toolError.INVALID_REGEX.message": "Ungültiger regulärer Ausdruck.",
   "backend.toolError.NETWORK_REQUEST_NOT_FOUND.message": "Netzwerkanfrage nicht gefunden.",
-  "backend.toolError.NO_ACTIVE_TAB.message": "Kein aktiver Tab verfügbar."
+  "backend.toolError.NO_ACTIVE_TAB.message": "Kein aktiver Tab verfügbar.",
+  "backend.dataConsentRequired": "Öffne die Seitenleiste und stimme den Hinweisen zur Datennutzung zu, bevor du qz verwendest.",
+  "backend.locationTitle": "Standort verwenden?",
+  "backend.locationDisclosure": "Für lokale Informationen ruft qz deine Koordinaten, deren Genauigkeit und den Erfassungszeitpunkt ab und sendet sie an deinen Modelldienst. Wenn du zustimmst, gilt diese Erlaubnis auch für spätere Standortanfragen ohne erneute Nachfrage.",
+  "backend.locationRequired": "Deine Zustimmung zur Standortnutzung ist erforderlich. Bestätige in der Seitenleiste oder gib eine Stadt oder Region an.",
+  "backend.locationUnavailable": "Der Standort konnte nicht ermittelt werden. Öffne die Seitenleiste und prüfe die Standorteinstellungen deines Geräts oder gib eine Stadt oder Region an."
 }

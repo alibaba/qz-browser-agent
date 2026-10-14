@@ -7,7 +7,11 @@ export function installBenchmarkChromeStub(options = {}) {
     const content = value.placeholders?.qz_literal?.content;
     return typeof content === "string" ? content.replace(/\${2,}/g, dollars => dollars.slice(1)) : "";
   };
-  const storage = clone(options.localStorage || {});
+  // Ordinary workspace fixtures represent a user who has completed first-use consent.
+  const storage = clone({ qz_data_consent: { version: 1, acceptedAt: 1 }, ...options.localStorage });
+  if (options.dataConsent === false) storage.qz_data_consent = JSON.parse(localStorage.getItem("__qz_test_consent") || "null");
+  const storageListeners = new Set();
+  let consentSaveFailures = Number(options.consentSaveFailures || 0);
   const sessionStoragePrefix = "__qz_test_chrome_session__:";
   const localGetDelayMs = Math.max(0, Number(options.localGetDelayMs) || 0);
   const sessionGetDelayMs = Math.max(0, Number(options.sessionGetDelayMs) || 0);
@@ -42,6 +46,15 @@ export function installBenchmarkChromeStub(options = {}) {
       getMessage: key => nativeText(options.localeMessages?.[key]),
     },
     runtime: {
+      async sendMessage(message) {
+        if (message.type !== "accept_data_consent") throw new Error("Unexpected runtime message");
+        if (consentSaveFailures-- > 0) return { ok: false };
+        const value = { version: message.version, acceptedAt: Date.now() };
+        storage.qz_data_consent = value;
+        localStorage.setItem("__qz_test_consent", JSON.stringify(value));
+        for (const listener of storageListeners) listener({ qz_data_consent: { newValue: value } }, "local");
+        return { ok: true, accepted: true };
+      },
       connect() {
         return {
           postMessage(message) {
@@ -346,7 +359,10 @@ export function installBenchmarkChromeStub(options = {}) {
           }
         },
       },
-      onChanged: { addListener() {} },
+      onChanged: {
+        addListener(listener) { storageListeners.add(listener); },
+        removeListener(listener) { storageListeners.delete(listener); },
+      },
     },
     commands: {
       async getAll() {

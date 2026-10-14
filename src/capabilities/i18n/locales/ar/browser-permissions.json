@@ -1,0 +1,13 @@
+{
+  "browser-permissions.title": "يلزم إذن المتصفح",
+  "browser-permissions.allow": "السماح والمتابعة",
+  "browser-permissions.hint": "سيطلب Chrome الإذن. اسمح بالوصول للمتابعة.",
+  "browser-permissions.bookmarks": "يتطلب هذا الإجراء الوصول إلى الإشارات المرجعية لقراءتها أو إدارتها. تُرسل معلومات الإشارات المرجعية المستخدمة في المهمة إلى خدمة النماذج التي أعددتها.",
+  "browser-permissions.history": "يتطلب هذا الإجراء الوصول إلى سجل التصفح. تُرسل السجلات المستخدمة في المهمة إلى خدمة النماذج التي أعددتها.",
+  "browser-permissions.name.bookmarks": "الإشارات المرجعية",
+  "browser-permissions.name.history": "سجل التصفح",
+  "browser-permissions.name.desktopCapture": "تسجيل الشاشة",
+  "browser-permissions.name.downloads.open": "فتح الملفات التي تم تنزيلها",
+  "browser-permissions.required": "امنح إذن «{permission}» في اللوحة الجانبية لـ qz، ثم أعد المحاولة.",
+  "browser-permissions.denied": "لم يُمنح إذن «{permission}»، لذا أُلغي الإجراء. أعد المحاولة لمنح الإذن عند الحاجة."
+}

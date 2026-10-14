@@ -1,0 +1,13 @@
+{
+  "browser-permissions.title": "ブラウザーの権限が必要です",
+  "browser-permissions.allow": "許可して続行",
+  "browser-permissions.hint": "Chrome が権限の許可を求めます。許可すると操作を続行します。",
+  "browser-permissions.bookmarks": "この操作には、ブックマークの読み取りや管理の権限が必要です。タスクで使用するブックマーク情報は、設定したモデルサービスに送信されます。",
+  "browser-permissions.history": "この操作には、閲覧履歴の読み取り権限が必要です。タスクで使用する履歴情報は、設定したモデルサービスに送信されます。",
+  "browser-permissions.name.bookmarks": "ブックマーク",
+  "browser-permissions.name.history": "閲覧履歴",
+  "browser-permissions.name.desktopCapture": "画面録画",
+  "browser-permissions.name.downloads.open": "ダウンロードしたファイルを開く",
+  "browser-permissions.required": "軽舟のサイドパネルで「{permission}」を許可してから、もう一度お試しください。",
+  "browser-permissions.denied": "「{permission}」が許可されなかったため、操作をキャンセルしました。必要な場合は再試行して許可してください。"
+}

@@ -218,5 +218,7 @@
   "sessions.manageSessionsAutomationRunsRequiresAutomationid": "manage_sessions 的 automation_runs 操作需要 automationId",
   "sessions.unsupportedManageSessionsAction": "不支援的 manage_sessions 操作：{action}",
   "sessions.goalTrackingShort": "目標追蹤",
-  "sessions.latestMessagesShort": "最新訊息"
+  "sessions.latestMessagesShort": "最新訊息",
+  "sessions.getLocation": "取得位置",
+  "sessions.locationUnavailable": "無法取得位置。請開啟側邊欄並檢查裝置定位設定，或直接提供城市、區域。"
 }

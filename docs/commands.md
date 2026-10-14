@@ -127,6 +127,24 @@ preserves the source manifest and writes the ZIP, README, and metadata to
 with the extension under `qz-browser-agent-extension/`. The debug archive is
 `qz-browser-agent-extension-<version>.debug.zip`. Distribution and Git tags are separate maintainer steps.
 
+For a Chrome Web Store upload, select the `webstore` target:
+
+```bash
+npm run release -- --version 0.0.0.1 --target webstore
+```
+
+This writes `dist/releases/<version>/webstore/qz-browser-agent-extension-<version>.webstore.zip`
+with `manifest.json` at the ZIP root. Upload this ZIP in the Chrome Developer Dashboard.
+Both targets use the same runtime files. The default `manual` target keeps the installation folder;
+each target has its own metadata and debug archive. The Web Store ZIP contains runtime files and
+licenses; its release metadata and source maps stay alongside it. Packaging checks the root manifest,
+its referenced resources, ZIP integrity, upload size, and separation of development files.
+
+JavaScript uses standard Terser minification, including variable shortening. `--no-minify` disables
+the final Terser pass for diagnostics. Build-time script compilation retains its production settings.
+Store review also covers runtime behavior, permissions, and data disclosures; this target validates
+the upload package.
+
 Use `--source worktree` to preview local edits, or `--git-ref` for another commit containing the
 packaging toolchain. Scripts and dependencies come from the selected source.
 
@@ -135,6 +153,7 @@ unused Chrome-compatible numeric version, then run `npm ci`, `npm run doctor`, a
 Package the committed source and check the output:
 
 - `version.json` records `source: "git"` and the intended `gitCommit`.
+- `target` and `packageRoot` identify the archive layout; `minification` records the Terser pass.
 - Bundling and minification are enabled; runtime entries, assets, and licenses are complete.
 - File counts, sizes, and SHA-256 match the package.
 - The install ZIP contains compiled runtime files, licenses, and notices. Source maps are in the debug archive.

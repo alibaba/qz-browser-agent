@@ -18,7 +18,6 @@ export default ((host) => [
     }
     return context;
   } },
-  { id: "location", read: () => host.requestLocation() },
   { id: "workingTab", reasons: ["snapshot", "site-skills", "tool"], read: async ({ sessionId }) => {
     const tab = await host.getWorkingTabContext(sessionId);
     if (!tab) return null;

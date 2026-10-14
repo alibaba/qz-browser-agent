@@ -8,6 +8,24 @@
   <link id="qingzhou-sidepanel-skin" rel="stylesheet" href="sidepanel.css" data-qingzhou-skin="default">
 </head>
 <body>
+  <template id="data-consent-template">
+    <section class="data-consent qz-scroll qz:p-5 qz:bg-surface qz:text-body" aria-labelledby="data-consent-title">
+      <div class="qz:mx-auto qz:flex qz:w-full qz:max-w-96 qz:flex-col qz:gap-4">
+        <div class="welcome-icon" aria-hidden="true"></div>
+        <h1 id="data-consent-title"></h1>
+        <p data-i18n="core.dataConsentModel"></p>
+        <p data-i18n="core.dataConsentLocation"></p>
+        <p data-i18n="core.dataConsentStorage"></p>
+        <p data-i18n="core.dataConsentServices"></p>
+        <a href="https://github.com/alibaba/qz-browser-agent/blob/main/docs/permissions.md" target="_blank" rel="noopener noreferrer" data-i18n="core.dataConsentDetails"></a>
+        <div class="qz:flex qz:flex-col qz:gap-2">
+          <button type="button" class="qz-btn qz-btn--primary qz-btn--lg" data-consent-accept data-i18n="core.dataConsentAccept"></button>
+          <button type="button" class="qz-btn qz-btn--ghost qz-btn--lg" data-consent-later data-i18n="core.dataConsentLater"></button>
+        </div>
+        <p role="alert" class="qz:text-danger" data-consent-error></p>
+      </div>
+    </section>
+  </template>
   <div id="app" class="qz:relative qz:flex qz:h-full qz:min-h-0 qz:w-full qz:flex-col qz:overflow-hidden qz:rounded-none qz:bg-surface" data-workspace-booting>
     <div id="workspace-boot-fallback" class="workspace-boot-fallback hidden" role="alert"></div>
     <!-- Header -->

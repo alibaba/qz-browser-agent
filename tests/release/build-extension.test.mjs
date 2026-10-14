@@ -401,6 +401,8 @@ test("public provider composition keeps standard providers and their browser rul
   const rules = JSON.parse(await readFile(join(build.outputDir, "rules/provider-headers.json")));
   assert.equal(rules.some(rule => rule.id === 1), false);
   assert.equal(rules.some(rule => rule.id === 4), true);
+  const manifest = JSON.parse(await readFile(join(build.outputDir, "manifest.json")));
+  assert.equal(manifest.declarative_net_request, undefined, "provider rules must be scoped to the installed extension at runtime");
 });
 
 test("models.dev uses one licensed local asset and keeps the SDK in Background", async t => {

@@ -5,7 +5,7 @@ type FrozenApi<T extends BackgroundApi> = { readonly [K in keyof T]: Readonly<T[
  * Namespaces contain already-bound functions; transports may adapt envelopes,
  * but they never receive repositories, Agents, or mutable Session handles.
  */
-export function createBackgroundApi<T extends BackgroundApi>(namespaces: T) {
+export function createBackgroundApi<T extends BackgroundApi>(namespaces: T, beforeCall?: (path: string) => void) {
   if (!isPlainObject(namespaces)) throw new TypeError("background API namespaces are required");
   const api: Record<string, Readonly<Record<string, unknown>>> = {};
   for (const [namespace, methods] of Object.entries(namespaces)) {
@@ -13,7 +13,10 @@ export function createBackgroundApi<T extends BackgroundApi>(namespaces: T) {
     const normalized: Record<string, unknown> = {};
     for (const [name, method] of Object.entries(methods)) {
       if (typeof method !== "function") throw new TypeError(`background API method must be a function: ${namespace}.${name}`);
-      normalized[name] = method;
+      normalized[name] = beforeCall ? (...args: unknown[]) => {
+        beforeCall(`${namespace}.${name}`);
+        return method(...args);
+      } : method;
     }
     api[namespace] = Object.freeze(normalized);
   }

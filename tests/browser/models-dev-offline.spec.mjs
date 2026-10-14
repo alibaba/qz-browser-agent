@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { providers as snapshot } from "@opencode-ai/models/snapshot";
 import { expect, test } from "./fixtures.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
+import { acceptDataDisclosure } from "../support/data-consent.mjs";
 
 /** Speak the public panel protocol to the unchanged production Service Worker. */
 async function request(page, type, fields = {}) {
@@ -87,6 +88,7 @@ test("a real offline MV3 panel discovers, configures and restores models.dev pro
     page = await context.newPage();
     page.on("pageerror", error => evidence.pageErrors.push(String(error.stack || error)));
     await page.goto(panelUrl);
+    await acceptDataDisclosure(page);
     await expect(page.locator("#app")).toBeVisible();
     await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-booting");
     await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-boot-fallback");

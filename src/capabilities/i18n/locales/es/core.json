@@ -375,5 +375,14 @@
   "core.firstRows": "Mostrando las primeras {count} filas",
   "core.firstColumns": "Mostrando las primeras {count} columnas",
   "core.imageTotal": "Imágenes: {count}",
-  "core.moreImages": "{count} imágenes más"
+  "core.moreImages": "{count} imágenes más",
+  "core.dataConsentTitle": "Empezar a usar {brand}",
+  "core.dataConsentModel": "Para realizar una tarea, qz envía tu entrada y la información que utiliza al servicio de modelos que hayas configurado. Esto puede incluir contenido web, capturas de pantalla, archivos, títulos y URL de pestañas, y marcadores o entradas del historial que hayas autorizado a leer.",
+  "core.dataConsentLocation": "Cuando necesites información local, qz puede obtener tus coordenadas, precisión y hora de ubicación y enviarlas al servicio de modelos configurado. Te pedirá permiso la primera vez.",
+  "core.dataConsentStorage": "Los chats, Skills y datos recopilados se guardan en tu navegador.",
+  "core.dataConsentServices": "Los Skills y las conexiones MCP también pueden intercambiar datos de las tareas con los servicios que configures.",
+  "core.dataConsentDetails": "Privacidad y permisos",
+  "core.dataConsentAccept": "Aceptar y continuar",
+  "core.dataConsentLater": "Más tarde",
+  "core.dataConsentSaveFailed": "No se pudo guardar tu elección. Inténtalo de nuevo."
 }

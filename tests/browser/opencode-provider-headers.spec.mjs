@@ -25,7 +25,9 @@ test("provider requests send qz client identity and preserve OpenCode conversati
       import { getProviderDef } from "./background/llm/provider-catalog.js";
       import { listProviderModels } from "./background/llm/model-directory.js";
       import { resolveRequestConfig } from "./background/llm/config.js";
-      globalThis.providerHeaderTest = { createLlmGateway, getProviderDef, listProviderModels, resolveRequestConfig };
+      import { initializeProviderHeaderRules } from "./background/services/provider-header-rules.js";
+      globalThis.providerHeaderTest = { createLlmGateway, getProviderDef, listProviderModels, resolveRequestConfig,
+        ready: initializeProviderHeaderRules({ runtime: chrome.runtime, dnr: chrome.declarativeNetRequest, fetch }) };
     `);
 
     receiver = createServer({
@@ -67,6 +69,7 @@ test("provider requests send qz client identity and preserve OpenCode conversati
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     await expect.poll(() => worker.evaluate(() => Boolean(globalThis.providerHeaderTest))).toBe(true);
     const results = await worker.evaluate(async () => {
+      await globalThis.providerHeaderTest.ready;
       const { createLlmGateway, getProviderDef, listProviderModels, resolveRequestConfig } = globalThis.providerHeaderTest;
       const config = { provider: "opencodego", apiKey: "offline-fixture-key", model: "fixture-model" };
       const gateway = createLlmGateway({ rateGovernor: null, rateLearning: null, resolveConfig: () => resolveRequestConfig({ config }) });

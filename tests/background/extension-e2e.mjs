@@ -1,3 +1,4 @@
+import { acceptDataDisclosure } from "../support/data-consent.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -46,9 +47,12 @@ try {
   const extensionId = await getExtensionId(context, profile);
   page = await context.newPage();
   await page.goto(`chrome-extension://${extensionId}/sidepanel/sidepanel.html`);
+  assert.equal((await page.evaluate(() => chrome.runtime.sendMessage({ type: "run_script_tool_call" }))).code, "DATA_CONSENT_REQUIRED");
+  await acceptDataDisclosure(page);
   await waitForWorkspaceReady(page);
   await installHarness(page);
   await saveConfig(page, provider.endpoint);
+  await locationOnlyWhenRequested(page);
   await mcpOutputSchemaSurvivesExtensionCsp(page, provider);
   page = await automationAlarmRunsWithoutSidepanel(page, context, extensionId, provider);
   await runningAutomationCanBeDeleted(page, provider);
@@ -85,7 +89,7 @@ try {
 
   console.log(JSON.stringify({
     ok: true,
-    scenarios: ["mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart"],
+    scenarios: ["data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart"],
     providerRequests: provider.requests.length,
     providerFaultCases: 16,
   }));
@@ -121,6 +125,31 @@ try {
   await gitRepository.close();
   await provider.close();
   rmSync(profile, { recursive: true, force: true });
+}
+
+async function locationOnlyWhenRequested(page) {
+  await page.evaluate(() => {
+    window.__locationReads = 0;
+    Object.defineProperty(navigator.geolocation, "getCurrentPosition", { configurable: true, value(success) {
+      window.__locationReads++;
+      success({ coords: { latitude: 30.25, longitude: 120.15, accuracy: 10 }, timestamp: Date.now() });
+    } });
+  });
+  const sessionId = await createSession(page, "Location consent");
+  await switchUiToSession(page, sessionId);
+  await page.locator("#input").fill("QZ_E2E_LOCATION");
+  await page.locator("#input").press("Enter");
+  await page.locator('.waiting-active [data-wait-action="continue"]').waitFor();
+  assert.equal(await page.evaluate(() => window.__locationReads), 0);
+  await page.locator('.waiting-active [data-wait-action="continue"]').click();
+  await waitForTerminalState(page, sessionId, 20_000);
+  assert.equal(await page.evaluate(() => window.__locationReads), 2);
+  const events = await sessionEvents(page, sessionId);
+  assert.equal(events.filter(event => event.type === "waiting_for_user").length, 1);
+  const results = events.filter(event => event.type === "tool_execution_end" && event.toolName === "get_location");
+  assert.equal(results.length, 2);
+  for (const event of results) { assert.equal(event.isError, false); assert.equal(event.result.latitude, 30.25); }
+  await deleteSession(page, sessionId);
 }
 
 async function waitForWorkspaceReady(page) {
@@ -1720,6 +1749,14 @@ async function createProviderServer() {
       return;
     }
 
+    if (marker === "QZ_E2E_LOCATION" && count <= 2) {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: ${JSON.stringify(streamToolCall(`location_${count}`, "get_location", "{}"))}\n\n`);
+      res.write(`data: ${JSON.stringify(streamToolCallsDone())}\n\n`);
+      res.end("data: [DONE]\n\n");
+      return;
+    }
+
     if (marker === "QZ_E2E_MCP_OUTPUT_SCHEMA" && count <= 5) {
       const serverArgs = { url: `http://127.0.0.1:${server.address().port}/mcp-output-schema`, name: "schema-fixture", timeout: 10 };
       const steps = [
@@ -2055,7 +2092,7 @@ function outputForMarker(marker) {
 
 function detectMarker(body) {
   const messages = Array.isArray(body?.messages) ? body.messages : [];
-  const markers = [
+  const markers = ["QZ_E2E_LOCATION",
     "QZ_E2E_MANAGED_CHILD", "QZ_E2E_MANAGE", "QZ_E2E_HTTP_ERROR", "QZ_E2E_UNSUPPORTED_IMAGE", "QZ_E2E_RETRY", "QZ_E2E_BASIC", "QZ_E2E_UI",
     "QZ_E2E_ATTACHMENT_HISTORY_SEED", "QZ_E2E_ATTACHMENT_HISTORY", "QZ_E2E_ATTACHMENT_NEW",
     "QZ_E2E_AUTOMATION", "QZ_E2E_DELETE_RUNNING_AUTOMATION", "QZ_E2E_SCREEN_ACTION", "QZ_E2E_MCP_OUTPUT_SCHEMA", "QZ_E2E_RECOVER",

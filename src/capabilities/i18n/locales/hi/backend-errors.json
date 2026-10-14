@@ -1,4 +1,6 @@
 {
+  "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "ब्राउज़र की अनुमति चाहिए",
+  "backend.toolError.BROWSER_PERMISSION_DENIED.label": "ब्राउज़र की अनुमति नहीं मिली",
   "backend.model.reviewAttachments": "कृपया अटैचमेंट की समीक्षा करें।",
   "backend.toolError.ABORTED.label": "रोका गया",
   "backend.toolError.ABORTED.message": "उपयोगकर्ता ने टूल कॉल रोक दी; कोई परिणाम नहीं लौटा।",
@@ -298,5 +300,10 @@
   "backend.toolError.INVALID_IMAGE_URL.message": "अमान्य छवि URL।",
   "backend.toolError.INVALID_REGEX.message": "अमान्य रेगुलर एक्सप्रेशन।",
   "backend.toolError.NETWORK_REQUEST_NOT_FOUND.message": "नेटवर्क अनुरोध नहीं मिला।",
-  "backend.toolError.NO_ACTIVE_TAB.message": "कोई सक्रिय टैब उपलब्ध नहीं।"
+  "backend.toolError.NO_ACTIVE_TAB.message": "कोई सक्रिय टैब उपलब्ध नहीं।",
+  "backend.dataConsentRequired": "qz का उपयोग करने से पहले साइड पैनल खोलें और डेटा उपयोग की जानकारी से सहमत हों।",
+  "backend.locationTitle": "स्थान के उपयोग की अनुमति दें?",
+  "backend.locationDisclosure": "स्थानीय जानकारी देने के लिए qz आपके निर्देशांक, सटीकता और स्थान मापने का समय प्राप्त करके आपकी कॉन्फ़िगर की गई मॉडल सेवा को भेजेगा। सहमति देने पर, आगे के स्थान अनुरोध इसी अनुमति का उपयोग करेंगे और दोबारा नहीं पूछा जाएगा।",
+  "backend.locationRequired": "स्थान के उपयोग की अनुमति चाहिए। साइड पैनल में पुष्टि करें या शहर या क्षेत्र बताएं।",
+  "backend.locationUnavailable": "आपका स्थान प्राप्त नहीं हो सका। साइड पैनल खोलें और डिवाइस की स्थान सेटिंग जाँचें, या शहर या क्षेत्र बताएं।"
 }

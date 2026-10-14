@@ -8,7 +8,7 @@ import { RUNTIME_REQUEST_PORT } from "../../shared/transport/runtime-request.js"
 import { backgroundReceiveBudget, backgroundTransferBudget } from "./transfer-budget.js";
 
 const OWNED_MESSAGE_TYPES = new Set([
-  "get_content_language", "offscreen_keepalive", "session_export_import_request",
+  "accept_location_consent", "accept_data_consent", "get_content_language", "offscreen_keepalive", "session_export_import_request",
   "stop_session", "run_script_inner_result", "run_script_inner_trace", "run_script_inner_fetch",
   "run_script_inner_fetch_cancel", "run_script_tool_call",
 ]);
@@ -21,6 +21,26 @@ export function createRuntimeMessageTransport(api: BackgroundApi, {
 
   function dispatch(message: Fields, sender: chrome.runtime.MessageSender, sendResponse: (response: unknown) => void) {
     const type = String(message?.type || "");
+
+    if (type === "accept_location_consent") {
+      respondAsync(
+        () => call("system.acceptLocationConsent", message.waitId, message.sessionId, sender),
+        result => ({ ok: true, ...object(result) }),
+        error => failure(error, "LOCATION_CONSENT_SAVE_FAILED"),
+        sendResponse,
+      );
+      return true;
+    }
+
+    if (type === "accept_data_consent") {
+      respondAsync(
+        () => call("system.acceptDataConsent", message.version, sender),
+        result => ({ ok: true, ...object(result) }),
+        error => failure(error, "DATA_CONSENT_SAVE_FAILED"),
+        sendResponse,
+      );
+      return true;
+    }
 
     if (type === "get_content_language") {
       respondAsync(
@@ -94,7 +114,8 @@ export function createRuntimeMessageTransport(api: BackgroundApi, {
   }
 
   function listener(message: Fields = {}, sender: chrome.runtime.MessageSender = {}, sendResponse: (response: unknown) => void = () => {}) {
-    return dispatch(message, sender, sendResponse);
+    try { return dispatch(message, sender, sendResponse); }
+    catch (error) { sendResponse(failure(error, "RUNTIME_REQUEST_FAILED")); return false; }
   }
 
   function register(runtime = globalThis.chrome?.runtime) {

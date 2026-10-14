@@ -34,7 +34,7 @@ def serve_repo():
 CHROME_MOCK = """
 (() => {
   const listeners = { message: [], disconnect: [], changed: [] };
-  const storage = {};
+  const storage = { qz_data_consent: { version: 1, acceptedAt: 1 } };
   const clone = (value) => value == null ? value : JSON.parse(JSON.stringify(value));
   const emit = (event) => listeners.message.slice().forEach(fn => fn(event));
   const storageGet = async (keys) => {

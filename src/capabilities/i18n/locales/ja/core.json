@@ -375,5 +375,14 @@
   "core.firstRows": "最初の {count} 行を表示",
   "core.firstColumns": "最初の {count} 列を表示",
   "core.imageTotal": "画像: {count} 枚",
-  "core.moreImages": "ほか {count} 枚の画像"
+  "core.moreImages": "ほか {count} 枚の画像",
+  "core.dataConsentTitle": "{brand}の利用を開始",
+  "core.dataConsentModel": "タスクを実行するため、軽舟は入力内容とタスクで使用する情報を、設定したモデルサービスに送信します。これには、ページの内容、スクリーンショット、ファイル、タブのタイトルと URL、許可を得て読み取ったブックマークや閲覧履歴が含まれる場合があります。",
+  "core.dataConsentLocation": "地域の情報が必要な場合、軽舟は緯度・経度、精度、取得時刻を取得し、設定したモデルサービスに送信できます。初回の利用時に同意を求めます。",
+  "core.dataConsentStorage": "チャット、Skill、収集したデータはブラウザ内に保存されます。",
+  "core.dataConsentServices": "SkillやMCP接続も、設定したサービスとタスクのデータをやり取りする場合があります。",
+  "core.dataConsentDetails": "プライバシーと権限",
+  "core.dataConsentAccept": "同意して続行",
+  "core.dataConsentLater": "後で",
+  "core.dataConsentSaveFailed": "選択を保存できませんでした。もう一度お試しください。"
 }

@@ -1,4 +1,6 @@
 {
+  "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "إذن المتصفح مطلوب",
+  "backend.toolError.BROWSER_PERMISSION_DENIED.label": "لم يُمنح إذن المتصفح",
   "backend.model.reviewAttachments": "يرجى مراجعة المرفقات.",
   "backend.toolError.ABORTED.label": "متوقف",
   "backend.toolError.ABORTED.message": "أوقف المستخدم استدعاء الأداة؛ لم تُعد أي نتيجة.",
@@ -298,5 +300,10 @@
   "backend.toolError.INVALID_IMAGE_URL.message": "URL صورة غير صالح.",
   "backend.toolError.INVALID_REGEX.message": "تعبير نمطي غير صالح.",
   "backend.toolError.NETWORK_REQUEST_NOT_FOUND.message": "لم يُعثر على طلب الشبكة.",
-  "backend.toolError.NO_ACTIVE_TAB.message": "لا توجد علامة تبويب نشطة متاحة."
+  "backend.toolError.NO_ACTIVE_TAB.message": "لا توجد علامة تبويب نشطة متاحة.",
+  "backend.dataConsentRequired": "افتح اللوحة الجانبية ووافق على بيان استخدام البيانات قبل استخدام qz.",
+  "backend.locationTitle": "هل تسمح باستخدام موقعك؟",
+  "backend.locationDisclosure": "لتقديم معلومات محلية، سيحصل qz على إحداثياتك ودقتها ووقت تحديد الموقع ويرسلها إلى خدمة النماذج التي أعددتها. إذا وافقت، فستستخدم طلبات الموقع اللاحقة هذا الإذن دون السؤال مجددًا.",
+  "backend.locationRequired": "يلزم إذنك لاستخدام الموقع. أكّد في اللوحة الجانبية أو حدّد مدينة أو منطقة.",
+  "backend.locationUnavailable": "تعذّر الحصول على موقعك. افتح اللوحة الجانبية وتحقق من إعدادات الموقع في جهازك، أو حدّد مدينة أو منطقة."
 }

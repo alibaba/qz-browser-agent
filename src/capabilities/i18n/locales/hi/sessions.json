@@ -218,5 +218,7 @@
   "sessions.manageSessionsAutomationRunsRequiresAutomationid": "manage_sessions automation_runs के लिए automationId ज़रूरी है",
   "sessions.unsupportedManageSessionsAction": "manage_sessions की यह कार्रवाई उपलब्ध नहीं है: {action}",
   "sessions.goalTrackingShort": "लक्ष्य ट्रैक करें",
-  "sessions.latestMessagesShort": "नए संदेश"
+  "sessions.latestMessagesShort": "नए संदेश",
+  "sessions.getLocation": "स्थान प्राप्त करें",
+  "sessions.locationUnavailable": "आपका स्थान प्राप्त नहीं हो सका। साइड पैनल खोलें और डिवाइस की स्थान सेटिंग जाँचें, या शहर या क्षेत्र बताएं।"
 }

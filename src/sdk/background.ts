@@ -53,8 +53,8 @@ export interface ToolExtensionAPI extends Omit<PageNavigationHost, "commitObserv
   readonly ToolExecutionError: ToolErrorConstructor;
   readonly getToolRuntimeDependencies: GetToolRuntimeDependencies;
   readonly element: ElementAccess;
-  readonly bookmarks: typeof chrome.bookmarks;
-  readonly history: typeof chrome.history;
+  getBookmarks(): typeof chrome.bookmarks;
+  getHistory(): typeof chrome.history;
   readonly getSecurityGuardrails: () => Promise<SecurityGuardrails>;
   readonly matchBlockedUrl: (url?: unknown, guardrails?: unknown) => GuardrailDecision | null;
   readonly sendCdp: BrowserDebugger["sendCdp"];

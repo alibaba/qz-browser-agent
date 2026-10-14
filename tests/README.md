@@ -212,8 +212,9 @@ to four for deliberate concurrency checks. Benchmark evidence retains its own pe
 `npm test -- release` checks the actual build and packaged ZIP locally. It covers fixed entries,
 deterministic output, stale-file cleanup, notices, source-map separation and private-data scanning.
 Git packaging uses scripts, declarations and lockfiles from the same commit. The Chrome smoke test
-loads the compressed package and exercises Worker, panel, Data and restart behavior. See [package
-commands](../docs/commands.md#package-a-version) for source selection.
+loads the compressed Web Store package and exercises Worker, panel, Data and restart behavior.
+Archive tests compare both targets and check missing resources, debug-file leaks, and invalid ZIP
+paths. See [package commands](../docs/commands.md#package-a-version) for source selection.
 
 ## Coverage
 

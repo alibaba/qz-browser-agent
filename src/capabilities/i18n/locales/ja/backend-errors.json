@@ -1,4 +1,6 @@
 {
+  "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "ブラウザーの権限が必要です",
+  "backend.toolError.BROWSER_PERMISSION_DENIED.label": "ブラウザーの権限が許可されていません",
   "backend.model.reviewAttachments": "添付ファイルを確認してください。",
   "backend.toolError.ABORTED.label": "停止済み",
   "backend.toolError.ABORTED.message": "ユーザーがツール呼び出しを停止したため、結果は返されませんでした。",
@@ -298,5 +300,10 @@
   "backend.toolError.INVALID_IMAGE_URL.message": "無効な画像 URL。",
   "backend.toolError.INVALID_REGEX.message": "無効な正規表現。",
   "backend.toolError.NETWORK_REQUEST_NOT_FOUND.message": "ネットワークリクエストが見つかりません。",
-  "backend.toolError.NO_ACTIVE_TAB.message": "利用できるアクティブなタブがありません。"
+  "backend.toolError.NO_ACTIVE_TAB.message": "利用できるアクティブなタブがありません。",
+  "backend.dataConsentRequired": "サイドパネルを開き、データの利用について同意してから軽舟をご利用ください。",
+  "backend.locationTitle": "位置情報を使用しますか？",
+  "backend.locationDisclosure": "地域に合った情報を提供するため、軽舟は緯度・経度、精度、取得時刻を取得し、設定したモデルサービスに送信します。同意すると、次回以降は確認せずに位置情報を取得できます。",
+  "backend.locationRequired": "位置情報の利用への同意が必要です。サイドパネルで確認するか、都市や地域を指定してください。",
+  "backend.locationUnavailable": "位置情報を取得できませんでした。サイドパネルを開いて端末の位置情報設定を確認するか、都市や地域を指定してください。"
 }

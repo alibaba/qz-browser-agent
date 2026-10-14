@@ -88,6 +88,13 @@ first.onPosted = message => {
 assert.deepEqual(await channel.requestLocation({ timeoutMs: 100 }), { href: "https://example.test/" });
 first.onPosted = null;
 assert.equal(await channel.requestLocation({ timeoutMs: 5 }), null);
+assert.equal(await channel.requestLocation({ windowId: 999 }), null);
+const locationAbort = new AbortController();
+const pendingLocation = channel.requestLocation({ signal: locationAbort.signal });
+locationAbort.abort();
+assert.equal(await pendingLocation, null);
+assert.equal(await channel.requestLocation({ signal: locationAbort.signal }), null);
+
 
 first.onMessage.emit({ type: "ok", requestId: "request-ok" });
 await tick();

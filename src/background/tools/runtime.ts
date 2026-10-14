@@ -27,6 +27,7 @@ import { consumeToolEffects, copyToolEffects, issueToolEffects } from "./effects
 export { consumeToolEffects } from "./effects.js";
 import { summarizeToolArgsForTrace } from "./trace-summary.js";
 import { createToolRegistry, isCoreToolSnapshot, withCommonToolParameters } from "./registry.js";
+import { ensureToolBrowserPermission } from "./browser-permissions.js";
 import { assertScriptPageLifecycle } from "./behavior.js";
 /**
  * Definitions declare capabilities; this runtime owns permission, cancellation and effects.
@@ -179,10 +180,12 @@ export function createToolRuntime({
   skills = null,
   skillSettings = null,
   skillNetwork = null,
+  requestLocation,
   windowTarget = null,
   emit = null,
 }: ToolRuntimeDependencies = {}) {
   const dependencies = Object.freeze({
+    requestLocation,
     sessions: sessions && typeof sessions === "object" ? sessions : null,
     skills: skills && typeof skills === "object" ? skills : null,
     skillSettings: skillSettings && typeof skillSettings === "object" ? skillSettings : null,
@@ -347,6 +350,9 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       signal,
       emitUpdate: update => emitToolExecutionUpdate(name, executionArgs, update, context),
     });
+    if (definition.requires?.browserPermission) {
+      await ensureToolBrowserPermission(definition.requires.browserPermission, context, signal, getToolRuntimeDependencies(context));
+    }
     const timeoutMs = resolveToolTimeoutMs(definition, executionArgs);
     if (traceTool) {
       toolTrace(`[tool] resolved name=${name} kind=${definition.source} capability=${definition.capabilityId} timeoutMs=${timeoutMs} executionArgs=${summarizeToolArgsForTrace(executionArgs)}`);
@@ -1343,7 +1349,7 @@ const capabilityHost: ToolExtensionAPI = Object.freeze({
   skills: Object.freeze({ list: listSkills, load: loadSkill, save: saveSkill, update: updateSkill,
     delete: deleteSkill, loadResource: loadSkillResource, loadScript: loadSkillScript }), ToolExecutionError, getToolRuntimeDependencies, element: elementRuntime,
   clampLimit, clampNumber, secondsToMs, makeSessionTabTargetError,
-  bookmarks: chrome.bookmarks, history: chrome.history, getSecurityGuardrails, matchBlockedUrl,
+  getBookmarks: () => chrome.bookmarks, getHistory: () => chrome.history, getSecurityGuardrails, matchBlockedUrl,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
   sendToContent, sendCdp, withDebugger, getDebuggerConnectionId, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,

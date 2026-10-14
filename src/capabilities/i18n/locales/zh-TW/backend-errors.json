@@ -1,4 +1,6 @@
 {
+  "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "需要瀏覽器權限",
+  "backend.toolError.BROWSER_PERMISSION_DENIED.label": "未取得瀏覽器權限",
   "backend.model.reviewAttachments": "請查看附件。",
   "backend.toolError.ABORTED.label": "已中止",
   "backend.toolError.ABORTED.message": "工具呼叫已被使用者終止，未返回結果。",
@@ -298,5 +300,10 @@
   "backend.toolError.SESSION_EXPORT_SOURCE_NOT_ALLOWED.label": "匯入來源不被允許",
   "backend.toolError.SESSION_NOT_FOUND.label": "未找到任務",
   "backend.toolError.SESSION_PERSIST_FAILED.label": "任務儲存失敗",
-  "backend.toolError.STALE_AGENT_LEASE.label": "任務執行權限已失效"
+  "backend.toolError.STALE_AGENT_LEASE.label": "任務執行權限已失效",
+  "backend.dataConsentRequired": "請開啟側邊欄，同意資料使用說明後再使用輕舟。",
+  "backend.locationTitle": "允許取得位置？",
+  "backend.locationDisclosure": "為提供當地資訊，輕舟會取得你的經緯度、精確度和定位時間，並傳送至你設定的模型服務。同意後，後續定位請求將沿用此授權，不再重複詢問。",
+  "backend.locationRequired": "需要定位授權。請在側邊欄確認，或直接提供城市、區域。",
+  "backend.locationUnavailable": "無法取得位置。請開啟側邊欄並檢查裝置定位設定，或直接提供城市、區域。"
 }

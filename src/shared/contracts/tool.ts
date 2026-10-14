@@ -1,3 +1,5 @@
+import type { ToolBrowserPermission } from "../browser-permissions.js";
+
 /** Cross-context schema and capability types; executable definitions bind only in their owning runtime. */
 type ParameterType = "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
 export interface ToolParameter {
@@ -73,7 +75,7 @@ export interface ToolDefinition<S extends ToolSchema, Result, Context, Signal> {
   execute(args: ToolArguments<S> & { timeoutMs?: number }, signal: Signal | undefined, context: Context): Result | Promise<Result>;
   model?: Readonly<ToolModelPolicy>;
   behavior?: Readonly<ToolBehavior>;
-  requires?: { images?: boolean; rootSession?: { code: string; message: string }; tools?: readonly string[] };
+  requires?: { browserPermission?: ToolBrowserPermission; images?: boolean; rootSession?: { code: string; message: string }; tools?: readonly string[] };
   /** Trusted tab lifecycle role; ordinary result payloads cannot grant ownership. */
   workingTab?: "created" | "clear" | "claim" | ((args: ToolArguments<S>) => "update" | "claim");
   effects?(args: ToolArguments<S>, result: Result): readonly ToolEffect[];

@@ -2,6 +2,11 @@ import { defineMessages } from "./definition.js";
 
 /** Browser, session and tool host messages. Protocol identifiers remain language neutral. */
 export const backendMessages = defineMessages("backend", {
+  locationTitle: { en: "Use your location?", "zh-CN": "允许获取位置？" },
+  locationDisclosure: { en: "To provide local information, qz will get your coordinates, accuracy, and location timestamp and send them to your configured model service. If you agree, future location requests will use this permission without asking again.", "zh-CN": "为提供本地信息，轻舟会获取你的经纬度、精度和定位时间，并发送至你配置的模型服务。同意后，后续定位请求将沿用此授权，不再重复询问。" },
+  locationRequired: { en: "Location permission is required. Confirm in the side panel, or provide a city or area instead.", "zh-CN": "需要定位授权。请在侧边栏确认，或直接提供城市、区域。" },
+  locationUnavailable: { en: "Could not get your location. Open the side panel and check your device’s location settings, or provide a city or area.", "zh-CN": "未能获取位置。请打开侧边栏并检查设备定位设置，或直接提供城市、区域。" },
+  dataConsentRequired: { en: "Open the side panel and agree to the data disclosure before using qz.", "zh-CN": "请打开侧边栏，同意数据使用说明后再使用轻舟。" },
   "artifact.imageCollection": { "zh-CN": "图集", "en": "Image collection" },
   "artifact.dataTable": { "zh-CN": "数据表", "en": "Data table" },
   "artifact.file": { "zh-CN": "文件", "en": "File" },
@@ -255,6 +260,8 @@ export const backendMessages = defineMessages("backend", {
   "toolError.NO_CLICKABLE_POINT.message": {"zh-CN": "元素没有可点击位置，可能被隐藏、尺寸为 0 或被遮挡。", "en": "The element has no clickable area. It may be hidden, have no size, or be covered by another element."},
   "toolError.NO_WORKING_WEB_TAB.label": {"zh-CN": "当前任务标签页不是网页", "en": "Task tab is not a web page"},
   "toolError.OFFSCREEN_API_UNAVAILABLE.label": {"zh-CN": "后台页面能力不可用", "en": "Offscreen page unavailable"},
+  "toolError.BROWSER_PERMISSION_REQUIRED.label": {"zh-CN": "需要浏览器权限", "en": "Browser permission required"},
+  "toolError.BROWSER_PERMISSION_DENIED.label": {"zh-CN": "浏览器权限未授权", "en": "Browser permission denied"},
   "toolError.OPERATION_ABORTED.label": {"zh-CN": "操作已中止", "en": "Operation stopped"},
   "toolError.OPERATION_ABORTED.message": {"zh-CN": "操作已中止。", "en": "The operation was stopped."},
   "toolError.PAGE_CONTEXT_UNAVAILABLE.label": {"zh-CN": "页面上下文不可用", "en": "Page context unavailable"},

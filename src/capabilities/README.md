@@ -49,6 +49,11 @@ reopen the side panel. Argument types are inferred from the schema; the host han
 cancellation, timeouts, permissions, and errors. Page tools declare `page: "owned"` and use the
 task's tab from the call context. Require an explicitly owned target.
 
+Tools using bookmarks or history declare `requires: { browserPermission: "bookmarks" }` or
+`"history"`. The host waits for user authorization before starting the tool deadline. Obtain the
+Chrome API inside the handler through `qz.getBookmarks()` or `qz.getHistory()` so newly granted
+permissions take effect immediately. See [permission handling](../../docs/permissions.md#on-demand-access).
+
 ## One package, separate runtimes
 
 ```text

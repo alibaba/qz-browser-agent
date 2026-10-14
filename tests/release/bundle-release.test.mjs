@@ -187,7 +187,7 @@ test("release publisher packages bundles and records auditable metadata", async 
     "--version", version,
     "--source", "worktree",
     "--output-dir", output,
-    "--no-obfuscate",
+    "--no-minify",
   ], { cwd: ROOT, stdio: "pipe" });
 
   const releaseDir = join(output, version);
@@ -234,7 +234,7 @@ test("release publisher packages bundles and records auditable metadata", async 
   }
   execFileSync("python3", [
     join(ROOT, "scripts/publish-release.py"), "--version", version, "--source", "worktree",
-    "--output-dir", output, "--no-obfuscate",
+    "--output-dir", output, "--no-minify",
   ], { cwd: ROOT, stdio: "pipe" });
   assert.equal(await fileDigest(zipPath), metadata.sha256, "full release ZIP must be reproducible");
 });
@@ -247,7 +247,7 @@ test("publisher compiles TS even when bundling is disabled and requires locked T
   await writeFile(join(source, "shared/release-typescript-probe.ts"), "export const releaseProbe: number = 42;\n");
   const args = [join(ROOT, "scripts/publish-release.py"), "--version", "0.0.0.943", "--source", "worktree",
     "--extension-dir", source, "--output-dir", work, "--no-bundle"];
-  execFileSync("python3", [...args, "--no-obfuscate"], { cwd: ROOT, stdio: "pipe" });
+  execFileSync("python3", [...args, "--no-minify"], { cwd: ROOT, stdio: "pipe" });
   const zipPath = join(work, "0.0.0.943/qz-browser-agent-extension-0.0.0.943.zip");
   const entries = zipEntries(zipPath);
   assert.ok(entries.includes("qz-browser-agent-extension/shared/release-typescript-probe.js"));
@@ -257,7 +257,7 @@ test("publisher compiles TS even when bundling is disabled and requires locked T
   assert.match(mismatch.stderr, /Terser must match package-lock.json/);
   await writeFile(join(work, "outside.js"), "globalThis.externalSource = true;");
   await symlink(join(work, "outside.js"), join(source, "shared/external-source.js"));
-  const unsafe = spawnSync("python3", [...args, "--no-obfuscate"], { cwd: ROOT, encoding: "utf8" });
+  const unsafe = spawnSync("python3", [...args, "--no-minify"], { cwd: ROOT, encoding: "utf8" });
   assert.notEqual(unsafe.status, 0);
   assert.match(unsafe.stderr, /must not be symlinks/);
 });
@@ -358,7 +358,7 @@ with tempfile.TemporaryDirectory() as temporary:
         return original_run(command,**kwargs)
     module.subprocess.run=local_read
     sys.argv=[str(path),'--version','0.0.0.1','--prepared-package-source',str(root),'--prepared-commit','a'*40,
-              '--origin-repo',str(root/'origin'),'--output-dir',str(root/'output'),'--no-obfuscate']
+              '--origin-repo',str(root/'origin'),'--output-dir',str(root/'output'),'--no-minify']
     assert module.main()==0
     output=root/'output/0.0.0.1'
     assert sorted(item.name for item in output.iterdir())==[
@@ -369,7 +369,76 @@ with tempfile.TemporaryDirectory() as temporary:
         assert 'maps/fixture.js.map' in archive.namelist()
     metadata=json.loads((output/'version.json').read_text())
     assert metadata['gitCommit']=='a'*40
+    assert metadata['target']=='manual'
+    assert metadata['minification']['enabled'] is False
     assert metadata['sha256']==module.sha256_file(output/'qz-browser-agent-extension-0.0.0.1.zip')
+    manual_sha=metadata['sha256']
+    (extension/'fixture.js.map').write_text('{}')
+    sys.argv.extend(['--target','webstore'])
+    assert module.main()==0
+    store=output/'webstore'
+    metadata=json.loads((store/'version.json').read_text())
+    assert metadata['target']=='webstore' and metadata['packageRoot']=='.'
+    archive_path=store/metadata['package']
+    assert metadata['sha256']==module.sha256_file(archive_path)
+    with zipfile.ZipFile(output/'qz-browser-agent-extension-0.0.0.1.zip') as archive:
+        manual={name.removeprefix('qz-browser-agent-extension/'):archive.read(name)
+                for name in archive.namelist() if name!='version.json'}
+    with zipfile.ZipFile(archive_path) as archive:
+        assert {name:archive.read(name) for name in archive.namelist()}==manual
+        assert 'manifest.json' in archive.namelist() and 'version.json' not in archive.namelist()
+    with zipfile.ZipFile(store/'qz-browser-agent-extension-0.0.0.1.webstore.debug.zip') as archive:
+        assert 'maps/fixture.js.map' in archive.namelist()
+        assert json.loads(archive.read('manifest.json'))['package']['sha256']==metadata['sha256']
+    assert module.sha256_file(output/'qz-browser-agent-extension-0.0.0.1.zip')==manual_sha
+    assert module.main()==0
+    assert module.sha256_file(archive_path)==metadata['sha256'], 'Web Store ZIP must be reproducible'
+    manifest=json.loads((extension/'manifest.json').read_text())
+    manifest['background']={'service_worker':'missing.js'}
+    (extension/'manifest.json').write_text(json.dumps(manifest))
+    sys.argv.extend(['--output-dir',str(root/'invalid-output')])
+    try: module.main()
+    except ValueError as error: assert 'missing.js' in str(error)
+    else: raise AssertionError('Missing runtime resource was accepted')
+    assert not list((root/'invalid-output').rglob('*.zip'))
+    assert not list((root/'invalid-output').rglob('version.json'))
+`, join(ROOT, "scripts/publish-release.py")], { stdio: "pipe" });
+});
+
+test("Web Store archive validation rejects invalid layouts, missing assets and development files", () => {
+  execFileSync("python3", ["-c", String.raw`
+import importlib.util,json,pathlib,sys,tempfile,zipfile,warnings
+spec=importlib.util.spec_from_file_location('webstore_fixture',sys.argv[1])
+module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
+manifest={'manifest_version':3,'version':'0.1.0','default_locale':'en',
+    'background':{'service_worker':'worker.js'},'side_panel':{'default_path':'panel.html'},
+    'icons':{'128':'icon.png'},'action':{'default_icon':'icon.png'},'sandbox':{'pages':['sandbox.html']},
+    'content_scripts':[{'js':['content.js'],'css':['content.css']}],
+    'declarative_net_request':{'rule_resources':[{'path':'rules.json'}]}}
+files={name:b'fixture' for name in ['worker.js','panel.html','icon.png','sandbox.html','content.js','content.css',
+    'rules.json','_locales/en/messages.json',*module.RELEASE_NOTICES]}
+files['manifest.json']=json.dumps(manifest).encode()
+with tempfile.TemporaryDirectory() as temporary:
+    path=pathlib.Path(temporary)/'upload.zip'
+    def check(entries,valid=False):
+        with zipfile.ZipFile(path,'w') as archive:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', UserWarning)
+                for name,data in entries: archive.writestr(name,data)
+        try: module.validate_webstore_package(path)
+        except ValueError:
+            if valid: raise
+        else: assert valid, 'Invalid archive was accepted'
+    check(files.items(),True)
+    check([('qz-browser-agent-extension/'+name,data) for name,data in files.items()])
+    for missing in files:
+        check([(name,data) for name,data in files.items() if name!=missing])
+    for name in ['worker.js.map','.qingzhou-debug/worker.js','.qingzhou-build.json','.env.local',
+                 '../outside','/absolute','C:/drive','folder\\worker.js','worker.js']:
+        check([*files.items(),(name,b'fixture')])
+    for invalid in [[],{'manifest_version':2},{'manifest_version':3,'version':'v0.1.0'},
+                    {'manifest_version':3,'version':'0.0.0'}]:
+        check({**files,'manifest.json':json.dumps(invalid).encode()}.items())
 `, join(ROOT, "scripts/publish-release.py")], { stdio: "pipe" });
 });
 
@@ -460,7 +529,7 @@ test("private publisher re-entry cannot mutate a Git working tree or a directory
     await writeFile(manifest, original);
     const rejected = spawnSync("python3", [publisher, "--version", "0.0.0.945",
       "--prepared-package-source", repo, "--prepared-commit", "a".repeat(40), "--origin-repo", join(work, "other"),
-      "--no-obfuscate"], { cwd: repo, encoding: "utf8" });
+      "--no-minify"], { cwd: repo, encoding: "utf8" });
     assert.notEqual(rejected.status, 0);
     assert.match(rejected.stderr, /prepared release source must be an isolated export/);
     assert.equal(await readFile(manifest, "utf8"), original, "re-entry must reject before rewriting source files");
@@ -495,7 +564,7 @@ test("Git releases execute the source, publisher, build scripts, lockfile and no
   await writeFile(join(repo, "package.json"), '{"devDependencies":{"esbuild":"0.0.0"}}');
   const version = "0.0.0.944";
   execFileSync("python3", [publisherPath, "--version", version, "--output-dir", join(work, "output"),
-    "--no-obfuscate"], {
+    "--no-minify"], {
     cwd: repo, stdio: "pipe", timeout: 120_000,
     // The exported commit owns its Node toolchain. Host test preloads refer to another
     // node_modules tree and must not enter esbuild's workers; keep coverage inherited.

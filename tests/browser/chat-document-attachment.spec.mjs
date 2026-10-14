@@ -914,8 +914,8 @@ async function pasteFiles(page, files) {
 
 function installAttachmentChromeStub() {
   const storageKey = "__qingzhou_test_chrome_storage__";
-  let storage = {};
-  try { storage = JSON.parse(localStorage.getItem(storageKey) || "{}"); } catch (_error) {}
+  let storage = { qz_data_consent: { version: 1, acceptedAt: 1 } };
+  try { storage = { ...storage, ...JSON.parse(localStorage.getItem(storageKey) || "{}") }; } catch (_error) {}
   const clone = value => value == null ? value : JSON.parse(JSON.stringify(value));
   const ports = [];
   const draftStorageKey = "__qingzhou_test_composer_drafts__";

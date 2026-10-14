@@ -2,8 +2,8 @@ import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 type BookmarkDependencies = Pick<ToolExtensionAPI,
-  "registerTool" | "ToolExecutionError" | "clampLimit" | "bookmarks"
-  | "history" | "getSecurityGuardrails" | "matchBlockedUrl" | "assertUrlAllowed">;
+  "registerTool" | "ToolExecutionError" | "clampLimit" | "getBookmarks"
+  | "getHistory" | "getSecurityGuardrails" | "matchBlockedUrl" | "assertUrlAllowed">;
 import { requireToolFields } from "#sdk/background/tools";
 import { formatBeijingDateTime } from "#sdk/shared/format";
 
@@ -12,14 +12,15 @@ export function registerBookmarksHistoryTools({
   registerTool,
   ToolExecutionError,
   clampLimit,
-  bookmarks,
-  history,
+  getBookmarks,
+  getHistory,
   getSecurityGuardrails,
   matchBlockedUrl,
   assertUrlAllowed,
 }: BookmarkDependencies) {
   registerTool({
   name: "manage_bookmarks",
+  requires: { browserPermission: "bookmarks" },
   get description() { return toolT("manageBookmarksDescription"); },
   get parameters() { return {
       type: "object",
@@ -42,6 +43,7 @@ export function registerBookmarksHistoryTools({
     } as const; },
   timeout: { defaultMs: 15000, maxMs: 120000 },
   execute: async ({ action, query = "", id, parentId, title, url, index, recursive = false, limit = 50 }) => {
+      const bookmarks = getBookmarks();
       const max = clampLimit(limit, 1, 200);
 
       if (action === "search") {
@@ -129,6 +131,7 @@ export function registerBookmarksHistoryTools({
 
   registerTool({
   name: "browse_history",
+  requires: { browserPermission: "history" },
   get description() { return toolT("browseHistoryDescription"); },
   get parameters() { return {
       type: "object",
@@ -156,7 +159,7 @@ export function registerBookmarksHistoryTools({
       if (!["search", "recent"].includes(action)) {
         throw new ToolExecutionError("INVALID_HISTORY_ACTION", t("unsupportedBrowseHistoryAction", { action: String(action) }), { action });
       }
-      const items = await history.search({
+      const items = await getHistory().search({
         text: searchText,
         startTime: normalizeHistoryTimeSecondsToMs(startTime, monthAgo),
         endTime: normalizeHistoryTimeSecondsToMs(endTime, Date.now()),

@@ -218,5 +218,7 @@
   "sessions.manageSessionsAutomationRunsRequiresAutomationid": "manage_sessions automation_runs erfordert automationId",
   "sessions.unsupportedManageSessionsAction": "Nicht unterstützte manage_sessions-Aktion: {action}",
   "sessions.goalTrackingShort": "Zielverfolgung",
-  "sessions.latestMessagesShort": "Neueste Nachrichten"
+  "sessions.latestMessagesShort": "Neueste Nachrichten",
+  "sessions.getLocation": "Standort abrufen",
+  "sessions.locationUnavailable": "Der Standort konnte nicht ermittelt werden. Öffne die Seitenleiste und prüfe die Standorteinstellungen deines Geräts oder gib eine Stadt oder Region an."
 }

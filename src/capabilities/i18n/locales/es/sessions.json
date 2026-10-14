@@ -218,5 +218,7 @@
   "sessions.manageSessionsAutomationRunsRequiresAutomationid": "automation_runs de manage_sessions requiere automationId",
   "sessions.unsupportedManageSessionsAction": "Acción de manage_sessions no compatible: {action}",
   "sessions.goalTrackingShort": "Seguimiento de meta",
-  "sessions.latestMessagesShort": "Últimos mensajes"
+  "sessions.latestMessagesShort": "Últimos mensajes",
+  "sessions.getLocation": "Obtener ubicación",
+  "sessions.locationUnavailable": "No se pudo obtener tu ubicación. Abre el panel lateral y revisa los ajustes de ubicación del dispositivo, o indica una ciudad o zona."
 }

@@ -2390,7 +2390,7 @@ function readFixture(file) {
 }
 
 function installBenchmarkChromeStub() {
-  const storageData = {};
+  const storageData = { qz_data_consent: { version: 1, acceptedAt: 1 } };
   const storageListeners = [];
   const composerDrafts = {};
   const clone = value => {

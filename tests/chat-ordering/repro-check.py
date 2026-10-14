@@ -84,7 +84,7 @@ def run(verbose=False):
         (() => {
           const listeners = { message: [], disconnect: [], changed: [] };
           const session = { id: 'sess-ordering-probe', title: 'Ordering probe', parentSessionId: 'root' };
-          const storage = { _sessions: {} };
+          const storage = { qz_data_consent: { version: 1, acceptedAt: 1 }, _sessions: {} };
           const runtimes = {};
           const clone = value => value == null ? value : JSON.parse(JSON.stringify(value));
           const storageDelay = async keys => {

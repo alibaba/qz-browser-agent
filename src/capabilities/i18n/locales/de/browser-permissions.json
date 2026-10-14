@@ -1,0 +1,13 @@
+{
+  "browser-permissions.title": "Browserberechtigung erforderlich",
+  "browser-permissions.allow": "Erlauben und fortfahren",
+  "browser-permissions.hint": "Chrome fragt nach der Berechtigung. Erteile sie, um fortzufahren.",
+  "browser-permissions.bookmarks": "Diese Aktion benötigt Zugriff zum Lesen oder Verwalten deiner Lesezeichen. Die von der Aufgabe verwendeten Lesezeichendaten werden an deinen konfigurierten Modelldienst gesendet.",
+  "browser-permissions.history": "Diese Aktion benötigt Zugriff auf deinen Browserverlauf. Die von der Aufgabe verwendeten Verlaufseinträge werden an deinen konfigurierten Modelldienst gesendet.",
+  "browser-permissions.name.bookmarks": "Lesezeichen",
+  "browser-permissions.name.history": "Browserverlauf",
+  "browser-permissions.name.desktopCapture": "Bildschirmaufnahme",
+  "browser-permissions.name.downloads.open": "Öffnen heruntergeladener Dateien",
+  "browser-permissions.required": "Erteile die Berechtigung „{permission}“ im qz-Seitenbereich und versuche es erneut.",
+  "browser-permissions.denied": "Die Berechtigung „{permission}“ wurde verweigert. Die Aktion wurde abgebrochen. Versuche es erneut, um die Berechtigung zu erteilen."
+}

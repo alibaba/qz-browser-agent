@@ -218,5 +218,7 @@
   "sessions.manageSessionsAutomationRunsRequiresAutomationid": "Для manage_sessions automation_runs требуется automationId",
   "sessions.unsupportedManageSessionsAction": "Неподдерживаемое действие manage_sessions: {action}",
   "sessions.goalTrackingShort": "Отслеживать цель",
-  "sessions.latestMessagesShort": "Новые сообщения"
+  "sessions.latestMessagesShort": "Новые сообщения",
+  "sessions.getLocation": "Получить местоположение",
+  "sessions.locationUnavailable": "Не удалось определить местоположение. Откройте боковую панель и проверьте настройки геолокации устройства или укажите город или район."
 }

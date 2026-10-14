@@ -13,17 +13,19 @@
     "sidePanel",
     "storage",
     "downloads",
-    "downloads.open",
     "debugger",
-    "desktopCapture",
     "geolocation",
-    "bookmarks",
-    "history",
     "offscreen",
     "clipboardWrite",
     "notifications",
     "declarativeNetRequest",
     "unlimitedStorage"
+  ],
+  "optional_permissions": [
+    "history",
+    "bookmarks",
+    "desktopCapture",
+    "downloads.open"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -31,15 +33,6 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';",
     "sandbox": "sandbox allow-scripts; script-src 'self' 'unsafe-eval' blob:; worker-src blob:; child-src blob:;"
-  },
-  "declarative_net_request": {
-    "rule_resources": [
-      {
-        "id": "provider_headers",
-        "enabled": true,
-        "path": "rules/provider-headers.json"
-      }
-    ]
   },
   "background": {
     "service_worker": "background/service-worker.js",

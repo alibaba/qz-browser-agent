@@ -375,5 +375,14 @@
   "core.firstRows": "Affichage des {count} premières lignes",
   "core.firstColumns": "Affichage des {count} premières colonnes",
   "core.imageTotal": "Images : {count}",
-  "core.moreImages": "{count} images supplémentaires"
+  "core.moreImages": "{count} images supplémentaires",
+  "core.dataConsentTitle": "Commencer à utiliser {brand}",
+  "core.dataConsentModel": "Pour exécuter une tâche, qz envoie votre saisie et les informations utilisées au service de modèles que vous avez configuré. Cela peut inclure le contenu des pages, des captures d’écran, des fichiers, les titres et URL des onglets, ainsi que les favoris ou l’historique dont vous avez autorisé la lecture.",
+  "core.dataConsentLocation": "Lorsque vous avez besoin d’informations locales, qz peut obtenir vos coordonnées, leur précision et l’heure du relevé, puis les envoyer au service de modèles configuré. Votre accord sera demandé à la première utilisation.",
+  "core.dataConsentStorage": "Les discussions, Skills et données collectées sont stockés dans votre navigateur.",
+  "core.dataConsentServices": "Les Skills et les connexions MCP peuvent aussi échanger des données de tâche avec les services que vous configurez.",
+  "core.dataConsentDetails": "Confidentialité et autorisations",
+  "core.dataConsentAccept": "Accepter et continuer",
+  "core.dataConsentLater": "Plus tard",
+  "core.dataConsentSaveFailed": "Impossible d’enregistrer votre choix. Réessayez."
 }

@@ -37,7 +37,7 @@ export function createDynamicContextProvider(options: ContextOptions = {}) {
         {
           enableHighAccuracy: false,
           maximumAge: 300000,
-          timeout: 1200,
+          timeout: 10_000,
         },
       );
     });

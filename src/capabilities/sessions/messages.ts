@@ -2,6 +2,8 @@ import { defineMessages } from "#sdk/shared/i18n-definition";
 
 /** Package-owned interface text. Identifiers and user content remain untranslated. */
 export default defineMessages("sessions", {
+  getLocation: { en: "Get location", "zh-CN": "获取位置" },
+  locationUnavailable: { en: "Open the side panel, check your device’s location settings, and try again.", "zh-CN": "请打开侧边栏，检查设备的定位设置后重试。" },
   "manageTasks": { "zh-CN": "管理任务 · {action}", en: "Manage tasks · {action}" },
   "manageTasksTitle": { "zh-CN": "管理任务", en: "Manage tasks" },
   "tasks": { "zh-CN": "{count} 个任务", en: "Tasks: {count}" },
@@ -223,5 +225,5 @@ export default defineMessages("sessions", {
   "manageSessionsAutomationRunsRequiresAutomationid": { "zh-CN": "读取定时任务运行记录需要 automationId。", en: "manage_sessions automation_runs requires automationId" },
   "unsupportedManageSessionsAction": { "zh-CN": "不支持的 manage_sessions 操作：{action}", en: "Unsupported manage_sessions action: {action}" },
 }, { historicalLabels: [
-  "manageTasksTitle", "goalTracking",
+  "manageTasksTitle", "goalTracking", "getLocation",
 ] });

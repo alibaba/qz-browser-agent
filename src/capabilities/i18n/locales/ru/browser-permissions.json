@@ -1,0 +1,13 @@
+{
+  "browser-permissions.title": "Требуется разрешение браузера",
+  "browser-permissions.allow": "Разрешить и продолжить",
+  "browser-permissions.hint": "Chrome запросит разрешение. Предоставьте доступ, чтобы продолжить.",
+  "browser-permissions.bookmarks": "Для этого действия нужен доступ к чтению или управлению закладками. Данные закладок, используемые в задаче, отправляются настроенному вами сервису моделей.",
+  "browser-permissions.history": "Для этого действия нужен доступ к истории браузера. Записи истории, используемые в задаче, отправляются настроенному вами сервису моделей.",
+  "browser-permissions.name.bookmarks": "закладки",
+  "browser-permissions.name.history": "история браузера",
+  "browser-permissions.name.desktopCapture": "запись экрана",
+  "browser-permissions.name.downloads.open": "открытие скачанных файлов",
+  "browser-permissions.required": "Предоставьте разрешение «{permission}» в боковой панели qz и повторите попытку.",
+  "browser-permissions.denied": "Разрешение «{permission}» не предоставлено. Действие отменено. Повторите попытку, чтобы разрешить доступ."
+}

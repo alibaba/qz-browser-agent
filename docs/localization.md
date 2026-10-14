@@ -63,6 +63,11 @@ versions; other languages fall back to English. Keep identifiers and execution b
 External Skill and MCP descriptions remain unchanged, and the model still follows the user's
 requested response language.
 
+Built-in approval cards resolve their titles and disclosures from the stored approval type in the
+panel's current language. Apply this to pending and resolved history entries. Keep model-authored
+questions and form labels verbatim; translation belongs to the display projection and preserves
+the stored transcript.
+
 ## Preserve language and history behavior
 
 Resolve long-lived display metadata through getters, as in the [provider

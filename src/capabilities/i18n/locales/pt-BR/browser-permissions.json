@@ -1,0 +1,13 @@
+{
+  "browser-permissions.title": "Permissão do navegador necessária",
+  "browser-permissions.allow": "Permitir e continuar",
+  "browser-permissions.hint": "O Chrome solicitará permissão. Conceda o acesso para continuar.",
+  "browser-permissions.bookmarks": "Esta ação precisa de acesso para ler ou gerenciar seus favoritos. As informações dos favoritos usadas na tarefa são enviadas ao serviço de modelos que você configurou.",
+  "browser-permissions.history": "Esta ação precisa de acesso ao seu histórico de navegação. Os registros usados na tarefa são enviados ao serviço de modelos que você configurou.",
+  "browser-permissions.name.bookmarks": "favoritos",
+  "browser-permissions.name.history": "histórico de navegação",
+  "browser-permissions.name.desktopCapture": "gravação de tela",
+  "browser-permissions.name.downloads.open": "abertura de arquivos baixados",
+  "browser-permissions.required": "Conceda a permissão de {permission} no painel lateral do qz e tente novamente.",
+  "browser-permissions.denied": "A permissão de {permission} não foi concedida e a ação foi cancelada. Tente novamente para conceder o acesso."
+}

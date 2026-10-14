@@ -80,6 +80,7 @@ export function createSuiteCatalog({ root: ROOT, match, unitConcurrency }) {
       parallelCommand("node", "tests/data-grid/browser-matrix.mjs"),
     ],
     e2e: [
+      commandWith({ id: "provider-header-rules-e2e", resource: "browser-secondary" }, "node", "tests/background/provider-header-rules-e2e.mjs"),
       commandWith({ id: "image-conversion-e2e" }, "node", "tests/background/image-conversion-e2e.mjs"),
       commandWith({ id: "extension-e2e", resource: "browser-secondary" }, "node", "tests/background/extension-e2e.mjs"),
       commandWith({ id: "mcp-tab-ownership-e2e", resource: "browser-secondary" }, "node", "tests/background/mcp-tab-ownership-e2e.mjs"),

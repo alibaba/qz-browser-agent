@@ -403,6 +403,7 @@ test("restores the Logs tab only after its debug capability is known", async ({ 
 for (const colorScheme of ["light", "dark"]) {
   test(`reveals a clear ${colorScheme} fallback when the workspace module fails before startup`, async ({ page, browserDiagnostics }) => {
     await page.emulateMedia({ colorScheme });
+    await page.addInitScript(installBenchmarkChromeStub, { benchmark: false });
     await page.route("**/extension/sidepanel/app.js", route => route.fulfill({
       contentType: "application/javascript",
       body: 'throw new Error("forced workspace startup failure");',
@@ -440,6 +441,7 @@ test("surfaces an error thrown by the application startup sequence", async ({ pa
 });
 
 test("reveals the current shell if workspace startup never settles", async ({ page }) => {
+  await page.addInitScript(installBenchmarkChromeStub, { benchmark: false });
   await page.route("**/extension/sidepanel/app.js", route => route.fulfill({
     contentType: "application/javascript",
     body: "await new Promise(() => {}); export {};",

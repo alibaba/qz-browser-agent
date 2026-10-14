@@ -26,7 +26,6 @@ interface AgentHostOptions {
   getToolRuntime(): AgentOptions["tools"];
   getSupervisor(): HostSupervisor;
   getCommands(): HostCommands;
-  requestLocation(): Promise<Fields | null>;
   getWorkingTabContext(sessionId: string): Promise<TabReference | null>;
   recordTranscriptEvent(sessionId: string, event: SessionEvent): unknown;
   recordRuntimeEvent(sessionId: string, event: SessionEvent): unknown;
@@ -58,7 +57,6 @@ export function createSessionAgentHost({
   getToolRuntime,
   getSupervisor,
   getCommands,
-  requestLocation,
   getWorkingTabContext,
   recordTranscriptEvent,
   recordRuntimeEvent,
@@ -82,7 +80,7 @@ export function createSessionAgentHost({
       return runtime ? { visitedTaskSites: runtime.visitedTaskSites, tracker: runtime.tracker, goal: runtime.goal } : null;
     },
     canUseSessionGoal: (sessionId: string) => getCommands().canUseSessionGoal(sessionId),
-    requestLocation, getWorkingTabContext, getSecurityGuardrails,
+    getWorkingTabContext, getSecurityGuardrails,
   });
   const collectContext = createContextSources([
     ...contextCapabilities.flatMap(contribute => contribute(contextHost)),

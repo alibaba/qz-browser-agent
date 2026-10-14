@@ -375,5 +375,14 @@
   "core.waitingForAction": "任務正在等待你的操作",
   "core.waitNotQueued": "等待已不在背景佇列中",
   "core.waitReplaced": "已被新的等待替換",
-  "core.yes": "是"
+  "core.yes": "是",
+  "core.dataConsentTitle": "開始使用{brand}",
+  "core.dataConsentModel": "為執行任務，輕舟會將你的輸入和任務使用的資訊傳送至你設定的模型服務，包括網頁內容、螢幕截圖、檔案、分頁標題和網址，以及授權讀取的書籤或瀏覽紀錄。",
+  "core.dataConsentLocation": "當你需要取得當地資訊時，輕舟可取得經緯度、精確度和定位時間，並傳送至你設定的模型服務。首次呼叫時會徵求你的同意。",
+  "core.dataConsentStorage": "對話、Skill 和擷取的資料儲存在瀏覽器中。",
+  "core.dataConsentServices": "Skill 和 MCP 連線也可能與你設定的服務交換任務資料。",
+  "core.dataConsentDetails": "隱私與權限說明",
+  "core.dataConsentAccept": "同意並繼續",
+  "core.dataConsentLater": "稍後再說",
+  "core.dataConsentSaveFailed": "無法儲存你的選擇，請重試。"
 }

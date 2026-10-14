@@ -14,15 +14,23 @@ function revealFallback(message: string, reason: string) {
   app?.removeAttribute("data-workspace-booting");
 }
 
-const timeout = setTimeout(() => {
-  revealFallback(t("startupSlow"), "timeout");
-}, WORKSPACE_BOOT_TIMEOUT_MS);
+let timeout: ReturnType<typeof setTimeout> | undefined;
+function startBootTimer() {
+  timeout = setTimeout(() => revealFallback(t("startupSlow"), "timeout"), WORKSPACE_BOOT_TIMEOUT_MS);
+}
+startBootTimer();
 
 try {
   const [, { localizeDocument }] = await Promise.all([initializeLanguage(), import("./i18n/dom.js")]);
   document.documentElement.lang = getLanguage();
   document.documentElement.dir = getTextDirection();
   localizeDocument(document);
+  clearTimeout(timeout);
+  fallback?.classList.add("hidden");
+  app?.setAttribute("data-workspace-booting", "");
+  const { ensureDataConsent } = await import("./features/app/data-consent.js");
+  await ensureDataConsent();
+  startBootTimer();
   await import("./app.js");
   fallback?.classList.add("hidden");
   app?.removeAttribute("data-workspace-boot-fallback");

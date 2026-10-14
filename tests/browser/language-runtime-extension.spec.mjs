@@ -1,3 +1,4 @@
+import { acceptDataDisclosure } from "../support/data-consent.mjs";
 import { chromium } from "playwright";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,6 +22,7 @@ test("saving a language reloads the real extension panel and updates Background"
     const panelUrl = new URL("/sidepanel/sidepanel.html", worker.url()).href;
     let page = await context.newPage();
     await page.goto(panelUrl);
+    await acceptDataDisclosure(page);
     await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-booting");
     await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-boot-fallback");
     await page.locator("#btn-settings").click();

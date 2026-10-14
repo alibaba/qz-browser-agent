@@ -218,5 +218,7 @@
   "sessions.manageSessionsAutomationRunsRequiresAutomationid": "L’action automation_runs de manage_sessions nécessite automationId",
   "sessions.unsupportedManageSessionsAction": "Action manage_sessions non prise en charge : {action}",
   "sessions.goalTrackingShort": "Suivi d’objectif",
-  "sessions.latestMessagesShort": "Derniers messages"
+  "sessions.latestMessagesShort": "Derniers messages",
+  "sessions.getLocation": "Obtenir la position",
+  "sessions.locationUnavailable": "Localisation impossible. Ouvrez le panneau latéral et vérifiez les paramètres de localisation de votre appareil, ou indiquez une ville ou une zone."
 }

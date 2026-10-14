@@ -356,7 +356,6 @@ function createHostFixture({
       canUseSessionGoal: async () => true,
       saveSessionRecordRuntime: saveRecord,
     }),
-    requestLocation: async () => null,
     getWorkingTabContext: async () => null,
     recordTranscriptEvent,
     recordRuntimeEvent,

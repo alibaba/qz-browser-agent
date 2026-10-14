@@ -218,5 +218,7 @@
   "sessions.manageSessionsAutomationRunsRequiresAutomationid": "manage_sessionsのautomation_runsにはautomationIdが必要です",
   "sessions.unsupportedManageSessionsAction": "未対応のmanage_sessions操作：{action}",
   "sessions.goalTrackingShort": "目標の追跡",
-  "sessions.latestMessagesShort": "最新のメッセージ"
+  "sessions.latestMessagesShort": "最新のメッセージ",
+  "sessions.getLocation": "位置情報を取得",
+  "sessions.locationUnavailable": "位置情報を取得できませんでした。サイドパネルを開いて端末の位置情報設定を確認するか、都市や地域を指定してください。"
 }

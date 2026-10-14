@@ -18,7 +18,7 @@ registerBookmarksHistoryTools({
   },
   ToolExecutionError,
   clampLimit: (value, min, max) => Math.max(min, Math.min(max, Math.floor(Number(value) || min))),
-  bookmarks: {
+  getBookmarks: () => ({
     search: async query => {
       calls.push(["bookmark.search", query]);
       return [bookmark("1", "Allowed", "https://allowed.test/"), bookmark("2", "Blocked", "https://blocked.test/")];
@@ -34,8 +34,8 @@ registerBookmarksHistoryTools({
     move: async (id, destination) => ({ id, ...destination }),
     remove: async id => calls.push(["bookmark.remove", id]),
     removeTree: async id => calls.push(["bookmark.removeTree", id]),
-  },
-  history: {
+  }),
+  getHistory: () => ({
     search: async input => {
       calls.push(["history.search", input]);
       return [
@@ -43,7 +43,7 @@ registerBookmarksHistoryTools({
         { id: "h2", title: "Blocked", url: "https://blocked.test/", lastVisitTime: 1_700_000_000_000 },
       ];
     },
-  },
+  }),
   getSecurityGuardrails: async () => ({ blocked }),
   matchBlockedUrl: (url, guardrails) => guardrails.blocked.has(url),
   assertUrlAllowed: (url, guardrails) => {

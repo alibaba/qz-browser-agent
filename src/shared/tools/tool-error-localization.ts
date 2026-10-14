@@ -10,6 +10,8 @@ const UPPER_ERROR_CODE_RE = /^[A-Z][A-Z0-9_]+$/;
 
 // Each error owns its label and optional fixed recovery message; contextual messages stay below.
 const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message?: BackendMessageKey }>> = Object.freeze({
+  LOCATION_CONSENT_REQUIRED: { label: "locationRequired", message: "locationRequired" },
+  LOCATION_UNAVAILABLE: { label: "locationUnavailable", message: "locationUnavailable" },
   ABORTED: { label: "toolError.ABORTED.label", message: "toolError.ABORTED.message" },
   AGENT_ALREADY_RUNNING: { label: "toolError.AGENT_ALREADY_RUNNING.label" },
   SESSION_PERSIST_FAILED: { label: "toolError.SESSION_PERSIST_FAILED.label" },
@@ -162,6 +164,8 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   NO_CLICKABLE_POINT: { label: "toolError.NO_CLICKABLE_POINT.label", message: "toolError.NO_CLICKABLE_POINT.message" },
   NO_WORKING_WEB_TAB: { label: "toolError.NO_WORKING_WEB_TAB.label" },
   OFFSCREEN_API_UNAVAILABLE: { label: "toolError.OFFSCREEN_API_UNAVAILABLE.label" },
+  BROWSER_PERMISSION_REQUIRED: { label: "toolError.BROWSER_PERMISSION_REQUIRED.label" },
+  BROWSER_PERMISSION_DENIED: { label: "toolError.BROWSER_PERMISSION_DENIED.label" },
   OPERATION_ABORTED: { label: "toolError.OPERATION_ABORTED.label", message: "toolError.OPERATION_ABORTED.message" },
   PAGE_CONTEXT_UNAVAILABLE: { label: "toolError.PAGE_CONTEXT_UNAVAILABLE.label", message: "toolError.PAGE_CONTEXT_UNAVAILABLE.message" },
   PAGE_SKILL_ZIP_DOWNLOAD_FAILED: { label: "toolError.PAGE_SKILL_ZIP_DOWNLOAD_FAILED.label" },
@@ -267,6 +271,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   STALE_ELEMENT_UID_PAGE_CHANGED: { label: "toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label", message: "toolError.STALE_ELEMENT_UID_PAGE_CHANGED.message" },
   STALE_IMAGE_TARGET: { label: "toolError.STALE_IMAGE_TARGET.label", message: "toolError.STALE_IMAGE_TARGET.message" },
   UNSUPPORTED_SCREEN_ACTION: { label: "toolError.UNSUPPORTED_SCREEN_ACTION.label", message: "toolError.UNSUPPORTED_SCREEN_ACTION.message" },
+  STALE_RUN: { label: "toolError.STALE_SESSION_LEASE.label" },
   STALE_SESSION_LEASE: { label: "toolError.STALE_SESSION_LEASE.label" },
   TAB_CAPTURE_AWAITING_USER_GRANT: { label: "toolError.TAB_CAPTURE_AWAITING_USER_GRANT.label" },
   TAB_CAPTURE_EMPTY_STREAM_ID: { label: "toolError.TAB_CAPTURE_EMPTY_STREAM_ID.label" },

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { ensureTestExtension } from '../support/extension-build.mjs';
+import { acceptDataDisclosure } from '../support/data-consent.mjs';
 const extension = await ensureTestExtension();
 const profile = await mkdtemp(join(tmpdir(), 'qz-image-conversion-'));
 const context = await chromium.launchPersistentContext(profile, {
@@ -16,6 +17,7 @@ try {
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
   const page = await context.newPage();
   await page.goto(new URL("/sidepanel/sidepanel.html", worker.url()).href);
+  await acceptDataDisclosure(page);
   const results = await page.evaluate(async () => {
     const { resolveToolDefinition } = await import('../background/tools/runtime.js');
     const read = (url, options = {}) => resolveToolDefinition('read_image').execute({ url, ...options }, undefined, {});

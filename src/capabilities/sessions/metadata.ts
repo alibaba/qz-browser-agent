@@ -4,6 +4,7 @@ import type { CapabilityMetadata } from "#sdk/shared/metadata";
 
 const tools = () => Object.freeze({
   manage_sessions: toolMeta(t("manageTasksTitle"), ["session"], { profileFamily: "sessions", resultFamily: "sessions", familyId: "process" }),
+  get_location: toolMeta(t("getLocation"), [], { familyId: "process" }),
   manage_goal: toolMeta(t("goalTracking"), [], { shortTitle: t("goalTrackingShort"), familyId: "process" }),
 });
 

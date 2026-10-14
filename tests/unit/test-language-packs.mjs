@@ -8,6 +8,7 @@ import { capabilityLocaleAssets, readTranslationBaseline } from "../../scripts/c
 import { chromeMessageId, decodeChromeMessage, defineMessages, HISTORICAL_LABELS_MESSAGE_ID } from "../../src/shared/i18n/definition.ts";
 import { getToolMetadataCatalog } from "../../src/shared/tools/tool-metadata.ts";
 import { createTranslator, getLanguage, getTextDirection } from "../../src/shared/i18n/index.ts";
+import { browserPermissionMessages, permissionT } from "../../src/shared/browser-permissions.ts";
 import { createContentLanguageSnapshot } from "../../src/shared/i18n/content.ts";
 import { t as panelText } from "../../src/sidepanel/i18n/index.ts";
 import { localizeToolFailurePayload } from "../../src/shared/tools/tool-error-localization.ts";
@@ -20,7 +21,7 @@ import { groupProviderChoices } from "../../src/shared/settings-menu-utils.ts";
 const source = resolve("src");
 const namespaces = new Set([
   ...uiCatalogs.map(catalog => catalog.namespace), "core", "backend", "content",
-  "product-public", "document-input", "skill-renderers",
+  "product-public", "document-input", "skill-renderers", browserPermissionMessages.namespace,
 ]);
 const baseline = readTranslationBaseline(source);
 const required = [...baseline.keys()].filter(key => namespaces.has(key.split(".")[0]));
@@ -126,6 +127,24 @@ test("the public extension ships all twelve declared native language packs", () 
     assert.ok(messages.extensionName.message);
     assert.ok(messages.extensionDescription.message);
   }
+});
+
+test("permission recovery messages use localized permission names in every language", () => {
+  for (const pack of packs) withPack(pack, messages => {
+    const text = key => pack.catalog
+      ? decodeChromeMessage(messages[chromeMessageId(`browser-permissions.${key}`)])
+      : browserPermissionMessages.messages[key]?.[pack.language];
+    for (const permission of ["bookmarks", "history", "desktopCapture", "downloads.open"]) {
+      const name = text(`name.${permission}`);
+      assert.ok(name, `${pack.language}: ${permission} has a translated name`);
+      assert.equal(permissionT(`name.${permission}`), name);
+      for (const key of ["required", "denied"]) {
+        const template = text(key);
+        assert.ok(template, `${pack.language}: ${key} is shipped`);
+        assert.equal(permissionT(key, { permission: name }), template.replace("{permission}", name));
+      }
+    }
+  });
 });
 
 test("weekly schedule summaries localize weekdays without changing the scheduled instant", () => {

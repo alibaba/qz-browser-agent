@@ -192,6 +192,13 @@ try {
   await import("../../src/background/service-worker.js");
   const pluginRuntime = await import("../../src/background/skills/skill-tool-runtime.js");
 
+  const consentReply = await new Promise(resolve => state.runtimeOnMessage[0](
+    { type: "accept_data_consent", version: 1 },
+    { id: chrome.runtime.id, url: chrome.runtime.getURL("sidepanel/sidepanel.html") }, resolve,
+  ));
+  assert.equal(consentReply.ok, true);
+  assert.equal(storageData.qz_data_consent.version, 1);
+
   assert.equal(state.alarmsOnAlarm.length, 1, "service worker should register one top-level alarm router");
   assert.equal(state.commandsOnCommand.length, 1, "service worker should register one custom command router");
   const sidePanelOpenCount = state.sidePanelOpens.length;
@@ -980,6 +987,7 @@ try {
 function createChromeMock() {
   return {
     declarativeNetRequest: {
+      async getSessionRules() { return []; },
       async updateSessionRules() {},
     },
     storage: {
@@ -1034,6 +1042,7 @@ function createChromeMock() {
       },
     },
     runtime: {
+      id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       async getPlatformInfo() { return { os: "mac", arch: "arm64", nacl_arch: "arm" }; },
       lastError: null,
       getManifest() {
@@ -1261,6 +1270,7 @@ function createFetchMock(responses = []) {
   return async function fetchMock(url, init = {}) {
     const href = String(url || "");
     state.networkRequests.push(href);
+    if (href === "chrome-extension://qingzhou/rules/provider-headers.json") return Response.json([]);
     if (href === "https://llm-smoke.test/chat/completions") {
       const request = JSON.parse(String(init.body || "{}"));
       const titleRequest = isTitleGenerationRequest(request);

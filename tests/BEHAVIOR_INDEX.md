@@ -101,10 +101,10 @@ Judge a task at four levels:
 - **Role**: Human
 - **Task**: Open qz for the first time, connect a model, and receive a useful answer.
 - **Preconditions**: A fresh extension profile ready for model setup.
-- **Steps**: Open the Side Panel → open model settings → choose a Provider or custom endpoint → authorize or enter the endpoint, model, and API key → save → return to chat and send a clear task.
+- **Steps**: Open the Side Panel → agree to the data disclosure → open model settings → choose a Provider or custom endpoint → authorize or enter the endpoint, model, and API key → save → return to chat and send a clear task.
 - **Expected outcome**: Configuration is saved once; the composer becomes usable immediately; the task starts in the current Session; the user sees streaming progress, the answer, and an error recovery action if needed.
-- **Failure and recovery**: Authorization timeout preserves retry and custom setup options. Only unambiguous endpoint paths are completed automatically. Authentication, quota, or network errors preserve the draft and the existing Session.
-- **Evidence**: [Custom endpoint browser](browser/settings-custom-endpoint.spec.mjs), [session tools unit](unit/test-session-tools.mjs), [Extension E2E](background/extension-e2e.mjs)
+- **Failure and recovery**: Deferring first-use consent closes the panel; failed consent writes retain the card for retry. Authorization timeout preserves retry and custom setup options. Only unambiguous endpoint paths are completed automatically. Authentication, quota, or network errors preserve the draft and the existing Session.
+- **Evidence**: [Data consent browser](browser/data-consent.spec.mjs), [Consent gate unit](unit/test-data-consent.mjs), [Custom endpoint browser](browser/settings-custom-endpoint.spec.mjs), [session tools unit](unit/test-session-tools.mjs), [Extension E2E](background/extension-e2e.mjs)
 - **Coverage**: Medium
 - **Next test**: In an empty profile, test successful authorization, authorization timeout followed by custom setup, and correction of an invalid API key. End each path with a complete first answer.
 
@@ -247,11 +247,11 @@ extension E2E and live tests for persistence and real-model behavior.
 
 - **Role**: Human
 - **Task**: Clarify a requirement or personally complete login, CAPTCHA, authorization, or local file selection.
-- **Preconditions**: The Agent called `ask_user` or `wait_for_user`, and the Session is waiting.
+- **Preconditions**: The Agent called `ask_user` or `wait_for_user`, or first requested `get_location`, and the Session is waiting.
 - **Steps**: Read and answer a structured question, or complete the action on the target page → return to qz and continue.
-- **Expected outcome**: Answers reach only the initiating run. The Agent observes the page again after continuation. The wait card names the target and action. Submitted answers remain bound to the initiating task.
+- **Expected outcome**: Answers reach only the initiating run. The Agent observes the page again after continuation. The wait card names the target and action. Submitted answers remain bound to the initiating task. Location is collected only after the first explicit approval; later calls and Worker restarts reuse that recorded consent.
 - **Failure and recovery**: Cancel, stop, and delete end the wait. Worker restart interrupts pending waits for user recovery. A closed target tab prompts context recovery.
-- **Evidence**: [decision dialog browser](browser/decision-dialog.spec.mjs), [wait defaults unit](unit/test-wait-form-default-values.mjs), [Session supervisor unit](unit/test-session-supervisor.mjs)
+- **Evidence**: [Location service unit](unit/test-location-service.mjs), [Location approval browser](browser/waiting-card.spec.mjs), [Extension E2E](background/extension-e2e.mjs), [decision dialog browser](browser/decision-dialog.spec.mjs), [wait defaults unit](unit/test-wait-form-default-values.mjs), [Session supervisor unit](unit/test-session-supervisor.mjs)
 - **Coverage**: Medium
 - **Next test**: Add a responding-user extension E2E covering submit, cancel, stop, Session switching, tab closure, and panel refresh.
 
@@ -711,7 +711,7 @@ regression](browser/screen-action-runtime.spec.mjs).
 - **Task**: Build an installable, runnable, upgradable extension from Git HEAD with traceable output.
 - **Preconditions**: Intended changes are committed, the version is valid, and locked dependencies are available.
 - **Steps**: Export a temporary Git copy → bundle Background/Side Panel → minify and inject configuration → create ZIP/version.json/SHA → load in isolated Chrome → verify obsolete-file cleanup and key E2E paths.
-- **Expected outcome**: The source manifest is unchanged. Bundles are deterministic; vendor bytes remain stable. ZIP contents are limited to runtime files, release metadata, and licenses. The packaged Worker and panel actually start.
+- **Expected outcome**: The source manifest is unchanged. Bundles are deterministic; vendor bytes remain stable. Manual and Web Store archives contain identical runtime files. The Web Store ZIP has a root manifest and keeps release metadata and debug files outside it. The packaged Worker and panel actually start.
 - **Failure and recovery**: Failed gates prevent distribution. Use the report to diagnose the build source or installation, repair, repackage, and verify. Distribution and tagging are separate maintainer steps.
 - **Evidence**: [release bundle tests](release/bundle-release.test.mjs), [release Chrome smoke](release/chrome-smoke.mjs)
 - **Coverage**: Strong

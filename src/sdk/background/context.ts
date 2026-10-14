@@ -24,7 +24,6 @@ export interface ContextSource {
 export interface ContextCapabilityHost {
   getSessionRuntime(sessionId: string): Readonly<{ visitedTaskSites?: unknown; tracker?: unknown; goal?: unknown }> | null;
   canUseSessionGoal(sessionId: string): Promise<boolean>;
-  requestLocation(): Promise<Readonly<Record<string, unknown>> | null>;
   getWorkingTabContext(sessionId: string): Promise<TabReference | null>;
   readonly getSecurityGuardrails: typeof getSecurityGuardrails;
 }

@@ -1,4 +1,6 @@
 {
+  "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "Требуется разрешение браузера",
+  "backend.toolError.BROWSER_PERMISSION_DENIED.label": "Разрешение браузера не предоставлено",
   "backend.model.reviewAttachments": "Проверьте вложения.",
   "backend.toolError.ABORTED.label": "Остановлено",
   "backend.toolError.ABORTED.message": "Пользователь остановил вызов инструмента; результат не возвращён.",
@@ -298,5 +300,10 @@
   "backend.toolError.INVALID_IMAGE_URL.message": "Неверный URL изображения.",
   "backend.toolError.INVALID_REGEX.message": "Неверное регулярное выражение.",
   "backend.toolError.NETWORK_REQUEST_NOT_FOUND.message": "Сетевой запрос не найден.",
-  "backend.toolError.NO_ACTIVE_TAB.message": "Нет доступной активной вкладки."
+  "backend.toolError.NO_ACTIVE_TAB.message": "Нет доступной активной вкладки.",
+  "backend.dataConsentRequired": "Откройте боковую панель и дайте согласие на использование данных, прежде чем пользоваться qz.",
+  "backend.locationTitle": "Разрешить доступ к местоположению?",
+  "backend.locationDisclosure": "Для предоставления местной информации qz получит координаты, точность и время определения местоположения и отправит их настроенному сервису моделей. Если вы согласитесь, последующие запросы будут использовать это разрешение без повторного подтверждения.",
+  "backend.locationRequired": "Требуется согласие на использование местоположения. Подтвердите его в боковой панели или укажите город или район.",
+  "backend.locationUnavailable": "Не удалось определить местоположение. Откройте боковую панель и проверьте настройки геолокации устройства или укажите город или район."
 }

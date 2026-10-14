@@ -151,6 +151,7 @@ def run():
             page.on("pageerror", lambda error: sidepanel_errors.append(str(error)))
             page.on("console", lambda message: sidepanel_errors.append(message.text) if message.type == "error" else None)
             page.goto(f"chrome-extension://{ext_id}/sidepanel/sidepanel.html")
+            page.locator("[data-consent-accept]").click()
             try:
                 page.wait_for_function("() => Boolean(window.qingzhouConversationBenchmark?.renderSessionDocument)")
             except Exception:

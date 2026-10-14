@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 import { ensureTestExtension } from "../support/extension-build.mjs";
+import { acceptDataDisclosure } from "../support/data-consent.mjs";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const extensionPath = await ensureTestExtension();
@@ -37,6 +38,7 @@ try {
   page.on("pageerror", err => pageErrors.push(err.message));
 
   await page.goto(`chrome-extension://${extensionId}/sidepanel/sidepanel.html`);
+  await acceptDataDisclosure(page);
   await page.waitForSelector('[data-tab="data"]');
   await seedDataTable(page, tableName);
 

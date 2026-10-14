@@ -1662,7 +1662,7 @@ def expect_sidepanel_settings_smoke(browser, visual_url):
         },
         storage: {
           local: {
-            async get() { return {}; },
+            async get(key) { return key === 'qz_data_consent' ? { qz_data_consent: { version: 1, acceptedAt: 1 } } : {}; },
             async set() {},
             async remove() {},
           },
@@ -1708,7 +1708,7 @@ def expect_sidepanel_session_delete_stability(browser, visual_url):
       };
       const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
       const emit = event => listeners.message.slice().forEach(fn => fn(event));
-      const storage = { _sessions: sessions };
+      const storage = { qz_data_consent: { version: 1, acceptedAt: 1 }, _sessions: sessions };
       const storageGet = async keys => {
         if (typeof keys === 'string') return { [keys]: clone(storage[keys]) };
         if (Array.isArray(keys)) return Object.fromEntries(keys.map(key => [key, clone(storage[key])]));
@@ -2099,6 +2099,7 @@ def expect_sidepanel_assistant_actions_smoke(browser, visual_url):
         storage: {
           local: {
             async get(key) {
+              if (key === 'qz_data_consent') return { qz_data_consent: { version: 1, acceptedAt: 1 } };
               if (key === '_sessions') return { _sessions: { [session.id]: session } };
               return {};
             },
@@ -2323,7 +2324,7 @@ def expect_sidepanel_artifacts_smoke(browser, visual_url):
     (() => {
       const listeners = { message: [], disconnect: [], changed: [] };
       const session = { id: 'sess-artifacts', title: '产物测试任务', parentSessionId: 'root' };
-      const storage = { _sessions: {} };
+      const storage = { qz_data_consent: { version: 1, acceptedAt: 1 }, _sessions: {} };
       const clone = (value) => JSON.parse(JSON.stringify(value));
       const emit = (event) => listeners.message.slice().forEach(fn => fn(event));
       const storageGet = async (keys) => {
@@ -2385,6 +2386,7 @@ def expect_sidepanel_artifacts_smoke(browser, visual_url):
           },
           onChanged: { addListener(fn) { listeners.changed.push(fn); } },
         },
+        permissions: { async request({ permissions }) { return permissions.every(value => value === 'downloads.open'); } },
         downloads: {
           async download(opts) { window.__downloadedArtifactOpts = opts || {}; },
           async search() { return []; },
@@ -2672,6 +2674,7 @@ def expect_sidepanel_automation_artifacts_smoke(browser, visual_url):
         updatedAt: '2026-06-15 09:04:31',
       };
       const storage = {
+        qz_data_consent: { version: 1, acceptedAt: 1 },
         _sessions: {
           [session.id]: session,
           'auto-session-0': {
@@ -2777,6 +2780,7 @@ def expect_sidepanel_automation_artifacts_smoke(browser, visual_url):
           },
           onChanged: { addListener(fn) { listeners.changed.push(fn); } },
         },
+        permissions: { async request({ permissions }) { return permissions.every(value => value === 'downloads.open'); } },
         downloads: {
           async download(opts) { window.__downloadedArtifactOpts = opts || {}; },
           async search() { return []; },

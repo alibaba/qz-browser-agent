@@ -105,6 +105,9 @@ import { createSidepanelTransport } from "./transports/sidepanel.js";
 import { createRuntimeMessageTransport } from "./transports/runtime-message.js";
 import { createSidepanelChannel } from "./transports/sidepanel-channel.js";
 import { createChromeWindowTarget } from "./services/chrome-window-target.js";
+import { createLocationService } from "./services/location.js";
+import { createDataConsentService } from "./services/data-consent.js";
+import { initializeProviderHeaderRules } from "./services/provider-header-rules.js";
 import { createConfigRuntime } from "./services/config-runtime.js";
 import { createSessionExchangeBridge } from "./services/session-exchange-bridge.js";
 import { createPlatformCommands } from "./services/platform-commands.js";
@@ -143,6 +146,8 @@ import {
 } from "../shared/session/session-resource-ledger.js";
 
 console.log("[轻舟] Service Worker started");
+
+const dataConsent = createDataConsentService(chrome.storage.local);
 
 const MODEL_PRESET_SWITCHER_COMMAND = "open-model-preset-switcher";
 
@@ -225,7 +230,6 @@ const sidepanelChannel = createSidepanelChannel({
   trace: llmTrace,
 });
 const broadcast = sidepanelChannel.broadcast;
-const requestSidepanelLocation = sidepanelChannel.requestLocation;
 const chromeWindowTarget = createChromeWindowTarget({
   tabs: chrome.tabs,
   windows: chrome.windows,
@@ -355,7 +359,7 @@ const productRuntime = createProductRuntime({
 });
 setModelChangeObserver(productRuntime.onModelChange);
 const agentLlm = productRuntime.llm;
-productRuntime.start().catch(err => console.debug("[轻舟] product runtime start failed:", err instanceof Error ? err.message : err));
+dataConsent.whenAccepted.then(() => productRuntime.start()).catch(err => console.debug("[轻舟] product runtime start failed:", err instanceof Error ? err.message : err));
 const collectRunScriptToolArtifacts = createRunScriptArtifactCollector({ getToolIdentity });
 const releaseAgentRunResources = async ({ sessionId, runId, eventType }: { sessionId: string; runId: string; eventType?: string }) => {
   try { return await releaseRunCdp(sessionId, runId); }
@@ -391,7 +395,6 @@ const sessionAgentHost = createSessionAgentHost({
   getToolRuntime: () => toolRuntime,
   getSupervisor: () => sessionSupervisor,
   getCommands: () => sessionCommands,
-  requestLocation: requestSidepanelLocation,
   getWorkingTabContext: (...args) => sessionTabs.getWorkingTabContext(...args),
   recordTranscriptEvent: (...args) => sessionTranscript.recordEvent(...args),
   recordRuntimeEvent: (...args) => sessionRuntimeState.recordEvent(...args),
@@ -458,9 +461,12 @@ const sessionTabs = createSessionTabs({
   normalizeSessionId,
   rootSessionId: ROOT_SESSION_ID,
 });
-// Keep Chrome listener registration synchronous; commands await both startup dependencies.
+// Keep Chrome listener registration synchronous; commands await startup dependencies.
 const languageReady = initializeLanguage({ watch: true });
-const sessionRuntimeReady = Promise.all([sessionRuntimeState.hydrate(), languageReady]).then(() => undefined);
+const sessionRuntimeReady = Promise.all([
+  sessionRuntimeState.hydrate(), languageReady, dataConsent.ready,
+  initializeProviderHeaderRules({ runtime: chrome.runtime, dnr: chrome.declarativeNetRequest, fetch }),
+]).then(() => undefined);
 const sessionBrowserContext = createSessionBrowserContextCollector({
   ready: () => sessionRuntimeReady,
   tabs: chrome.tabs,
@@ -475,6 +481,7 @@ const sessionBrowserContext = createSessionBrowserContextCollector({
 });
 const collectBrowserContext = sessionBrowserContext.collect;
 sessionCommands = createSessionCommands({
+  assertDataConsent: dataConsent.assertAccepted,
   runtime: sessionRuntimeState,
   agents: sessionAgentHost,
   transcript: sessionTranscript,
@@ -563,7 +570,7 @@ automationRuntime = createAutomationRuntime({
     iconUrl: chrome.runtime.getURL("icons/icon128.png"),
   },
   emit: broadcast,
-  ready: () => sessionRuntimeReady,
+  ready: () => Promise.all([sessionRuntimeReady, dataConsent.whenAccepted]),
 });
 chrome.alarms?.onAlarm?.addListener((alarm) => {
   automationRuntime.handleAlarm(alarm);
@@ -635,7 +642,7 @@ sessionTabs.cleanupLegacyGroups().catch((err) => {
 sessionRuntimeReady.then(() => sessionTabs.syncGroup("startup")).catch((err) => {
   console.debug("[轻舟] startup tab group sync failed:", err instanceof Error ? err.message : err);
 });
-sessionRuntimeReady.then(() => sessionRuntimeState.queueFollowUpResume("startup")).catch((err) => {
+Promise.all([sessionRuntimeReady, dataConsent.whenAccepted]).then(() => sessionRuntimeState.queueFollowUpResume("startup")).catch((err) => {
   console.debug("[轻舟] startup follow-up resume failed:", err instanceof Error ? err.message : err);
 });
 automationRuntime.start().catch((err) => {
@@ -649,7 +656,14 @@ const handleToolRuntimeEvent = createToolEventRouter({
   handleAgentEvent: sessionAgentHost.handleEvent,
   broadcast,
 });
+const locationService = createLocationService({
+  storage: chrome.storage.local,
+  sessions: sessionSupervisor,
+  emit: handleToolRuntimeEvent,
+  locate: sidepanelChannel.requestLocation,
+});
 toolRuntime = createToolRuntime({
+  requestLocation: locationService.request,
   skillSettings,
   skillNetwork,
   windowTarget: chromeWindowTarget,
@@ -762,6 +776,8 @@ const backgroundApi = createBackgroundApi({
       await whenLanguageReady();
       return createContentLanguageSnapshot();
     },
+    acceptDataConsent: dataConsent.accept,
+    acceptLocationConsent: locationService.accept,
     ready: async () => sessionRuntimeReady,
     ping: platformCommands.ping,
     runtimeMessage: mcpRuntime.dispatchRuntimeMessage,
@@ -882,6 +898,9 @@ const backgroundApi = createBackgroundApi({
     clear: clearTraceLog,
     stream: sidepanelChannel.recordStreamTrace,
   },
+}, path => {
+  if (["system.ready", "system.contentLanguage", "system.ping", "system.acceptDataConsent", "sessions.stop"].includes(path)) return;
+  dataConsent.assertAccepted();
 });
 
 const mcpTransport = createMcpTransport(backgroundApi, {
@@ -902,11 +921,11 @@ const runtimeMessageTransport = createRuntimeMessageTransport(backgroundApi);
 runtimeMessageTransport.register(chrome.runtime);
 
 subscribeSkillToolRegistry(broadcast);
-startQingzhouMcpBridge({
+dataConsent.whenAccepted.then(() => startQingzhouMcpBridge({
   dispatch: mcpTransport.dispatch,
   describe: mcpRuntime.describe,
   trace: llmTrace,
-});
+})).catch(error => console.debug("[qz] MCP bridge startup failed:", error));
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   sessionTabs.handleTabRemoved(tabId).catch((error) => {

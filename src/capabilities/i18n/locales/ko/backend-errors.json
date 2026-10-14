@@ -1,4 +1,6 @@
 {
+  "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "브라우저 권한 필요",
+  "backend.toolError.BROWSER_PERMISSION_DENIED.label": "브라우저 권한이 허용되지 않음",
   "backend.model.reviewAttachments": "첨부 파일을 검토하세요.",
   "backend.toolError.ABORTED.label": "중지됨",
   "backend.toolError.ABORTED.message": "사용자가 도구 호출을 중지하여 결과가 반환되지 않았습니다.",
@@ -298,5 +300,10 @@
   "backend.toolError.INVALID_IMAGE_URL.message": "잘못된 이미지 URL.",
   "backend.toolError.INVALID_REGEX.message": "잘못된 정규 표현식.",
   "backend.toolError.NETWORK_REQUEST_NOT_FOUND.message": "네트워크 요청을 찾을 수 없음.",
-  "backend.toolError.NO_ACTIVE_TAB.message": "사용 가능한 활성 탭 없음."
+  "backend.toolError.NO_ACTIVE_TAB.message": "사용 가능한 활성 탭 없음.",
+  "backend.dataConsentRequired": "사이드 패널을 열고 데이터 사용 안내에 동의한 후 qz를 사용하세요.",
+  "backend.locationTitle": "위치를 사용하도록 허용할까요?",
+  "backend.locationDisclosure": "지역 정보를 제공하기 위해 qz가 좌표, 정확도, 위치 측정 시각을 가져와 설정한 모델 서비스로 전송합니다. 동의하면 이후 위치 요청에는 다시 묻지 않고 이 권한을 사용합니다.",
+  "backend.locationRequired": "위치 사용 동의가 필요합니다. 사이드 패널에서 확인하거나 도시 또는 지역을 알려 주세요.",
+  "backend.locationUnavailable": "위치를 가져오지 못했습니다. 사이드 패널을 열고 기기의 위치 설정을 확인하거나 도시 또는 지역을 알려 주세요."
 }

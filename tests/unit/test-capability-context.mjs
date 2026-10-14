@@ -26,9 +26,9 @@ function fixture(overrides = {}) {
 
 test("discovered Session context keeps structured values private and preserves built-in order", async () => {
   assert.ok(contributions.includes(sessionContext), "the real source catalog must discover the built-in capability");
-  const { host, collect, runtime } = fixture();
+  const { host, collect, runtime, reads } = fixture();
   const definitions = sessionContext(host);
-  assert.deepEqual(definitions.map(source => source.id), ["session", "location", "workingTab"]);
+  assert.deepEqual(definitions.map(source => source.id), ["session", "workingTab"]);
   assert.ok(definitions.every(source => source.title === undefined));
   const result = await collect(request);
   assert.equal(result.sources.length, 1);
@@ -38,7 +38,8 @@ test("discovered Session context keeps structured values private and preserves b
   const session = result.values.get("session");
   assert.equal(session.tracker.id, "tracker-a");
   assert.equal(session.goal.objective, "Read the relevant pages");
-  assert.deepEqual(result.values.get("location"), { city: "Test city" });
+  assert.equal(result.values.has("location"), false);
+  assert.equal(reads.some(([kind]) => kind === "location"), false, "context collection must leave location access to the explicit tool");
   assert.equal(result.values.get("workingTab").securityGuardrailBlocked, true);
   runtime.visitedTaskSites[0].id = 8;
   assert.equal(session.taskSiteTabs[0].id, 7, "the host must not retain mutable runtime results");

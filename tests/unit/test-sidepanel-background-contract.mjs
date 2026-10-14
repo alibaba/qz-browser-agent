@@ -10,13 +10,15 @@ import { createPortClient, PortClientError } from "../../src/sidepanel/features/
 
 const sidepanelRoot = "src/sidepanel";
 const transportSource = readFileSync("src/background/transports/sidepanel.ts", "utf8");
+const runtimeSource = readFileSync("src/background/transports/runtime-message.ts", "utf8");
 const product = JSON.parse(readFileSync("src/products/manifest.json", "utf8")).defaultProduct;
 const productSource = readFileSync(`src/products/${product}/background/runtime.ts`, "utf8");
 const productHandledTypes = new Set([...productSource.matchAll(/case\s+["']([a-z_]+)["']\s*:/g)].map(match => match[1]));
 const transportHandledTypes = new Set([...transportSource.matchAll(/case\s+["']([a-z_]+)["']\s*:/g)].map(match => match[1]));
 for (const match of transportSource.matchAll(/if \(type === ["']([a-z_]+)["']\)/g)) transportHandledTypes.add(match[1]);
 for (const match of transportSource.matchAll(/^    ([a-z_]+):\s*\{ method:/gm)) transportHandledTypes.add(match[1]);
-const handledTypes = new Set([...transportHandledTypes, ...productHandledTypes, ...SIDEPANEL_CHANNEL_MESSAGE_TYPES]);
+const runtimeHandledTypes = [...runtimeSource.matchAll(/if \(type === ["']([a-z_]+)["']\)/g)].map(match => match[1]);
+const handledTypes = new Set([...transportHandledTypes, ...runtimeHandledTypes, ...productHandledTypes, ...SIDEPANEL_CHANNEL_MESSAGE_TYPES]);
 const frontendRequestTypes = new Set([sidepanelRoot, `src/products/${product}/sidepanel`].flatMap(root => [...collectFrontendRequestTypes(root)]));
 const frontendOutboundTypes = new Set([sidepanelRoot, `src/products/${product}/sidepanel`].flatMap(root => [...collectFrontendOutboundTypes(root)]));
 

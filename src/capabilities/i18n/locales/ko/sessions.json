@@ -218,5 +218,7 @@
   "sessions.manageSessionsAutomationRunsRequiresAutomationid": "manage_sessions의 automation_runs에는 automationId가 필요합니다",
   "sessions.unsupportedManageSessionsAction": "지원하지 않는 manage_sessions 동작: {action}",
   "sessions.goalTrackingShort": "목표 추적",
-  "sessions.latestMessagesShort": "최근 메시지"
+  "sessions.latestMessagesShort": "최근 메시지",
+  "sessions.getLocation": "위치 가져오기",
+  "sessions.locationUnavailable": "위치를 가져오지 못했습니다. 사이드 패널을 열고 기기의 위치 설정을 확인하거나 도시 또는 지역을 알려 주세요."
 }

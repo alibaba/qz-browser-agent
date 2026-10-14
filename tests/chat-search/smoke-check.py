@@ -59,6 +59,7 @@ def run(args):
           const listeners = { message: [], disconnect: [], changed: [] };
           const session = { id: 'sess-chat-search', title: '搜索测试任务', parentSessionId: 'root' };
           const storage = {
+            qz_data_consent: { version: 1, acceptedAt: 1 },
             _sessions: {},
             _skills: {
               'search-smoke-skill': {

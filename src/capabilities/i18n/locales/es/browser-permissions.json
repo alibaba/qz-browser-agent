@@ -1,0 +1,13 @@
+{
+  "browser-permissions.title": "Se requiere permiso del navegador",
+  "browser-permissions.allow": "Permitir y continuar",
+  "browser-permissions.hint": "Chrome solicitará permiso. Concédelo para continuar.",
+  "browser-permissions.bookmarks": "Esta acción requiere permiso para leer o gestionar tus marcadores. Los datos de marcadores que use la tarea se enviarán al servicio de modelos que hayas configurado.",
+  "browser-permissions.history": "Esta acción requiere acceso a tu historial de navegación. Las entradas del historial que use la tarea se enviarán al servicio de modelos que hayas configurado.",
+  "browser-permissions.name.bookmarks": "marcadores",
+  "browser-permissions.name.history": "historial de navegación",
+  "browser-permissions.name.desktopCapture": "grabación de pantalla",
+  "browser-permissions.name.downloads.open": "apertura de archivos descargados",
+  "browser-permissions.required": "Concede el permiso de {permission} en el panel lateral de qz y vuelve a intentarlo.",
+  "browser-permissions.denied": "No se concedió el permiso de {permission} y se canceló la acción. Vuelve a intentarlo para concederlo."
+}

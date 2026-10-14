@@ -1,0 +1,13 @@
+{
+  "browser-permissions.title": "Autorisation du navigateur requise",
+  "browser-permissions.allow": "Autoriser et continuer",
+  "browser-permissions.hint": "Chrome vous demandera une autorisation. Accordez-la pour continuer.",
+  "browser-permissions.bookmarks": "Cette action nécessite de lire ou de gérer vos favoris. Les informations des favoris utilisées par la tâche sont envoyées au service de modèles que vous avez configuré.",
+  "browser-permissions.history": "Cette action nécessite un accès à votre historique de navigation. Les entrées utilisées par la tâche sont envoyées au service de modèles que vous avez configuré.",
+  "browser-permissions.name.bookmarks": "favoris",
+  "browser-permissions.name.history": "historique de navigation",
+  "browser-permissions.name.desktopCapture": "enregistrement de l’écran",
+  "browser-permissions.name.downloads.open": "ouverture des fichiers téléchargés",
+  "browser-permissions.required": "Accordez l’autorisation « {permission} » dans le panneau latéral de qz, puis réessayez.",
+  "browser-permissions.denied": "L’autorisation « {permission} » a été refusée et l’action a été annulée. Réessayez pour l’accorder."
+}

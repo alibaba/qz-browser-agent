@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { providers as snapshot } from "@opencode-ai/models/snapshot";
 import { expect, test } from "./fixtures.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
+import { acceptDataDisclosure } from "../support/data-consent.mjs";
 
 /** Read accepted Background facts through the same public protocol as the panel. */
 async function request(page, type, fields = {}) {
@@ -56,6 +57,7 @@ async function withOfflinePanel(testInfo, scenario, run) {
     page = await context.newPage();
     page.on("pageerror", error => evidence.pageErrors.push(String(error.stack || error)));
     await page.goto(new URL("/sidepanel/sidepanel.html", worker.url()).href);
+    await acceptDataDisclosure(page);
     await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-booting");
     await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-boot-fallback");
     await page.locator("#btn-settings").click();

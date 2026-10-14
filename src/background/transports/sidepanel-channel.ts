@@ -155,27 +155,24 @@ export function createSidepanelChannel({
     return true;
   }
 
-  function requestLocation({ timeoutMs = 1500 } = {}) {
-    const port = ports.values().next().value;
+  function requestLocation({ timeoutMs = 12_000, windowId = null, signal }: { timeoutMs?: number; windowId?: number | null; signal?: AbortSignal } = {}) {
+    if (signal?.aborted) return Promise.resolve(null);
+    const port = [...ports].find(port => windowId == null || portWindowIds.get(port) === windowId);
     if (!port) return Promise.resolve(null);
     const requestId = `ctx_${++dynamicContextSeq}`;
     return new Promise<Fields | null>(resolve => {
-      const timer = setTimeout(() => {
-        dynamicContextRequests.delete(requestId);
-        resolve(null);
-      }, timeoutMs);
+      function cancel() { clearTimeout(timer); signal?.removeEventListener("abort", cancel); dynamicContextRequests.delete(requestId); resolve(null); }
+      const timer = setTimeout(cancel, timeoutMs);
+      signal?.addEventListener("abort", cancel, { once: true });
       dynamicContextRequests.set(requestId, {
         resolve(value) {
           clearTimeout(timer);
+          signal?.removeEventListener("abort", cancel);
           const location = object(value).location;
           resolve(location && typeof location === "object" ? object(location) : null);
         },
       });
-      void send(port, { type: "dynamic_context_request", requestId, fields: ["location"] }).catch(() => {
-        clearTimeout(timer);
-        dynamicContextRequests.delete(requestId);
-        resolve(null);
-      });
+      void send(port, { type: "dynamic_context_request", requestId, fields: ["location"] }).catch(cancel);
     });
   }
 

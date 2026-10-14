@@ -38,6 +38,18 @@ runtimes. [SDK modules](../src/sdk/) expose services to capabilities. Package in
 contributions; generated catalogs connect them to each runtime. The [product
 manifest](../src/products/manifest.json) selects adapters for the public build.
 
+## First-use data consent
+
+[Data consent](../src/background/services/data-consent.ts) owns the versioned acceptance record.
+[Side Panel startup](../src/sidepanel/features/app/data-consent.ts) defers workspace initialization
+until acceptance. The Background API gate covers transports, while Session commands guard internal
+run admission. Scheduler and MCP startup wait for consent.
+
+Location is collected by the `get_location` tool when a task needs local information. The
+[location service](../src/background/services/location.ts) requests a separate first-use approval
+through the Session's wait lifecycle. Only a Side Panel click can save that approval. Collection
+checks the run before and after asynchronous work; stop and stale waits revoke the pending request.
+
 ## A task from submission to completion
 
 1. A transport parses and correlates a request, then calls the

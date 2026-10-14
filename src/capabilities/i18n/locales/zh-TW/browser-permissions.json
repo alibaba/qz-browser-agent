@@ -1,0 +1,13 @@
+{
+  "browser-permissions.title": "需要瀏覽器權限",
+  "browser-permissions.allow": "授權並繼續",
+  "browser-permissions.hint": "點擊後由 Chrome 請求授權，允許後繼續操作。",
+  "browser-permissions.bookmarks": "此操作需要讀取或管理你的書籤。任務使用的書籤資訊會傳送至你設定的模型服務。",
+  "browser-permissions.history": "此操作需要讀取你的瀏覽紀錄。任務使用的歷史紀錄會傳送至你設定的模型服務。",
+  "browser-permissions.name.bookmarks": "書籤",
+  "browser-permissions.name.history": "瀏覽紀錄",
+  "browser-permissions.name.desktopCapture": "螢幕錄製",
+  "browser-permissions.name.downloads.open": "開啟下載檔案",
+  "browser-permissions.required": "請在輕舟側邊欄中授予{permission}權限後重試。",
+  "browser-permissions.denied": "未取得{permission}權限，操作已取消。需要時可重試並授權。"
+}

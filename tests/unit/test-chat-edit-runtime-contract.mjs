@@ -203,7 +203,7 @@ function assertUiRuntimeContracts() {
     "steering handoff should prepare, dequeue, persist, then move directly into the transcript",
   );
   assert.match(agent, /steerFollowUp\(clientMessageId[\s\S]*followUpQueue\.removeByClientMessageId[\s\S]*steeringQueue\.enqueue/, "promotion should move the original queued message without rebuilding attachments");
-  assert.match(serviceWorker, /sessionRuntimeReady\.then\(\(\)\s*=>\s*sessionRuntimeState\.queueFollowUpResume\("startup"\)\)/, "service worker startup should resume persisted follow-up queues without waiting for UI access");
+  assert.match(serviceWorker, /Promise\.all\(\[\s*sessionRuntimeReady,\s*dataConsent\.whenAccepted\s*\]\)\.then\(\(\)\s*=>\s*sessionRuntimeState\.queueFollowUpResume\("startup"\)\)/, "service worker startup should resume persisted follow-up queues after data consent is accepted");
   const resumePersistedFollowUpsBody = extractFunction(sessionRuntimeState, "resumeFollowUps");
   assert.match(resumePersistedFollowUpsBody, /normalizePendingFollowUps\(runtime\?\.pendingFollowUpMessages\)\.length\s*>\s*0/, "startup resume should scan persisted pending follow-up messages");
   assert.match(resumePersistedFollowUpsBody, /normalizePendingFollowUps\(runtime\?\.pendingSteeringMessages\)\.length\s*>\s*0/, "startup resume should also scan persisted steering messages");

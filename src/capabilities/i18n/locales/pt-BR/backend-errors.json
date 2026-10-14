@@ -1,4 +1,6 @@
 {
+  "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "Permissão do navegador necessária",
+  "backend.toolError.BROWSER_PERMISSION_DENIED.label": "Permissão do navegador não concedida",
   "backend.model.reviewAttachments": "Revise os anexos.",
   "backend.toolError.ABORTED.label": "Interrompido",
   "backend.toolError.ABORTED.message": "O usuário interrompeu a chamada; nenhum resultado foi retornado.",
@@ -298,5 +300,10 @@
   "backend.toolError.INVALID_IMAGE_URL.message": "URL de imagem inválida.",
   "backend.toolError.INVALID_REGEX.message": "Expressão regular inválida.",
   "backend.toolError.NETWORK_REQUEST_NOT_FOUND.message": "Solicitação de rede não encontrada.",
-  "backend.toolError.NO_ACTIVE_TAB.message": "Nenhuma aba ativa disponível."
+  "backend.toolError.NO_ACTIVE_TAB.message": "Nenhuma aba ativa disponível.",
+  "backend.dataConsentRequired": "Abra o painel lateral e aceite as informações sobre o uso de dados antes de usar o qz.",
+  "backend.locationTitle": "Permitir acesso à localização?",
+  "backend.locationDisclosure": "Para fornecer informações locais, o qz obterá suas coordenadas, a precisão e o horário da localização e os enviará ao serviço de modelos configurado. Se você concordar, essa permissão será reutilizada nas próximas solicitações, sem perguntar novamente.",
+  "backend.locationRequired": "É necessária sua permissão para acessar a localização. Confirme no painel lateral ou informe uma cidade ou região.",
+  "backend.locationUnavailable": "Não foi possível obter sua localização. Abra o painel lateral e confira as configurações de localização do dispositivo, ou informe uma cidade ou região."
 }

@@ -36,11 +36,11 @@ SKIP_FILENAMES = {
     "README.md",
     "Thumbs.db",
 }
-SKIP_OBFUSCATE_PREFIXES = (
+SKIP_MINIFY_PREFIXES = (
     "vendor/",
     ".qingzhou-debug/",
 )
-SKIP_OBFUSCATE_SUFFIXES = (
+SKIP_MINIFY_SUFFIXES = (
     ".min.js",
 )
 
@@ -62,7 +62,7 @@ def main() -> int:
     source_tmp: tempfile.TemporaryDirectory[str] | None = None
     git_commit = ""
     bundling_summary = {"enabled": False, "entries": [], "inputFiles": 0, "outputFiles": 0}
-    obfuscation_summary = {"enabled": False, "files": 0, "tool": ""}
+    minification_summary = {"enabled": False, "files": 0, "tool": ""}
     try:
         if args.source == "git":
             if args.prepared_source.resolve() != REPO_DIR or not re.fullmatch(r"[0-9a-f]{40,64}", args.prepared_commit):
@@ -86,13 +86,13 @@ def main() -> int:
         for name, contents in release_notices.items():
             (extension_dir / name).write_bytes(contents)
 
-        if not args.no_obfuscate:
-            obfuscation_summary = obfuscate_extension_sources(extension_dir, args.terser_version)
+        if not args.no_minify:
+            minification_summary = minify_extension_sources(extension_dir, args.terser_version)
 
-        output = release_paths(args.output_dir.resolve(), version)
+        output = release_paths(args.output_dir.resolve(), version, args.target)
         output.directory.mkdir(parents=True, exist_ok=True)
         debug_files = collect_debug_files(extension_dir)
-        refresh_dependency_provenance(extension_dir, obfuscation_summary)
+        refresh_dependency_provenance(extension_dir, minification_summary)
         files = list(iter_extension_files(extension_dir))
         if not files:
             raise SystemExit(f"no extension files found under {extension_dir}")
@@ -106,7 +106,14 @@ def main() -> int:
             version,
             uncompressed_size=uncompressed_size,
             bundling=bundling_summary,
+            target=args.target,
         )
+        if args.target == "webstore":
+            try:
+                validate_webstore_package(output.package)
+            except (ValueError, zipfile.BadZipFile):
+                output.package.unlink(missing_ok=True)
+                raise
         package_sha256 = sha256_file(output.package)
         write_debug_package(output, debug_files, extension_dir, version=version,
                             source=args.source, git_commit=git_commit, package_sha256=package_sha256)
@@ -127,12 +134,13 @@ def main() -> int:
                     "sourceManifestVersion": source_manifest_version,
                     "package": output.package.name,
                     "readme": output.readme.name,
-                    "packageRoot": PACKAGE_ROOT,
+                    "packageRoot": "." if args.target == "webstore" else PACKAGE_ROOT,
+                    "target": args.target,
                     "source": args.source,
                     "gitRef": args.git_ref if args.source == "git" else "",
                     "gitCommit": git_commit,
                     "bundling": bundling_summary,
-                    "obfuscation": obfuscation_summary,
+                    "minification": minification_summary,
                     "fileCount": file_count,
                     "uncompressedSize": uncompressed_size,
                     "size": package_size,
@@ -161,8 +169,8 @@ def main() -> int:
             f"{bundling_summary['inputFiles']} modules -> "
             f"{bundling_summary['outputFiles']} runtime bundles with {bundling_summary['tool']}"
         )
-    if obfuscation_summary["enabled"]:
-        print(f"Obfuscated {obfuscation_summary['files']} JS files with {obfuscation_summary['tool']}")
+    if minification_summary["enabled"]:
+        print(f"Minified {minification_summary['files']} JS files with {minification_summary['tool']}")
     return 0
 
 
@@ -171,6 +179,8 @@ def parse_args() -> argparse.Namespace:
         description="Build a local qz extension package from an isolated source snapshot.",
     )
     parser.add_argument("--version", required=True, help="Release version, for example 0.1.0.")
+    parser.add_argument("--target", choices=["manual", "webstore"], default="manual",
+                        help="manual keeps the installation folder; webstore places manifest.json at the ZIP root.")
     parser.add_argument(
         "--source",
         choices=["git", "worktree"],
@@ -185,7 +195,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--feature", dest="features", action="append", default=[], help="Feature bullet. Can repeat.")
     parser.add_argument("--notes", default="", help="Additional markdown appended to README.")
     parser.add_argument("--no-bundle", action="store_true", help="Disable release-only background/sidepanel bundling.")
-    parser.add_argument("--no-obfuscate", action="store_true", help="Disable release JS obfuscation.")
+    parser.add_argument("--no-minify", action="store_true", help="Disable release JS minification.")
     parser.add_argument("--terser-version", default=DEFAULT_TERSER_VERSION, help="Must match the locked, locally installed Terser version.")
     parser.add_argument("--prepared-package-source", dest="prepared_source", type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--prepared-commit", default="", help=argparse.SUPPRESS)
@@ -385,28 +395,28 @@ def compile_extension_sources(extension_dir: Path, *, bundle: bool) -> tuple[Pat
     return output_dir, summary["bundling"]
 
 
-def refresh_dependency_provenance(extension_dir: Path, obfuscation: dict[str, object]) -> None:
+def refresh_dependency_provenance(extension_dir: Path, minification: dict[str, object]) -> None:
     # Capture final installed bytes after Terser and debug-map extraction; upstream assets stay immutable.
     result = subprocess.run(
         [shutil.which("node") or "node", str(REPO_DIR / "scripts/vendor/assets.mjs"), "--refresh",
-         "--extension-dir", str(extension_dir), "--transform", str(obfuscation.get("tool") or "release")],
+         "--extension-dir", str(extension_dir), "--transform", str(minification.get("tool") or "release")],
         cwd=REPO_DIR, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     if result.returncode:
         raise SystemExit(f"failed to audit packaged dependencies: {result.stderr.strip() or result.stdout.strip()}")
 
 
-def obfuscate_extension_sources(extension_dir: Path, terser_version: str) -> dict[str, object]:
+def minify_extension_sources(extension_dir: Path, terser_version: str) -> dict[str, object]:
     node, terser_cli = resolve_terser_cli(terser_version)
     # The compiler owns script format; an ESM entry may contain only top-level await and no exports.
     build = json.loads((extension_dir / ".qingzhou-build.json").read_text(encoding="utf-8"))
     classic_entries = {entry["path"] for entry in build["entries"] if entry["format"] == "iife"}
     candidates = [
         path for path in sorted(extension_dir.rglob("*.js"))
-        if should_obfuscate_js(path.relative_to(extension_dir).as_posix())
+        if should_minify_js(path.relative_to(extension_dir).as_posix())
     ]
     for path in candidates:
-        obfuscate_js_file(path, node=node, terser_cli=terser_cli,
+        minify_js_file(path, node=node, terser_cli=terser_cli,
                           module=path.relative_to(extension_dir).as_posix() not in classic_entries)
     return {
         "enabled": True,
@@ -416,11 +426,11 @@ def obfuscate_extension_sources(extension_dir: Path, terser_version: str) -> dic
     }
 
 
-def should_obfuscate_js(relative_path: str) -> bool:
+def should_minify_js(relative_path: str) -> bool:
     lower = relative_path.lower()
-    if any(lower.startswith(prefix) for prefix in SKIP_OBFUSCATE_PREFIXES):
+    if any(lower.startswith(prefix) for prefix in SKIP_MINIFY_PREFIXES):
         return False
-    if any(lower.endswith(suffix) for suffix in SKIP_OBFUSCATE_SUFFIXES):
+    if any(lower.endswith(suffix) for suffix in SKIP_MINIFY_SUFFIXES):
         return False
     return True
 
@@ -428,7 +438,7 @@ def should_obfuscate_js(relative_path: str) -> bool:
 def resolve_terser_cli(terser_version: str) -> tuple[str, Path]:
     node = shutil.which("node")
     if not node:
-        raise SystemExit("release obfuscation requires Node.js")
+        raise SystemExit("release minification requires Node.js")
     try:
         lock = json.loads((REPO_DIR / "package-lock.json").read_text(encoding="utf-8"))
         installed = json.loads((REPO_DIR / "node_modules" / "terser" / "package.json").read_text(encoding="utf-8"))
@@ -443,7 +453,7 @@ def resolve_terser_cli(terser_version: str) -> tuple[str, Path]:
     return node, cli
 
 
-def obfuscate_js_file(path: Path, *, node: str, terser_cli: Path, module: bool) -> None:
+def minify_js_file(path: Path, *, node: str, terser_cli: Path, module: bool) -> None:
     module_args = ["--module"] if module else []
     output = path.with_suffix(path.suffix + ".tmp")
     source_map = path.with_suffix(path.suffix + ".map")
@@ -474,7 +484,7 @@ def obfuscate_js_file(path: Path, *, node: str, terser_cli: Path, module: bool) 
         output.unlink(missing_ok=True)
         rel = path.relative_to(REPO_DIR) if path.is_relative_to(REPO_DIR) else path
         detail = exc.stderr.strip() or exc.stdout.strip()
-        raise SystemExit(f"failed to obfuscate {rel}: {detail}") from exc
+        raise SystemExit(f"failed to minify {rel}: {detail}") from exc
     finally:
         output.unlink(missing_ok=True)
         output_map.unlink(missing_ok=True)
@@ -494,14 +504,18 @@ def run_git(args: list[str]) -> str:
 
 
 
-def release_paths(output_dir: Path, version: str) -> ReleasePaths:
+def release_paths(output_dir: Path, version: str, target: str = "manual") -> ReleasePaths:
     directory = output_dir / version
+    suffix = ""
+    if target == "webstore":
+        directory /= "webstore"
+        suffix = ".webstore"
     return ReleasePaths(
         directory=directory,
-        package=directory / f"{PACKAGE_ROOT}-{version}.zip",
+        package=directory / f"{PACKAGE_ROOT}-{version}{suffix}.zip",
         readme=directory / "README.md",
         version_json=directory / "version.json",
-        debug=directory / f"{PACKAGE_ROOT}-{version}.debug.zip",
+        debug=directory / f"{PACKAGE_ROOT}-{version}{suffix}.debug.zip",
     )
 
 
@@ -576,12 +590,15 @@ def make_package_zip(
     *,
     uncompressed_size: int,
     bundling: dict[str, object],
+    target: str = "manual",
 ) -> None:
     zip_path.unlink(missing_ok=True)
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for path in sorted(files, key=lambda item: item.relative_to(extension_dir).as_posix()):
             rel = path.relative_to(extension_dir).as_posix()
-            write_zip_entry(zf, f"{PACKAGE_ROOT}/{rel}", path.read_bytes())
+            write_zip_entry(zf, rel if target == "webstore" else f"{PACKAGE_ROOT}/{rel}", path.read_bytes())
+        if target == "webstore":
+            return
         version_bytes = json.dumps(
             {
                 "version": version,
@@ -594,6 +611,56 @@ def make_package_zip(
             indent=2,
         ).encode("utf-8")
         write_zip_entry(zf, "version.json", version_bytes)
+
+
+def validate_webstore_package(path: Path) -> None:
+    """Check the upload archive after compilation and debug-file separation."""
+    if path.stat().st_size > 2 * 1024**3:
+        raise ValueError("Chrome Web Store packages must be at most 2 GiB")
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        files = set(names)
+        if len(files) != len(names):
+            raise ValueError("duplicate Web Store ZIP entries")
+        for name in names:
+            if "\\" in name or ":" in name or any(part in {"", ".", "..", *SKIP_DIRS} for part in name.split("/")):
+                raise ValueError(f"invalid Web Store ZIP path: {name}")
+            if name.endswith((".map", ".debug.zip")) or any(part.startswith((".qingzhou-", ".env")) for part in name.split("/")):
+                raise ValueError(f"development file in Web Store ZIP: {name}")
+        if "manifest.json" not in files:
+            raise ValueError("Web Store ZIP requires manifest.json at its root")
+        manifest = json.loads(archive.read("manifest.json"))
+        if not isinstance(manifest, dict) or manifest.get("manifest_version") != 3:
+            raise ValueError("Web Store ZIP requires Manifest V3")
+        version = manifest.get("version", "")
+        try:
+            if normalize_version(version) != version:
+                raise ValueError("Web Store manifest requires a numeric version")
+        except SystemExit as error:
+            raise ValueError(str(error)) from error
+        required = set(RELEASE_NOTICES)
+        required.update(manifest.get("icons", {}).values())
+        required.update(manifest.get("sandbox", {}).get("pages", []))
+        for section, key in [("background", "service_worker"), ("side_panel", "default_path"),
+                             ("action", "default_popup"), ("options_ui", "page")]:
+            if entry := manifest.get(section, {}).get(key):
+                required.add(entry)
+        icons = manifest.get("action", {}).get("default_icon", {})
+        required.update([icons] if isinstance(icons, str) else icons.values())
+        for key in ("options_page", "devtools_page"):
+            if entry := manifest.get(key):
+                required.add(entry)
+        for script in manifest.get("content_scripts", []):
+            required.update(script.get("js", []))
+            required.update(script.get("css", []))
+        required.update(rule["path"] for rule in manifest.get("declarative_net_request", {}).get("rule_resources", []))
+        if locale := manifest.get("default_locale"):
+            required.add(f"_locales/{locale}/messages.json")
+        missing = required - files
+        if missing:
+            raise ValueError(f"missing Web Store package resources: {sorted(missing)}")
+        if corrupt := archive.testzip():
+            raise ValueError(f"corrupt Web Store ZIP entry: {corrupt}")
 
 
 def write_zip_entry(archive: zipfile.ZipFile, name: str, contents: bytes) -> None:

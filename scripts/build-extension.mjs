@@ -347,7 +347,7 @@ async function validateRuntimeEntries(root) {
     ...manifest.sandbox.pages,
     ...Object.values(manifest.icons || {}),
     ...Object.values(manifest.action?.default_icon || {}),
-    ...manifest.declarative_net_request.rule_resources.map(item => item.path),
+    ...(manifest.declarative_net_request?.rule_resources || []).map(item => item.path),
   ]);
   for (const path of manifest.content_scripts.flatMap(item => item.js || [])) {
     if (!path.startsWith("vendor/") && !CLASSIC_ENTRIES.has(path)) throw new Error(`declare the classic entry in EXTENSION_ENTRIES: ${path}`);

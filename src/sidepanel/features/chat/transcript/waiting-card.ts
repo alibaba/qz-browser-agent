@@ -1,3 +1,6 @@
+import { isToolBrowserPermission, type ToolBrowserPermission } from "../../../../shared/browser-permissions.js";
+import { requestBrowserPermission, permissionT } from "../../../ui/browser-permissions.js";
+import { t as backendT } from "../../../../shared/i18n/backend.js";
 import { t, tHtml } from "../../../i18n/index.js";
 import { escapeHtml, escapeHtmlAttribute } from "../../../ui/ui-utils.js";
 import { record } from "../../../tools/renderer-input.js";
@@ -10,7 +13,7 @@ export type WaitingField = FieldBase & (
   | { type: "single_choice"; options: ChoiceOption[]; defaultValue: string }
   | { type: "multi_choice"; options: ChoiceOption[]; defaultValue: string[] }
 );
-interface WaitingForm { title: string; submitLabel: string; fields: WaitingField[] }
+interface WaitingForm { locationConsent?: boolean; browserPermission?: ToolBrowserPermission; title: string; submitLabel: string; fields: WaitingField[] }
 interface WaitCard {
   waitId: string; runId: string; title: string; message: string; status: string; reason: string; form: WaitingForm;
 }
@@ -96,6 +99,16 @@ export function createWaitingCards(options: CardOptions) {
     const label = type === "cancel_wait" ? t("cancel") : hasForm ? t("submit") : t("continue");
     setWaitActions(el, true, t(type === "cancel_wait" ? "cancelling" : hasForm ? "submitting" : "continuing"));
     try {
+      if (type === "continue_task" && state.card.form.browserPermission) {
+        const allowed = await requestBrowserPermission(state.card.form.browserPermission);
+        if (!owns(el, state)) return;
+        if (!allowed) command.type = "cancel_wait";
+      }
+      if (type === "continue_task" && state.card.form.locationConsent) {
+        const response = await chrome.runtime.sendMessage({ type: "accept_location_consent", sessionId: state.sessionId, waitId: state.card.waitId });
+        if (!owns(el, state)) return;
+        if (!response?.ok || response.accepted !== true) throw new Error("Location consent was not saved");
+      }
       // send confirms transport delivery, not wait completion. Keep controls locked until the accepted event.
       await options.send(command);
     } catch (_error) {
@@ -116,11 +129,21 @@ function setWaitActions(el: HTMLElement, disabled: boolean, label: string) {
 
 function normalizeWaitCard(value: unknown): WaitCard {
   const entry = record(value);
+  const form = normalizeWaitingForm(entry.form);
+  let message = String(entry.message || "");
+  // Resolve built-in disclosures in the panel's language, including restored waits.
+  if (form.locationConsent) {
+    form.title = backendT("locationTitle");
+    message = backendT("locationDisclosure");
+  } else if (form.browserPermission) {
+    form.title = permissionT("title");
+    message = permissionT(form.browserPermission);
+  }
   return {
     waitId: String(entry.waitId || ""), runId: String(entry.runId || ""),
-    title: String(entry.title || ""), message: String(entry.message || ""),
+    title: String(entry.title || ""), message,
     status: String(entry.status || "waiting"), reason: String(entry.reason || ""),
-    form: normalizeWaitingForm(entry.form),
+    form,
   };
 }
 
@@ -138,7 +161,7 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
     : waitResolvedTitle(entry);
   const message = entry.message || "";
   const hint = waiting
-    ? (hasForm ? t("agentAfterSubmit") : t("agentAfterAction"))
+    ? (form.browserPermission ? permissionT("hint") : hasForm ? t("agentAfterSubmit") : t("agentAfterAction"))
     : waitResolvedHint(entry);
   return `
     <div class="waiting-card${statusClass} qz:relative qz:overflow-hidden qz:px-3 qz:pt-2.5 qz:pb-3">
@@ -151,7 +174,7 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
       </div>
       ${waiting ? `
         <div class="waiting-actions qz:flex qz:gap-1.5">
-          <button class="qz-btn qz-btn--primary qz-btn--sm waiting-continue-btn qz:flex-1" type="button" data-wait-action="continue">${escapeHtml(hasForm ? form.submitLabel : t("doneContinue"))}</button>
+          <button class="qz-btn qz-btn--primary qz-btn--sm waiting-continue-btn qz:flex-1" type="button" data-wait-action="continue">${escapeHtml(form.locationConsent ? t("dataConsentAccept") : form.browserPermission ? permissionT("allow") : hasForm ? form.submitLabel : t("doneContinue"))}</button>
           <button class="qz-btn qz-btn--ghost qz-btn--sm waiting-cancel-btn" type="button" data-wait-action="cancel">${tHtml("cancel")}</button>
         </div>
       ` : ""}
@@ -180,6 +203,8 @@ export function normalizeWaitingForm(value: unknown = {}): WaitingForm {
   const form = record(value);
   const fields = Array.isArray(form.fields) ? form.fields : [];
   return {
+    ...(form.locationConsent === true ? { locationConsent: true } : {}),
+    ...(isToolBrowserPermission(form.browserPermission) ? { browserPermission: form.browserPermission } : {}),
     title: String(form.title || "").trim(),
     submitLabel: String(form.submitLabel || t("submit")).trim(),
     fields: fields.map((value: unknown, index): WaitingField => {

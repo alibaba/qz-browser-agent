@@ -218,5 +218,7 @@
   "sessions.manageSessionsAutomationRunsRequiresAutomationid": "يتطلب manage_sessions automation_runs قيمة automationId",
   "sessions.unsupportedManageSessionsAction": "إجراء manage_sessions غير مدعوم: {action}",
   "sessions.goalTrackingShort": "تتبّع الهدف",
-  "sessions.latestMessagesShort": "أحدث الرسائل"
+  "sessions.latestMessagesShort": "أحدث الرسائل",
+  "sessions.getLocation": "الحصول على الموقع",
+  "sessions.locationUnavailable": "تعذّر الحصول على موقعك. افتح اللوحة الجانبية وتحقق من إعدادات الموقع في جهازك، أو حدّد مدينة أو منطقة."
 }
