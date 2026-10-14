@@ -88,12 +88,12 @@ const messages = defineMessages("page-tools", {
     en: "Match index when multiple elements match. Default: 0.",
   },
   actOnElementDescription: {
-    "zh-CN": "对元素执行高层动作。常规操作只用这个工具：click=真实点击按钮/链接/自定义选项（移动模式自动使用触摸）；fill=填写输入框/textarea/contenteditable，contenteditable 多行文本会尝试按富文本段落插入并返回 p/br/block 结构；press=按键如 Enter；select=仅选择原生 <select> 的 option value；check/uncheck=勾选；scroll=滚到元素。必须先从 get_ax_tree/find_elements 获取 target。本地文件选择通过 wait_for_user 交给用户完成。{targetGrammar}。失败会返回元素诊断和可选候选。",
-    en: "Perform a high-level action on an element. Use this tool for routine interactions: click sends a real click to a button/link/custom option, using touch in mobile mode; fill enters text into an input/textarea/contenteditable, attempting rich-text paragraphs for multiline contenteditable text and returning p/br/block structure; press sends a key such as Enter; select chooses an option value only in a native <select>; check/uncheck toggles a checkbox; scroll scrolls to an element. Obtain the target from get_ax_tree/find_elements first. Use wait_for_user for the user to select local files. {targetGrammar}. Failures return element diagnostics and optional alternatives.",
+    "zh-CN": "对元素执行高层动作。常规操作只用这个工具：click=真实点击按钮/链接/自定义选项（移动模式自动使用触摸）；fill=填写输入框/textarea/contenteditable，contenteditable 多行文本会尝试按富文本段落插入并返回 p/br/block 结构；press=按键如 Enter；select=选择原生 <select> 的 option（优先精确匹配 option.value，否则匹配可见 label，label 忽略首尾空白）；check/uncheck=勾选；scroll=滚到元素。必须先从 get_ax_tree/find_elements 获取 target。本地文件选择通过 wait_for_user 交给用户完成。{targetGrammar}。失败会返回元素诊断和可选候选。",
+    en: "Perform a high-level action on an element. Use this tool for routine interactions: click sends a real click to a button/link/custom option, using touch in mobile mode; fill enters text into an input/textarea/contenteditable, attempting rich-text paragraphs for multiline contenteditable text and returning p/br/block structure; press sends a key such as Enter; select chooses an option in a native <select> by exact option.value first, or by visible label (surrounding whitespace ignored) if no value matches; check/uncheck toggles a checkbox; scroll scrolls to an element. Obtain the target from get_ax_tree/find_elements first. Use wait_for_user for the user to select local files. {targetGrammar}. Failures return element diagnostics and optional alternatives.",
   },
   actOnElementValue: {
-    "zh-CN": "fill 的文本或原生 select 的 option.value；press 也可用作 key。例如 fill 搜索词，press Enter",
-    en: "Text for fill or an option.value for a native select. Can also supply the key for press. For example, fill a search query, then press Enter.",
+    "zh-CN": "fill 的文本，或原生 select 的 option.value / 可见 label（精确 value 优先）；press 也可用作 key。例如 fill 搜索词，press Enter",
+    en: "Text for fill, or an option.value / visible label for a native select (exact value takes priority). Can also supply the key for press. For example, fill a search query, then press Enter.",
   },
   actOnElementKey: {
     "zh-CN": "press 的按键，如 Enter/Escape/Tab/ArrowDown。press 时 key 或 value 必填",
