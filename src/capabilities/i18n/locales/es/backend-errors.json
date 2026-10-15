@@ -1,4 +1,8 @@
 {
+  "backend.toolError.UNSUPPORTED_URL.label": "Protocolo de página no compatible",
+  "backend.toolError.UNSUPPORTED_URL.message": "Use una URL de página HTTP, HTTPS o file:// con acceso autorizado.",
+  "backend.toolError.FILE_ACCESS_REQUIRED.label": "Se requiere acceso a archivos",
+  "backend.toolError.FILE_ACCESS_REQUIRED.message": "Abra los detalles de qz en chrome://extensions, active el acceso a las URL de archivos y vuelva a intentarlo.",
   "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "Se requiere permiso del navegador",
   "backend.toolError.BROWSER_PERMISSION_DENIED.label": "Permiso del navegador no concedido",
   "backend.model.reviewAttachments": "Revisa los archivos adjuntos.",

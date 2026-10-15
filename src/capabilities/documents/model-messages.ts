@@ -4,8 +4,8 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model documentation is separate from the eager UI translation catalog. */
 const messages = defineMessages("documents-model", {
   saveFile: {
-    "zh-CN": "保存内容到用户下载目录。支持文本、JSON、CSV、HTML、Markdown 等任意格式。用于保存采集结果、导出数据等。filename 可选；缺省时会根据内容和 MIME 自动生成文件名，避免已经生成的大段内容因文件名遗漏而失败。",
-    en: "Save content to the user's Downloads folder in text, JSON, CSV, HTML, Markdown, or other formats. Use for collected results and data exports. filename is optional: if omitted, a name is generated from the content and MIME type, so a missing filename does not discard already-generated content.",
+    "zh-CN": "保存内容到用户下载目录。支持文本、JSON、CSV、HTML、Markdown 等任意格式。用于保存采集结果、导出数据等。filename 可选；缺省时会根据内容和 MIME 自动生成文件名。",
+    en: "Save content to the user's Downloads folder in text, JSON, CSV, HTML, Markdown, or other formats. Use for collected results and data exports. filename is optional: if omitted, a name is generated from the content and MIME type.",
   },
   saveFilename: {
     "zh-CN": "可选文件名，如 results.md、data.json、report.csv；不填时自动生成 qingzhou-output-时间戳.*。",
@@ -20,12 +20,12 @@ const messages = defineMessages("documents-model", {
     en: "File content. This field may be long; provide it last, after filename/mimeType.",
   },
   listDownloads: {
-    "zh-CN": "查看最近的下载列表及状态。download_url 返回 downloadId 后，优先用 id 精确确认同一次下载；文件名只用于人工搜索。",
-    en: "List recent downloads and their status. After download_url returns downloadId, use id to check that exact download; filename search is only for manual lookup.",
+    "zh-CN": "查看最近的下载列表及状态。保存或下载后，用返回的 downloadId 作为 id 精确查询。已完成且仍存在的文件会返回真实 fileUrl；预览时使用此地址，不要猜测本地路径。文件名只用于人工搜索。",
+    en: "List recent downloads and their status. After saving or downloading, pass the returned downloadId as id to check that exact download. A completed file that still exists includes its actual fileUrl; use that URL for preview instead of guessing a local path. Filename search is only for manual lookup.",
   },
   downloadId: {
-    "zh-CN": "Chrome 下载 ID；用于精确查询 download_url 刚返回的那一次下载",
-    en: "Chrome download ID. Use it to look up the exact download just returned by download_url.",
+    "zh-CN": "Chrome 下载 ID；使用保存或下载工具返回的 downloadId。",
+    en: "Chrome download ID returned by a save or download tool.",
   },
   downloadLimit: {
     "zh-CN": "返回数量，默认 10",
@@ -84,8 +84,8 @@ const messages = defineMessages("documents-model", {
     en: "Target characters per text chunk. Default: 6000.",
   },
   documentReadChunk: {
-    "zh-CN": "小块读取 docModel，避免长文档挤占上下文。正文按 chunkIndex 返回 Markdown；表格按返回的 tableId（Excel 也兼容 sheetName）配合 offset、limit 分页读取结构化行。继续读取时保留 docModelId，并沿用结果中的 next，不要重复读取已返回范围。",
-    en: "Read small portions of a docModel to preserve context space. Text is returned as Markdown by chunkIndex. Read structured table rows using the returned tableId (sheetName is also supported for Excel), offset, and limit. Keep docModelId and follow next from the result when continuing; do not reread ranges already returned.",
+    "zh-CN": "小块读取 docModel，避免长文档挤占上下文。正文按 chunkIndex 返回 Markdown；表格按返回的 tableId（Excel 也兼容 sheetName）配合 offset、limit 分页读取结构化行。继续读取时保留 docModelId，并从结果中的 next 继续。",
+    en: "Read small portions of a docModel to preserve context space. Text is returned as Markdown by chunkIndex. Read structured table rows using the returned tableId (sheetName is also supported for Excel), offset, and limit. Keep docModelId and continue from next in the result.",
   },
   documentModelId: {
     "zh-CN": "qingzhou_documents__document_parse 返回的 docModelId。",

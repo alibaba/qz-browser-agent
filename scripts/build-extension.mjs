@@ -115,8 +115,6 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
         else modules.set(emitted, path);
       } else if (profile.overrides.has(resolve(source, path))) {
         await writeFile(destination, profile.overrides.get(resolve(source, path)));
-      } else if (path === "products/manifest.json") {
-        await writeFile(destination, `${JSON.stringify(profile.manifest, null, 2)}\n`);
       } else {
         await copyFile(resolve(source, path), destination);
       }

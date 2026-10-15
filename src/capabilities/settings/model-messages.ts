@@ -4,8 +4,8 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model documentation is separate from the eager UI translation catalog. */
 const messages = defineMessages("settings-model", {
   notifyUser: {
-    "zh-CN": "给当前用户发送一条本地浏览器弹窗提醒，用于把用户叫回浏览器处理阻塞或查看重要进展。它只提醒当前用户，不会向外部系统发送消息，也不能替代 ask_user/wait_for_user；遇到登录、验证码、授权、付款等需要用户亲自操作的场景，仍必须调用 wait_for_user。工具内置全局流控，所有 session、定时任务和脚本调用共享限频，重复提醒可能被 suppressed。",
-    en: "Send the current user a local browser notification to bring them back for a blocker or important progress. It does not message external systems or replace ask_user/wait_for_user. For login, CAPTCHA, authorization, payment, or other actions requiring the user, still call wait_for_user. Notifications share a global rate limit across all sessions, automations, and scripts; repeated notifications may be suppressed.",
+    "zh-CN": "给当前用户发送一条本地浏览器弹窗提醒，用于把用户叫回浏览器处理阻塞或查看重要进展。它不能替代 ask_user/wait_for_user；遇到登录、验证码、授权、付款等需要用户亲自操作的场景，仍必须调用 wait_for_user。工具内置全局流控，所有 session、定时任务和脚本调用共享限频，重复提醒可能被 suppressed。",
+    en: "Send the current user a local browser notification to bring them back for a blocker or important progress. It does not replace ask_user/wait_for_user. For login, CAPTCHA, authorization, payment, or other actions requiring the user, still call wait_for_user. Notifications share a global rate limit across all sessions, automations, and scripts; repeated notifications may be suppressed.",
   },
   notificationTitle: {
     "zh-CN": "通知标题，默认“轻舟提醒”。保持简短。",

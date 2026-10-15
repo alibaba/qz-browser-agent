@@ -389,7 +389,7 @@ function assertAgentPromptContract() {
   assert.match(promptsSource, /业务字段都在 row\.data 内/, "system prompt should explain the data_store row wrapper");
   assert.match(promptsSource, /不要用 row\["标题"\] 取业务字段/, "system prompt should prevent top-level row field access");
   assert.match(promptsSource, /run_script\(\{target:"inner"[\s\S]*tools\.data_store 读取、计算和分批写回/, "system prompt should route page-independent table crunching through inner run_script");
-  assert.match(promptsSource, /不要为了跑内部计算打开空网页/, "system prompt should discourage opening placeholder pages for data crunching");
+  assert.match(promptsSource, /与页面无关的纯 JS 计算[^\n]*直接使用 run_script\(\{target:"inner"/, "system prompt should route page-independent computation directly to inner mode");
   assert.match(promptsSource, /最后只返回表名、行数、聚合口径、少量样例和异常统计/, "system prompt should keep table crunching summaries small");
   assert.match(promptsSource, /聚合结果或派生表使用稳定唯一 dedupField/, "system prompt should require stable unique dedup fields for aggregated outputs");
 }

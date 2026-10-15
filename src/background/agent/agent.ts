@@ -49,7 +49,7 @@ import { nowBeijingDateTime } from "../../shared/time-utils.js";
 import {
   buildSecurityGuardrailPromptSection,
 } from "../../shared/security-guardrails.js";
-import { formatTab, isWebTabUrl } from "../../shared/tab-utils.js";
+import { formatTab } from "../../shared/tab-utils.js";
 import { toolIdentityEventFields } from "../../shared/tools/tool-identity.js";
 import { normalizeMessageDocuments } from "../../shared/documents/document-attachments.js";
 import {
@@ -1294,9 +1294,11 @@ export class Agent {
       this._service("getSecurityGuardrails")().catch(() => ({ blockedDomains: [], blockedPatterns: [] })),
     ]);
     const profile = runProfile || this._runProfile || await this._buildRunProfile();
+    const fileAccessRestriction = this._dynamicContextSnapshot?.fileAccessAllowed === false
+      ? withLanguage(this._runLanguage, () => `\n\n${promptT("fileAccessDisabled")}`) : "";
     const systemMessage = {
       role: "system",
-      content: withLanguage(this._runLanguage, () => buildSystemPrompt({ runProfile: profile, language: this._runLanguage }) + buildSecurityGuardrailPromptSection(guardrails)) + skillSection,
+      content: withLanguage(this._runLanguage, () => buildSystemPrompt({ runProfile: profile, language: this._runLanguage }) + buildSecurityGuardrailPromptSection(guardrails)) + skillSection + fileAccessRestriction,
     };
     if (this.messages[0]?.role === "system") {
       this.messages[0] = systemMessage;
@@ -2188,6 +2190,7 @@ export class Agent {
 
   async _callLLM(signal: AbortSignal) {
     const runProfile = await this._ensureFreshRunProfile();
+    await this._ensureDynamicContextSnapshot(null, "llm");
     await this._refreshSystemPrompt(runProfile);
     return this._attemptLLM(signal, { runProfile });
   }
@@ -2766,10 +2769,12 @@ export class Agent {
         const formattedTab = tab ? formatTab(tab, { titleLimit: 120 }) : { title: "", url: "" };
         if (formattedTab.title && !input._pageTitle) input._pageTitle = formattedTab.title;
         const tabUrl = formattedTab.url;
-        if (!input._pageUrl) input._pageUrl = isWebTabUrl(tabUrl) ? tabUrl : (working?.url || "");
+        if (!input._pageUrl) input._pageUrl = tabUrl;
       } catch (_err) {
-        if (working?.title && !input._pageTitle) input._pageTitle = working.title;
-        if (working?.url && !input._pageUrl) input._pageUrl = working.url;
+        if (Number(working?.id) === tabId) {
+          if (working?.title && !input._pageTitle) input._pageTitle = working.title;
+          if (working?.url && !input._pageUrl) input._pageUrl = working.url;
+        }
       }
     } else if (policy.pageUrlArgument && input[policy.pageUrlArgument] && !input._pageUrl) {
       input._pageUrl = input[policy.pageUrlArgument];

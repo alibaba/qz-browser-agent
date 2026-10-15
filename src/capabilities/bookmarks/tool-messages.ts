@@ -44,8 +44,8 @@ const messages = defineMessages("bookmarks-tools", {
     en: "Maximum number of results. Default: 50.",
   },
   browseHistoryDescription: {
-    "zh-CN": "查询浏览器历史记录。支持 search/recent，只返回历史条目摘要，不修改历史。任务要求确认页面已进入历史时必须用本工具读取验证，不能用 open_tab 成功代替。",
-    en: "Query browser history. Supports search/recent and returns entry summaries without modifying history. If a task requires confirming that a page appears in history, verify it with this tool; a successful open_tab call is not sufficient.",
+    "zh-CN": "查询浏览器历史记录。支持 search/recent，只返回历史条目摘要。任务要求确认页面已进入历史时必须用本工具读取验证，不能用 open_tab 成功代替。",
+    en: "Query browser history. Supports search/recent and returns entry summaries. If a task requires confirming that a page appears in history, verify it with this tool; a successful open_tab call is not sufficient.",
   },
   browseHistoryAction: {
     "zh-CN": "search 按关键词搜索，需 query；recent 返回最近访问，无需 query。",

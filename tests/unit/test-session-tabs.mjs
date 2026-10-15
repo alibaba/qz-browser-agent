@@ -369,3 +369,20 @@ function createMemoryStorage() {
     },
   };
 }
+
+// File content needs Chrome's toggle; tab management only needs task ownership.
+const localUrl = "file:///tmp/local%20report.html";
+tabs.set(80, webTab(80, localUrl));
+runtimes.set("local", { sessionId: "local", workingTabId: 80, ownedTabIds: [80] });
+let fileAllowed = false;
+globalThis.chrome = { extension: { isAllowedFileSchemeAccess: async () => fileAllowed } };
+assert.equal(normalizeWorkingTab(tabs.get(80)).url, localUrl);
+assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "local", tabId: 80 })).code, "FILE_ACCESS_REQUIRED");
+assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "local", tabId: 80, tabOnly: true })).ok, true);
+assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "a", tabId: 80, tabOnly: true })).code, "SESSION_TAB_FOREIGN");
+fileAllowed = true;
+assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "local", tabId: 80 })).ok, true);
+assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "a", tabId: 80 })).code, "SESSION_TAB_FOREIGN");
+assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "a", tabId: 80, readOnly: true })).ok, true);
+chrome.extension.isAllowedFileSchemeAccess = async () => { throw new Error("unavailable"); };
+assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "local", tabId: 80 })).code, "FILE_ACCESS_REQUIRED");

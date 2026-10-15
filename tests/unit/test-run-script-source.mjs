@@ -456,7 +456,7 @@ assert.match(
 );
 assert.match(
   runScriptDefinition.description,
-  /不是 DevTools Console：不能用 getEventListeners、\$0、copy、monitorEvents/,
+  /不能用 getEventListeners、\$0、copy、monitorEvents/,
   "run_script description should warn against DevTools Console helpers",
 );
 assert.match(
@@ -482,7 +482,7 @@ assert.match(
 assert.doesNotMatch(toolsSource, /会滚动、缩放、改尺寸.*逐步执行/, "run_script guidance should not overfit policy to action names");
 assert.match(
   runScriptDefinition.description,
-  /自动提升内部最后一次 screenshot 或 act_on_screen\(returnScreenshot:true\) 的图片，不要把工具结果或图片数据塞进摘要/,
+  /自动提升内部最后一次 screenshot 或 act_on_screen\(returnScreenshot:true\) 的图片/,
   "run_script summary guidance should explain last-observation promotion",
 );
 assert.match(

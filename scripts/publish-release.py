@@ -83,6 +83,11 @@ def main() -> int:
         manifest_version = sync_manifest_version(extension_dir, manifest, version)
 
         extension_dir, bundling_summary = compile_extension_sources(extension_dir, bundle=not args.no_bundle)
+        if args.target == "webstore":
+            manifest_path = extension_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest.pop("key", None)
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         for name, contents in release_notices.items():
             (extension_dir / name).write_bytes(contents)
 
@@ -625,6 +630,8 @@ def validate_webstore_package(path: Path) -> None:
         for name in names:
             if "\\" in name or ":" in name or any(part in {"", ".", "..", *SKIP_DIRS} for part in name.split("/")):
                 raise ValueError(f"invalid Web Store ZIP path: {name}")
+            if name.endswith("/manifest.json"):
+                raise ValueError(f"extra manifest in Web Store ZIP: {name}")
             if name.endswith((".map", ".debug.zip")) or any(part.startswith((".qingzhou-", ".env")) for part in name.split("/")):
                 raise ValueError(f"development file in Web Store ZIP: {name}")
         if "manifest.json" not in files:
@@ -632,6 +639,8 @@ def validate_webstore_package(path: Path) -> None:
         manifest = json.loads(archive.read("manifest.json"))
         if not isinstance(manifest, dict) or manifest.get("manifest_version") != 3:
             raise ValueError("Web Store ZIP requires Manifest V3")
+        if "key" in manifest:
+            raise ValueError("Web Store manifest must not contain key")
         version = manifest.get("version", "")
         try:
             if normalize_version(version) != version:

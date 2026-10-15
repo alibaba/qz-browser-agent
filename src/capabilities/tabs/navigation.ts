@@ -1,5 +1,6 @@
 import { ToolExecutionError } from "#sdk/background/tools";
 import type { ToolExtensionAPI } from "#sdk/background";
+import { isPageTabUrl } from "#sdk/shared/browser";
 import { t } from "./i18n.js";
 
 /** Confirm the new main document using existing tabs/scripting permissions. */
@@ -42,7 +43,7 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     const destination = new URL(url).href;
     const before = await getTab();
     // A busy old renderer must not prevent Chrome from starting navigation.
-    const previousId = /^https?:\/\//i.test(before.url || "") ? await wait(Promise.race([
+    const previousId = isPageTabUrl(before.url) ? await wait(Promise.race([
       documentId().catch(() => null),
       new Promise<null>(resolve => { baselineTimer = setTimeout(() => resolve(null), 100); }),
     ])) : null;
@@ -52,7 +53,7 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     const sameDocument = (destination.includes("#") || before.url !== destination)
       && withoutFragment(before.url || "") === withoutFragment(destination);
     // Without a baseline, require a load completion observed after navigation starts.
-    listenForCompletion = previousId === null && /^https?:\/\//i.test(before.url || "") && !sameDocument;
+    listenForCompletion = previousId === null && isPageTabUrl(before.url) && !sameDocument;
     if (listenForCompletion) chrome.tabs.onUpdated.addListener(onUpdated);
     await wait(chrome.tabs.update(tabId, { url }));
     for (;;) {

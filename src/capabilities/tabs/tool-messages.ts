@@ -23,12 +23,12 @@ const messages = defineMessages("tabs-tools", {
     en: "Read the current task’s existing working tab. Returns hasWorkingTab=false if none exists, or hasWorkingTab=true with page metadata and the current desktop/mobile pageMode if it does. A tab blocked by a security policy still returns title, URL, and tabId with contentAccess=blocked; do not subsequently read its page content.",
   },
   openTabDescription: {
-    "zh-CN": "打开新标签页，等待目标文档的导航提交后返回，可接着调用页面读取工具；不等待所有资源或动态内容加载完成。若需要捕获新页面首屏、重定向或加载期接口，传 watchNetwork:true；工具会先创建空白页并在导航前开启 Network 监听，再跳到目标 URL，之后可直接用 network_recent 查看首屏请求。若页面已经打开，或只想监听点击、搜索、提交等后续交互产生的请求，不要重新 open，改用 network_watch 在当前页面开启后置监听。",
-    en: "Open a new tab and wait for the destination document's navigation to commit before returning. Page-reading tools can follow immediately; resources and dynamic content may still be loading. To capture requests made during the initial page load or redirects, including API calls, pass watchNetwork:true. The tool creates a blank tab, starts network monitoring before navigation, then opens the target URL. Use network_recent afterward to inspect initial requests. If the page is already open, or you only need requests from later interactions such as clicking, searching, or submitting, do not reopen it: use network_watch on the current page.",
+    "zh-CN": "打开新标签页，等待目标文档的导航提交后返回，可接着调用页面读取工具；不等待所有资源或动态内容加载完成。若需要捕获新页面首屏、重定向或加载期接口，传 watchNetwork:true；工具会先创建空白页并在导航前开启 Network 监听，再跳到目标 URL，之后可直接用 network_recent 查看首屏请求。监听已打开页面中点击、搜索、提交等后续交互的请求时，使用 network_watch。",
+    en: "Open a new tab and wait for the destination document's navigation to commit before returning. Page-reading tools can follow immediately; resources and dynamic content may still be loading. To capture requests made during the initial page load or redirects, including API calls, pass watchNetwork:true. The tool creates a blank tab, starts network monitoring before navigation, then opens the target URL. Use network_recent afterward to inspect initial requests. Use network_watch to capture requests from later interactions on an open page, such as clicking, searching, or submitting.",
   },
   openTabUrl: {
-    "zh-CN": "要打开的 URL；需要移动网页时同时设置 mode:mobile，首次请求即使用移动模式。",
-    en: "URL to open. For a mobile page, also set mode:mobile so the very first request uses mobile mode.",
+    "zh-CN": "要打开的 HTTP/HTTPS 或已获文件网址访问权限的 file:// URL；需要移动网页时同时设置 mode:mobile，首次请求即使用移动模式。",
+    en: "HTTP/HTTPS URL or a file:// URL permitted by Chrome file access. For a mobile page, also set mode:mobile so the very first request uses mobile mode.",
   },
   openTabWatchNetwork: {
     "zh-CN": "打开新标签页时是否在真正导航前开启 Network 监听；用于抓首屏、重定向、页面加载期请求。页面已打开后的交互监听请用 network_watch。",
@@ -55,12 +55,12 @@ const messages = defineMessages("tabs-tools", {
     en: "Set the specified web tab as the current task’s working tab, without changing the tab visible to the user. Accepts tabs already owned by the current task or unclaimed tabs. To inspect a tab owned by another task, pass tabId explicitly to a read-only page tool.",
   },
   navigateDescription: {
-    "zh-CN": "在当前任务的工作标签页或当前任务拥有的指定标签页中导航到新 URL，等待本次导航提交后返回，避免后续读取旧页面；不等待所有资源或动态内容加载完成。若需要捕获这次跳转的首屏、重定向或加载期接口，传 watchNetwork:true；工具会先在原 tab 上开启 Network 监听，再执行导航，之后可直接用 network_recent 查看本次导航请求。若当前页面已经加载完，只想监听点击、搜索、提交等后续交互请求，不要 navigate，改用 network_watch 开启后置监听。",
-    en: "Navigate to a new URL in the current task’s working tab or a specified tab it owns. Waits for this navigation to commit so subsequent tools do not read the old page; resources and dynamic content may still be loading. To capture requests made during the initial page load or redirects, including API calls, pass watchNetwork:true. The tool starts network monitoring on the existing tab before navigating; use network_recent afterward to inspect this navigation’s requests. If the page has already loaded and you only need requests from later interactions such as clicking, searching, or submitting, do not navigate: use network_watch.",
+    "zh-CN": "在当前任务的工作标签页或当前任务拥有的指定标签页中导航到新 URL，等待本次导航提交后返回，避免后续读取旧页面；不等待所有资源或动态内容加载完成。若需要捕获这次跳转的首屏、重定向或加载期接口，传 watchNetwork:true；工具会先在原 tab 上开启 Network 监听，再执行导航，之后可直接用 network_recent 查看本次导航请求。监听当前页面中点击、搜索、提交等后续交互的请求时，使用 network_watch。",
+    en: "Navigate to a new URL in the current task’s working tab or a specified tab it owns. Waits for this navigation to commit so subsequent tools do not read the old page; resources and dynamic content may still be loading. To capture requests made during the initial page load or redirects, including API calls, pass watchNetwork:true. The tool starts network monitoring on the existing tab before navigating; use network_recent afterward to inspect this navigation’s requests. Use network_watch to capture requests from later interactions on the current page, such as clicking, searching, or submitting.",
   },
   navigateUrl: {
-    "zh-CN": "目标 URL",
-    en: "Destination URL.",
+    "zh-CN": "目标 HTTP/HTTPS 或已获文件网址访问权限的 file:// URL",
+    en: "Destination HTTP/HTTPS URL or a file:// URL permitted by Chrome file access.",
   },
   navigateTabId: {
     "zh-CN": "本次调用的目标标签页 ID；省略时使用当前任务工作标签页。",

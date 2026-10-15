@@ -28,6 +28,7 @@ export { consumeToolEffects } from "./effects.js";
 import { summarizeToolArgsForTrace } from "./trace-summary.js";
 import { createToolRegistry, isCoreToolSnapshot, withCommonToolParameters } from "./registry.js";
 import { ensureToolBrowserPermission } from "./browser-permissions.js";
+import { assertPageUrlAccessible } from "./page-access.js";
 import { assertScriptPageLifecycle } from "./behavior.js";
 /**
  * Definitions declare capabilities; this runtime owns permission, cancellation and effects.
@@ -36,7 +37,7 @@ import { assertScriptPageLifecycle } from "./behavior.js";
 
 import { ToolExecutionError, isMissingRequiredValue, validateToolSchema } from "./arguments.js";
 import { DEFAULT_TOOL_TIMEOUT, resolveTimeout, scriptTimeout } from "./timing.js";
-import { formatTab, getEffectiveTabUrl, isWebTab } from "../../shared/tab-utils.js";
+import { formatTab, getEffectiveTabUrl, isPageTab, isPageTabUrl, isLocalFileUrl } from "../../shared/tab-utils.js";
 import { getSecurityGuardrails, matchBlockedUrl } from "../../shared/security-guardrails.js";
 import {
   enforceSiteOpenRateLimitForTool,
@@ -103,7 +104,7 @@ async function waitForInitialPage(tabId: number, signal?: AbortSignal) {
   while (true) {
     if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for the page", { tabId });
     const tab = await chrome.tabs.get(tabId);
-    if ((tab.url && tab.url !== "about:blank") || !/^https?:\/\//i.test(tab.pendingUrl || "")) return waited;
+    if ((tab.url && tab.url !== "about:blank") || !isPageTabUrl(tab.pendingUrl)) return waited;
     waited = true;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
@@ -363,10 +364,11 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       result = await runToolWithTimeout(
         name,
         async (args, signal, context) => {
-          if (resolvePageAccess(selectedDefinition, args) && args._readOnlyTabAccess !== true && Number(args.tabId) > 0) {
+          const pageAccess = resolvePageAccess(selectedDefinition, args);
+          if (pageAccess && pageAccess !== "tab" && args._readOnlyTabAccess !== true && Number(args.tabId) > 0) {
             await capabilityBridges.preparePage?.(Number(args.tabId), name, signal, context);
           }
-          if (resolvePageAccess(selectedDefinition, args) === "readOnly" && Number(args.tabId) > 0
+          if (pageAccess === "readOnly" && Number(args.tabId) > 0
             && await waitForInitialPage(Number(args.tabId), signal)) {
             await withSessionOwnedTarget(selectedDefinition, args, parameters, context, signal);
             await assertToolTargetAllowedBySecurityGuardrails(selectedDefinition, args, context);
@@ -543,7 +545,7 @@ async function assertToolTargetAllowedBySecurityGuardrails(definition: RuntimeTo
     assertUrlAllowedBySecurityGuardrails(url, guardrails, { tool: name, source: "args" });
   }
 
-  if (!resolvePageAccess(definition, args)) return;
+  if (!resolvePageAccess(definition, args) || resolvePageAccess(definition, args) === "tab") return;
   if (isUidElementTarget(args?.target) || isUidElementTarget(args?.selector)) return;
 
   const tabIds = Array.isArray(args?.tabIds) ? args.tabIds : [];
@@ -586,7 +588,6 @@ function collectGuardrailCandidateUrls(value: unknown, key = "", out: string[] =
 
 async function assertTabAllowedBySecurityGuardrails(tabId: number, details: Fields = {}, guardrails: SecurityGuardrails | null = null) {
   const rules = guardrails || await getSecurityGuardrails();
-  if (!hasSecurityGuardrailRules(rules)) return null;
   let tab = null;
   try {
     tab = await chrome.tabs.get(Number(tabId));
@@ -594,6 +595,7 @@ async function assertTabAllowedBySecurityGuardrails(tabId: number, details: Fiel
     return null;
   }
   const url = getEffectiveTabUrl(tab);
+  if (isLocalFileUrl(url)) await assertPageUrlAccessible(url);
   return assertUrlAllowedBySecurityGuardrails(url, rules, { ...details, tabId: Number(tabId) });
 }
 
@@ -764,6 +766,7 @@ async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _pa
     tabId: targetTabId,
     source: `tool:${toolName}:preflight`,
     readOnly: resolvePageAccess(definition, input) === "readOnly",
+    tabOnly: resolvePageAccess(definition, input) === "tab",
   });
   if (!resolved?.ok) {
     throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {
@@ -838,7 +841,7 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
   }
 
   const fallback = record(result);
-  const formattedTab = tab && isWebTab(tab) ? formatTab(tab, { titleLimit: 120 }) : null;
+  const formattedTab = tab && isPageTab(tab) ? formatTab(tab, { titleLimit: 120 }) : null;
   const workingTab = {
     id: tabId,
     title: String(fallback._pageTitle || fallback.title || formattedTab?.title || ""),
@@ -847,7 +850,7 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
     pinned: !!formattedTab?.pinned,
     windowId: Number.isFinite(Number(formattedTab?.windowId)) ? Number(formattedTab?.windowId) : null,
   };
-  if (!workingTab.url || !/^https?:\/\//i.test(workingTab.url)) return;
+  if (!isPageTabUrl(workingTab.url)) return;
 
   await sessions.updateWorkingTab?.({
     sessionId,
@@ -930,19 +933,19 @@ function pageStateDelta(before: PageState = {}, after: PageState = {}) {
   };
 }
 
-function normalizeHttpNavigationUrl(rawUrl: unknown = "", baseUrl = "") {
+function normalizePageNavigationUrl(rawUrl: unknown = "", baseUrl = "") {
   const value = String(rawUrl || "").trim();
   if (!value) return "";
   try {
     const parsed = baseUrl ? new URL(value, baseUrl) : new URL(value);
-    return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : "";
+    return ["http:", "https:", "file:"].includes(parsed.protocol) ? parsed.href : "";
   } catch (_err) {
     return "";
   }
 }
 
 function stripUrlHash(url: unknown = "") {
-  const normalized = normalizeHttpNavigationUrl(url);
+  const normalized = normalizePageNavigationUrl(url);
   return normalized ? normalized.split("#")[0] : "";
 }
 
@@ -971,8 +974,9 @@ async function prepareKnownPageNavigation({
   tabId = null,
   source = "navigation_target",
 }: { url?: string; baseUrl?: string; pageBefore?: PageState; guardrails?: Partial<SecurityGuardrails>; context?: ToolContext; signal?: AbortSignal | null; toolName?: string; toolArgs?: Fields; tabId?: number | null; source?: string } = {}) {
-  const targetUrl = normalizeHttpNavigationUrl(url, baseUrl || pageBefore?.url || "");
+  const targetUrl = normalizePageNavigationUrl(url, baseUrl || pageBefore?.url || "");
   if (!targetUrl || !isMeaningfulKnownNavigationTarget(pageBefore?.url || "", targetUrl)) return null;
+  await assertPageUrlAccessible(targetUrl);
   assertUrlAllowedBySecurityGuardrails(targetUrl, guardrails, { tool: toolName, source, tabId });
   const rateLimitMatch = resolveUrlNavigationOpenRateLimit(targetUrl, guardrails);
   const rateLimit = await enforceSiteOpenRateLimitForUrl({
@@ -997,7 +1001,7 @@ function commitObservedPageNavigation({
   toolName = "",
   tabId = null,
 }: { pageBefore?: PageState; pageAfter?: PageState; prepared?: PreparedNavigation | null; guardrails?: Partial<SecurityGuardrails>; toolName?: string; tabId?: unknown } = {}) {
-  const afterUrl = normalizeHttpNavigationUrl(pageAfter?.url || "");
+  const afterUrl = normalizePageNavigationUrl(pageAfter?.url || "");
   if (!afterUrl || !isMeaningfulNavigationChange(pageBefore?.url || "", afterUrl)) return null;
   assertUrlAllowedBySecurityGuardrails(afterUrl, guardrails, { tool: toolName, source: "page_after", tabId });
   const afterMatch = resolveUrlNavigationOpenRateLimit(afterUrl, guardrails);
@@ -1081,7 +1085,7 @@ async function resolveToolPageContext(definition: RuntimeTool, args: Fields = {}
     return {
       tabId,
       title: String(formattedTab.title || result?.title || ""),
-      url: isWebTab(tab) ? formattedTab.url : (resultUrl || formattedTab.url),
+      url: isPageTab(tab) ? formattedTab.url : (resultUrl || formattedTab.url),
     };
   } catch (_err) {
     if (!result?.title && !result?.url && !args?.url) return { tabId, title: "", url: "" };
@@ -1352,6 +1356,7 @@ const capabilityHost: ToolExtensionAPI = Object.freeze({
   getBookmarks: () => chrome.bookmarks, getHistory: () => chrome.history, getSecurityGuardrails, matchBlockedUrl,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
+  assertPageUrlAccessible,
   sendToContent, sendCdp, withDebugger, getDebuggerConnectionId, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
   getTabPageState, pageStateDelta, prepareKnownPageNavigation, commitObservedPageNavigation,
   clickPointReady, clickNotReadyResult, captureTabScreenshot, enablePreNavigationNetworkWatch,

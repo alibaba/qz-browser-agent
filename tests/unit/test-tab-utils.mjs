@@ -3,6 +3,7 @@ import {
   formatTab,
   getEffectiveTabUrl,
   isWebTab,
+  isPageTab,
 } from "../../src/shared/tab-utils.js";
 
 const pendingWebTab = {
@@ -58,3 +59,10 @@ for (const title of ["「Demo Playground」玩法攻略 · 示例文档", "می\
 }
 assert.equal(formatTab({ id: 13, url: "https://example.test/doc", title: invisiblePrefix }).title, "");
 assert.equal(formatTab({ id: 14, url: "https://example.test/doc", title: "x".repeat(100) }).title, "x".repeat(80));
+
+const fileTab = { id: 15, url: "file:///tmp/local%20report.html", pendingUrl: "https://old.example/", title: "Local report" };
+assert.equal(isWebTab(fileTab), false, "Site Skill matching remains HTTP-only");
+assert.equal(isPageTab(fileTab), true);
+assert.equal(formatTab(fileTab).url, fileTab.url, "committed file URL wins over stale HTTP metadata");
+assert.equal(isPageTab(internalTab), false);
+assert.equal(isPageTab({ url: "about:blank", pendingUrl: fileTab.url }), true);

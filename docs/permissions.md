@@ -81,6 +81,13 @@ Page tools require the Session's working tab or an explicitly authorized target.
 fetch, MCP, and Skill resources also enforce shared safety checks. File URLs also require Chrome's
 **Allow access to file URLs** setting.
 
+To preview a generated HTML file, query `list_downloads` with its download ID and pass the returned
+`fileUrl` to `open_tab`. The URL is available once the download completes and the file still exists.
+Enable **Allow access to file URLs** in the extension details at `chrome://extensions` to open,
+read, or interact with it. Each task reads the setting; if disabled, its system prompt tells the
+Agent to avoid local file operations. Tools check access again before operating and return
+`FILE_ACCESS_REQUIRED` when disabled.
+
 Capabilities declare operations and UI; Background and Chrome enforce access. When removing a
 feature from a distribution, review its callers, stored data, authorization checks, and manifest
 together.

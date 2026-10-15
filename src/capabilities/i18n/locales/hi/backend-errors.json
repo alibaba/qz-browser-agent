@@ -1,4 +1,8 @@
 {
+  "backend.toolError.UNSUPPORTED_URL.label": "पेज प्रोटोकॉल समर्थित नहीं है",
+  "backend.toolError.UNSUPPORTED_URL.message": "HTTP, HTTPS या अनुमति प्राप्त file:// पेज URL का उपयोग करें।",
+  "backend.toolError.FILE_ACCESS_REQUIRED.label": "फ़ाइल तक पहुँच की अनुमति चाहिए",
+  "backend.toolError.FILE_ACCESS_REQUIRED.message": "chrome://extensions में qz का विवरण खोलें, फ़ाइल URL तक पहुँच की अनुमति दें और फिर से कोशिश करें।",
   "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "ब्राउज़र की अनुमति चाहिए",
   "backend.toolError.BROWSER_PERMISSION_DENIED.label": "ब्राउज़र की अनुमति नहीं मिली",
   "backend.model.reviewAttachments": "कृपया अटैचमेंट की समीक्षा करें।",

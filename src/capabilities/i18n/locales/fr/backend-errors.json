@@ -1,4 +1,8 @@
 {
+  "backend.toolError.UNSUPPORTED_URL.label": "Protocole de page non pris en charge",
+  "backend.toolError.UNSUPPORTED_URL.message": "Utilisez une URL de page HTTP, HTTPS ou file:// autorisée.",
+  "backend.toolError.FILE_ACCESS_REQUIRED.label": "Accès aux fichiers requis",
+  "backend.toolError.FILE_ACCESS_REQUIRED.message": "Ouvrez les détails de qz dans chrome://extensions, autorisez l’accès aux URL de fichiers, puis réessayez.",
   "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "Autorisation du navigateur requise",
   "backend.toolError.BROWSER_PERMISSION_DENIED.label": "Autorisation du navigateur non accordée",
   "backend.model.reviewAttachments": "Veuillez examiner les pièces jointes.",

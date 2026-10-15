@@ -335,7 +335,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       if (element.tagName === "A" && element.hasAttribute("href")) {
         try {
           const url = new URL(element.getAttribute("href") || "", document.baseURI);
-          if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) element.removeAttribute("href");
+          if (!["http:", "https:", "file:", "mailto:", "tel:"].includes(url.protocol)) element.removeAttribute("href");
           else element.setAttribute("href", url.href);
         } catch (_err) {
           element.removeAttribute("href");
@@ -515,7 +515,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     doc.querySelectorAll("a[href]").forEach((link) => {
       try {
         const url = new URL(link.getAttribute("href") || "", document.baseURI);
-        if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) link.removeAttribute("href");
+        if (!["http:", "https:", "file:", "mailto:", "tel:"].includes(url.protocol)) link.removeAttribute("href");
         else link.setAttribute("href", url.href);
       } catch (_err) {
         link.removeAttribute("href");

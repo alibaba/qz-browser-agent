@@ -132,8 +132,8 @@ const messages = defineMessages("skill-workbench", {
     "en": "Optional purpose description for set/rename."
   },
   "exactOldText": {
-    "zh-CN": "replace 时的旧文本；从刚读取的资源 content 中原样复制最小但唯一的连续片段，不要凭记忆重写",
-    "en": "Old text for replace. Copy the smallest unique contiguous excerpt verbatim from the resource just read; do not reconstruct it from memory."
+    "zh-CN": "replace 时的旧文本；从刚读取的资源 content 中原样复制最小但唯一的连续片段",
+    "en": "Old text for replace. Copy the smallest unique contiguous excerpt verbatim from the resource just read."
   },
   "exactNewText": {
     "zh-CN": "replace 时的新文本",

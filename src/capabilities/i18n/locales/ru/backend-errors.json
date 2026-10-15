@@ -1,4 +1,8 @@
 {
+  "backend.toolError.UNSUPPORTED_URL.label": "Неподдерживаемый протокол страницы",
+  "backend.toolError.UNSUPPORTED_URL.message": "Используйте URL страницы HTTP, HTTPS или file:// с разрешённым доступом.",
+  "backend.toolError.FILE_ACCESS_REQUIRED.label": "Требуется доступ к файлам",
+  "backend.toolError.FILE_ACCESS_REQUIRED.message": "Откройте сведения о qz на странице chrome://extensions, разрешите доступ к файлам по URL и повторите попытку.",
   "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "Требуется разрешение браузера",
   "backend.toolError.BROWSER_PERMISSION_DENIED.label": "Разрешение браузера не предоставлено",
   "backend.model.reviewAttachments": "Проверьте вложения.",

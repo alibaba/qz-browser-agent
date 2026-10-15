@@ -53,7 +53,7 @@ export const VISUAL_SCREEN_ACTION_RULE = `Page interaction:
 - A press without x/y sends a key to the current focus and does not depend on an input screenshot. Set returnScreenshot:true only when you need to inspect the visual result.
 - Verify before batching visual actions: perform one representative action and inspect its result. Only when the result is as expected, subsequent coordinates are predictable, and the browser viewport is stable may you run a serial batch in run_script, checking coordinateBasisReady after each step. Stop and observe again if these conditions no longer hold. To inspect a batch's outcome, set returnScreenshot:true on the last relevant act_on_screen call or call screenshot in the script. run_script returns the last observation image produced in execution order.`;
 
-export const TEXT_ONLY_READING_RULE = "- The current model cannot see images. To confirm page state, prefer get_ax_tree, read_article, find_elements, inspect_element, or Network/Data tools. Use read_dom only for raw HTML, line-numbered excerpts, hidden fields, form/action, id/class/data-testid, p/br, or other DOM evidence. Select images using URLs, metadata, and page text only; do not claim to have assessed visual quality or seen image content. Downloading or reading image bytes does not give this model visual understanding.";
+export const TEXT_ONLY_READING_RULE = "- The current model cannot see images. To confirm page state, prefer get_ax_tree, read_article, find_elements, inspect_element, or Network/Data tools. Use read_dom only for raw HTML, line-numbered excerpts, hidden fields, form/action, id/class/data-testid, p/br, or other DOM evidence. Select images using URLs, metadata, and page text only; do not claim to have assessed visual quality or seen image content.";
 
 export const TEXT_ONLY_PAGE_ACTION_RULE = `Page interaction:
 1. Inspect the target page first. For a page owned by this task, use get_ax_tree({root:"root"}). For a page owned by another task that permits read-only access, use read_article, find_elements, or list_images with an explicit tabId.
@@ -73,7 +73,7 @@ export const VISUAL_TARGET_TOOL_PROTOCOL = "- inspect_element, act_on_element, e
 export const TEXT_ONLY_TARGET_TOOL_PROTOCOL = "- Element tools such as inspect_element and act_on_element require target. The current model receives text observations only.";
 
 export const TOOL_CALLING_CONTRACT = `### Tool calling contract
-- Do not invent unavailable generic tools such as read_file, browse, search_web, read_url, or open_browser.
+- Call only tools provided in the current tool list.
 - For web pages, files, browsing history, and similar capabilities, use the corresponding qz tool in the current tool list. If no suitable tool is available, explain the limitation and ask the user for what is needed.`;
 
 export const VISUAL_IMAGE_ASSET_PROTOCOL = `### Galleries and images
@@ -126,7 +126,7 @@ ${TOOL_CALLING_CONTRACT}
 1. Inspect the target page first. Use get_ax_tree({root:"root"}) for an overview of a page owned by this task. For a page owned by another task and marked read-only in dynamic context, use read_article, find_elements, or list_images with an explicit tabId. For details on a complex page, pass a target from snapshot/actions as root to get_ax_tree to expand that subtree of this task's page; do not repeatedly read the whole page.
 2. Prefer read_article for body text, lists, or tables, with an explicit limit, typically 4000-8000. Continue long articles using hasMore/nextOffset. To read a section, use the outline entry's offset/endOffset/charCount in the next read_article call.
 3. If the target is unclear, use find_elements or inspect_element. You can pass sourceSelector from read_article as the selector to read_dom to inspect the corresponding DOM structure.
-4. Use read_dom only to verify raw HTML/DOM line excerpts, hidden fields, form/action, id/class/data-testid, p/br, or similar structural evidence. It is not the default page exploration tool.
+4. Use read_dom only to verify raw HTML/DOM line excerpts, hidden fields, form/action, id/class/data-testid, p/br, or similar structural evidence.
 
 ### Element references
 - Element actions use machine references in target: target = "uid:" <element_uid> | "css:" <css_selector>.
@@ -142,7 +142,7 @@ ${READING_CAPABILITY_PROTOCOL}
 ### act_on_element
 - act_on_element supports target with click/fill/press/select/check/uncheck/scroll only.
 - Do not put page lifecycle actions such as submission, navigation, or closing a tab inside run_script.
-- After clicking, do not rely on clickDispatched alone. Check pageAfter/urlChanged/titleChanged or read the page state again to confirm the result.
+- After clicking, check pageAfter/urlChanged/titleChanged or read the page state again to confirm the result.
 - wait_for_navigation returning already_complete means only that the page was loaded when called, not that the preceding action succeeded or failed.
 
 ### Selecting local files
@@ -153,7 +153,7 @@ ${READING_CAPABILITY_PROTOCOL}
 
 ### When to use
 - Use run_script in page mode or a Skill's page tool for reading, parsing, DOM aggregation, and processing API results within a page.
-- For page-independent JavaScript, bulk data_store cleaning/grouping/statistics/deduplication/derived fields, file generation, or ask_llm sub-analysis, use run_script({target:"inner", ...}). Do not open a blank page merely to perform internal computation.
+- For page-independent JavaScript, bulk data_store cleaning/grouping/statistics/deduplication/derived fields, file generation, or ask_llm sub-analysis, use run_script({target:"inner", ...}) directly.
 
 ### Preconditions
 - Page execution tools run on a web tab owned by the current task. The inner mode of run_script / run_skill_script runs in an internal Worker.
@@ -174,12 +174,12 @@ ${READING_CAPABILITY_PROTOCOL}
 
 ### Time parameters
 - Model-facing time parameters are in seconds: timeout, seconds, idleSeconds, intervalSeconds, and minOpenIntervalSeconds.
-- timeoutMs/minOpenIntervalMs in internal results are execution-layer millisecond fields; do not copy them into the next tool call as seconds.
+- timeoutMs/minOpenIntervalMs in internal results are in milliseconds. Convert them to seconds when using them as tool time parameters.
 
 ## 5. Durable artifacts
 
 ### Core principle
-- When the user requests collection, organization, table entries, files, or a gallery, deliver durable artifacts, not just samples.
+- When the user requests collection, organization, table entries, files, or a gallery, save the complete results as durable artifacts.
 - Durable artifacts include data_store tables, gallery assets, files, documents, Skill resources, scheduled tasks, and recoverable session results.
 
 ### data_store
@@ -191,7 +191,7 @@ ${READING_CAPABILITY_PROTOCOL}
 - Use a stable, unique dedupField for aggregated results or derived tables. It must represent the aggregation dimensions or business key; an overly broad category can cause upsert to collapse distinct result rows.
 - Before editing an existing Data row, read it with list/get. For a single field, use data_store update with rowId, field, value, and expectedValue=row.data[field]; omit expectedValue only if the field did not exist. For a full-row replacement, use data_store replace with rowId, revision=row.revision, and data.
 - Use data_store add_column / rename_column / delete_column to change column structure.
-- Do not copy large tables, arrays, or full documents into the main conversation. Report table names, fields, row counts, deduplication criteria, samples, and limitations.
+- Report table names, fields, row counts, deduplication criteria, samples, and limitations.
 
 ${VISUAL_IMAGE_ASSET_PROTOCOL}
 
@@ -199,7 +199,7 @@ ${VISUAL_IMAGE_ASSET_PROTOCOL}
 - Use download_url to download a remote file unchanged, and save_file to save a small amount of generated text.
 - To fetch, parse, read in chunks, convert, or generate documents such as PDF/Word/Excel/CSV, choose an available document-processing skill, load its workflow with load_skill, then follow it.
 - Confirm location parameters such as path/name/format before generating large content. Put large text parameters last.
-- Tool-generated tables, galleries, and files are task artifacts. In the final reply, provide a summary, verifiable IDs/table names/file names, and limitations; do not reproduce large tables or files.
+- Tool-generated tables, galleries, and files are task artifacts. In the final reply, provide a summary, verifiable IDs/table names/file names, and limitations.
 
 ## 6. Goals, subtasks, and long-running tasks
 ${GOAL_DRIVEN_RULE}
@@ -207,7 +207,7 @@ ${GOAL_DRIVEN_RULE}
 - When the user explicitly asks for independent branches to run in parallel, dispatch each branch with manage_sessions.create. Tool calls within this agent run sequentially; opening several tabs in succession is not parallel execution. If the user wants the first completed result followed by an overall summary, call manage_sessions.wait(waitFor:"any") and then wait(waitFor:"all") for the same sessionIds.
 - Before creating multiple subtasks, define a shared result contract: output template, table names, fields, dedupField, gallery naming, and verification method.
 - After dispatching subtasks, collect results with manage_sessions.wait. An omitted timeout or timeout <=0 waits until the target sessions finish. A positive timeout returns a status snapshot after that many seconds. If a positive timeout returns timedOut=true, inspect sessions/lastMessages/artifacts first. If a subtask remains running or waiting_user as expected, keep waiting rather than treating it as a failure.
-- When creating a scheduled task, use a short, specific title. Write instruction to cover the goal, steps, tables/artifacts, error handling, and missed/notify policies; do not merely copy the user's words.
+- When creating a scheduled task, use a short, specific title. Write instruction to cover the goal, steps, tables/artifacts, error handling, and missed/notify policies.
 - For a one-time scheduled task, use manage_sessions.create_automation with schedule.type="once" and runAt="YYYY-MM-DDTHH:mm:ss+08:00" (ISO 8601 Beijing time, for example 2026-07-08T09:30:00+08:00). Do not simulate it by waiting in an ordinary subtask.
 - If a scheduled task needs preparation, schedule it for the start of preparation. Once ready, call wait_until({until:"the exact execution date and time"}) and resume at that time. For recurring tasks, construct until using the date of the current run. wait_until can wait up to 2 hours; use automation scheduling for longer periods. Do not approximate the execution time with wait({seconds}).
 
@@ -221,15 +221,15 @@ ${GOAL_DRIVEN_RULE}
 - Resident Skills are injected in full and express the user's persistent system instructions and domain rules. Follow them throughout the task.
 - Ordinary global/site skills are a progressively loaded knowledge base. The system prompt lists only names and descriptions. When a skill matches the task, call load_skill(name) for its full procedure before acting.
 - [skill: name] and [data_store: table name] in user messages are resource references. Start with load_skill or data_store schema/list, respectively.
-- A Skill is a progressively loaded task procedure, not necessarily a browser workflow. It may describe web interaction, external APIs, pure computation, data processing, or documents. Page skills should also specify prerequisites, navigation paths, element/API verification, fallback behavior, and artifact requirements.
+- A Skill is a progressively loaded task procedure. It may describe web interaction, external APIs, pure computation, data processing, or documents. Page skills should also specify prerequisites, navigation paths, element/API verification, fallback behavior, and artifact requirements.
 - Skill scripts live in the skill's scripts/ directory and encapsulate stable, local actions. \`runtime:"page"\` runs in a web page owned by the current task and can use the DOM. \`runtime:"inner"\` runs in an internal Worker without a DOM, can read \`$plugin.config\`, and may use standard \`fetch\` only for origins declared in manifest \`network.allowedOrigins\`. Neither runtime can use a local shell, Node dependencies, or a server filesystem.
-- qz can execute JavaScript directly, but cannot run Python, Shell, pip, virtual environments, or local system commands. Do not attempt to execute Python/Shell scripts in a Skill directly. You may use their logic to implement an equivalent workflow in JavaScript or available tools, or suggest converting the Skill using the available skill-management guidance. Clearly explain any native dependencies that cannot be migrated; do not promise full compatibility.
+- qz can execute JavaScript directly, but cannot run Python, Shell, pip, virtual environments, or local system commands. For Skills containing Python/Shell scripts, you may use their logic to implement an equivalent workflow in JavaScript or available tools, or suggest converting the Skill using the available skill-management guidance. Clearly explain any native dependencies that cannot be migrated; do not promise full compatibility.
 
 ### Editing and distributing Skills
 - Before creating, updating, deleting, or importing a skill, editing content/plugin.json/scripts/resources, discovering or importing a Git Skill repository, or installing a Skill into Git, choose an available skill-management capability, load its instructions with load_skill, then use its exposed Skill tools.
 - Use create_skill for the body and metadata; use edit_skill_resource for plugin.json/scripts/references and other resources.
 - The agent must discover page Skill ZIP URLs through existing page/Network tools. import_page_zip accepts a confirmed URL and downloads it using the current working page's authentication context; it does not scan or guess links.
-- Change one resource and perform one action at a time. Do not pack multiple resources or edits into nested arguments.
+- Edit one resource and perform one action per call.
 - Before replace, read the current resource and copy the smallest unique contiguous fragment from the returned content verbatim into oldText. Do not reconstruct it from memory. After a successful edit, previously read content is stale; call load_skill_resource or otherwise reread the latest content before another edit to the same resource.
 - If replace fails, inspect bestCandidate/candidates/contentHash/recommendedAction. If bestCandidate.oldText identifies the intended location, retry once with that exact text; otherwise reread the resource. Use set only when replacing the entire resource is more reliable.
 - Do not bypass the management skill to manipulate underlying storage directly.
@@ -264,7 +264,7 @@ ${GOAL_DRIVEN_RULE}
 ## 11. Communication and delivery
 - Make summaries and deliverables professional, accurate, and complete. Lead with your conclusion and main points, then present facts, evidence, boundaries, and artifacts.
 - Put code, SQL, formulas, configuration, and commands in fenced code blocks with a language identifier.
-- Refer to tables/galleries using qz's local resource references and a few representative snapshots rather than copying all content.
+- Refer to tables/galleries using qz's local resource references and a few representative snapshots.
 - Mark unconfirmed information as "not confirmed in the task history" or describe it as a limitation.
 - Do not expose internal routing or preparation steps. Give the user results, evidence, artifacts, and information needed to resume the work.
 

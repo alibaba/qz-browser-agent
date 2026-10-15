@@ -3,7 +3,7 @@ import {
   annotateSecurityGuardrailTabs,
   getSecurityGuardrails,
 } from "../../shared/security-guardrails.js";
-import { formatTab, isWebTab } from "../../shared/tab-utils.js";
+import { formatTab, isPageTab, isLocalFileUrl } from "../../shared/tab-utils.js";
 import { normalizeSessionGoal, normalizeSessionTracker } from "./task-state.js";
 
 import type { TabReference } from "../../shared/tab-utils.js";
@@ -16,6 +16,7 @@ interface AgentBrowserOptions {
 interface BrowserCollectorOptions {
   ready?(): Promise<unknown>;
   tabs?: Pick<typeof chrome.tabs, "query">;
+  isAllowedFileSchemeAccess?(): Promise<boolean>;
   normalizeSessionId?(value: unknown): string;
   supervisor?: { getRuntime?(sessionId: string): { tracker?: unknown; goal?: unknown } | null };
   canUseSessionGoal?(sessionId: string): Promise<boolean>;
@@ -72,6 +73,7 @@ export function createAgentBrowserContext({
 export function createSessionBrowserContextCollector({
   ready = async () => {},
   tabs = globalThis.chrome?.tabs,
+  isAllowedFileSchemeAccess = async () => await globalThis.chrome?.extension?.isAllowedFileSchemeAccess?.() ?? false,
   normalizeSessionId = value => String(value || "").trim(),
   supervisor,
   canUseSessionGoal = async () => true,
@@ -84,7 +86,8 @@ export function createSessionBrowserContextCollector({
   async function collect(sessionId = "", { sourceWindowId = null }: { sourceWindowId?: number | string | null } = {}) {
     await ready();
     const id = normalizeSessionId(sessionId);
-    const context: DynamicContext = {};
+    const context: DynamicContext = { fileAccessAllowed: false };
+    try { context.fileAccessAllowed = await isAllowedFileSchemeAccess(); } catch { /* Treat an unavailable grant as disabled. */ }
     const sourceId = sourceWindowId === null || sourceWindowId === undefined || sourceWindowId === ""
       ? NaN
       : Number(sourceWindowId);
@@ -105,7 +108,7 @@ export function createSessionBrowserContextCollector({
         const [visibleTab] = Number.isInteger(sourceId) && sourceId >= 0
           ? await tabs?.query?.({ active: true, windowId: sourceId }) || []
           : [];
-        if (visibleTab && isWebTab(visibleTab)) {
+        if (visibleTab && isPageTab(visibleTab)) {
           const formattedVisible = annotateSecurityGuardrailTab(formatTab(visibleTab, { titleLimit: 120 }), guardrails);
           const visibleTabId = Number(formattedVisible.id);
           const owner = findOwnedTabOwner(visibleTabId);
@@ -113,7 +116,8 @@ export function createSessionBrowserContextCollector({
             ...formattedVisible,
             ownedByCurrentTask: ownsTab(id, visibleTabId),
             ownerSessionId: owner?.sessionId || "",
-            readOnlyUsable: !formattedVisible.securityGuardrailBlocked,
+            readOnlyUsable: !formattedVisible.securityGuardrailBlocked
+              && (!isLocalFileUrl(formattedVisible.url) || context.fileAccessAllowed === true),
           };
         }
       } catch (_error) {

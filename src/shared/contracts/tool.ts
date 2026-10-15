@@ -35,7 +35,8 @@ export type ToolArguments<S extends ToolSchema> = {
   [K in Extract<RequiredKeys<S>, keyof S["properties"]>]-?: ParameterValue<S["properties"][K]>;
 };
 
-export type ToolPageAccess = false | "owned" | "readOnly";
+/** `tab` manages an owned tab without reading its document. */
+export type ToolPageAccess = false | "owned" | "readOnly" | "tab";
 export interface ToolTimeoutProfile { defaultMs: number; maxMs: number; graceMs?: number }
 export type ToolTimeout = number | ToolTimeoutProfile;
 

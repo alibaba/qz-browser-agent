@@ -51,7 +51,7 @@ export default `# 技能工作台
 1. 编辑前先 \`load_skill("qingzhou-mcp")\`，根据其探测结果、\`tools[].name/description/inputSchema\`、最小试调用和用户目标，选出真正需要绑定的工具；不要默认包装 server 的全部工具。
 2. 在 \`plugin.json\` 顶层写 \`category\`，按用户任务场景选择稳定业务分类（如“研究”“数据”“出行”“开发”）；只有跨场景纯 MCP 网关才使用 \`{ "id": "mcp", "label": "MCP" }\`。
 3. 根据最小试调用的真实返回 shape 调用“读取可用渲染器”，为每个绑定工具选择 \`table/list/fields/summary/article/image_grid/tree/markdown/text\` 等标准 renderer。MCP 返回 \`structuredContent\` 或 JSON 文本时可直接映射；只有自然语言文本时使用 \`text/markdown\`，不要臆测字段。
-4. 在 \`plugin.json.mcpServers\` 声明 server，并在 \`tools[]\` 中为选中的工具配置 \`runtime:"mcp"\`、\`mcp:{ server, tool }\` 和匹配返回结构的 \`renderer\`。renderer 可以写在单个 tool 上，也可以写在顶层 \`renderers.tools\`；不要只完成 MCP 绑定而遗漏结果 UI。
+4. 在 \`plugin.json.mcpServers\` 声明 server，并在 \`tools[]\` 中为选中的工具配置 \`runtime:"mcp"\`、\`mcp:{ server, tool }\` 和匹配返回结构的 \`renderer\`。renderer 可以写在单个 tool 上，也可以写在顶层 \`renderers.tools\`。
 5. 写入前轻舟会校验启用的 MCP server 能否完成 \`tools/list\`；失败时修正 URL、headers，或明确将暂不可用的 server 设为 \`enabled:false\`，不要绕过校验。
 6. 写入后重新 \`load_skill(name)\`，再按 \`qingzhou-mcp\` 的 registry 流程验证 \`pluginTool.name\`，通过该 Skill 工具做正式调用，并确认命中了预期 renderer 而不是通用文本兜底。
 
@@ -143,13 +143,13 @@ export default `# 技能工作台
 
 需要 Endpoint、Token 或其他用户配置时，在 manifest 顶层声明 \`settings.fields\`；不要新增业务专用设置页或 host action。设置页的控件、分组和宽度只由下面这套通用 DSL 决定，不支持自定义 \`style\`、\`theme\` 或任意组件名：
 
-- \`settings.fields[].type\` 只支持 \`text\`、\`secret\`、\`url\`、\`boolean\`、\`number\`、\`select\`。布尔开关必须用 \`boolean\`，不存在 \`toggle\` 类型。
+- \`settings.fields[].type\` 只支持 \`text\`、\`secret\`、\`url\`、\`boolean\`、\`number\`、\`select\`。布尔开关使用 \`boolean\`。
 - 所有字段都可声明 \`key\`、\`type\`、\`label\`、\`description\`、\`placeholder\`、\`required\`、\`default\` 和 \`width\`。\`key\` 以英文字母开头，只能包含字母、数字、下划线和连字符；\`width\` 只支持 \`full\`（默认，整行）或 \`half\`（半行，两列排列；窄屏自动回到整行）。
 - \`text\` 可声明正则字符串 \`pattern\`；\`url\` 只接受不带用户名密码的 HTTP(S) 地址；\`secret\` 可声明 \`reenterWhen\`，列出哪些其他字段改变后必须重新输入密钥，且不能声明非空 \`default\`。
 - \`number\` 可声明 \`min\`、\`max\`、\`step\`；\`select\` 必须声明非空 \`options\`，每项使用 \`{ "label": "显示文字", "value": "稳定字符串值" }\`；\`boolean\` 的值和默认值必须是真正的 JSON boolean，不能用字符串 \`"true"\` / \`"false"\` 代替。
 - 字段较多时用 \`settings.layout.sections\` 分组。每组支持 \`title\`、可选 \`description\` 和字段 key 数组 \`fields\`；一个字段最多进入一个分组，未分组字段仍会显示。layout 只控制通用设置页的展示，不进入存储或脚本配置。
 
-脚本通过 \`$plugin.config.<key>\` 读取设置。\`type:"secret"\` 的值会回填到本地设置页的 password 控件，但不会注入 page runtime；需要密钥的工具必须使用 \`runtime:"inner"\`。动态网络来源引用一个 \`type:"url"\` 设置字段，Skill 继续使用普通 \`fetch\`，不调用轻舟专用 fetch 工具。
+脚本通过 \`$plugin.config.<key>\` 读取设置。\`type:"secret"\` 的值会回填到本地设置页的 password 控件，但不会注入 page runtime；需要密钥的工具必须使用 \`runtime:"inner"\`。动态网络来源引用一个 \`type:"url"\` 设置字段，Skill 使用普通 \`fetch\`。
 
 \`\`\`json
 {
@@ -260,7 +260,7 @@ async () => {
 - \`renderers.tools\` 的可用类型以“读取可用渲染器”工具返回为准。创建带 UI 的 Skill 前先读取 registry，再选择合适 renderer，并按返回 schema 设计脚本 return。
 - 配置了 renderer 的工具用轻舟标准可视化/分组展示；没有 renderer 的工具自动按通用脚本结果展示。
 - 更复杂的展示用 renderer 的 \`layout.blocks\` 组合已有轻舟组件，不要写一次性的视觉结构。
-- skill 本身就是用户可选择的入口；Skill 不要再声明 slash command。需要用户配置时，在 manifest 声明通用 \`settings.fields\`，轻舟会自动把设置卡片放进“设置 → 技能”。
+- 需要用户配置时，在 manifest 声明通用 \`settings.fields\`，轻舟会自动把设置卡片放进“设置 → 技能”。
 - manifest 的 \`settings.fields\` 只定义字段结构和可选初始 default，不代表用户当前配置；实际读写配置值时加载 \`qingzhou-management\`，使用 \`qingzhou_management__manage_skill_settings\` 的 list/get/update，并以 get 结果验收。secret 不在 manifest 声明 default。
 
 ## 质量要求

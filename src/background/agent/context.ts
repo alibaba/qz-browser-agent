@@ -7,6 +7,7 @@ import { annotateSecurityGuardrailTab, annotateSecurityGuardrailTabs, matchBlock
 import { getSkillDisplayName } from "../../shared/skills/skill-utils.js";
 import { throwIfCancelled } from "../internal/abortable.js";
 import type { TabReference } from "../../shared/tab-utils.js";
+import { isLocalFileUrl } from "../../shared/tab-utils.js";
 import type { ModelMessage } from "../../shared/contracts/model-message.js";
 import type { ContextReason } from "../../sdk/background/context.js";
 import type { ContextCapsule, ContextDiagnostic } from "../context-sources.js";
@@ -35,7 +36,7 @@ export interface DynamicContext extends Record<string, unknown> {
   now?: string; workingTab?: ContextTab | null; userVisibleTab?: ContextTab | null;
   tabs?: ContextTab[]; taskSiteTabs?: ContextTab[]; sourceWindowId?: number | string | null;
   pageTitle?: string; pageUrl?: string; selectionText?: string;
-  securityGuardrailBlocked?: boolean; contentAccess?: string; siteSkills?: SiteSkill[];
+  securityGuardrailBlocked?: boolean; fileAccessAllowed?: boolean; contentAccess?: string; siteSkills?: SiteSkill[];
   sessions?: SessionContext[]; tracker?: TrackerContext; goal?: GoalContext | null; location?: LocationContext;
   sources?: readonly ContextCapsule[]; contextDiagnostics?: readonly ContextDiagnostic[];
 }
@@ -276,7 +277,7 @@ export function formatDynamicContext(context: DynamicContext | null) {
     const ownership = visible.ownedByCurrentTask
       ? t("owned")
       : (visible.ownerSessionId ? t("foreignOwned", { id: visible.ownerSessionId }) : t("unowned"));
-    const access = visible.ownerSessionId && !visible.ownedByCurrentTask
+    const access = visible.readOnlyUsable === false ? "" : visible.ownerSessionId && !visible.ownedByCurrentTask
       ? t("readOnlyAccess")
       : t("useTabAccess");
     lines.push(t("visibleTab", { tab: formatDynamicContextTab(visible), ownership, access }));
@@ -504,7 +505,7 @@ export async function collectDynamicContext(
   if (contextTab) {
     context.pageTitle = contextTab.title || context.pageTitle || "";
     context.pageUrl = contextTab.url || context.pageUrl || "";
-    if (!contextTab.securityGuardrailBlocked) {
+    if (!contextTab.securityGuardrailBlocked && !(isLocalFileUrl(contextTab.url) && context.fileAccessAllowed === false)) {
       context.selectionText = String(await services.readSelectedText(contextTab.id ?? undefined) || "");
     } else {
       delete context.selectionText;
@@ -557,11 +558,11 @@ export function normalizeDynamicContext(value: unknown): DynamicContext {
   const source = record(value);
   const extra = { ...source };
   for (const key of ["now", "workingTab", "userVisibleTab", "tabs", "taskSiteTabs", "sourceWindowId", "pageTitle", "pageUrl",
-    "selectionText", "securityGuardrailBlocked", "contentAccess", "siteSkills", "sessions", "tracker", "goal", "location", "sources", "contextDiagnostics"]) delete extra[key];
+    "selectionText", "securityGuardrailBlocked", "fileAccessAllowed", "contentAccess", "siteSkills", "sessions", "tracker", "goal", "location", "sources", "contextDiagnostics"]) delete extra[key];
   const context: DynamicContext = {
     ...extra,
     ...textFields(source, ["now", "pageTitle", "pageUrl", "selectionText", "contentAccess"]),
-    ...booleanFields(source, ["securityGuardrailBlocked"]),
+    ...booleanFields(source, ["securityGuardrailBlocked", "fileAccessAllowed"]),
   };
   if (source.sourceWindowId === null || typeof source.sourceWindowId === "string" || typeof source.sourceWindowId === "number") context.sourceWindowId = source.sourceWindowId;
   for (const key of ["workingTab", "userVisibleTab"] as const) {

@@ -80,10 +80,6 @@ export function buildRunProfilePromptSection(profile: RunProfile | null | undefi
     lines.push(t("textPolicy"));
     lines.push(t("imagePlaceholderPolicy"));
   }
-  if (!profile.session?.canManageSessions) {
-    lines.push(t("restrictedPolicy"));
-    lines.push(t("noGoals"));
-  }
   return `${lines.join("\n")}\n`;
 }
 

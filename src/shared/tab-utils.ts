@@ -15,12 +15,24 @@ export function isWebTabUrl(url: unknown) {
   return /^https?:\/\//i.test(String(url || ""));
 }
 
+export function isLocalFileUrl(url: unknown) {
+  return /^file:\/\//i.test(String(url || ""));
+}
+
+export function isPageTabUrl(url: unknown) {
+  return isWebTabUrl(url) || isLocalFileUrl(url);
+}
+
+export function isPageTab(tab: TabReference | null | undefined) {
+  return isPageTabUrl(getEffectiveTabUrl(tab));
+}
+
 export function getEffectiveTabUrl(tab: TabReference | null | undefined) {
   if (!tab || typeof tab !== "object") return "";
   const currentUrl = String(tab.url || "").trim();
   const pendingUrl = String(tab.pendingUrl || "").trim();
-  if (isWebTabUrl(currentUrl)) return currentUrl;
-  if (isWebTabUrl(pendingUrl)) return pendingUrl;
+  if (isPageTabUrl(currentUrl)) return currentUrl;
+  if (isPageTabUrl(pendingUrl)) return pendingUrl;
   return currentUrl || pendingUrl;
 }
 
@@ -36,8 +48,8 @@ export function formatTab(tab: TabReference, { titleLimit = 80 } = {}) {
   const currentUrl = String(tab?.url || "").trim();
   const url = getEffectiveTabUrl(tab);
   const rawTitle = stripInvisibleTitlePrefix(String(tab?.title || ""));
-  const title = isWebTabUrl(url) && (
-    !isWebTabUrl(currentUrl)
+  const title = isPageTabUrl(url) && (
+    !isPageTabUrl(currentUrl)
     || /^(?:about:|chrome(?:-extension)?:\/\/|edge:\/\/|brave:\/\/|opera:\/\/|vivaldi:\/\/)/i.test(rawTitle.trim())
   )
     ? ""

@@ -78,6 +78,7 @@ export interface ToolExtensionAPI extends Omit<PageNavigationHost, "commitObserv
   secondsToMs(value?: unknown, fallback?: number): number;
   makeSessionTabTargetError(code: string, details: Fields): Error;
   assertTabAllowed(tabId: number, details: Fields): Promise<unknown>;
+  assertPageUrlAccessible(url: string): Promise<void>;
   assertUrlAllowed(url: string, guardrails: SecurityGuardrails, details: Fields): void;
   sendToContent(tabId: number | undefined, action: string, args: Fields): Promise<unknown>;
   getTabPageState(tabId: unknown): Promise<{ url: string; title: string }>;

@@ -18,6 +18,8 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   STALE_AGENT_LEASE: { label: "toolError.STALE_AGENT_LEASE.label" },
   RUN_ABORTED_BEFORE_START: { label: "toolError.RUN_ABORTED_BEFORE_START.label" },
   EMPTY_LLM_RESPONSE: { label: "toolError.EMPTY_LLM_RESPONSE.label" },
+  FILE_ACCESS_REQUIRED: { label: "toolError.FILE_ACCESS_REQUIRED.label", message: "toolError.FILE_ACCESS_REQUIRED.message" },
+  UNSUPPORTED_URL: { label: "toolError.UNSUPPORTED_URL.label", message: "toolError.UNSUPPORTED_URL.message" },
   GIT_REPOSITORY_TAB_FAILED: { label: "toolError.GIT_REPOSITORY_TAB_FAILED.label" },
   INVALID_CONTENT_RESPONSE: { label: "toolError.INVALID_CONTENT_RESPONSE.label" },
   AGENT_RUN_FAILED: { label: "toolError.AGENT_RUN_FAILED.label" },

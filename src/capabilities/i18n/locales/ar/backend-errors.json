@@ -1,4 +1,8 @@
 {
+  "backend.toolError.UNSUPPORTED_URL.label": "بروتوكول الصفحة غير مدعوم",
+  "backend.toolError.UNSUPPORTED_URL.message": "استخدم عنوان صفحة HTTP أو HTTPS أو file:// مع إذن الوصول.",
+  "backend.toolError.FILE_ACCESS_REQUIRED.label": "يلزم إذن الوصول إلى الملفات",
+  "backend.toolError.FILE_ACCESS_REQUIRED.message": "افتح تفاصيل qz في chrome://extensions، وفعّل السماح بالوصول إلى عناوين URL للملفات، ثم أعد المحاولة.",
   "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "إذن المتصفح مطلوب",
   "backend.toolError.BROWSER_PERMISSION_DENIED.label": "لم يُمنح إذن المتصفح",
   "backend.model.reviewAttachments": "يرجى مراجعة المرفقات.",

@@ -7,14 +7,14 @@ import type { TabReference } from '#sdk/shared/browser';
 import type { ToolContext } from '#sdk/background';
 type TabsHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "getToolRuntimeDependencies" | "makeSessionTabTargetError"
-  | "assertTabAllowed" | "assertUrlAllowed" | "enablePreNavigationNetworkWatch"
+  | "assertTabAllowed" | "assertUrlAllowed" | "assertPageUrlAccessible" | "enablePreNavigationNetworkWatch"
   | "withDebugger" | "getDebuggerConnectionId" | "setDebuggerRetention" | "releaseDebugger"> & { defaultNetworkLimit?: number };
 interface UsableTab extends TabReference {
   usable?: boolean; ownedByCurrentTask?: boolean; securityGuardrailBlocked?: boolean;
   unusableCode?: string; unusableReason?: string; claimRequired?: boolean;
   isWorkingTab?: boolean; readOnlyUsable?: boolean; ownerSessionId?: string;
 }
-import { filterWebTabs, formatTab, isWebTab } from "#sdk/shared/browser";
+import { formatTab, isPageTab } from "#sdk/shared/browser";
 import {
   annotateSecurityGuardrailTab,
   annotateSecurityGuardrailTabs,
@@ -29,6 +29,7 @@ export function registerTabsNavigationTools({
   makeSessionTabTargetError,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
+  assertPageUrlAccessible,
   enablePreNavigationNetworkWatch,
   withDebugger, getDebuggerConnectionId, setDebuggerRetention, releaseDebugger,
   defaultNetworkLimit: DEFAULT_NETWORK_LIMIT = 200,
@@ -48,7 +49,7 @@ registerTool({
   execute: async (_args, _signal, context = {}) => {
     const tabs = await chrome.tabs.query({});
     const guardrails = await getSecurityGuardrails();
-    const formatted = filterWebTabs(tabs).map((tab) => ({ ...formatTab(tab), ...modes.describePage(Number(tab.id)) }));
+    const formatted = tabs.filter(isPageTab).map((tab) => ({ ...formatTab(tab), ...modes.describePage(Number(tab.id)) }));
     const annotated = annotateSecurityGuardrailTabs(formatted, guardrails);
     return await annotateTabsWithSessionUsability(annotated, context);
   },
@@ -132,7 +133,7 @@ registerTool({
       });
     }
     const tab = resolved.tab || await chrome.tabs.get(tabId);
-    if (!isWebTab(tab)) {
+    if (!isPageTab(tab)) {
       throw new ToolExecutionError("NO_WORKING_WEB_TAB", t("currentSessionWorkingTabIsNotAWebPage"), {
         tab: formatTab(tab),
       });
@@ -164,6 +165,7 @@ registerTool({
   } as const; },
   timeout: { defaultMs: 20000, maxMs: 120000 },
   execute: async ({ url, mode = "desktop", watchNetwork = false, resetNetwork = true, networkMaxRecords = DEFAULT_NETWORK_LIMIT }, signal, context = {}) => {
+    await assertPageUrlAccessible(url);
     assertUrlAllowedBySecurityGuardrails(url, await getSecurityGuardrails(), { tool: "open_tab", source: "url" });
     if (signal?.aborted) {
       throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before opening tab", { url });
@@ -241,7 +243,7 @@ registerTool({
     },
     required: ["tabId"],
   } as const; },
-  page: "owned",
+  page: "tab",
   timeout: { defaultMs: 20000, maxMs: 120000 },
   execute: async ({ tabId }) => {
     await chrome.tabs.remove(tabId);
@@ -266,7 +268,7 @@ registerTool({
   execute: async ({ tabId }) => {
     const before = await chrome.tabs.get(tabId);
     await assertTabAllowedBySecurityGuardrails(tabId, { tool: "use_tab", source: "tab" });
-    if (!isWebTab(before)) {
+    if (!isPageTab(before)) {
       throw new ToolExecutionError("NOT_WEB_TAB", t("tabIsNotAWebPageAndCannotBe", { tabId: String(tabId) }), {
         tab: formatTab(before),
       });
@@ -303,11 +305,13 @@ registerTool({
     },
     required: ["url"],
   } as const; },
-  page: "owned",
+  page: "tab",
   timeout: { defaultMs: 20000, maxMs: 120000 },
   execute: async ({ url, tabId, watchNetwork = false, resetNetwork = true, networkMaxRecords = DEFAULT_NETWORK_LIMIT }, signal, context = {}) => {
+    await assertPageUrlAccessible(url);
     assertUrlAllowedBySecurityGuardrails(url, await getSecurityGuardrails(), { tool: "navigate", source: "url" });
     if (!tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "navigate" });
+    await modes.preparePage(tabId, "navigate", signal, context);
     const networkWatch = watchNetwork
       ? await enablePreNavigationNetworkWatch(tabId, { resetNetwork, networkMaxRecords }, context)
       : null;

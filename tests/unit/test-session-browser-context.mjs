@@ -45,3 +45,15 @@ assert.equal(Object.hasOwn(backgroundContext, "userVisibleTab"), false);
 assert.deepEqual(queries, [{ active: true, windowId: 8 }], "background runs must not infer a global current window");
 
 console.log("session browser context tests passed");
+
+let grant = false;
+const fileCollector = createSessionBrowserContextCollector({
+  isAllowedFileSchemeAccess: async () => { if (grant === null) throw new Error('unavailable'); return grant; },
+  tabs: { query: async () => [{ id: 7, url: 'file:///tmp/report.html' }] },
+});
+for (grant of [false, true, null]) {
+  const context = await fileCollector.collect('s1', { sourceWindowId: 8 });
+  assert.equal(context.fileAccessAllowed, grant === true);
+  assert.equal(context.userVisibleTab.readOnlyUsable, grant === true);
+  assert.equal((await fileCollector.collect('s1')).fileAccessAllowed, grant === true, 'permission is known even without a visible tab');
+}

@@ -135,9 +135,11 @@ npm run release -- --version 0.0.0.1 --target webstore
 
 This writes `dist/releases/<version>/webstore/qz-browser-agent-extension-<version>.webstore.zip`
 with `manifest.json` at the ZIP root. Upload this ZIP in the Chrome Developer Dashboard.
+The Web Store target removes `key` from the packaged manifest. Source and manual packages retain
+their public key to keep a stable extension ID during local development.
 Both targets use the same runtime files. The default `manual` target keeps the installation folder;
 each target has its own metadata and debug archive. The Web Store ZIP contains runtime files and
-licenses; its release metadata and source maps stay alongside it. Packaging checks the root manifest,
+licenses; its release metadata and source maps stay alongside it. Packaging checks the single root manifest,
 its referenced resources, ZIP integrity, upload size, and separation of development files.
 
 JavaScript uses standard Terser minification, including variable shortening. `--no-minify` disables

@@ -50,7 +50,7 @@ for (const phase of ["before", "create", "claim", "watch", "navigate", "claim-fa
         });
       },
       makeSessionTabTargetError: (code, details) => new ToolExecutionError(code, code, details),
-      assertTabAllowed() {}, assertUrlAllowed() {},
+      assertTabAllowed() {}, assertUrlAllowed() {}, async assertPageUrlAccessible() {},
       getToolRuntimeDependencies(actual) {
         assert.equal(actual, context);
         return {

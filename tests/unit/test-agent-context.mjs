@@ -4,11 +4,51 @@ import { Agent } from '../../src/background/agent/agent.js';
 import { collectDynamicContext, collectSiteSkillPreviewContext, collectToolRuntimeContext,
   normalizeDynamicContext, formatDynamicContext, buildContextCapsuleMessage } from '../../src/background/agent/context.js';
 import { createTestAgentOptions } from '../support/agent-services.mjs';
+import { withLanguage } from '../../src/shared/i18n/index.js';
 
 const request = (signal, runId = 'run-1', reason = 'snapshot') => ({ signal, runId, reason });
 const services = overrides => ({ getSecurityGuardrails: async () => ({ blockedDomains: [], blockedPatterns: [] }),
   readSelectedText: async id => `selection-${id}`, matchSiteSkillsForUrls: async () => [], ...overrides });
 function deferred() { let resolve; let reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
+
+test('file access restriction lives only in the current system prompt', async () => {
+  for (const language of ['en', 'zh-CN']) {
+    let allowed = false;
+    const agent = withLanguage(language, () => new Agent('session', createTestAgentOptions()));
+    agent.setDynamicContextProvider(async () => ({ fileAccessAllowed: allowed }));
+    agent._attemptLLM = async () => structuredClone(agent.messages);
+    const denial = language === 'en' ? /File URL access is disabled/g : /未开启文件网址访问/g;
+    for (allowed of [false, false, true, false]) {
+      agent._clearDynamicContextSnapshot();
+      const messages = await agent._callLLM(new AbortController().signal);
+      assert.equal(messages.length, 1, 'replace the system message without appending history');
+      assert.equal(messages[0].role, 'system');
+      assert.equal(messages[0].content.match(denial)?.length || 0, allowed ? 0 : 1);
+      const capsule = buildContextCapsuleMessage(agent._dynamicContextSnapshot);
+      assert.doesNotMatch(capsule.content, /file:\/\/|File URL access|文件网址访问/);
+    }
+  }
+  assert.equal(normalizeDynamicContext({ fileAccessAllowed: 'true' }).fileAccessAllowed, undefined);
+});
+
+test('disabled file access avoids selection reads and page access suggestions', async () => {
+  const context = await collectDynamicContext(async () => ({ fileAccessAllowed: false,
+    workingTab: { id: 7, url: 'file:///tmp/report.html' }, selectionText: 'old',
+    userVisibleTab: { id: 8, url: 'file:///tmp/other.html', readOnlyUsable: false },
+  }), request(), services({ readSelectedText: async () => assert.fail('must not read local content') }));
+  assert.equal(context.selectionText, undefined);
+  assert.doesNotMatch(withLanguage('en', () => formatDynamicContext(context)), /Read with read_article|Use use_tab/);
+});
+
+test('local and missing target tabs never inherit another page URL', async () => {
+  const agent = new Agent('session', createTestAgentOptions({
+    tools: { getModelPolicy: () => ({ pageContext: 'working' }) },
+    browserContext: { getTab: async id => id === 7 ? { id, url: 'file:///tmp/report.html' } : null },
+  }));
+  const context = { workingTab: { id: 1, url: 'https://old.test/' } };
+  assert.equal((await agent._enrichToolCallArgsWithPageContext('read_article', { tabId: 7 }, context))._pageUrl, 'file:///tmp/report.html');
+  assert.equal((await agent._enrichToolCallArgsWithPageContext('read_article', { tabId: 8 }, context))._pageUrl, '');
+});
 
 test('unknown context fields stay opaque while malformed known structures are excluded', () => {
   const custom = { nested: 'private' };

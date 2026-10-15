@@ -4,8 +4,8 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model-facing documentation stays with the tool contribution, outside the UI catalog. */
 const messages = defineMessages("page-tools", {
   readArticleDescription: {
-    "zh-CN": "读取目标页面经过整理的正文 Markdown。正文抽取会组合规则清噪、Readability 对照与失败恢复，并保留标题、列表、链接、代码和表格结构；适合文章、文档、搜索结果摘要、长文本页面。每次只返回 offset/limit 指定的正文片段，并返回 totalChars/hasMore/nextOffset/sourceSelector/linkCount；outline 是可定位目录，条目带 offset/endOffset/charCount，需要读取某章节时用对应 offset 和 limit 继续调用 read_article；需要 DOM 结构证据时，用 sourceSelector 继续调用 read_dom。limit 必填，建议 4000-8000，最大 20000。读正文优先用它，不要用截图逐屏阅读。",
-    en: "Read cleaned main content from the target page as Markdown. Extraction combines rule-based cleanup, Readability comparison, and failure recovery while preserving headings, lists, links, code, and tables. Suitable for articles, documents, search-result summaries, and long text pages. Each call returns only the segment specified by offset/limit, along with totalChars/hasMore/nextOffset/sourceSelector/linkCount. outline is a navigable table of contents whose entries include offset/endOffset/charCount; use the corresponding offset and limit in another read_article call to read a section. For DOM evidence, pass sourceSelector to read_dom. limit is required; 4000–8000 is recommended, with a maximum of 20000. Prefer this tool for reading text rather than taking screenshots of successive screens.",
+    "zh-CN": "读取目标页面经过整理的正文 Markdown。正文抽取会组合规则清噪、Readability 对照与失败恢复，并保留标题、列表、链接、代码和表格结构；适合文章、文档、搜索结果摘要、长文本页面。每次只返回 offset/limit 指定的正文片段，并返回 totalChars/hasMore/nextOffset/sourceSelector/linkCount；outline 是可定位目录，条目带 offset/endOffset/charCount，需要读取某章节时用对应 offset 和 limit 继续调用 read_article；需要 DOM 结构证据时，用 sourceSelector 继续调用 read_dom。limit 必填，建议 4000-8000，最大 20000。读正文优先使用本工具。",
+    en: "Read cleaned main content from the target page as Markdown. Extraction combines rule-based cleanup, Readability comparison, and failure recovery while preserving headings, lists, links, code, and tables. Suitable for articles, documents, search-result summaries, and long text pages. Each call returns only the segment specified by offset/limit, along with totalChars/hasMore/nextOffset/sourceSelector/linkCount. outline is a navigable table of contents whose entries include offset/endOffset/charCount; use the corresponding offset and limit in another read_article call to read a section. For DOM evidence, pass sourceSelector to read_dom. limit is required; 4000–8000 is recommended, with a maximum of 20000. Prefer this tool for reading text.",
   },
   readArticleTabId: {
     "zh-CN": "本次调用的目标标签页 ID；省略时使用当前任务工作标签页。",
@@ -28,8 +28,8 @@ const messages = defineMessages("page-tools", {
     en: "Required number of characters to return. Recommended: 4000–8000; maximum: 20000. To continue reading, pass nextOffset from the previous result.",
   },
   readDomDescription: {
-    "zh-CN": "分页读取目标页面的实时 DOM HTML 原始片段。返回原始 HTML 和行号，支持指定起始行和行数进行分段读取，总是返回 totalLines 方便后续继续读取。不要把它作为常规页面探索入口；通常只在 find_elements 返回 line/lineRange 后，或需要验证隐藏字段、form/action、id/class/data-testid、p/br 等结构证据时读取。",
-    en: "Read paginated raw HTML from the target page’s live DOM. Returns raw HTML with line numbers, accepts a starting line and line count, and always returns totalLines for continued reading. Do not use as the default page exploration tool. Usually use after find_elements returns line/lineRange, or when verifying structural evidence such as hidden fields, form/action, id/class/data-testid, or p/br.",
+    "zh-CN": "分页读取目标页面的实时 DOM HTML 原始片段。返回原始 HTML 和行号，支持指定起始行和行数进行分段读取，总是返回 totalLines 方便后续继续读取。用于读取 find_elements 返回的 line/lineRange，或验证隐藏字段、form/action、id/class/data-testid、p/br 等 DOM 结构。",
+    en: "Read paginated raw HTML from the target page’s live DOM. Returns raw HTML with line numbers, accepts a starting line and line count, and always returns totalLines for continued reading. Use to read line/lineRange returned by find_elements, or to verify DOM structure such as hidden fields, form/action, id/class/data-testid, or p/br.",
   },
   readDomOffset: {
     "zh-CN": "起始行号（1-indexed），默认 1",
@@ -44,8 +44,8 @@ const messages = defineMessages("page-tools", {
     en: "Scope to read. Default: body. Accepts a raw CSS selector or a css:... / uid:... target.",
   },
   findElementsDescription: {
-    "zh-CN": "按范围、语义和可选文本正则查找页面元素候选，并优先排序可操作、可见、匹配更明确的元素。默认用于定位按钮、链接、输入框、列表项，也可查找普通文本/容器；pattern 是过滤条件，不是必填入口：不传 pattern 时会列出 selector/tags/roles/types 命中的候选。返回可直接用于 inspect_element/act_on_element 的 target，以及 stable selector、role/name/text/rect/actionable/inViewport/lineRange 等摘要。需要原始 DOM 时用 read_dom 读取对应行号。",
-    en: "Find candidate page elements by scope, semantics, and an optional text regular expression. Prioritizes actionable, visible, and more specific matches. Commonly used for buttons, links, inputs, and list items; also supports plain text and containers. pattern is an optional filter, not a required entry point: without it, lists candidates matching selector/tags/roles/types. Returns a target usable directly with inspect_element/act_on_element, plus summaries including a stable selector, role/name/text/rect/actionable/inViewport/lineRange. For raw DOM, pass the corresponding line numbers to read_dom.",
+    "zh-CN": "按范围、语义和可选文本正则查找页面元素候选，并优先排序可操作、可见、匹配更明确的元素。默认用于定位按钮、链接、输入框、列表项，也可查找普通文本/容器；pattern 是可选过滤条件：不传 pattern 时会列出 selector/tags/roles/types 命中的候选。返回可直接用于 inspect_element/act_on_element 的 target，以及 stable selector、role/name/text/rect/actionable/inViewport/lineRange 等摘要。需要原始 DOM 时用 read_dom 读取对应行号。",
+    en: "Find candidate page elements by scope, semantics, and an optional text regular expression. Prioritizes actionable, visible, and more specific matches. Commonly used for buttons, links, inputs, and list items; also supports plain text and containers. pattern is an optional filter: without it, lists candidates matching selector/tags/roles/types. Returns a target usable directly with inspect_element/act_on_element, plus summaries including a stable selector, role/name/text/rect/actionable/inViewport/lineRange. For raw DOM, pass the corresponding line numbers to read_dom.",
   },
   findElementsPattern: {
     "zh-CN": "可选 JavaScript RegExp pattern，用于匹配文本、aria、placeholder、class、id、href 等；不传则列出范围内候选元素。",

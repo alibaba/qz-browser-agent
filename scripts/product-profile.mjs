@@ -47,7 +47,8 @@ export async function readProductProfile(sourceDir, requested) {
     overrides.set(target, `${JSON.stringify(rules.sort((a, b) => a.id - b.id), null, 2)}\n`);
     fragments.add(fragment);
   }
-  const includes = path => !fragments.has(path) && (!/^products\/[^/]+\//.test(path) || path.startsWith(`products/${name}/`));
+  const includes = path => path !== 'products/manifest.json' && !fragments.has(path)
+    && (!/^products\/[^/]+\//.test(path) || path.startsWith(`products/${name}/`));
   const plugins = [{ name: 'product-composition', setup(build) {
     build.onLoad({ filter: /\.[cm]?[jt]s$/ }, ({ path }) => {
       if (!includes(forwardPath(relative(sourceDir, path)))) throw new Error(`inactive product import: ${forwardPath(relative(sourceDir, path))}`);
@@ -55,5 +56,5 @@ export async function readProductProfile(sourceDir, requested) {
       return contents === undefined ? undefined : { contents, loader: 'ts', resolveDir: dirname(path) };
     });
   } }];
-  return { name, overrides, includes, plugins, manifest: { ...manifest, defaultProduct: name } };
+  return { name, overrides, includes, plugins };
 }

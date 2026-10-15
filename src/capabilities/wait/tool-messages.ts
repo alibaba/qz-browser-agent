@@ -88,8 +88,8 @@ const messages = defineMessages("wait-tools", {
     en: "Timeout in seconds. Default: 10.",
   },
   waitForNavigationScreenshot: {
-    "zh-CN": "是否在加载完成后截图，默认 false。读正文不要开启，视觉确认才开启",
-    en: "Whether to take a screenshot after loading. Default: false. Enable for visual confirmation, not for reading main text.",
+    "zh-CN": "是否在加载完成后截图，默认 false。需要视觉确认时设为 true。",
+    en: "Whether to take a screenshot after loading. Default: false. Enable for visual confirmation.",
   },
   waitForNavigationFromUrl: {
     "zh-CN": "可选：上一动作前的 URL，用于判断当前 URL 是否已变化",

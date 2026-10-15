@@ -67,7 +67,7 @@ export interface ToolSessionCommands extends UserWaitRuntime {
   runAutomation(id: string): Promise<unknown>;
   listAutomationRuns(input: { automationId: string; limit: number }): Promise<unknown>;
   updateGoal(input: GoalUpdateInput): Promise<unknown>;
-  resolveTargetTab(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; tabId: number; source: string; checkOnly?: boolean; readOnly?: boolean; allowPreNavigationBlank?: boolean }): Promise<TargetTabResult>;
+  resolveTargetTab(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; tabId: number; source: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean }): Promise<TargetTabResult>;
   updateWorkingTab(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; tab: TabReference; source: string; toolName: string; action?: string; createdTab?: boolean; claim?: boolean }): Promise<unknown>;
   clearWorkingTab(input: { sessionId: string; tabId?: number; source?: string; runId?: string | null; signal?: AbortSignal }): Promise<unknown>;
   canManageSessions(sessionId: string): Promise<boolean>;

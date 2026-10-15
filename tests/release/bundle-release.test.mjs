@@ -347,7 +347,7 @@ with tempfile.TemporaryDirectory() as temporary:
     for name in ['LICENSE','NOTICE','THIRD_PARTY_NOTICES.md']:
         (root/name).write_text('Synthetic distribution notice: '+name)
     extension=root/'src';extension.mkdir()
-    (extension/'manifest.json').write_text(json.dumps({'manifest_version':3,'name':'qz fixture','version':'0.0.0.1'}))
+    (extension/'manifest.json').write_text(json.dumps({'manifest_version':3,'name':'qz fixture','version':'0.0.0.1','key':'fixture-public-key'}))
     (extension/'fixture.js').write_text('console.log(42);')
     (extension/'fixture.js.map').write_text('{}')
     module.compile_extension_sources=lambda source,**kwargs:(source,{'enabled':False})
@@ -385,7 +385,13 @@ with tempfile.TemporaryDirectory() as temporary:
         manual={name.removeprefix('qz-browser-agent-extension/'):archive.read(name)
                 for name in archive.namelist() if name!='version.json'}
     with zipfile.ZipFile(archive_path) as archive:
-        assert {name:archive.read(name) for name in archive.namelist()}==manual
+        store_files={name:archive.read(name) for name in archive.namelist()}
+        manual_manifest=json.loads(manual.pop('manifest.json'))
+        store_manifest=json.loads(store_files.pop('manifest.json'))
+        assert manual_manifest.pop('key')=='fixture-public-key'
+        assert store_manifest==manual_manifest
+        assert store_files==manual
+        assert sum(info.file_size for info in archive.infolist())==metadata['uncompressedSize']
         assert 'manifest.json' in archive.namelist() and 'version.json' not in archive.namelist()
     with zipfile.ZipFile(store/'qz-browser-agent-extension-0.0.0.1.webstore.debug.zip') as archive:
         assert 'maps/fixture.js.map' in archive.namelist()
@@ -433,10 +439,12 @@ with tempfile.TemporaryDirectory() as temporary:
     check([('qz-browser-agent-extension/'+name,data) for name,data in files.items()])
     for missing in files:
         check([(name,data) for name,data in files.items() if name!=missing])
-    for name in ['worker.js.map','.qingzhou-debug/worker.js','.qingzhou-build.json','.env.local',
+    for name in ['products/manifest.json','nested/extension/manifest.json',
+                 'worker.js.map','.qingzhou-debug/worker.js','.qingzhou-build.json','.env.local',
                  '../outside','/absolute','C:/drive','folder\\worker.js','worker.js']:
         check([*files.items(),(name,b'fixture')])
-    for invalid in [[],{'manifest_version':2},{'manifest_version':3,'version':'v0.1.0'},
+    for invalid in [[],{'manifest_version':2},{**manifest,'key':'fixture-public-key'},{**manifest,'key':''},
+                    {'manifest_version':3,'version':'v0.1.0'},
                     {'manifest_version':3,'version':'0.0.0'}]:
         check({**files,'manifest.json':json.dumps(invalid).encode()}.items())
 `, join(ROOT, "scripts/publish-release.py")], { stdio: "pipe" });

@@ -55,8 +55,7 @@ try {
   const extensionId = new URL(worker.url()).host;
   const workerVersion = await worker.evaluate(() => chrome.runtime.getManifest().version);
   assert.equal(workerVersion, version);
-  assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().key),
-    JSON.parse(readFileSync(join(ROOT, "src/manifest.json"), "utf8")).key);
+  assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().key), undefined);
 
   const page = await context.newPage();
   const pageErrors = [];
@@ -101,21 +100,6 @@ try {
   await page.waitForTimeout(300);
   assert.deepEqual(pageErrors, []);
 
-  await worker.evaluate(() => chrome.storage.local.set({ __qzIdentityProbe: "relocated" }));
-  await context.close();
-  context = null;
-  const relocatedPath = join(work, "relocated extension 开源");
-  renameSync(extensionPath, relocatedPath);
-  extensionPath = relocatedPath;
-  context = await launchExtension(extensionPath);
-  const relocatedWorker = context.serviceWorkers().find(item => item.url().startsWith("chrome-extension://"))
-    || await context.waitForEvent("serviceworker", {
-      predicate: item => item.url().startsWith("chrome-extension://"),
-      timeout: 10_000,
-    });
-  assert.equal(new URL(relocatedWorker.url()).host, extensionId, "moving the installation preserves its identity");
-  assert.deepEqual(await relocatedWorker.evaluate(() => chrome.storage.local.get("__qzIdentityProbe")),
-    { __qzIdentityProbe: "relocated" }, "moving the installation preserves its stored data");
   await context.close();
   context = null;
   const backgroundE2eOutput = execFileSync(process.execPath, [
@@ -128,10 +112,43 @@ try {
   const backgroundE2e = JSON.parse(backgroundE2eOutput.trim().split(/\r?\n/).filter(Boolean).at(-1));
   assert.equal(backgroundE2e.ok, true);
 
+  execFileSync("python3", [
+    join(ROOT, "scripts/publish-release.py"),
+    "--version", version, "--source", "worktree", "--target", "manual", "--output-dir", output,
+  ], { cwd: ROOT, stdio: "pipe" });
+  execFileSync("python3", [
+    "-c", "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])",
+    join(output, version, `qz-browser-agent-extension-${version}.zip`), join(work, "manual"),
+  ]);
+  extensionPath = join(work, "manual", "qz-browser-agent-extension");
+  context = await launchExtension(extensionPath);
+  const manualWorker = context.serviceWorkers().find(item => item.url().endsWith("/background/service-worker.js"))
+    || await context.waitForEvent("serviceworker", { timeout: 10_000 });
+  const manualExtensionId = new URL(manualWorker.url()).host;
+  assert.equal(await manualWorker.evaluate(() => chrome.runtime.getManifest().key),
+    JSON.parse(readFileSync(join(ROOT, "src/manifest.json"), "utf8")).key);
+  await manualWorker.evaluate(() => chrome.storage.local.set({ __qzIdentityProbe: "relocated" }));
+  await context.close();
+  context = null;
+  const relocatedPath = join(work, "relocated extension 开源");
+  renameSync(extensionPath, relocatedPath);
+  extensionPath = relocatedPath;
+  context = await launchExtension(extensionPath);
+  const relocatedWorker = context.serviceWorkers().find(item => item.url().startsWith("chrome-extension://"))
+    || await context.waitForEvent("serviceworker", {
+      predicate: item => item.url().startsWith("chrome-extension://"),
+      timeout: 10_000,
+    });
+  assert.equal(new URL(relocatedWorker.url()).host, manualExtensionId, "moving the installation preserves its identity");
+  assert.deepEqual(await relocatedWorker.evaluate(() => chrome.storage.local.get("__qzIdentityProbe")),
+    { __qzIdentityProbe: "relocated" }, "moving the installation preserves its stored data");
+  await context.close();
+  context = null;
   console.log(JSON.stringify({
     ok: true,
     version,
     extensionId,
+    manualExtensionId,
     relocationPreservesIdentityAndStorage: true,
     serviceWorker: true,
     sidepanel: true,

@@ -1,4 +1,8 @@
 {
+  "backend.toolError.UNSUPPORTED_URL.label": "未対応のページプロトコル",
+  "backend.toolError.UNSUPPORTED_URL.message": "HTTP、HTTPS、またはアクセスが許可された file:// ページの URL を使用してください。",
+  "backend.toolError.FILE_ACCESS_REQUIRED.label": "ファイルへのアクセス許可が必要です",
+  "backend.toolError.FILE_ACCESS_REQUIRED.message": "chrome://extensions で軽舟の詳細を開き、「ファイルの URL へのアクセスを許可する」を有効にしてから再試行してください。",
   "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "ブラウザーの権限が必要です",
   "backend.toolError.BROWSER_PERMISSION_DENIED.label": "ブラウザーの権限が許可されていません",
   "backend.model.reviewAttachments": "添付ファイルを確認してください。",

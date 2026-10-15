@@ -89,7 +89,7 @@ async function assertPromptAndUiUseTarget() {
   assert.match(prompt, /把它作为当前关注范围：[\s\S]*inspect_element[\s\S]*get_ax_tree[\s\S]*read_article\/read_dom/, "system prompt should inspect the picked region before answering or acting");
   assert.match(prompt, /不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域/, "system prompt should keep attention on the picked region");
   assert.match(prompt, /selector 时表示 CSS 范围(?:\/|或)过滤条件，可传原始 CSS，也可传 target 格式/, "system prompt should define selector compatibility");
-  assert.match(prompt, /不要只看 clickDispatched/, "system prompt should tell the model not to over-trust click dispatch");
+  assert.match(prompt, /点击后用 pageAfter\/urlChanged\/titleChanged，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click results");
   assert.match(prompt, /already_complete 只说明调用时页面已加载/, "system prompt should clarify wait_for_navigation already_complete");
   assert.doesNotMatch(read("src/background/agent/prompts/zh-CN.js"), /`(?:uid:|css:)/, "target examples in ESM template strings should avoid raw Markdown backticks");
   const registry = createToolRegistry();
@@ -238,7 +238,7 @@ function assertFindElementsFilterContract() {
   const block = toolBlock("find_elements");
   assert.doesNotMatch(block, /required: \["pattern"\]/, "find_elements should not require pattern when selector/tags/roles can list candidates");
   assert.doesNotMatch(resolveToolDefinition("find_elements").description, /可操作候选元素/, "find_elements should not describe the candidate set as action-only");
-  assert.match(resolveToolDefinition("find_elements").description, /pattern 是过滤条件，不是必填入口/, "find_elements should explain selector-first candidate discovery");
+  assert.match(resolveToolDefinition("find_elements").description, /pattern 是可选过滤条件：不传 pattern 时会列出 selector\/tags\/roles\/types 命中的候选/, "find_elements should explain selector-first candidate discovery");
   assert.match(resolveToolDefinition("find_elements").description, /actionable\/inViewport/, "find_elements should document rank signals returned in summaries");
   assert.match(block, /pattern = ""/, "find_elements runtime should default pattern to an empty filter");
   assert.doesNotMatch(contentScript, /MISSING_PATTERN/, "content findElements should not reject empty pattern");

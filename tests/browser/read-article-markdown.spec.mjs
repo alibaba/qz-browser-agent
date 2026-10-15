@@ -672,7 +672,7 @@ test("link-rich repeated cards remain a valid editorial collection", async ({ pa
 test("read_article preserves block-linked search result headings and their URLs", async ({ page }) => {
   const cards = Array.from({ length: 8 }, (_, index) => `
     <div class="search-result">
-      <a href="https://result${index}.example/article">
+      <a href="${index === 3 ? 'file:///tmp/report.html' : `https://result${index}.example/article`}">
         <h3><span>React library result ${index + 1}</span></h3>
         <div class="result-source">result${index}.example</div>
       </a>
@@ -684,6 +684,7 @@ test("read_article preserves block-linked search result headings and their URLs"
   const result = await readArticle(page, { source: "auto", limit: 20_000 });
   expect(result.text).toContain("### [React library result 1](https://result0.example/article)");
   expect(result.text).toContain("### [React library result 8](https://result7.example/article)");
+  expect(result.text).toContain("### [React library result 4](file:///tmp/report.html)");
   expect(result.text).toContain("Result 8 explains the library API");
   expect(result.outline).toEqual(expect.arrayContaining([
     expect.objectContaining({ level: 3, title: "React library result 1" }),
@@ -936,7 +937,7 @@ test("read_article converts the selected DOM fragment into the same Markdown con
 test("read_article keeps complex tables as sanitized HTML", async ({ page }) => {
   await installContentScript(page, `
     <table id="complex" class="report" style="color:red" onclick="alert(1)">
-      <caption>Quarterly sales</caption>
+      <caption>Quarterly sales <a href="file:///tmp/report.html">Local report</a></caption>
       <thead>
         <tr><th id="region" rowspan="2" scope="col">Region</th><th colspan="2">Sales</th></tr>
         <tr><th>Q1</th><th>Q2</th></tr>
@@ -950,7 +951,7 @@ test("read_article keeps complex tables as sanitized HTML", async ({ page }) => 
   const result = await readArticle(page, { source: "selector", selector: "#complex", limit: 20_000 });
   expect(Object.hasOwn(result, "format")).toBe(false);
   expect(result.text).toContain("<table>");
-  expect(result.text).toContain("<caption>Quarterly sales</caption>");
+  expect(result.text).toContain('<caption>Quarterly sales <a href="file:///tmp/report.html">Local report</a></caption>');
   expect(result.text).toContain('rowspan="2"');
   expect(result.text).toContain('colspan="2"');
   expect(result.text).toContain('headers="region"');

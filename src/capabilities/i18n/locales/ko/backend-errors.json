@@ -1,4 +1,8 @@
 {
+  "backend.toolError.UNSUPPORTED_URL.label": "지원하지 않는 페이지 프로토콜",
+  "backend.toolError.UNSUPPORTED_URL.message": "HTTP, HTTPS 또는 액세스가 허용된 file:// 페이지 URL을 사용하세요.",
+  "backend.toolError.FILE_ACCESS_REQUIRED.label": "파일 액세스 권한 필요",
+  "backend.toolError.FILE_ACCESS_REQUIRED.message": "chrome://extensions에서 qz의 세부정보를 열고 파일 URL에 대한 액세스 허용을 켠 다음 다시 시도하세요.",
   "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "브라우저 권한 필요",
   "backend.toolError.BROWSER_PERMISSION_DENIED.label": "브라우저 권한이 허용되지 않음",
   "backend.model.reviewAttachments": "첨부 파일을 검토하세요.",

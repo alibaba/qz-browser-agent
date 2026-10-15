@@ -1,4 +1,8 @@
 {
+  "backend.toolError.UNSUPPORTED_URL.label": "不支援此網頁協定",
+  "backend.toolError.UNSUPPORTED_URL.message": "請使用 HTTP、HTTPS 或已授權的 file:// 網頁網址。",
+  "backend.toolError.FILE_ACCESS_REQUIRED.label": "需要檔案存取權限",
+  "backend.toolError.FILE_ACCESS_REQUIRED.message": "請在 chrome://extensions 中開啟輕舟的詳細資料，啟用「允許存取檔案網址」，然後重試。",
   "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "需要瀏覽器權限",
   "backend.toolError.BROWSER_PERMISSION_DENIED.label": "未取得瀏覽器權限",
   "backend.model.reviewAttachments": "請查看附件。",

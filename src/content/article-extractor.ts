@@ -587,7 +587,7 @@ const host = globalThis as typeof globalThis & { QingzhouArticleExtractor?: Arti
       try {
         url = new URL(rawHref, link.ownerDocument?.baseURI || "https://invalid.local/");
       } catch (_err) {}
-      if (!url || !/^https?:$/.test(url.protocol) || !normalizedText(heading.textContent)) continue;
+      if (!url || !/^(?:https?|file):$/.test(url.protocol) || !normalizedText(heading.textContent)) continue;
       if (heading.closest("table") || heading.querySelector("a[href],button,input,select,textarea")) continue;
       if (link.querySelector("button,input,select,textarea,audio,video")) continue;
 

@@ -59,6 +59,13 @@ for (const vision of [true, false]) for (const canManageSessions of [true, false
   assert.equal(system.includes(prompts.VISUAL_IMAGE_ASSET_PROTOCOL), vision);
   assert.equal(system.includes(prompts.GOAL_DRIVEN_RULE), canManageSessions);
   assert.equal(system.includes(prompts.RESTRICTED_GOAL_RULE), !canManageSessions);
+  const sessionRestriction = en
+    ? /do not create, manage, wait for, or delete other sessions\/scheduled tasks/gi
+    : /(?:不要|不能)创建、管理、等待或删除其他 session\/定时任务/g;
+  assert.equal(system.match(sessionRestriction)?.length || 0, canManageSessions ? 0 : 1,
+    "Session restrictions appear once in the actual model request");
+  if (!canManageSessions) assert.equal(system.match(/\bmanage_goal\b/g)?.length, 1,
+    "Restricted sessions receive one goal prohibition without root goal instructions");
   assert.ok(system.includes('target = "uid:" <element_uid> | "css:" <css_selector>'));
   assert.ok(system.includes('schedule.type="once"'));
   assert.ok(system.includes('runtime:"inner"'));

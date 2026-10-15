@@ -50,6 +50,7 @@ test("development build preserves application modules and generates locked runti
   assert.deepEqual(first.files, second.files);
   assert.equal(await treeDigest(first.outputDir), await treeDigest(second.outputDir));
   assert.equal(first.bundling.enabled, false);
+  assert.equal(first.files.includes("products/manifest.json"), false);
   assert.ok(first.files.length > 250);
   await checkDependencyAssets({ extensionDir: first.outputDir });
   assert.ok((await readFile(join(first.outputDir, "vendor/pdf.mjs"))).equals(await readFile(join(ROOT, "node_modules/pdfjs-dist/legacy/build/pdf.mjs"))), "PDF runtime retains upstream bytes");
@@ -366,7 +367,8 @@ test("public composition resolves ESM and classic entries and rejects invalid pr
   assert.deepEqual(JSON.parse(await readFile(join(outputDir, "rules/fixture.json"))), [{ id: 1, source: "public" }, { id: 2, source: "shared" }]);
   assert.equal(publicBuild.files.includes("products/public/rules/fixture.json"), false);
   assert.match(await readFile(join(outputDir, "shared/product/value.js"), "utf8"), /products\/public/);
-  assert.equal(JSON.parse(await readFile(join(outputDir, "products/manifest.json"))).defaultProduct, "public");
+  assert.equal(publicBuild.files.includes("products/manifest.json"), false);
+  await assert.rejects(access(join(outputDir, "products/manifest.json")), { code: "ENOENT" });
   const before = await treeDigest(outputDir);
   await put(sourceDir, "content/content-script.ts", 'import { value } from "../products/other/shared/value.js"; globalThis.answer = value;');
   await assert.rejects(buildExtension({ sourceDir, outputDir }), /inactive product import/);

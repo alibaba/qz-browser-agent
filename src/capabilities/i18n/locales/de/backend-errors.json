@@ -1,4 +1,8 @@
 {
+  "backend.toolError.UNSUPPORTED_URL.label": "Nicht unterstütztes Seitenprotokoll",
+  "backend.toolError.UNSUPPORTED_URL.message": "Verwenden Sie eine HTTP-, HTTPS- oder freigegebene file://-Seiten-URL.",
+  "backend.toolError.FILE_ACCESS_REQUIRED.label": "Dateizugriff erforderlich",
+  "backend.toolError.FILE_ACCESS_REQUIRED.message": "Öffnen Sie die Details von qz unter chrome://extensions, aktivieren Sie den Zugriff auf Datei-URLs und versuchen Sie es erneut.",
   "backend.toolError.BROWSER_PERMISSION_REQUIRED.label": "Browserberechtigung erforderlich",
   "backend.toolError.BROWSER_PERMISSION_DENIED.label": "Browserberechtigung nicht erteilt",
   "backend.model.reviewAttachments": "Bitte die Anhänge prüfen.",

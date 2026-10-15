@@ -135,6 +135,18 @@ function extensionForSaveFileMimeType(mimeType = "") {
   return SAVE_FILE_EXTENSION_BY_MIME[normalized] || "txt";
 }
 
+function downloadFileUrl(filename: string) {
+  const windowsPath = /^[a-z]:[\\/]/i.test(filename) || filename.startsWith("\\\\");
+  const path = windowsPath ? filename.replace(/\\/g, "/") : filename;
+  if (path.includes("\0") || (!path.startsWith("/") && !/^[a-z]:\//i.test(path))) return undefined;
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  try {
+    return new URL(filename.startsWith("\\\\")
+      ? `file:${encoded}`
+      : `file://${path.startsWith("/") ? "" : "/"}${encoded.replace(/^([a-z])%3A\//i, "$1:/")}`).href;
+  } catch { return undefined; }
+}
+
 registerTool({
   name: "list_downloads",
   get description() { return modelT("listDownloads"); },
@@ -149,7 +161,7 @@ registerTool({
   timeout: { defaultMs: 15000, maxMs: 120000 },
   execute: async ({ id, limit = 10, query }) => {
     const searchOpts: chrome.downloads.DownloadQuery = {};
-    if (Number.isInteger(Number(id)) && Number(id) >= 0) searchOpts.id = Number(id);
+    if (typeof id === "number" && Number.isInteger(id) && id >= 0) searchOpts.id = id;
     if (query) searchOpts.filenameRegex = query;
     const items = await chrome.downloads.search(searchOpts);
     const guardrails = await getSecurityGuardrails();
@@ -158,7 +170,9 @@ registerTool({
     const visibleItems = items.filter(item => !matchBlockedUrl(item.url, guardrails)).slice(0, limit);
     return visibleItems.map(d => ({
       id: d.id,
-      filename: d.filename?.split("/").pop() || d.filename,
+      filename: d.filename?.split(/[\\/]/).pop() || d.filename,
+      ...(searchOpts.id === d.id && d.state === "complete" && d.exists === true
+        ? { fileUrl: downloadFileUrl(d.filename) } : {}),
       url: d.url?.slice(0, 100),
       state: d.state,           // in_progress | complete | interrupted
       paused: d.paused,

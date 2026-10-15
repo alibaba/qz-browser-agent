@@ -33,17 +33,18 @@ interface SessionTabsOptions {
 interface TabClaim { source?: string; toolName?: string; action?: string; explicitClaim?: boolean; createdTab?: boolean; clonedTab?: boolean }
 interface RunAuthority { runId?: string | null; signal?: AbortSignal }
 interface WorkingTabUpdate extends TabClaim, RunAuthority { sessionId?: unknown; tab?: unknown; owned?: boolean; claim?: boolean }
-interface TargetTabOptions extends RunAuthority { sessionId?: unknown; tabId?: unknown; source?: string; checkOnly?: boolean; readOnly?: boolean; allowPreNavigationBlank?: boolean }
+interface TargetTabOptions extends RunAuthority { sessionId?: unknown; tabId?: unknown; source?: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean }
 type RestoreFailure = { ok: false; index: number; code: string; reason: string; error?: string };
 type RestoreSuccess = { ok: true; index: number; portable: PortableSessionTab; tab: WorkingTab };
 const object = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 const errorCode = (error: unknown, fallback: string): string => String(object(error).code || fallback);
-import { formatTab, getEffectiveTabUrl, isWebTab } from "../../shared/tab-utils.js";
+import { formatTab, getEffectiveTabUrl, isPageTab, isPageTabUrl, isLocalFileUrl } from "../../shared/tab-utils.js";
 import {
   getSecurityGuardrails,
   matchBlockedUrl,
 } from "../../shared/security-guardrails.js";
+import { assertPageUrlAccessible } from "../tools/page-access.js";
 import { normalizePortableSessionOwnedTabs } from "../../shared/session/session-exchange.js";
 
 export const OWNED_TAB_SCHEMA_VERSION = 1;
@@ -167,6 +168,7 @@ export function createSessionTabs({
     source = "",
     checkOnly = false,
     readOnly = false,
+    tabOnly = false,
     allowPreNavigationBlank = false,
   }: TargetTabOptions = {}) {
     const id = normalizeSessionId(sessionId);
@@ -213,7 +215,7 @@ export function createSessionTabs({
     const isOwnedPreNavigationBlank = allowPreNavigationBlank === true
       && tabUrl === "about:blank"
       && owner?.sessionId === id;
-    if (!isWebTab(tab) && !isOwnedPreNavigationBlank) {
+    if (!isPageTab(tab) && !isOwnedPreNavigationBlank && !(tabOnly && owner?.sessionId === id)) {
       return {
         ok: false,
         code: "SESSION_TAB_NOT_WEB",
@@ -225,7 +227,18 @@ export function createSessionTabs({
       };
     }
 
+    if (!tabOnly && isLocalFileUrl(formatted.url)) {
+      try { await assertPageUrlAccessible(formatted.url); }
+      catch (error) {
+        return { ok: false, code: errorCode(error, "FILE_ACCESS_REQUIRED"), reason: "file_access_required",
+          error: errorMessage(error), sessionId: id, tabId: targetTabId, tab: formatted };
+      }
+      if (!isCurrent()) return aborted();
+    }
+
     if (!owner) {
+      if (tabOnly) return { ok: false, code: "SESSION_TAB_UNOWNED", reason: "tab_not_owned_by_current_session",
+        error: t("browser.tabUnowned"), sessionId: id, tabId: targetTabId };
       if (readOnly) {
         return {
           ok: true,
@@ -629,7 +642,7 @@ export function createSessionTabs({
       }
       try {
         const tab = await tabsApi.get(tabId);
-        if (isWebTab(tab)) {
+        if (isPageTab(tab)) {
           const formatted = formatTab(tab, { titleLimit: 120 });
           const runtime = await updateWorkingTab({
             sessionId: id,
@@ -656,7 +669,7 @@ export function createSessionTabs({
       seen.add(tabId);
       try {
         const tab = await tabsApi.get(tabId);
-        if (!isWebTab(tab)) continue;
+        if (!isPageTab(tab)) continue;
         const formatted = formatTab(tab, { titleLimit });
         out.push(guardrails ? annotateGuardrailTab(formatted, guardrails) : formatted);
       } catch (_error) {}
@@ -673,7 +686,7 @@ export function createSessionTabs({
 
     try {
       const tab = await tabsApi.get(tabId);
-      if (!isWebTab(tab)) return { activated: false, reason: "not_web_tab", tabId };
+      if (!isPageTab(tab)) return { activated: false, reason: "not_web_tab", tabId };
       const [activeInWindow] = await tabsApi.query({ active: true, windowId: tab.windowId });
       const alreadyActive = activeInWindow?.id === tabId;
       const updated = alreadyActive ? tab : await tabsApi.update(tabId, { active: true });
@@ -762,7 +775,7 @@ export function createSessionTabs({
       for (const tabId of ownedTabIds) {
         try {
           const tab = await tabsApi.get(tabId);
-          if (!isWebTab(tab)) continue;
+          if (!isPageTab(tab)) continue;
           const normalizedTabId = Number(tab.id);
           validTabIds.push(normalizedTabId);
           if (!groupedTabIds.has(normalizedTabId)) {
@@ -930,7 +943,7 @@ export function normalizeWorkingTab(input: unknown) {
   const tab = object(input);
   const id = Number(tab.id);
   const url = getEffectiveTabUrl({ url: String(tab.url || ""), pendingUrl: String(tab.pendingUrl || "") });
-  if (!Number.isFinite(id) || id <= 0 || !/^https?:\/\//i.test(url)) return null;
+  if (!Number.isFinite(id) || id <= 0 || !isPageTabUrl(url)) return null;
   return {
     id,
     title: String(tab.title || "").slice(0, 120),

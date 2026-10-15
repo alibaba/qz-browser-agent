@@ -67,7 +67,7 @@ assert.match(VISUAL_SCREEN_ACTION_RULE, /每次 act_on_screen 都必须显式填
 assert.match(VISUAL_SCREEN_ACTION_RULE, /视觉动作序列遵循“验证后批量”/, "visual actions should use one general verify-then-batch principle");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /效果符合预期、后续坐标可预测且浏览器视口稳定/, "visual batches should require observable semantic and coordinate stability");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /viewportChange 只记录浏览器视口是否变化/, "visual actions should distinguish viewport facts from application effects");
-assert.match(VISUAL_SCREEN_ACTION_RULE, /只有 true 才产生观察截图；false 不产生观察图，并在坐标空间仍有效时沿用原依据/, "visual actions should make observation capture explicit");
+assert.match(VISUAL_SCREEN_ACTION_RULE, /只有 true 才产生观察截图；false 在坐标空间仍有效时沿用原依据/, "visual actions should make observation capture explicit");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /run_script 会返回内部最后一次 screenshot 或 act_on_screen\(returnScreenshot:true\) 的图片/, "visual batches should return the last explicit observation");
 assert.doesNotMatch(VISUAL_SCREEN_ACTION_RULE, /会滚动、缩放、改尺寸.*主 Agent 逐步执行/, "the prompt should not blanket-ban action kinds whose effects depend on the page");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /^### 文本读取协议\n- 当前模型不能看图/m, "text-only reading protocol should include its title");
@@ -95,7 +95,7 @@ assert.match(TEXT_ONLY_IMAGE_ASSET_PROTOCOL, /以当前 tab 为一个工作单�
 assert.match(TEXT_ONLY_IMAGE_ASSET_PROTOCOL, /离开、跳转或切换当前 tab 之前调用 collect_images 采集/, "text-only image protocol should collect accepted metadata candidates before changing context");
 assert.match(TEXT_ONLY_IMAGE_ASSET_PROTOCOL, /文本证据不足以完成选择时，向用户说明已确认的候选元信息并请求选择/, "text-only image protocol should request a choice when evidence is insufficient");
 assert.doesNotMatch(TEXT_ONLY_IMAGE_ASSET_PROTOCOL, /全量|整页图片|大容器|indexes|精确 selector/, "text-only image protocol should expose one selection workflow without a bulk branch");
-assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /下载或读取图片二进制也不会让当前模型获得视觉理解/, "text-only reading protocol should explain that binary access does not add vision");
+assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /图片采集只能依据 URL\/meta 和页面文本证据，不能声称已筛选视觉质量或看到了图片内容/, "text-only reading protocol should retain the visual-evidence boundary");
 
 const fullTextOnlyPrompt = SYSTEM_PROMPT
   .replace(MULTIMODAL_CAPABILITY_PROMPT, TEXT_ONLY_CAPABILITY_PROMPT)

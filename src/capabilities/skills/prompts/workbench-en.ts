@@ -51,7 +51,7 @@ qz supports remote HTTP MCP only, not local stdio. \`qingzhou-mcp\` handles disc
 1. Before editing, \`load_skill("qingzhou-mcp")\`. Use its inspection results, tools[].name/description/inputSchema, minimal test calls, and the user's goal to select bindings. Do not wrap every server tool by default.
 2. Set a top-level category in \`plugin.json\` using a stable, user-facing business category such as Research, Data, Travel, or Development. Use \`{ "id": "mcp", "label": "MCP" }\` only for a general MCP gateway spanning multiple use cases.
 3. Read the available renderer registry and choose a standard renderer such as table/list/fields/summary/article/image_grid/tree/markdown/text based on real test-call results. Map structuredContent or JSON text directly; use text/markdown for natural-language-only results. Do not invent fields.
-4. Declare the server in plugin.json.mcpServers. For each selected tool, set \`runtime:"mcp"\`, \`mcp:{ server, tool }\`, and a renderer matching its result. Set the renderer on the tool or in top-level renderers.tools. Do not leave the result view unfinished.
+4. Declare the server in plugin.json.mcpServers. For each selected tool, set \`runtime:"mcp"\`, \`mcp:{ server, tool }\`, and a renderer matching its result. Set the renderer on the tool or in top-level renderers.tools.
 5. Before saving, qz verifies that enabled servers complete tools/list. Fix the URL/headers or explicitly set a temporarily unavailable server to \`enabled:false\`. Do not bypass validation.
 6. Reload the saved skill with \`load_skill(name)\`. Follow the qingzhou-mcp registry workflow to verify pluginTool.name, make the real call through that Skill tool, and confirm the intended renderer is used instead of a generic text fallback.
 
@@ -143,13 +143,13 @@ qz supports remote HTTP MCP only, not local stdio. \`qingzhou-mcp\` handles disc
 
 For endpoints, tokens, or other user configuration, declare top-level settings.fields. Do not add a business-specific settings page or host action. Controls, grouping, and widths use the generic DSL below; custom style, theme, and arbitrary component names are unsupported:
 
-- settings.fields[].type supports only text, secret, url, boolean, number, and select. Use boolean for switches; there is no toggle type.
+- settings.fields[].type supports only text, secret, url, boolean, number, and select. Use boolean for switches.
 - Every field can declare key, type, label, description, placeholder, required, default, and width. key must start with an English letter and contain only letters, digits, underscores, and hyphens. width is full by default or half for two-column layouts; narrow screens return to full width.
 - text can declare a regex string in pattern. url accepts HTTP(S) URLs without embedded credentials. secret can declare reenterWhen, listing fields whose changes require the secret to be reentered; it must not declare a nonempty default.
 - number can declare min, max, and step. select requires nonempty options, each \`{ "label": "Display text", "value": "stable-string-value" }\`. boolean values and defaults must be actual JSON booleans, not the strings "true" or "false".
 - Group many fields with settings.layout.sections. Each section supports title, optional description, and a fields array of keys. A field may belong to at most one section; ungrouped fields still appear. layout affects only the generic settings view, not storage or script configuration.
 
-Scripts read settings through \`$plugin.config.<key>\`. Secret values are populated in local password controls but never injected into the page runtime; tools that need secrets must use \`runtime:"inner"\`. A dynamic network origin references a \`type:"url"\` setting. Use ordinary fetch, not a qz-specific fetch tool.
+Scripts read settings through \`$plugin.config.<key>\`. Secret values are populated in local password controls but never injected into the page runtime; tools that need secrets must use \`runtime:"inner"\`. A dynamic network origin references a \`type:"url"\` setting. Use ordinary fetch.
 
 \`\`\`json
 {
@@ -260,7 +260,7 @@ Return \`{ summary: {...}, data: { rows:[...], totalRows: 10, truncated: false }
 - The renderer-discovery tool defines the available renderers.tools types. Read the registry before creating a Skill with a UI; choose a renderer and design the return value to match its schema.
 - Configured renderers use qz's standard views and grouping. Tools without renderers use generic script-result presentation.
 - Compose existing components with layout.blocks for complex views; do not invent a one-off visual structure.
-- The Skill is already the user-selectable entry point; do not declare slash commands. For user configuration, declare generic settings.fields and qz adds a card under Settings → Skills.
+- For user configuration, declare generic settings.fields and qz adds a card under Settings → Skills.
 - settings.fields declares field structure and optional initial defaults, not the user's current values. For actual configuration reads/writes, load qingzhou-management, use qingzhou_management__manage_skill_settings list/get/update, and verify with get. Do not put secret defaults in manifests.
 
 ## Quality requirements
