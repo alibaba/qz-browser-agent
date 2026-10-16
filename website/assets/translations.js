@@ -28,8 +28,6 @@ export const translations = {
       "promptLabel": "TRY A TASK",
       "promptCopy": "Copy prompt",
       "prompt": "Open Wikipedia’s Hangzhou page. Make a table of its main sights, with a short description and a source link for each.",
-      "nameVerse": "The light boat has already passed ten thousand mountains.",
-      "nameDescription": "qz = qingzhou (轻舟), “light boat”.",
       "footerDocs": "Documentation",
       "footerIssues": "Feedback",
       "footerPrivacy": "Privacy",
@@ -49,9 +47,6 @@ export const translations = {
       "extension2Link": "Capability API<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step2Title": "Connect your model",
       "step2Description": "Open qz Settings. Choose a provider, enter your credentials, select a model, and save.",
-      "extension3Title": "CLI & MCP",
-      "extension3Description": "Run browser tasks from your terminal or let another agent use qz through a Skill or MCP.",
-      "extension3Link": "Connect your tools<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step3Title": "Give it a task",
       "step3Description": "Open the side panel and describe what you want to do. You can adjust the task while it runs.",
       "tableTitle": "Compare tools using their official documentation",
@@ -66,19 +61,30 @@ export const translations = {
       "parallelDescription": "Delegate parts of a task and combine the findings. Here, agents research West Lake walks and Longjing tea experiences for a Hangzhou itinerary.",
       "imageTitle": "Screenshot",
       "imageOpen": "Open original",
-      "navAgents": "CLI &amp; agents",
-      "agentsTitle": "CLI &amp; agents.",
-      "agentsDescription": "Run browser tasks from your terminal, Codex, Claude Code, or pi. Set up the extension above and use Node.js 24 or later.",
-      "cliTitle": "From your terminal",
-      "cliDescription": "Connect to qz, then start a task and stream its progress.",
+      "navAgents": "For agents",
+      "agentsTitle": "Agent-friendly.",
+      "agentsDescription": "Let your agent delegate browser tasks to qz.",
+      "cliTitle": "Install the CLI",
+      "cliDescription": "Connect once. Start tasks from your terminal.",
       "commandCopy": "Copy commands",
-      "cliCommands": "npx --yes qz-browser-agent@latest connect\nnpx --yes qz-browser-agent@latest create \\\n  \"Summarize the current page.\" --stream",
-      "cliMcp": "For MCP clients, run <code>npx --yes qz-browser-agent@latest mcp</code> after connecting to get the connection URL.",
+      "cliCommands": "npm install --global qz-browser-agent\nqz connect",
+      "cliMcp": "Also available via <code>npx --yes qz-browser-agent@latest</code>. For MCP, run <code>qz mcp</code> after connecting to get the connection URL.",
       "cliGuide": "CLI &amp; MCP guide",
-      "agentTitle": "From your agent",
-      "agentDescription": "Install the Skill so your agent can delegate browser work to qz.",
-      "agentTargets": "Replace <code>codex</code> with <code>claude-code</code> or <code>pi</code> for your agent. Then ask it to use qz for a browser task.",
-      "agentGuide": "Read the Skill"
+      "agentTitle": "Install the Skill",
+      "agentDescription": "Let your coding agent delegate browser tasks to qz.",
+      "agentTargets": "Then ask your agent: “Use qz to compare these three product pages and save a sourced table.”",
+      "agentGuide": "Read the Skill",
+      "agentTerminalLabel": "YOUR TERMINAL / CODING AGENT",
+      "agentPanelLabel": "qz / CHROME SIDE PANEL",
+      "agentExampleLabel": "Example session",
+      "agentTerminalPrompt": "qz create \"Compare Playwright, Puppeteer and Selenium. Save a sourced table.\" --stream",
+      "agentTerminalQueued": "Task queued",
+      "agentTerminalReading": "I’ll read their official documentation and compare the tools.",
+      "agentTerminalResult": "Saved 6 comparison rows with source links.",
+      "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
+      "agentTerminalFile": "browser_automation_tool_comparison.csv",
+      "agentRequirements": "Requires Node.js 24+ and Chrome on the same machine, with the qz extension and a model configured.",
+      "agentDownload": "Download the extension"
     },
     "attributes": {
       "description": {
@@ -172,6 +178,17 @@ export const translations = {
       "copyCommand": {
         "data-copied": "Copied",
         "data-failed": "Select and copy the commands below."
+      },
+      "agentPanelImage": {
+        "src": "./assets/screens/agent-en.png",
+        "alt": "qz side panel showing a real browser automation research task"
+      },
+      "agentPanelLink": {
+        "href": "./assets/screens/agent-en.png",
+        "aria-label": "Enlarge the qz side panel"
+      },
+      "agentTarget": {
+        "aria-label": "Install Skill for"
       }
     }
   },
@@ -203,8 +220,6 @@ export const translations = {
       "promptLabel": "试一个任务",
       "promptCopy": "复制指令",
       "prompt": "打开 Wikipedia 的杭州页面，把主要景点整理成一张表格，每个景点附上简短介绍和来源链接。",
-      "nameVerse": "两岸猿声啼不住，轻舟已过万重山。",
-      "nameDescription": "qz 取自轻舟的拼音 qingzhou。",
       "footerDocs": "使用文档",
       "footerIssues": "问题反馈",
       "footerPrivacy": "隐私",
@@ -224,9 +239,6 @@ export const translations = {
       "extension2Link": "能力包 API<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step2Title": "连接模型",
       "step2Description": "打开轻舟设置，选择服务商、填写凭证、选择模型并保存。",
-      "extension3Title": "CLI 与 MCP",
-      "extension3Description": "在终端执行浏览器任务，或让其他 Agent 通过 Skill 或 MCP 调用轻舟。",
-      "extension3Link": "接入你的工具<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step3Title": "开始第一个任务",
       "step3Description": "打开侧边栏，描述你想做的事。执行过程中也可以继续调整任务。",
       "tableTitle": "查阅官方文档，生成工具对比表",
@@ -241,19 +253,30 @@ export const translations = {
       "parallelDescription": "把任务拆分给多个 Agent，再汇总结果。图中的子任务分别调查西湖路线、龙井体验，并核对交通与预约信息。",
       "imageTitle": "界面截图",
       "imageOpen": "查看原图",
-      "navAgents": "CLI 与 Agent",
-      "agentsTitle": "CLI 与 Agent。",
-      "agentsDescription": "在终端、Codex、Claude Code 或 pi 中调用轻舟。先完成上方的扩展配置，并安装 Node.js 24 或更高版本。",
-      "cliTitle": "在终端中使用",
-      "cliDescription": "连接轻舟后创建任务，实时查看执行进度。",
+      "navAgents": "Agent 接入",
+      "agentsTitle": "Agent 友好性。",
+      "agentsDescription": "让你的 Agent 把浏览器任务交给轻舟。",
+      "cliTitle": "安装 CLI",
+      "cliDescription": "连接轻舟，在终端下达任务。",
       "commandCopy": "复制命令",
-      "cliCommands": "npx --yes qz-browser-agent@latest connect\nnpx --yes qz-browser-agent@latest create \\\n  \"总结当前页面。\" --stream",
-      "cliMcp": "使用 MCP 客户端时，连接后运行 <code>npx --yes qz-browser-agent@latest mcp</code> 获取连接地址。",
+      "cliCommands": "npm install --global qz-browser-agent\nqz connect",
+      "cliMcp": "也可直接使用 <code>npx --yes qz-browser-agent@latest</code>。MCP 客户端可在连接后运行 <code>qz mcp</code> 获取连接地址。",
       "cliGuide": "CLI 与 MCP 指南",
-      "agentTitle": "交给你的 Agent",
-      "agentDescription": "安装 Skill，让你的 Agent 学会将浏览器任务交给轻舟。",
-      "agentTargets": "将 <code>codex</code> 换为 <code>claude-code</code> 或 <code>pi</code>，即可安装到对应 Agent。然后让它使用轻舟执行浏览器任务。",
-      "agentGuide": "查看 Skill"
+      "agentTitle": "安装 Skill",
+      "agentDescription": "让编程 Agent 学会把浏览器任务交给轻舟。",
+      "agentTargets": "然后告诉你的 Agent：“用 qz 对比这三个商品页面，保存带来源链接的表格。”",
+      "agentGuide": "查看 Skill",
+      "agentTerminalLabel": "你的终端 / 编程 AGENT",
+      "agentPanelLabel": "轻舟 / CHROME 侧边栏",
+      "agentExampleLabel": "命令示例",
+      "agentTerminalPrompt": "qz create \"对比 Playwright、Puppeteer 和 Selenium，保存带来源的表格。\" --stream",
+      "agentTerminalQueued": "Task queued",
+      "agentTerminalReading": "我会查阅官方文档，整理三个工具的差异。",
+      "agentTerminalResult": "已保存 6 行对比数据，附有来源链接。",
+      "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
+      "agentTerminalFile": "browser_automation_tool_comparison.csv",
+      "agentRequirements": "需要 Node.js 24+，以及同一台电脑上的 Chrome、轻舟扩展和已配置的模型。",
+      "agentDownload": "下载轻舟扩展"
     },
     "attributes": {
       "description": {
@@ -347,6 +370,17 @@ export const translations = {
       "copyCommand": {
         "data-copied": "已复制",
         "data-failed": "请选中下方命令并复制。"
+      },
+      "agentPanelImage": {
+        "src": "./assets/screens/agent-zh.png",
+        "alt": "轻舟侧边栏展示真实的浏览器自动化工具研究任务"
+      },
+      "agentPanelLink": {
+        "href": "./assets/screens/agent-zh.png",
+        "aria-label": "放大查看轻舟侧边栏"
+      },
+      "agentTarget": {
+        "aria-label": "Skill 安装目标"
       }
     }
   }

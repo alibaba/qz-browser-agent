@@ -22,9 +22,14 @@ path `/qz-browser-agent/`.
   follows the system color scheme and reduced-motion preference.
 - Download links point to the latest GitHub release. Add a verified store URL when the extension
   becomes available in the Chrome Web Store.
-- The CLI and agent section uses the published `qz-browser-agent` npm package and the repository's
-  `skills/qz-browser-agent/SKILL.md`. Keep its commands aligned with the
-  [CLI guide](../services/mcp-bridge/README.md); agent install targets are `codex`, `claude-code`, and `pi`.
+- The Agent-friendly section pairs an illustrative terminal session with actual narrow Side Panel
+  screenshots from the documentation-research task. The console is authored HTML, not a recording.
+  `assets/screens/agent-en.png` and `agent-zh.png` show the same original English conversation in
+  each interface language; see [screenshot sources](assets/screens/SOURCES.md) for capture details.
+- The CLI and Skill installation commands use the published `qz-browser-agent` npm package and
+  `skills/qz-browser-agent/SKILL.md`. The Skill selector updates the copyable command for `codex`,
+  `claude-code`, or `pi`. Keep these commands aligned with the [CLI guide](../services/mcp-bridge/README.md).
+  Without JavaScript, the English content and Codex installation command remain visible.
 - The English and Chinese workspace screenshots are unchanged copies of `docs/images/workspace.png`
   and `docs/images/workspace-zh-CN.png`. Update both copies when those source images change.
 - `assets/demo-en.mp4` is the existing 45-second English demo. It loads only when the

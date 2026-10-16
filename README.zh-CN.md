@@ -54,28 +54,32 @@ npm run build
 
 ## CLI 与编程 Agent
 
-安装扩展并配置模型后，使用 Node.js 24 或更高版本，从终端运行任务：
+给 qz 一个目标和需要的产出，它会自行规划并执行浏览器任务，返回结果或需要用户回答的问题。终端和轻舟侧边栏可以查看同一个任务。
+
+在运行 Chrome 的同一台机器上使用 Node.js 24 或更高版本。从[最新版本](https://github.com/alibaba/qz-browser-agent/releases/latest)安装扩展，在轻舟设置中配置模型，然后安装 CLI：
 
 ```bash
-npx --yes qz-browser-agent@latest connect
-npx --yes qz-browser-agent@latest create "打开 en.wikipedia.org/wiki/Hangzhou，总结主要景点并附上来源链接。" --stream
+npm install --global qz-browser-agent
+qz connect
+qz create "比较 SQLite、DuckDB 和 PostgreSQL 在本地数据分析中的取舍，把优缺点和来源链接整理成表格。" --stream
 ```
 
-`connect` 会在需要时打开连接页面。请使用安装了轻舟的 Chrome 用户配置，并完成首次数据告知。`--stream` 实时显示进展和结果。
+`connect` 会在需要时打开连接页面。请使用安装了轻舟的 Chrome 用户配置，并完成首次数据告知。`--stream` 实时显示进展、待回答的问题和结果。
+也可以不做全局安装，将命令中的 `qz` 替换为 `npx --yes qz-browser-agent@latest`。
 
 ### 给 Agent 安装 Skill
 
-安装 [qz-browser-agent Skill](skills/qz-browser-agent/SKILL.md)，让编程 Agent 将网页研究、浏览器操作和数据提取任务交给轻舟：
+安装 [qz-browser-agent Skill](skills/qz-browser-agent/SKILL.md)，让编程 Agent 检查连接、委派任务、处理用户输入并获取结果：
 
 ```bash
-npx skills add alibaba/qz-browser-agent --skill qz-browser-agent --agent codex --global
+npx --yes skills add alibaba/qz-browser-agent --skill qz-browser-agent --agent codex --global
 ```
 
 安装给 Claude Code 或 Pi 时，将目标改为 `--agent claude-code` 或 `--agent pi`。`--skill` 选择 Skill，`--agent` 选择编程 Agent。其他目标见[支持列表](https://github.com/vercel-labs/skills#supported-agents)。
 
 然后对 Agent 说：**用轻舟比较这三个产品页面，把价格和来源链接整理成表格。**
 
-使用 MCP 客户端时，连接后运行 `npx --yes qz-browser-agent@latest mcp`，将返回的 HTTP 地址填入客户端配置。任务追问、用户输入、导出和设置等用法见 [CLI 与 MCP 指南](services/mcp-bridge/README.md)。
+使用 MCP 客户端时，连接后运行 `qz mcp`，将返回的 HTTP 地址填入客户端配置。任务追问、用户输入、导出和设置等用法见 [CLI 与 MCP 指南](services/mcp-bridge/README.md)。
 
 ## 扩展轻舟
 

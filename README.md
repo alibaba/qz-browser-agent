@@ -61,24 +61,31 @@ Follow the Chrome installation steps above, selecting `dist/extension/` as the e
 
 ## CLI and coding agents
 
-After installing the extension and configuring its model, use Node.js 24 or later to run tasks
-from your terminal:
+Give qz a goal and the output you need. It plans and runs the browser work, then returns results
+or questions for the user. Follow the same task in your terminal and the qz side panel.
+
+Use Node.js 24 or later on the same machine as Chrome. Install the extension from the
+[latest release](https://github.com/alibaba/qz-browser-agent/releases/latest) and configure its
+model in qz Settings, then install the CLI:
 
 ```bash
-npx --yes qz-browser-agent@latest connect
-npx --yes qz-browser-agent@latest create "Open en.wikipedia.org/wiki/Hangzhou and summarize its main sights with source links." --stream
+npm install --global qz-browser-agent
+qz connect
+qz create "Compare SQLite, DuckDB, and PostgreSQL for local analytics. Save trade-offs and source links in a table." --stream
 ```
 
 `connect` opens a connection page when needed. Use the Chrome profile where qz is installed and
-accept its first-use data notice. `--stream` displays progress and the result.
+accept its first-use data notice. `--stream` displays progress, pending questions, and the result.
+You can also run any command without a global install by replacing `qz` with
+`npx --yes qz-browser-agent@latest`.
 
 ### Install the agent Skill
 
-Give your coding agent the [qz-browser-agent Skill](skills/qz-browser-agent/SKILL.md) to delegate
-browser research, automation, and data extraction to qz:
+Install the [qz-browser-agent Skill](skills/qz-browser-agent/SKILL.md) to let your coding agent
+check the connection, delegate a task, handle user input, and retrieve results:
 
 ```bash
-npx skills add alibaba/qz-browser-agent --skill qz-browser-agent --agent codex --global
+npx --yes skills add alibaba/qz-browser-agent --skill qz-browser-agent --agent codex --global
 ```
 
 Use `--agent claude-code` or `--agent pi` to install for Claude Code or Pi. `--skill` selects the
@@ -86,7 +93,7 @@ Skill; `--agent` selects the coding agent. See the [supported agents](https://gi
 
 Then ask your agent: **Use qz to compare these three product pages and save a table with prices and source links.**
 
-For MCP clients, run `npx --yes qz-browser-agent@latest mcp` after connecting and use the returned
+For MCP clients, run `qz mcp` after connecting and use the returned
 HTTP URL. See the [CLI and MCP guide](services/mcp-bridge/README.md) for task follow-ups, pending
 input, exports, and configuration.
 

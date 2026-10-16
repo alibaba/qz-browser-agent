@@ -1,6 +1,6 @@
 # Screenshot sources
 
-The table screenshots come from a new live qz task. The other screenshots are crops of real qz browser recordings. UI text, code, and result content are unchanged.
+The table and agent conversation screenshots come from a live qz task. The other screenshots are crops of real qz browser recordings. UI text, code, and result content are unchanged.
 PNG output preserves the original pixels; CSS scales images for display. Model-selection footers
 are outside the crops. Coordinates refer to the original 2880 × 1626 recordings and use
 `x, y, width, height`.
@@ -58,3 +58,19 @@ Research sources include [Playwright](https://playwright.dev/docs/intro),
 [Puppeteer](https://pptr.dev/guides/what-is-puppeteer),
 [Selenium WebDriver](https://www.selenium.dev/documentation/webdriver/), and
 [Selenium Manager](https://www.selenium.dev/documentation/selenium_manager/).
+
+## Agent conversation — October 17, 2026
+
+`agent-en.png` and `agent-zh.png` show the original browser-automation comparison task described
+above, restored from its saved conversation into an isolated extension profile. Both are native
+Side Panel captures at 420 × 680 CSS pixels with a 2× device scale (840 × 1360 PNG output).
+The view shows the task instruction, qz's plan, its collapsed 60-step tool activity, and the
+opening of its completed result. The saved table is `browser_automation_tool_comparison`, with
+six rows and five columns: Criterion, Playwright, Puppeteer, Selenium, and Sources.
+
+The interface language changes between captures; the original English task and response remain
+unchanged. No transcript content, styles, or raster pixels were edited. Capture reused the
+sanitized `qz-site-captures/demo-storage.json` without model credentials or new provider calls.
+The local connection was disabled in the temporary profile, which was removed after capture.
+The capture helper is `tests/results/website/capture-agent.mjs` in the ignored local results.
+The terminal beside these images is a labelled command example, not a recording of the task.
