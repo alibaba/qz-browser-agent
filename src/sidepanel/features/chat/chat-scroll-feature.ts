@@ -819,7 +819,7 @@ function handOffWheelFromInnerBoundary(delta: number) {
 
 function pauseInnerTailTargetsForOuterHistoryScroll(target: EventTarget | null) {
   const el = target instanceof Element ? target : null;
-  const scope = el?.closest?.(".msg-tool, .msg-tool-timeline, .msg-assistant") || messagesEl;
+  const scope = el?.closest?.(".msg-tool, .msg-tool-timeline, .msg-thinking-group, .msg-assistant") || messagesEl;
   pauseDescendantTailTargets(scope, { selector: INNER_SCROLL_TARGET_SELECTOR });
 }
 

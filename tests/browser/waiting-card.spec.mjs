@@ -141,6 +141,59 @@ test("long result lists scroll within the card and keep counts and actions below
 });
 
 for (const scheme of ["light", "dark"]) {
+  test(`result cards follow all reading sizes in a narrow ${scheme} form`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 320, height: 760 });
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.route("https://example.com/role.svg", route => route.fulfill({
+      contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><path fill="#888" d="M0 0h40v40H0z"/></svg>',
+    }));
+    await showResultChoices(page);
+    await page.evaluate(() => {
+      const f = window.waitFixture;
+      document.querySelector('#messages').style.cssText = 'width:320px;padding:8px';
+      f.entry.form.fields[0].options[0].imageUrl = "https://example.com/role.svg";
+      f.cards.patch(f.el, f.entry, "session-a");
+    });
+    const first = page.locator('.qz-choice-card input[value="job-1"]');
+    await first.check();
+    for (const [level, scale] of [["small", 0.875], ["compact", 0.9], ["standard", 1], ["comfortable", 1.1], ["large", 1.25], ["xlarge", 15.5 / 12]]) {
+      await page.locator('#messages').evaluate((el, size) => { el.dataset.chatTextSize = size; }, level);
+      await expectResultCardTypography(page.locator('.qz-choice-card').first(), scale);
+      await expect(first).toBeChecked();
+      // Reading size changes content; action controls keep the shared small-button size.
+      await expect(page.locator('[data-wait-action="continue"]')).toHaveCSS('font-size', '11px');
+      expect(await page.locator('.waiting-card').evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+    }
+
+    await page.locator('#messages').screenshot({ path: testInfo.outputPath(`choice-reading-size-${scheme}.png`) });
+    await page.locator('[data-wait-action="continue"]').click();
+    await expect(first).toBeDisabled();
+    await expectResultCardTypography(page.locator('.qz-choice-card').first(), 15.5 / 12);
+    await page.evaluate(() => {
+      const f = window.waitFixture;
+      f.cards.patch(f.el, { ...f.entry, status: "submitted" }, "session-a");
+      f.state.sends[0].resolve();
+    });
+    await expect(page.locator('.waiting-title')).toHaveCSS('font-size', '15.5px');
+    await page.evaluate(() => {
+      const f = window.waitFixture;
+      f.cards.reset();
+      f.el = f.cards.create(JSON.parse(JSON.stringify(f.entry)), "session-a");
+      document.querySelector('#messages').replaceChildren(f.el);
+    });
+    await expectResultCardTypography(page.locator('.qz-choice-card').first(), 15.5 / 12);
+
+    // The reusable control keeps its theme defaults outside the conversation.
+    await page.evaluate(async () => {
+      const { renderResultChoice } = await import("/extension/sidepanel/ui/result-choice.js");
+      const option = window.waitFixture.entry.form.fields[0].options[0];
+      const control = renderResultChoice(document, { ...option, id: "standalone-choice", name: "standalone", checked: false });
+      control.id = "standalone-control";
+      document.body.append(control);
+    });
+    await expectResultCardTypography(page.locator('#standalone-control'), 1);
+  });
+
   test(`result selection fits a 320px ${scheme} panel with visible action and translated count`, async ({ page }, testInfo) => {
     await page.emulateMedia({ colorScheme: scheme });
     await showResultChoices(page);
@@ -156,6 +209,22 @@ for (const scheme of ["light", "dark"]) {
     await expect(page.locator('[data-wait-action="continue"]')).toBeVisible();
     await page.locator('#messages').screenshot({ path: testInfo.outputPath(`selection-wait-${scheme}.png`) });
   });
+}
+
+async function expectResultCardTypography(card, scale) {
+  const styles = await card.evaluate(el => {
+    const sizes = Object.fromEntries(['title', 'description', 'tag', 'source'].map(part => {
+      const style = getComputedStyle(el.querySelector(`.qz-choice-card-${part}`));
+      return [part, { size: parseFloat(style.fontSize), lineHeight: parseFloat(style.lineHeight) }];
+    }));
+    return { sizes, overflow: el.scrollWidth - el.clientWidth, imageWidth: el.querySelector('img')?.getBoundingClientRect().width };
+  });
+  for (const [part, style] of Object.entries(styles.sizes)) {
+    expect(style.size).toBeCloseTo((part === 'title' ? 13 : 11.5) * scale, 2);
+    expect(style.lineHeight).toBeCloseTo(18 * scale, 2);
+  }
+  expect(styles.overflow).toBeLessThanOrEqual(1);
+  expect(styles.imageWidth).toBe(40);
 }
 
 test("required fields validate before sending and form submission delivers all typed answers once", async ({ page }) => {

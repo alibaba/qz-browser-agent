@@ -20,6 +20,10 @@
   background: var(--bg-secondary);
 }
 
+.waiting-card .qz-choice-card {
+  --qz-choice-card-text-scale: var(--chat-text-scale, 1);
+}
+
 .waiting-pulse {
   position: absolute;
   top: 0;

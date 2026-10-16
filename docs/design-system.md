@@ -40,6 +40,7 @@ Use native button/input semantics and the shared control states.
 | Scrolling | `qz-scroll`; add `qz-scroll--native` for native scrollbars |
 
 Control overrides use the declared `--qz-control-*`, `--qz-field-*`, and `--qz-popover-*` variables.
+`--qz-choice-card-text-scale` scales result-card text and line height together; it defaults to `1`.
 Preserve accessible names, keyboard focus, and disabled semantics. DOM helpers and renderer
 contracts are available through [SDK DOM](../src/sdk/sidepanel/dom.ts) and
 [renderers](../src/sdk/sidepanel/renderers.ts).

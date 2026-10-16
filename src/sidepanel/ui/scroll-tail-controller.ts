@@ -9,6 +9,7 @@ export const INNER_SCROLL_TARGET_SELECTOR = [
   ".markdown-code-block > pre",
   ".copyable-code-block > pre",
   ".tool-timeline-slot-body",
+  ".thinking-group-body",
 ].join(", ");
 
 export function installTailTracker(target: HTMLElement | null, { threshold = DEFAULT_TAIL_THRESHOLD_PX } = {}) {

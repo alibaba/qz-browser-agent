@@ -321,6 +321,7 @@ textarea.msg-user-edit-input::placeholder {
 
 .chat-error-card {
   position: relative;
+  font-size: var(--chat-content-font-size);
   padding: 11px 13px;
   border: 1px solid color-mix(in srgb, var(--red) 8%, var(--border));
   border-radius: var(--radius-sm);

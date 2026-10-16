@@ -437,7 +437,7 @@ textarea.qz-field {
   border-radius: var(--control-radius);
   background: var(--field-surface);
   color: var(--text-primary);
-  line-height: var(--choice-card-line-height);
+  line-height: calc(var(--choice-card-line-height) * var(--qz-choice-card-text-scale, 1));
   text-align: start;
   transition: background-color var(--transition), border-color var(--transition), box-shadow var(--transition);
 }
@@ -501,13 +501,13 @@ textarea.qz-field {
 
 .qz-choice-card-title {
   color: var(--text-primary);
-  font-size: var(--field-font-md);
+  font-size: calc(var(--field-font-md) * var(--qz-choice-card-text-scale, 1));
   font-weight: 600;
 }
 
 .qz-choice-card-description {
   color: var(--text-secondary);
-  font-size: var(--field-font-sm);
+  font-size: calc(var(--field-font-sm) * var(--qz-choice-card-text-scale, 1));
   text-wrap: pretty;
 }
 
@@ -521,7 +521,7 @@ textarea.qz-field {
 .qz-choice-card-tag {
   max-width: 100%;
   color: var(--text-secondary);
-  font-size: var(--field-font-sm);
+  font-size: calc(var(--field-font-sm) * var(--qz-choice-card-text-scale, 1));
 }
 
 .qz-choice-card-image {
@@ -544,7 +544,7 @@ textarea.qz-field {
   max-width: 100%;
   border-radius: var(--control-radius);
   color: var(--text-muted);
-  font-size: var(--field-font-sm);
+  font-size: calc(var(--field-font-sm) * var(--qz-choice-card-text-scale, 1));
   overflow-wrap: anywhere;
   text-decoration: none;
 }

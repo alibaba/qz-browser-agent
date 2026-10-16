@@ -57,6 +57,7 @@ import {
   toolRendererRegistry,
 } from "./tool-renderer.js";
 import { escapeHtml } from "../ui/ui-utils.js";
+import { installTailTracker, scrollToTail, setFollowTail, shouldFollowTail } from "../ui/scroll-tail-controller.js";
 import {
   hasActiveSelectionInsideNode,
   morphElementChildren,
@@ -301,8 +302,10 @@ export function patchThinkingTimelineGroupElement(el: TimelineElement, entry: En
   });
 
   patchAttributes(el, next);
-  morphElementChildren(el, next, { preserveSubtree: shouldPreserveMorphSubtree, beforeRemove: disposeRendererTree, beforeReplace: disposeRendererTree });
+  preserveToolDetailScrollState(el, () => {
+    morphElementChildren(el, next, { preserveSubtree: shouldPreserveMorphSubtree, beforeRemove: disposeRendererTree, beforeReplace: disposeRendererTree });
     commitRendererTree(el);
+  });
   updateThinkingSummaryPreview(el, entry);
 
   const nextDetails = el.querySelector<HTMLElement>(":scope > .thinking-group-details");
@@ -447,7 +450,14 @@ export function renderThinkingTimelineActiveSlot(el: TimelineElement, index: num
     <pre class="thinking-group-body user-selectable"></pre>
   `;
   const body = slot.querySelector<HTMLElement>(".thinking-group-body");
-  if (body) body.textContent = thinkingTimelineText(activeThought);
+  if (body) {
+    body.textContent = thinkingTimelineText(activeThought);
+    setFollowTail(body, Boolean(activeThought.streaming));
+    installTailTracker(body);
+    requestAnimationFrame(() => {
+      if (body.isConnected && shouldFollowTail(body)) scrollToTail(body);
+    });
+  }
 
   const summaryPreview = el.querySelector<HTMLElement>(":scope > .thinking-group-summary .thinking-group-preview");
   if (summaryPreview && !details.classList.contains("hidden")) {
