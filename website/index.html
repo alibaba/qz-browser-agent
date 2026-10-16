@@ -22,7 +22,7 @@
 <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
 <header class="header wrap">
   <a class="brand" href="./" aria-label="qz — Home" data-i18n-attributes="home"><img src="./assets/icon.png" width="32" height="32" alt=""><span>qz<span class="brand-caption"> / 轻舟</span></span></a>
-  <nav aria-label="Main navigation" data-i18n-attributes="nav"><a href="#overview" data-i18n="navOverview">Data</a><a href="#extend" data-i18n="navExtend">Skills</a><a href="https://github.com/alibaba/qz-browser-agent" class="nav-github">GitHub <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg></a></nav>
+  <nav aria-label="Main navigation" data-i18n-attributes="nav"><a href="#overview" data-i18n="navOverview">Data</a><a href="#extend" data-i18n="navExtend">Skills</a><a href="#agents" data-i18n="navAgents">CLI &amp; agents</a><a href="https://github.com/alibaba/qz-browser-agent" class="nav-github">GitHub <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg></a></nav>
   <div class="header-actions"><button class="language" type="button" hidden="" aria-label="Switch to 简体中文">中文</button><a class="button button-small" href="#get-started" data-i18n="navStart">Install<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a></div>
 </header>
 <main id="main">
@@ -48,12 +48,43 @@
   <ul class="extension-list">
     <li><h3 data-i18n="extension1Title">Skills</h3><p data-i18n="extension1Description">Install from a Git repository, edit in the panel, and activate on matching websites.</p><a class="text-link" href="https://github.com/alibaba/qz-browser-agent/blob/main/README.md#skills" data-i18n-attributes="skillGuide" data-i18n="extension1Link">Skill guide<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg></a></li>
     <li><h3 data-i18n="extension2Title">TypeScript capabilities</h3><p data-i18n="extension2Description">Add agent tools, panel views, settings pages, or providers as compiled TypeScript modules.</p><a class="text-link" href="https://github.com/alibaba/qz-browser-agent/blob/main/src/capabilities/README.md" data-i18n="extension2Link">Capability API<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg></a></li>
-    <li><h3 data-i18n="extension3Title">MCP bridge</h3><p data-i18n="extension3Description">Give external agents access to browser tools and task controls through a local MCP bridge.</p><a class="text-link" href="https://github.com/alibaba/qz-browser-agent/blob/main/services/mcp-bridge/README.md" data-i18n="extension3Link">MCP setup<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg></a></li>
+    <li><h3 data-i18n="extension3Title">CLI &amp; MCP</h3><p data-i18n="extension3Description">Run browser tasks from your terminal or let another agent use qz through a Skill or MCP.</p><a class="text-link" href="#agents" data-i18n="extension3Link">Connect your tools<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg></a></li>
   </ul>
 </div></section>
 
 <section class="ownership wrap" aria-labelledby="ownership-title"><div><h2 id="ownership-title" data-i18n="ownershipTitle">Local storage. Your model.</h2></div><div class="ownership-copy"><p data-i18n="ownershipDescription">Sessions, Skills, and collected data are stored in your browser. Connect a service with a compatible API and tool calling, including a local model server.</p><p class="privacy-note" data-i18n="ownershipPrivacy">Task context is sent to your configured model service. Skills and MCP connections may exchange data with services you configure.</p><a class="text-link" href="https://github.com/alibaba/qz-browser-agent/blob/main/docs/permissions.md" data-i18n="ownershipLink">Permissions &amp; data flow<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg></a></div></section>
 <section class="get-started section wrap" id="get-started" aria-labelledby="get-title"><div class="get-grid"><div><h2 id="get-title" data-i18n="startTitle">Install qz</h2><p class="section-description" data-i18n="startDescription">Download the ZIP for desktop Chrome. A model API key or local model endpoint is required.</p><a class="button" href="https://github.com/alibaba/qz-browser-agent/releases/latest" data-i18n="startDownload">Download latest release<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a><a class="install-guide text-link" href="https://github.com/alibaba/qz-browser-agent/blob/main/README.md#install" data-i18n="startGuide" data-i18n-attributes="installGuide">Installation guide<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg></a></div><ol class="steps"><li><span class="index">01</span><div><h3 data-i18n="step1Title">Download &amp; load</h3><p data-i18n="step1Description">Extract the release ZIP. Open <code>chrome://extensions</code>, enable Developer mode, then load the extracted extension folder.</p></div></li><li><span class="index">02</span><div><h3 data-i18n="step2Title">Connect your model</h3><p data-i18n="step2Description">Open qz Settings. Choose a provider, enter your credentials, select a model, and save.</p></div></li><li><span class="index">03</span><div><h3 data-i18n="step3Title">Give it a task</h3><p data-i18n="step3Description">Open the side panel and describe what you want to do. You can adjust the task while it runs.</p></div></li></ol></div><div class="first-prompt"><div class="prompt-label"><span class="eyebrow" data-i18n="promptLabel">TRY A TASK</span><button class="copy-prompt" type="button" data-copy-prompt="" data-copied="Copied" data-failed="Select and copy the prompt below." data-i18n-attributes="copy" hidden=""><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4"></path></svg><span data-i18n="promptCopy">Copy prompt</span></button></div><p id="first-prompt" data-i18n="prompt">Open Wikipedia’s Hangzhou page. Make a table of its main sights, with a short description and a source link for each.</p><span class="copy-status" role="status" aria-live="polite"></span></div></section>
+<section class="agent-access section wrap" id="agents" aria-labelledby="agents-title">
+  <div class="section-heading"><h2 id="agents-title" data-i18n="agentsTitle">CLI &amp; agents.</h2><p data-i18n="agentsDescription">Run browser tasks from your terminal, Codex, Claude Code, or pi. Set up the extension above and use Node.js 24 or later.</p></div>
+  <div class="integration-grid">
+    <article>
+      <h3 data-i18n="cliTitle">From your terminal</h3>
+      <p data-i18n="cliDescription">Connect to qz, then start a task and stream its progress.</p>
+      <div class="command-block" data-copy-block>
+        <div class="command-header"><span class="eyebrow">CLI</span><button class="copy-prompt" type="button" data-copy-target="cli-commands" data-copied="Copied" data-failed="Select and copy the commands below." data-i18n-attributes="copyCommand" hidden><span data-i18n="commandCopy">Copy commands</span></button></div>
+        <pre><code id="cli-commands" data-i18n="cliCommands">npx --yes qz-browser-agent@latest connect
+npx --yes qz-browser-agent@latest create \
+  "Summarize the current page." --stream</code></pre>
+        <span class="copy-status" role="status" aria-live="polite"></span>
+      </div>
+      <p class="integration-note" data-i18n="cliMcp">For MCP clients, run <code>npx --yes qz-browser-agent@latest mcp</code> after connecting to get the connection URL.</p>
+      <a class="text-link" href="https://github.com/alibaba/qz-browser-agent/blob/main/services/mcp-bridge/README.md" data-i18n="cliGuide">CLI &amp; MCP guide</a>
+    </article>
+    <article>
+      <h3 data-i18n="agentTitle">From your agent</h3>
+      <p data-i18n="agentDescription">Install the Skill so your agent can delegate browser work to qz.</p>
+      <div class="command-block" data-copy-block>
+        <div class="command-header"><span class="eyebrow">SKILL</span><button class="copy-prompt" type="button" data-copy-target="skill-command" data-copied="Copied" data-failed="Select and copy the commands below." data-i18n-attributes="copyCommand" hidden><span data-i18n="commandCopy">Copy commands</span></button></div>
+        <pre><code id="skill-command">npx --yes skills add alibaba/qz-browser-agent \
+  --skill qz-browser-agent \
+  --agent codex --global</code></pre>
+        <span class="copy-status" role="status" aria-live="polite"></span>
+      </div>
+      <p class="integration-note" data-i18n="agentTargets">Replace <code>codex</code> with <code>claude-code</code> or <code>pi</code> for your agent. Then ask it to use qz for a browser task.</p>
+      <a class="text-link" href="https://github.com/alibaba/qz-browser-agent/blob/main/skills/qz-browser-agent/SKILL.md" data-i18n="agentGuide">Read the Skill</a>
+    </article>
+  </div>
+</section>
 <div class="name-story wrap"><p data-i18n="nameDescription">qz = qingzhou (轻舟), “light boat”.</p><p class="name-verse" data-i18n="nameVerse">The light boat has already passed ten thousand mountains.</p></div>
 </main>
 <footer class="footer wrap"><a class="brand" href="./">qz<span class="footer-name">qz-browser-agent</span></a><nav aria-label="Footer navigation" data-i18n-attributes="footer"><a href="https://github.com/alibaba/qz-browser-agent/blob/main/README.md" data-i18n="footerDocs" data-i18n-attributes="documentation">Documentation</a><a href="https://github.com/alibaba/qz-browser-agent/issues" data-i18n="footerIssues">Feedback</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/docs/permissions.md" data-i18n="footerPrivacy">Privacy</a><a href="./credits/" data-i18n="footerCredits">Credits</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/LICENSE">Apache-2.0</a></nav></footer>

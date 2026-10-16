@@ -115,6 +115,17 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .copy-prompt:hover { background: var(--soft); color: var(--ink); }
 .copy-status { display: block; font-size: 12px; line-height: 1.6; margin-top: 4px; color: var(--secondary); }
 .copy-status:empty { display: none; }
+.agent-access { border-top: 1px solid var(--line); }
+.integration-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px; margin-top: 38px; }
+.integration-grid article { min-width: 0; }
+.integration-grid h3 { font-size: 20px; font-weight: 520; letter-spacing: -.4px; line-height: 1.35; }
+.integration-grid p { font-size: 14px; line-height: 1.8; color: var(--secondary); margin-top: 12px; }
+.command-block { padding: 14px 18px 18px; margin-top: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.command-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; }
+.command-header .eyebrow { color: var(--secondary); font-size: 9px; }
+.command-block pre { margin: 14px 0 0; font-size: 13px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
+.command-block code { font-family: 'SF Mono', Consolas, monospace; font-size: inherit; }
+.integration-grid .integration-note { font-size: 12px; margin-block: 16px; }
 .name-story { display:flex; justify-content:space-between; gap:20px; padding-block:28px; border-top:1px solid var(--line); color:var(--secondary); font-size:11px; line-height:1.8; }
 .footer { border-top: 1px solid var(--line); padding-block: 27px; display: flex; align-items: center; justify-content: space-between; gap: 25px; }
 .footer-name { margin-left: 8px; font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--secondary); }
@@ -192,6 +203,11 @@ video { display: block; width: 100%; max-height: 70dvh; aspect-ratio: 16 / 9; ba
   .get-started .button { margin-top: 24px; }
   .first-prompt { margin-top: 30px; padding: 19px 20px 25px; }
   .first-prompt > p { font-size: 17px; }
+  .integration-grid { grid-template-columns: 1fr; gap: 35px; margin-top: 28px; }
+  .integration-grid h3 { font-size: 19px; }
+  .integration-grid p { font-size: 13px; }
+  .command-block { padding-inline: 14px; }
+  .command-block pre { font-size: 12px; }
   .name-story { flex-direction: column; gap: 5px; padding-block: 24px; }
   .footer { align-items: start; flex-direction: column; padding-block: 25px; gap: 22px; }
   .footer nav { gap: 18px; font-size: 11px; }

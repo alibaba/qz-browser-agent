@@ -49,9 +49,9 @@ export const translations = {
       "extension2Link": "Capability API<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step2Title": "Connect your model",
       "step2Description": "Open qz Settings. Choose a provider, enter your credentials, select a model, and save.",
-      "extension3Title": "MCP bridge",
-      "extension3Description": "Give external agents access to browser tools and task controls through a local MCP bridge.",
-      "extension3Link": "MCP setup<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
+      "extension3Title": "CLI & MCP",
+      "extension3Description": "Run browser tasks from your terminal or let another agent use qz through a Skill or MCP.",
+      "extension3Link": "Connect your tools<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step3Title": "Give it a task",
       "step3Description": "Open the side panel and describe what you want to do. You can adjust the task while it runs.",
       "tableTitle": "Compare tools using their official documentation",
@@ -65,7 +65,20 @@ export const translations = {
       "parallelTitle": "Research with parallel subtasks",
       "parallelDescription": "Delegate parts of a task and combine the findings. Here, agents research West Lake walks and Longjing tea experiences for a Hangzhou itinerary.",
       "imageTitle": "Screenshot",
-      "imageOpen": "Open original"
+      "imageOpen": "Open original",
+      "navAgents": "CLI &amp; agents",
+      "agentsTitle": "CLI &amp; agents.",
+      "agentsDescription": "Run browser tasks from your terminal, Codex, Claude Code, or pi. Set up the extension above and use Node.js 24 or later.",
+      "cliTitle": "From your terminal",
+      "cliDescription": "Connect to qz, then start a task and stream its progress.",
+      "commandCopy": "Copy commands",
+      "cliCommands": "npx --yes qz-browser-agent@latest connect\nnpx --yes qz-browser-agent@latest create \\\n  \"Summarize the current page.\" --stream",
+      "cliMcp": "For MCP clients, run <code>npx --yes qz-browser-agent@latest mcp</code> after connecting to get the connection URL.",
+      "cliGuide": "CLI &amp; MCP guide",
+      "agentTitle": "From your agent",
+      "agentDescription": "Install the Skill so your agent can delegate browser work to qz.",
+      "agentTargets": "Replace <code>codex</code> with <code>claude-code</code> or <code>pi</code> for your agent. Then ask it to use qz for a browser task.",
+      "agentGuide": "Read the Skill"
     },
     "attributes": {
       "description": {
@@ -155,6 +168,10 @@ export const translations = {
       "parallelLink": {
         "href": "./assets/screens/parallel-en.png",
         "aria-label": "Enlarge: Task tree showing agents researching Hangzhou in parallel"
+      },
+      "copyCommand": {
+        "data-copied": "Copied",
+        "data-failed": "Select and copy the commands below."
       }
     }
   },
@@ -207,9 +224,9 @@ export const translations = {
       "extension2Link": "能力包 API<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step2Title": "连接模型",
       "step2Description": "打开轻舟设置，选择服务商、填写凭证、选择模型并保存。",
-      "extension3Title": "MCP Bridge",
-      "extension3Description": "通过本地 MCP Bridge，向外部 Agent 开放浏览器工具和任务控制。",
-      "extension3Link": "配置 MCP<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
+      "extension3Title": "CLI 与 MCP",
+      "extension3Description": "在终端执行浏览器任务，或让其他 Agent 通过 Skill 或 MCP 调用轻舟。",
+      "extension3Link": "接入你的工具<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step3Title": "开始第一个任务",
       "step3Description": "打开侧边栏，描述你想做的事。执行过程中也可以继续调整任务。",
       "tableTitle": "查阅官方文档，生成工具对比表",
@@ -223,7 +240,20 @@ export const translations = {
       "parallelTitle": "多个子任务，并行研究",
       "parallelDescription": "把任务拆分给多个 Agent，再汇总结果。图中的子任务分别调查西湖路线、龙井体验，并核对交通与预约信息。",
       "imageTitle": "界面截图",
-      "imageOpen": "查看原图"
+      "imageOpen": "查看原图",
+      "navAgents": "CLI 与 Agent",
+      "agentsTitle": "CLI 与 Agent。",
+      "agentsDescription": "在终端、Codex、Claude Code 或 pi 中调用轻舟。先完成上方的扩展配置，并安装 Node.js 24 或更高版本。",
+      "cliTitle": "在终端中使用",
+      "cliDescription": "连接轻舟后创建任务，实时查看执行进度。",
+      "commandCopy": "复制命令",
+      "cliCommands": "npx --yes qz-browser-agent@latest connect\nnpx --yes qz-browser-agent@latest create \\\n  \"总结当前页面。\" --stream",
+      "cliMcp": "使用 MCP 客户端时，连接后运行 <code>npx --yes qz-browser-agent@latest mcp</code> 获取连接地址。",
+      "cliGuide": "CLI 与 MCP 指南",
+      "agentTitle": "交给你的 Agent",
+      "agentDescription": "安装 Skill，让你的 Agent 学会将浏览器任务交给轻舟。",
+      "agentTargets": "将 <code>codex</code> 换为 <code>claude-code</code> 或 <code>pi</code>，即可安装到对应 Agent。然后让它使用轻舟执行浏览器任务。",
+      "agentGuide": "查看 Skill"
     },
     "attributes": {
       "description": {
@@ -313,6 +343,10 @@ export const translations = {
       "parallelLink": {
         "href": "./assets/screens/parallel-zh.png",
         "aria-label": "放大查看：轻舟任务树：多个 Agent 并行调查杭州行程"
+      },
+      "copyCommand": {
+        "data-copied": "已复制",
+        "data-failed": "请选中下方命令并复制。"
       }
     }
   }

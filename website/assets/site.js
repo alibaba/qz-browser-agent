@@ -36,7 +36,7 @@ function setLanguage(next, { remember = false } = {}) {
   languageButton.textContent = next === 'en' ? '中文' : 'EN';
   languageButton.lang = next === 'en' ? 'zh-CN' : 'en';
   languageButton.setAttribute('aria-label', next === 'en' ? 'Switch to 简体中文' : 'Switch to English');
-  document.querySelector('.copy-status').textContent = '';
+  document.querySelectorAll('.copy-status').forEach((status) => { status.textContent = ''; });
   if (remember) {
     try { localStorage.setItem(languageStorageKey, next); } catch { /* Optional preference. */ }
     const url = new URL(location.href);
@@ -75,17 +75,17 @@ if (dialog instanceof HTMLDialogElement && video instanceof HTMLVideoElement) {
   });
 }
 
-const copyButton = document.querySelector('[data-copy-prompt]');
-const prompt = document.querySelector('#first-prompt');
-const status = document.querySelector('.copy-status');
-if (copyButton instanceof HTMLButtonElement && prompt && status && navigator.clipboard) {
+for (const copyButton of document.querySelectorAll('[data-copy-prompt], [data-copy-target]')) {
+  const content = document.getElementById(copyButton.dataset.copyTarget || 'first-prompt');
+  const status = copyButton.closest('[data-copy-block], .first-prompt')?.querySelector('.copy-status');
+  if (!(copyButton instanceof HTMLButtonElement) || !content || !status || !navigator.clipboard) continue;
   copyButton.hidden = false;
   let resetTimer;
   copyButton.addEventListener('click', async () => {
     clearTimeout(resetTimer);
     const requestedLocaleVersion = localeVersion;
     try {
-      await navigator.clipboard.writeText(prompt.textContent.trim());
+      await navigator.clipboard.writeText(content.textContent.trim());
       if (requestedLocaleVersion !== localeVersion) return;
       status.textContent = copyButton.dataset.copied;
       resetTimer = setTimeout(() => { status.textContent = ''; }, 2500);
@@ -94,7 +94,7 @@ if (copyButton instanceof HTMLButtonElement && prompt && status && navigator.cli
       status.textContent = copyButton.dataset.failed;
       const selection = window.getSelection();
       const range = document.createRange();
-      range.selectNodeContents(prompt);
+      range.selectNodeContents(content);
       selection?.removeAllRanges();
       selection?.addRange(range);
     }

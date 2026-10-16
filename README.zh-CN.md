@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/3203bc89-ef26-4f66-86cc-b602a912a1ab
 - **Skill**：在目标网页中运行 JavaScript。将指令、脚本、工具和自定义界面打包为可复用的 Skill，并可按站点自动启用。
 - **模型选择**：支持任何具备工具调用能力且协议兼容的服务商，包括本地模型服务。
 - **TypeScript 能力包**：添加 Agent 工具、面板视图、设置页或模型服务商。
-- **MCP Bridge**：通过可选的[本地 MCP Bridge](services/mcp-bridge/README.md)，向外部 Agent 开放浏览器工具和任务控制。
+- **CLI 与 MCP**：从终端、编程 Agent 或 MCP 客户端委派浏览器任务，通过同一连接管理任务、数据、图集和设置。
 
 ## 隐私与数据流
 
@@ -51,6 +51,31 @@ npm run build
 2. 在**设置**中选择服务商并填写凭证。使用自定义接口时，还需填写 URL 和协议。
 3. 选择模型并保存。
 4. 试着输入：`打开 example.com，把页面的主标题提取到一张表格中。`
+
+## CLI 与编程 Agent
+
+安装扩展并配置模型后，使用 Node.js 24 或更高版本，从终端运行任务：
+
+```bash
+npx --yes qz-browser-agent@latest connect
+npx --yes qz-browser-agent@latest create "打开 en.wikipedia.org/wiki/Hangzhou，总结主要景点并附上来源链接。" --stream
+```
+
+`connect` 会在需要时打开连接页面。请使用安装了轻舟的 Chrome 用户配置，并完成首次数据告知。`--stream` 实时显示进展和结果。
+
+### 给 Agent 安装 Skill
+
+安装 [qz-browser-agent Skill](skills/qz-browser-agent/SKILL.md)，让编程 Agent 将网页研究、浏览器操作和数据提取任务交给轻舟：
+
+```bash
+npx skills add alibaba/qz-browser-agent --skill qz-browser-agent --agent codex --global
+```
+
+安装给 Claude Code 或 Pi 时，将目标改为 `--agent claude-code` 或 `--agent pi`。`--skill` 选择 Skill，`--agent` 选择编程 Agent。其他目标见[支持列表](https://github.com/vercel-labs/skills#supported-agents)。
+
+然后对 Agent 说：**用轻舟比较这三个产品页面，把价格和来源链接整理成表格。**
+
+使用 MCP 客户端时，连接后运行 `npx --yes qz-browser-agent@latest mcp`，将返回的 HTTP 地址填入客户端配置。任务追问、用户输入、导出和设置等用法见 [CLI 与 MCP 指南](services/mcp-bridge/README.md)。
 
 ## 扩展轻舟
 

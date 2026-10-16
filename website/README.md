@@ -22,6 +22,9 @@ path `/qz-browser-agent/`.
   follows the system color scheme and reduced-motion preference.
 - Download links point to the latest GitHub release. Add a verified store URL when the extension
   becomes available in the Chrome Web Store.
+- The CLI and agent section uses the published `qz-browser-agent` npm package and the repository's
+  `skills/qz-browser-agent/SKILL.md`. Keep its commands aligned with the
+  [CLI guide](../services/mcp-bridge/README.md); agent install targets are `codex`, `claude-code`, and `pi`.
 - The English and Chinese workspace screenshots are unchanged copies of `docs/images/workspace.png`
   and `docs/images/workspace-zh-CN.png`. Update both copies when those source images change.
 - `assets/demo-en.mp4` is the existing 45-second English demo. It loads only when the

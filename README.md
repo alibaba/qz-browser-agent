@@ -21,7 +21,7 @@ https://github.com/user-attachments/assets/26ee85fd-540f-4427-af59-c196fadfa221
 - **Skills.** Run JavaScript in target web pages. Package instructions, scripts, tools, and custom UI as reusable Skills, with optional site-based activation.
 - **Model choice.** Use any provider with a supported API protocol and tool calling, including local model servers.
 - **TypeScript capabilities.** Add agent tools, panel views, settings pages, or model providers.
-- **MCP bridge.** Expose browser tools and task controls to external agents through the optional [local MCP bridge](services/mcp-bridge/README.md).
+- **CLI and MCP.** Delegate browser tasks from your terminal, coding agent, or MCP client. Manage tasks, data, images, and settings through the same browser connection.
 
 ## Privacy and data flow
 
@@ -58,6 +58,37 @@ Follow the Chrome installation steps above, selecting `dist/extension/` as the e
 2. In **Settings**, choose a provider and enter its credentials. A custom endpoint also requires a URL and protocol.
 3. Select a model and save.
 4. Try a prompt: `Open example.com and extract its main heading into a table.`
+
+## CLI and coding agents
+
+After installing the extension and configuring its model, use Node.js 24 or later to run tasks
+from your terminal:
+
+```bash
+npx --yes qz-browser-agent@latest connect
+npx --yes qz-browser-agent@latest create "Open en.wikipedia.org/wiki/Hangzhou and summarize its main sights with source links." --stream
+```
+
+`connect` opens a connection page when needed. Use the Chrome profile where qz is installed and
+accept its first-use data notice. `--stream` displays progress and the result.
+
+### Install the agent Skill
+
+Give your coding agent the [qz-browser-agent Skill](skills/qz-browser-agent/SKILL.md) to delegate
+browser research, automation, and data extraction to qz:
+
+```bash
+npx skills add alibaba/qz-browser-agent --skill qz-browser-agent --agent codex --global
+```
+
+Use `--agent claude-code` or `--agent pi` to install for Claude Code or Pi. `--skill` selects the
+Skill; `--agent` selects the coding agent. See the [supported agents](https://github.com/vercel-labs/skills#supported-agents).
+
+Then ask your agent: **Use qz to compare these three product pages and save a table with prices and source links.**
+
+For MCP clients, run `npx --yes qz-browser-agent@latest mcp` after connecting and use the returned
+HTTP URL. See the [CLI and MCP guide](services/mcp-bridge/README.md) for task follow-ups, pending
+input, exports, and configuration.
 
 ## Extending qz
 
