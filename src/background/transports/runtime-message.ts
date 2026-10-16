@@ -8,7 +8,7 @@ import { RUNTIME_REQUEST_PORT } from "../../shared/transport/runtime-request.js"
 import { backgroundReceiveBudget, backgroundTransferBudget } from "./transfer-budget.js";
 
 const OWNED_MESSAGE_TYPES = new Set([
-  "accept_location_consent", "accept_data_consent", "get_content_language", "offscreen_keepalive", "session_export_import_request",
+  "accept_location_consent", "accept_data_consent", "get_content_language", "offscreen_keepalive", "session_export_import_request", "mcp_bridge_connect",
   "stop_session", "run_script_inner_result", "run_script_inner_trace", "run_script_inner_fetch",
   "run_script_inner_fetch_cancel", "run_script_tool_call",
 ]);
@@ -21,6 +21,16 @@ export function createRuntimeMessageTransport(api: BackgroundApi, {
 
   function dispatch(message: Fields, sender: chrome.runtime.MessageSender, sendResponse: (response: unknown) => void) {
     const type = String(message?.type || "");
+
+    if (type === "mcp_bridge_connect") {
+      respondAsync(
+        () => call("system.connectMcp", sender),
+        result => ({ ok: true, ...object(result) }),
+        error => failure(error, "MCP_CONNECTION_FAILED"),
+        sendResponse,
+      );
+      return true;
+    }
 
     if (type === "accept_location_consent") {
       respondAsync(

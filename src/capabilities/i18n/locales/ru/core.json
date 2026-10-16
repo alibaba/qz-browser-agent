@@ -116,6 +116,7 @@
   "core.newWaitRequested": "Теперь агент ожидает другого действия",
   "core.waitNotQueued": "Этот запрос больше не ожидает ответа",
   "core.agentContinued": "Агент продолжает работу",
+  "core.choiceSelectedCount": "Выбрано: {count}",
   "core.selectThisOption": "Выбрать этот вариант",
   "core.fillThisField": "Заполнить это поле",
   "core.cannotExport": "Экспорт невозможен",

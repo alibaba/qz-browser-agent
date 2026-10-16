@@ -14,9 +14,15 @@ interface LocationHost {
   locate(options: { windowId?: number | null; signal?: AbortSignal }): Promise<Record<string, unknown> | null>;
 }
 
-/** Location consent is granted by a panel click, independently of continuing a task. */
+/** Location consent requires an explicit approval, independently of continuing a task. */
 export function createLocationService({ storage, sessions, emit, locate }: LocationHost) {
   const approvals = new Map<string, Approval>();
+  let consentQueue = Promise.resolve();
+  function serializeConsent<T>(operation: () => Promise<T>): Promise<T> {
+    const result = consentQueue.then(operation);
+    consentQueue = result.then(() => {}, () => {});
+    return result;
+  }
   const message = (context: ToolContext, key: "locationDisclosure" | "locationTitle" | "locationRequired" | "locationUnavailable") =>
     withLanguage(context.language || getLanguage(), () => t(key));
   function assertActive({ context, signal }: Approval) {
@@ -25,11 +31,13 @@ export function createLocationService({ storage, sessions, emit, locate }: Locat
       throw new ToolExecutionError("STALE_RUN", "The location request no longer belongs to an active run");
     }
   }
-  async function accepted() { return hasDataConsent((await storage.get(LOCATION_CONSENT_KEY))[LOCATION_CONSENT_KEY]); }
+  function isAccepted() {
+    return serializeConsent(async () => hasDataConsent((await storage.get(LOCATION_CONSENT_KEY))[LOCATION_CONSENT_KEY]));
+  }
   async function request(context: ToolContext, signal?: AbortSignal) {
     const approval = { context, signal };
     assertActive(approval);
-    if (!await accepted()) {
+    if (!await isAccepted()) {
       assertActive(approval);
       const sessionId = String(context.sessionId), runId = String(context.runId);
       if (sessions.isWaitingForUser(sessionId)) throw new ToolExecutionError("LOCATION_CONSENT_REQUIRED", message(context, "locationRequired"));
@@ -44,7 +52,7 @@ export function createLocationService({ storage, sessions, emit, locate }: Locat
         await pending;
       } finally { approvals.delete(waitId); }
       assertActive(approval);
-      if (!await accepted()) throw new ToolExecutionError("LOCATION_CONSENT_REQUIRED", message(context, "locationRequired"));
+      if (!await isAccepted()) throw new ToolExecutionError("LOCATION_CONSENT_REQUIRED", message(context, "locationRequired"));
     }
     assertActive(approval);
     const location = await locate({ windowId: context.sourceWindowId, signal });
@@ -54,11 +62,42 @@ export function createLocationService({ storage, sessions, emit, locate }: Locat
   }
   async function accept(waitId: string, sessionId: string, sender: chrome.runtime.MessageSender) {
     assertSidePanelSender(sender);
-    const approval = approvals.get(waitId);
-    if (!approval || approval.context.sessionId !== sessionId) throw new ToolExecutionError("STALE_RUN", "Location approval has expired");
-    assertActive(approval);
-    await storage.set({ [LOCATION_CONSENT_KEY]: { version: DATA_CONSENT_VERSION, acceptedAt: Date.now() } });
-    return { accepted: true };
+    return saveAcceptance(waitId, sessionId);
   }
-  return { request, accept };
+  async function acceptExternal(waitId: string, sessionId: string, consentVersion: unknown) {
+    if (consentVersion !== DATA_CONSENT_VERSION) {
+      throw new ToolExecutionError("LOCATION_CONSENT_VERSION_MISMATCH", "The location disclosure has changed. Read the task input before approving it.");
+    }
+    return saveAcceptance(waitId, sessionId);
+  }
+  function saveAcceptance(waitId: string, sessionId: string) {
+    const approval = approvals.get(waitId);
+    function assertPending() {
+      if (!approval || approval.context.sessionId !== sessionId || approvals.get(waitId) !== approval) {
+        throw new ToolExecutionError("STALE_RUN", "Location approval has expired");
+      }
+      assertActive(approval);
+    }
+    assertPending();
+    return serializeConsent(async () => {
+      assertPending();
+      const previous = (await storage.get(LOCATION_CONSENT_KEY))[LOCATION_CONSENT_KEY];
+      assertPending();
+      if (hasDataConsent(previous)) return { accepted: true };
+      const record = { version: DATA_CONSENT_VERSION, acceptedAt: Date.now(), grantId: crypto.randomUUID() };
+      await storage.set({ [LOCATION_CONSENT_KEY]: record });
+      try {
+        assertPending();
+      } catch (error) {
+        // Readers and other approvals wait until this cancelled write has been rolled back.
+        const current = (await storage.get(LOCATION_CONSENT_KEY))[LOCATION_CONSENT_KEY];
+        if (current && typeof current === "object" && "grantId" in current && current.grantId === record.grantId) {
+          await storage.set({ [LOCATION_CONSENT_KEY]: previous ?? null });
+        }
+        throw error;
+      }
+      return { accepted: true };
+    });
+  }
+  return { request, accept, acceptExternal, isAccepted };
 }

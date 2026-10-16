@@ -106,6 +106,7 @@
   --field-focus-ring: var(--control-focus-ring);
   --choice-size-sm: 13px;
   --choice-size-md: 15px;
+  --choice-card-line-height: 18px;
   --choice-radius: 3px;
   --choice-border: color-mix(in srgb, var(--text-muted) 34%, var(--border));
   --choice-border-hover: color-mix(in srgb, var(--text-muted) 54%, var(--border-focus));

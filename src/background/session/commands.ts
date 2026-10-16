@@ -220,7 +220,8 @@ async function createSessionRuntime({ title = "", firstMessage = "", parentSessi
     title,
     firstMessage: message,
     parentSessionId: normalizedParentId,
-    titleSource: normalizedParentId === ROOT_SESSION_ID ? "first_message" : "fixed",
+    titleSource: normalizedParentId === ROOT_SESSION_ID
+      ? (String(title || "").trim() ? "manual" : "first_message") : "fixed",
   });
   broadcast({ type: "session_created", session, firstMessage: message });
   broadcast({ type: "sessions_changed", action: "create", sessionId: session.id, session });

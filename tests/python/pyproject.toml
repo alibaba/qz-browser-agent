@@ -4,6 +4,9 @@ version = "0.0.0"
 requires-python = ">=3.11"
 dependencies = [
   "playwright==1.61.0",
+  "mcp==1.28.1",
+  "pyjwt==2.15.1",
+  "pytest==9.1.1",
 ]
 
 [tool.uv]

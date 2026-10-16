@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import contextlib
 import json
-import os
 import random
 import time
 from dataclasses import replace
@@ -175,7 +174,6 @@ async def run_case_with_new_client(
 ) -> dict[str, Any]:
     async with streamablehttp_client(
         bridge_url,
-        headers={"Authorization": "Bearer " + os.environ.get("QINGZHOU_MCP_BRIDGE_TOKEN", "")},
         timeout=bridge_timeout,
         sse_read_timeout=max(300, bridge_timeout),
     ) as (read, write, _):
@@ -285,7 +283,7 @@ async def amain() -> int:
 
         cases = [localize_case(case, args.language, base_url) for case in cases]
 
-        async with streamablehttp_client(args.bridge_url, headers={"Authorization": "Bearer " + os.environ.get("QINGZHOU_MCP_BRIDGE_TOKEN", "")}, timeout=args.bridge_timeout, sse_read_timeout=max(300, args.bridge_timeout)) as (read, write, _):
+        async with streamablehttp_client(args.bridge_url, timeout=args.bridge_timeout, sse_read_timeout=max(300, args.bridge_timeout)) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 client = QingzhouMcpClient(session, bridge_timeout=args.bridge_timeout)

@@ -1,4 +1,4 @@
-import { initializeLanguage, whenLanguageReady } from "../shared/i18n/index.js";
+import { initializeLanguage, whenLanguageReady, readLanguagePreference, saveLanguagePreference, getAvailableLanguages } from "../shared/i18n/index.js";
 import { matchConfiguredModelCapabilities } from "../shared/models/model-capabilities.js";
 import { createContentLanguageSnapshot } from "../shared/i18n/content.js";
 import { t } from "../shared/i18n/backend.js";
@@ -39,6 +39,10 @@ import {
   saveQingzhouMcpBridgeConfig,
   startQingzhouMcpBridge,
 } from "./mcp/mcp-bridge.js";
+import { createMcpConnectPage } from "./mcp/connect-page.js";
+import { createMcpResourceRuntime } from "./mcp/resource-runtime.js";
+import { createMcpManagementRuntime } from "./mcp/management-runtime.js";
+import { downloadMcpFile } from "./mcp/file-download.js";
 import {
   listSkills,
   loadSkill,
@@ -731,7 +735,7 @@ const mcpRuntime = createMcpRuntime({
     normalizeId: normalizeSessionId,
     requireId: requireExplicitSessionId,
     supervisor: sessionSupervisor,
-    startPromptTask: sessionCommands.startSessionPromptTask,
+    submitMessage: sessionCommands.submitSessionMessageRuntime,
     waitForRunObserved: sessionCommands.waitForSessionRunObserved,
     getRuntimeOutput: sessionCommands.getSessionRuntimeStateForOutput,
     getLiveAgentEntry: sessionAgentHost.getLiveEntry,
@@ -764,13 +768,35 @@ const mcpRuntime = createMcpRuntime({
     empty: sessionArtifacts.empty,
   },
   trace: { get: getTraceLog },
+  userInputPermissions: {
+    hasBrowserPermission: permission => chrome.permissions.contains({ permissions: [permission as chrome.runtime.ManifestPermission] }),
+    locationConsent: locationService,
+  },
   dispatchSidepanel: (message, port) => sidepanelTransport.dispatch(message, port),
-  broadcast,
   storageKey: qingzhouMcpBridgeStorageKey,
+});
+
+const mcpResources = createMcpResourceRuntime();
+const mcpManagement = createMcpManagementRuntime({
+  config: configRuntime,
+  skills: { load: loadSkill },
+  download: downloadMcpFile,
+  language: { get: readLanguagePreference, save: saveLanguagePreference, list: getAvailableLanguages },
+});
+
+let mcpBridge: ReturnType<typeof startQingzhouMcpBridge> | undefined;
+const connectMcp = createMcpConnectPage({
+  extensionId: chrome.runtime.id,
+  assertConsent: dataConsent.assertAccepted,
+  getConfig: getQingzhouMcpBridgeConfig,
+  saveConfig: saveQingzhouMcpBridgeConfig,
+  getTab: tabId => chrome.tabs.get(tabId),
+  wake: () => mcpBridge?.wake(),
 });
 
 const backgroundApi = createBackgroundApi({
   system: {
+    connectMcp,
     contentLanguage: async () => {
       await languageReady;
       await whenLanguageReady();
@@ -803,6 +829,8 @@ const backgroundApi = createBackgroundApi({
     compact: sessionCommands.compactSessionContextRuntime,
     createUi: sessionCommands.createUiSessionFromApi,
     hydrateListSummaries: sessionArtifacts.hydrateListSummaries,
+    userInput: mcpRuntime.getUserInput,
+    respondToUserInput: mcpRuntime.respondToUserInput,
     continueWait: mcpRuntime.continueUserWait,
     submitWaitForm: mcpRuntime.submitWaitForm,
     cancelWait: mcpRuntime.cancelUserWait,
@@ -822,7 +850,13 @@ const backgroundApi = createBackgroundApi({
     cancelInnerFetch: skillNetwork.cancel,
   },
   data: {
-    listTables: platformCommands.listTables,
+    listTables: mcpResources.listDataTables,
+    deleteTable: mcpResources.deleteDataTable,
+    exportTable: mcpResources.exportDataTable,
+    listImageCollections: mcpResources.listImageCollections,
+    deleteImageCollection: mcpResources.deleteImageCollection,
+    exportImageCollection: mcpResources.exportImageCollection,
+    listDownloads: mcpResources.listDownloads,
   },
   artifacts: {
     list: sessionArtifacts.collect,
@@ -852,6 +886,7 @@ const backgroundApi = createBackgroundApi({
     list: mcpRuntime.listSkills,
     get: mcpRuntime.getSkill,
     resource: mcpRuntime.getSkillResource,
+    export: mcpManagement.exportSkill,
     contributions: platformCommands.contributions,
     refresh: platformCommands.refreshSkills,
     validateMcp: validateSkillMcpConfig,
@@ -867,6 +902,10 @@ const backgroundApi = createBackgroundApi({
     list: () => runSkillSettingsRequest("skill_settings_list", skillSettings.list),
     save: (input: Parameters<typeof skillSettings.save>[0]) => runSkillSettingsRequest("skill_settings_save", () => skillSettings.save(input)),
     remove: (input: Parameters<typeof skillSettings.remove>[0]) => runSkillSettingsRequest("skill_settings_remove", () => skillSettings.remove(input)),
+  },
+  settings: {
+    get: mcpManagement.getSettings,
+    update: mcpManagement.updateSettings,
   },
   config: {
     get: configRuntime.get,
@@ -921,11 +960,11 @@ const runtimeMessageTransport = createRuntimeMessageTransport(backgroundApi);
 runtimeMessageTransport.register(chrome.runtime);
 
 subscribeSkillToolRegistry(broadcast);
-dataConsent.whenAccepted.then(() => startQingzhouMcpBridge({
+dataConsent.whenAccepted.then(() => { mcpBridge = startQingzhouMcpBridge({
   dispatch: mcpTransport.dispatch,
   describe: mcpRuntime.describe,
   trace: llmTrace,
-})).catch(error => console.debug("[qz] MCP bridge startup failed:", error));
+}); }).catch(error => console.debug("[qz] MCP bridge startup failed:", error));
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   sessionTabs.handleTabRemoved(tabId).catch((error) => {

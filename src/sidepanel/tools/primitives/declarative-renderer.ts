@@ -18,6 +18,7 @@ interface StructuredHelpers {
 
 import { escapeHtml } from "../../ui/ui-utils.js";
 import { highlightCode } from "../../ui/code-highlighter.js";
+import { rendererT } from "../../../shared/skills/renderer-messages.js";
 import {
   normalizeSkillRendererSource,
   normalizeSkillRendererType,
@@ -81,6 +82,13 @@ const SKILL_RENDERER_APPENDERS = new Map<string, (parent: HTMLElement, renderer:
   ["text", (parent, renderer, data) => appendSkillTextBlock(parent, renderer, data)],
   ["article", (parent, renderer, data) => appendSkillArticleBlock(parent, renderer, data)],
   ["list", (parent, renderer, data) => appendSkillListBlock(parent, renderer, data)],
+  ["selection", (parent, renderer, data) => {
+    const selected = record(data).selectedIds;
+    return appendSkillListBlock(parent, { ...renderer, itemsPath: "selectedItems",
+      title: rendererT("selectionCompleted", { count: Array.isArray(selected) ? selected.length : 0, total: Number(record(data).totalItems) || 0 }),
+      empty: renderer.empty || t("noItems"),
+    }, data);
+  }],
   ["table", (parent, renderer, data) => appendSkillTableBlock(parent, renderer, data)],
   ["records", (parent, renderer, data) => appendSkillRecordsBlock(parent, renderer, data)],
   ["image_grid", (parent, renderer, data) => appendSkillImageGridBlock(parent, renderer, data)],
@@ -94,7 +102,7 @@ const SKILL_RENDERER_APPENDERS = new Map<string, (parent: HTMLElement, renderer:
 function skillRendererBlockData(renderer: Data = {}, data: unknown, args: unknown = {}) {
   const source = normalizeSkillRendererSource(String(renderer.source || ""));
   const sourceData = source === "args" ? args : data;
-  const sourcePath = String(renderer.sourcePath || "").trim();
+  const sourcePath = renderer.type === "selection" ? "" : String(renderer.sourcePath || "").trim();
   if (!sourcePath) return { state: "ready", value: sourceData };
   const resolved = skillValueAtPathState(sourceData, sourcePath);
   return resolved.exists

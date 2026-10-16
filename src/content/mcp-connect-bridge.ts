@@ -1,0 +1,20 @@
+import { requestRuntimeMessage } from "../shared/transport/runtime-request.js";
+
+// This packaged script only runs on the CLI's top-level local connection page.
+if (window === window.top && location.protocol === "http:"
+  && ["127.0.0.1", "localhost"].includes(location.hostname) && location.pathname === "/qz-connect") {
+  const status = document.querySelector<HTMLElement>("[data-qz-connection-status]");
+  if (status) {
+    void requestRuntimeMessage({ type: "mcp_bridge_connect" }, { timeoutMs: 10000 }).then(response => {
+      status.dataset.qzConnectionState = response.ok ? "connected" : "error";
+      status.dataset.qzConnectionCode = String(response.code || "");
+      status.textContent = response.ok ? "Connected. You can close this tab."
+        : response.code === "DATA_CONSENT_REQUIRED"
+          ? "Open the qz side panel and complete first-time setup, then reload this page."
+          : String(response.error || "Connection failed. Run qz connect to try again.");
+    }).catch(() => {
+      status.dataset.qzConnectionState = "error";
+      status.textContent = "Connection failed. Run qz connect to try again.";
+    });
+  }
+}

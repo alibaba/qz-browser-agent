@@ -309,5 +309,14 @@
   "backend.locationTitle": "位置情報を使用しますか？",
   "backend.locationDisclosure": "地域に合った情報を提供するため、軽舟は緯度・経度、精度、取得時刻を取得し、設定したモデルサービスに送信します。同意すると、次回以降は確認せずに位置情報を取得できます。",
   "backend.locationRequired": "位置情報の利用への同意が必要です。サイドパネルで確認するか、都市や地域を指定してください。",
-  "backend.locationUnavailable": "位置情報を取得できませんでした。サイドパネルを開いて端末の位置情報設定を確認するか、都市や地域を指定してください。"
+  "backend.locationUnavailable": "位置情報を取得できませんでした。サイドパネルを開いて端末の位置情報設定を確認するか、都市や地域を指定してください。",
+  "backend.locationPermissionDenied": "ブラウザーまたはOSによって位置情報へのアクセスが拒否されました。ブラウザーと端末の設定で位置情報へのアクセスを許可するか、都市や地域を指定してください。",
+  "backend.locationPositionUnavailable": "システムの位置情報サービスで現在地を特定できませんでした。ネットワークと端末の位置情報サービスを確認して後でもう一度試すか、都市や地域を指定してください。",
+  "backend.locationTimeout": "位置情報の取得がタイムアウトしました。後でもう一度試すか、都市や地域を指定してください。",
+  "backend.locationPanelUnavailable": "タスクを実行しているウィンドウのサイドパネルが閉じているか、接続が切れています。サイドパネルを開き直してもう一度試すか、都市や地域を指定してください。",
+  "backend.locationResponseTimeout": "サイドパネルから位置情報が時間内に返されませんでした。サイドパネルを開き直してもう一度試すか、都市や地域を指定してください。",
+  "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "候補の形式が無効です。一意で空でない文字列 ID とタイトルを持つ項目を最大 50 件返してください。",
+  "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "候補の形式が無効です",
+  "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "選択が無効です。ツールを再実行し、現在の候補から選択してください。",
+  "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.label": "選択が無効です"
 }

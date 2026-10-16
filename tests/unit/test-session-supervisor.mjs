@@ -230,16 +230,20 @@ async function ownsParallelUserWaitsPerSession() {
   });
   const rightRejected = assert.rejects(right, error => error?.code === "OPERATION_ABORTED");
 
+  assert.deepEqual(fixture.supervisor.getUserWait("wait-left"), { sessionId: "wait-left", waitId: "wait-1", runId: "run-left" });
+  assert.equal(fixture.supervisor.getUserWait("missing"), null);
   assert.equal(fixture.supervisor.isWaitingForUser("wait-left"), true);
   assert.equal(fixture.supervisor.isWaitingForUser("wait-right"), true);
   assert.equal(fixture.supervisor.resolveUserWait({ sessionId: "wait-left", waitId: "wrong" }), false);
   assert.equal(fixture.supervisor.resolveUserWait({ sessionId: "wait-left", waitId: "wait-1", payload: { ok: true } }), true);
   assert.deepEqual(await left, { ok: true });
   assert.equal(fixture.supervisor.isWaitingForUser("wait-left"), false);
+  assert.equal(fixture.supervisor.getUserWait("wait-left"), null);
 
   await fixture.supervisor.revoke("wait-right", { reason: "stop-during-wait" });
   await rightRejected;
   assert.equal(fixture.supervisor.isWaitingForUser("wait-right"), false);
+  assert.equal(fixture.supervisor.getUserWait("wait-right"), null);
 }
 
 async function newerUserWaitSupersedesOnlyTheSameSession() {
@@ -256,6 +260,7 @@ async function newerUserWaitSupersedesOnlyTheSameSession() {
     runId: "run-current",
   });
   await firstRejected;
+  assert.equal(fixture.supervisor.getUserWait("wait-supersede").waitId, "wait-new");
   assert.throws(
     () => fixture.supervisor.beginUserWait("wait-supersede", { waitId: "wait-stale", runId: "run-old" }),
     error => error?.code === "STALE_RUN",

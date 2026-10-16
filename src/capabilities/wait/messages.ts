@@ -30,6 +30,7 @@ export default defineMessages("wait", {
   "provideMoreInformation": { "zh-CN": "帮我补充信息", en: "A few more details" },
   "submit": { "zh-CN": "提交", en: "Submit" },
   "additionalNotes": { "zh-CN": "补充说明", en: "Additional notes" },
+  "cardsTooManyOptions": { "zh-CN": "候选卡片最多支持 50 项，请先缩小候选范围。", en: "Choose up to 50 candidates before showing selection cards." },
   "pageLoadTimedOutUseScreenshotToInspectThe": { "zh-CN": "页面加载超时。若需要视觉状态确认，请调用 screenshot；若要读取正文，请调用 read_article。", en: "Page load timed out. Use screenshot to inspect the visual state, or read_article to read the content." },
   "thePageWasAlreadyCompleteWhenCalledThisReflects": { "zh-CN": "调用时页面已经是 complete；这只说明当前加载态，不证明上一动作成功或失败。请结合 URL/标题变化、read_article/get_ax_tree/find_elements 判断结果。", en: "The page was already complete when called. This reflects its current load state, not whether the previous action succeeded. Check URL/title changes or use read_article/get_ax_tree/find_elements." },
   "pageLoadedUseReadArticleToReadTheContent": { "zh-CN": "页面加载完成。若要读取正文，请调用 read_article；需要视觉确认时再 screenshot。", en: "Page loaded. Use read_article to read the content, or screenshot for visual inspection." },

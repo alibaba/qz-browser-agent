@@ -14,6 +14,7 @@
     "benchmark": "node --import tsx tests/benchmarks/run.mjs",
     "docs": "node scripts/docs-api.mjs",
     "doctor": "node --import tsx tests/doctor.mjs",
+    "qz": "node services/mcp-bridge/src/bin.mjs",
     "release": "python3 scripts/publish-release.py"
   },
   "devDependencies": {

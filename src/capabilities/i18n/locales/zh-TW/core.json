@@ -296,6 +296,7 @@
   "core.selectElementFailed": "選擇元素失敗",
   "core.selector": "選擇器",
   "core.selectorText": "選擇器 {text}",
+  "core.choiceSelectedCount": "已選 {count} 項",
   "core.selectThisOption": "請選擇此項",
   "core.send": "發送",
   "core.settings": "設定",

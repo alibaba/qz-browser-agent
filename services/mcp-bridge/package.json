@@ -1,0 +1,16 @@
+{
+  "name": "qz-browser-agent",
+  "version": "0.1.0",
+  "description": "Local browser tools and MCP access for the qz extension",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "bin": { "qz": "src/bin.mjs" },
+  "files": ["src/*.mjs", "src/catalog.json", "README.md", "LICENSE"],
+  "license": "Apache-2.0",
+  "homepage": "https://alibaba.github.io/qz-browser-agent/",
+  "bugs": { "url": "https://github.com/alibaba/qz-browser-agent/issues" },
+  "keywords": ["browser-agent", "cli", "mcp", "chrome", "automation"],
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
+  "repository": { "type": "git", "url": "https://github.com/alibaba/qz-browser-agent.git", "directory": "services/mcp-bridge" },
+  "dependencies": { "@modelcontextprotocol/sdk": "1.31.0" }
+}

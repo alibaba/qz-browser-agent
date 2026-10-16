@@ -128,6 +128,7 @@ export default defineMessages("core", {
   waitNotQueued: { "zh-CN": "等待已不在后台队列中", en: "This request is no longer pending" },
   agentContinued: { "zh-CN": "Agent 已继续运行", en: "The agent is continuing" },
   selectThisOption: { "zh-CN": "请选择此项", en: "Select this option" },
+  choiceSelectedCount: { en: "Selected: {count}", "zh-CN": "已选 {count} 项" },
   fillThisField: { "zh-CN": "请填写此项", en: "Fill in this field" },
   cannotExport: { "zh-CN": "无法导出", en: "Cannot export" },
   exported: { "zh-CN": "已导出", en: "Exported" },

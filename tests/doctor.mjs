@@ -33,7 +33,6 @@ else failures.push("uv is missing or not executable");
 for (const path of [
   "package-lock.json",
   "tests/python/uv.lock",
-  "services/mcp-bridge/uv.lock",
 ]) {
   check(existsSync(join(root, path)), path, `missing lock file: ${path}`);
 }

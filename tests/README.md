@@ -22,7 +22,7 @@ npm run verify
 | --- | --- |
 | `unit` | Logic, repositories, cancellation, concurrency and data formats |
 | `contracts` | Side Panel projections, Port lifecycle and cross-context messages |
-| `services` | Python MCP Bridge and endpoint failures |
+| `services` | Node MCP/CLI lifecycle, endpoint failures, and Agent acceptance checks |
 | `browser` | Playwright, Python page smoke tests and Data Grid behavior |
 | `e2e` | The loaded extension, Session exchange, documents and tool timelines |
 | `release` | Deterministic builds, ZIP contents and the packaged extension |
@@ -32,6 +32,14 @@ npm run verify
 `verify` adds type checking and coverage gates. `--list` prints the selected commands. `--match`
 filters unit filenames or suite commands; the `playwright` entry accepts Playwright options
 directly.
+
+For the standalone CLI package, run `npm test -- services --match node` and
+`npm test -- release --match npm-package`. The package check uses the public npm registry to
+install the packed artifact in two clean temporary directories. It exercises the installed bin,
+MCP handshake, tools, daemon reuse across install paths, and shutdown on a temporary port.
+It uses isolated npm configuration, cache, and qz state, and cleans up its own service and files.
+Use `node tests/release/npm-package.mjs --help` to retain or test a specific tarball.
+The **npm package** workflow runs these checks on Linux, macOS, and Windows.
 
 The runner selects one to three concurrent jobs based on available CPUs. Timing-sensitive suites run
 after other work. Each lane runs ready commands while dependent commands wait; build-only release
@@ -87,6 +95,52 @@ node --require ./tests/support/unit-bootstrap.cjs \
 Use `t.after` or `finally` to release servers, timers, profiles, temporary directories and global
 mocks. Register new suites in the catalog. Keep test instrumentation under `tests/`.
 
+### Local connection resilience
+
+Run the real-browser connection checks with:
+
+```bash
+npm test -- e2e --match mcp-resilience
+npm test -- e2e --match mcp-user-input
+npm test -- e2e --match mcp-resources
+QINGZHOU_MCP_IDLE_MS=300000 npm test -- e2e --match mcp-resilience
+```
+
+The default idle window is 125 seconds. During that window, Chrome runs without a side panel or
+debugger attached; Node only reads the local service health endpoint. The test briefly reconnects
+to a regular page to stop the extension worker, disconnects again, and verifies automatic recovery.
+It also covers service interruption during navigation, three observed HTTP poll failures followed by
+automatic reconnection without a connection page, and an occupied port with fallback to a free port.
+Interrupted actions are checked for accidental replay. Evidence is saved to
+`tests/results/mcp-bridge/resilience-e2e.json`. Protocol, cancellation, concurrent-client and daemon
+lifecycle regressions run in `npm test -- services`.
+
+The resource scenario uses an isolated profile and temporary download directory to exercise CLI
+table CSV/XLSX exports, image ZIP exports, exact deletion, shared asset retention, Skill packages,
+and settings updates. It reads the saved files and verifies their contents. The user-input scenario
+also queues a CLI message behind a pending form and checks that streaming follows that message's
+run after the form is submitted.
+It also creates and observes a task through real MCP progress notifications, submits its first
+form through MCP, and completes the next form through CLI while all observers remain connected.
+Service tests check one MCP initialization per CLI command, bounded initialization and cleanup,
+request cancellation, and command routes against the advertised MCP schemas.
+
+For a sustained CLI/MCP check, run this manual scenario with Node.js 24:
+
+```bash
+node tests/background/mcp-agent-soak.mjs --duration-seconds 1800
+```
+
+The clock starts after setup. One isolated Chrome profile, service, and MCP connection remain alive
+while real CLI subprocesses and MCP calls alternate task creation, follow-ups, steering, forms,
+confirmations, cancellation, browser tools, and resource exports. The model and web pages use local
+synthetic fixtures. Export checks read the saved CSV, XLSX, and ZIP files; settings checks restore
+the original configuration. Profiles and downloads are removed on exit.
+
+Timestamped `agent-soak-*.json` reports in `tests/results/mcp-bridge/` record operations, expected
+rejections, task outcomes, health samples, and failures. This manual scenario is excluded from the
+default suites. Use `--duration-seconds 1` for one complete preflight round.
+
 ## Fixtures and isolation
 
 Shared fixtures must be small, synthetic and explainable. The [capability
@@ -131,10 +185,19 @@ npm test -- live agent --suite journeys
 npm test -- live realworld
 npm test -- live deepseek
 npm test -- live rate
+npm test -- live cli-mcp --duration-seconds 1800
 ```
 
-`agent` calls a real model against constructed pages; only `realworld` visits public sites.
+`agent` calls a real model against constructed pages; `realworld` and `cli-mcp` visit public sites.
 `deepseek` checks extension lifecycle and stream behavior; `rate` checks Provider throttling.
+`cli-mcp` runs English research, data, document, and interaction tasks with real DeepSeek responses
+through CLI and MCP in one isolated Chrome profile. Its 30-minute clock starts after setup; individual
+task failures are recorded and cancelled before the next task. It saves transcripts, downloads,
+acceptance results, and redacted provider request metadata under `tests/results/mcp-bridge/`.
+Set `QINGZHOU_DEEPSEEK_MODEL` to select a model. Use `--cases id,id` or
+`--task-timeout-seconds 360` to narrow a follow-up run. While that isolated run is active,
+`npm test -- live cli-mcp-supplement --report <live-soak-report.json>` checks MCP-created input
+through CLI responses and compares resource exports across the two interfaces.
 Without a scenario, `live` selects DeepSeek extension tests and real-world Agent tests. Use `--list`
 to inspect the selection. Provider and model overrides are accepted by `agent`; see
 [`background/agent-behavior-e2e.mjs`](background/agent-behavior-e2e.mjs).

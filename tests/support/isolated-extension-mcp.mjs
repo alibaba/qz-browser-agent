@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes } from "node:crypto";
+import assert from "node:assert/strict";
 import { ensureTestExtension } from "./extension-build.mjs";
 
 export const TEST_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -16,12 +16,14 @@ export async function launchIsolatedExtensionMcp({
   profilePrefix = "qingzhou-mcp-e2e-",
   headless = true,
   requestTimeoutSeconds = 300,
+  downloadDirectory,
 } = {}) {
   const bridge = await startIsolatedMcpBridge({ requestTimeoutSeconds });
   const diagnostics = [];
   const profile = mkdtempSync(join(tmpdir(), profilePrefix));
   let context = null;
   let page = null;
+  const pollRequests = [];
   try {
     const { chromium } = await import("playwright");
     const executablePath = findChromeExecutable(chromium.executablePath());
@@ -30,6 +32,7 @@ export async function launchIsolatedExtensionMcp({
       locale: "zh-CN",
       headless,
       executablePath,
+      ...(downloadDirectory ? { downloadsPath: resolve(downloadDirectory) } : {}),
       ignoreDefaultArgs: ["--disable-extensions"],
       viewport: { width: 980, height: 860 },
       args: [
@@ -38,7 +41,14 @@ export async function launchIsolatedExtensionMcp({
         `--load-extension=${EXTENSION_PATH}`,
       ],
     });
+    // Keep the compatibility probe away from a developer's bridge on the default port.
+    await context.route("http://127.0.0.1:18765/**", route => route.abort());
     attachWorkerDiagnostics(context, diagnostics);
+    context.on("request", request => {
+      if (new URL(request.url()).pathname === "/v1/qingzhou/poll") {
+        pollRequests.push({ at: Date.now(), url: request.url() });
+      }
+    });
     const extensionId = await getExtensionId(context, profile);
     page = await context.newPage();
     page.on("pageerror", error => diagnostics.push(String(error)));
@@ -46,22 +56,25 @@ export async function launchIsolatedExtensionMcp({
       if (message.type() === "error") diagnostics.push(message.text());
     });
     await page.goto(`chrome-extension://${extensionId}/sidepanel/sidepanel.html`);
-  await acceptDataDisclosure(page);
-    await page.waitForSelector("#input", { state: "attached" });
-    await page.evaluate(async config => {
-      await chrome.storage.local.set({ _qingzhou_mcp_bridge: config });
-    }, {
-      enabled: true,
-      endpoint: bridge.endpoint,
-      clientId: `qingzhou-e2e-${randomBytes(6).toString("hex")}`,
-      token: bridge.token,
-      pollIntervalMs: 100,
-      pollTimeoutMs: 1000,
-      requestTimeoutMs: requestTimeoutSeconds * 1000,
-      maxBatch: 8,
-      includeCapabilities: true,
-    });
-    const status = await waitForBridgeClient(bridge.healthUrl, 20_000);
+    await page.locator("[data-consent-accept]").waitFor({ state: "visible" });
+    assert.equal(await page.evaluate(async () =>
+      (await chrome.storage.local.get("_qingzhou_mcp_bridge"))._qingzhou_mcp_bridge), undefined,
+    "a fresh browser must have no endpoint injected by the fixture");
+    const connectionPage = await context.newPage();
+    connectionPage.on("pageerror", error => diagnostics.push(String(error)));
+    await connectionPage.goto(bridge.connectUrl);
+    await connectionPage.locator('[data-qz-connection-code="DATA_CONSENT_REQUIRED"]').waitFor();
+    const beforeConsent = await (await fetch(bridge.healthUrl)).json();
+    assert.equal(beforeConsent.status.clientCount, 0, "bridge must stay disconnected until data consent");
+    assert.equal(pollRequests.length, 0, "the extension must not poll or scan before consent");
+    await acceptDataDisclosure(page, { disableBridge: false });
+    await page.waitForFunction(() => !document.querySelector("#app")?.hasAttribute("data-workspace-booting"));
+    const connect = async () => {
+      await connectionPage.goto(bridge.connectUrl);
+      await connectionPage.locator('[data-qz-connection-state="connected"]').waitFor();
+      return waitForBridgeClient(bridge.healthUrl, 20_000);
+    };
+    const status = await connect();
     return {
       bridge,
       context,
@@ -69,7 +82,11 @@ export async function launchIsolatedExtensionMcp({
       profile,
       extensionId,
       diagnostics,
+      pollRequests,
+      connectionPage,
+      connect,
       bridgeStatus: status,
+      waitForConnection: () => waitForBridgeClient(bridge.healthUrl, 20_000),
       async close() {
         await context?.close().catch(() => undefined);
         await bridge.close();
@@ -118,8 +135,7 @@ export function extensionRequest(page, type, payload = {}, responseType = "", ti
 export async function runBridgePython(script, args = [], options = {}) {
   const commandArgs = [
     "run",
-    "--project", join(PROJECT_ROOT, "services", "mcp-bridge"),
-    "--index", "https://pypi.org/simple",
+    "--project", join(PROJECT_ROOT, "tests", "python"),
     "--default-index", "https://pypi.org/simple",
     "--locked",
     "python", script,
@@ -138,43 +154,50 @@ export function assertNoUnexpectedDiagnostics(diagnostics = [], secrets = []) {
 }
 
 async function startIsolatedMcpBridge({ requestTimeoutSeconds }) {
-  const port = await availablePort();
-  const token = randomBytes(24).toString("hex");
-  const endpoint = `http://127.0.0.1:${port}`;
+  let port = await availablePort();
+  let endpoint = `http://127.0.0.1:${port}`;
   const logs = [];
-  const child = spawn("uv", [
-    "run",
-    "--project", join(PROJECT_ROOT, "services", "mcp-bridge"),
-    "--index", "https://pypi.org/simple",
-    "--default-index", "https://pypi.org/simple",
-    "--locked",
-    "qz-browser-agent-mcp-bridge",
-    "--transport", "streamable-http",
-    "--host", "127.0.0.1",
-    "--port", String(port),
-    "--token", token,
-    "--request-timeout", String(requestTimeoutSeconds),
-  ], {
-    cwd: PROJECT_ROOT,
-    env: cleanUvEnvironment(process.env),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  child.stdout.on("data", chunk => appendLog(logs, chunk));
-  child.stderr.on("data", chunk => appendLog(logs, chunk));
-  try {
-    await waitForHealth(`${endpoint}/health`, child, logs, 20_000);
-  } catch (error) {
-    await stopChild(child);
-    throw error;
+  let child;
+  async function start() {
+    child = spawn(process.execPath, [
+      "--input-type=module", "--eval", `
+        import { startBridge } from "./services/mcp-bridge/src/server.mjs";
+        const bridge = await startBridge({ port: Number(process.argv[1]), requestTimeoutSeconds: Number(process.argv[2]) });
+        for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, async () => { await bridge.close(); process.exit(0); });
+        console.log(JSON.stringify({ endpoint: bridge.endpoint }));
+      `, "--", String(port), String(requestTimeoutSeconds),
+    ], {
+      cwd: PROJECT_ROOT,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout.on("data", chunk => appendLog(logs, chunk));
+    child.stderr.on("data", chunk => appendLog(logs, chunk));
+    try {
+      await waitForHealth(`${endpoint}/health`, child, logs, 20_000);
+    } catch (error) {
+      await stopChild(child);
+      throw error;
+    }
   }
+  await start();
   return {
-    endpoint,
-    mcpUrl: `${endpoint}/mcp`,
-    healthUrl: `${endpoint}/health`,
-    token,
+    get endpoint() { return endpoint; },
+    get mcpUrl() { return `${endpoint}/mcp`; },
+    get healthUrl() { return `${endpoint}/health`; },
+    get connectUrl() { return `${endpoint}/qz-connect`; },
     logs,
-    process: child,
+    get process() { return child; },
     close: () => stopChild(child),
+    async restart({ newPort = false } = {}) {
+      await stopChild(child);
+      if (newPort) {
+        const previousPort = port;
+        do { port = await availablePort(); } while (port === previousPort);
+        endpoint = `http://127.0.0.1:${port}`;
+      }
+      await start();
+    },
   };
 }
 

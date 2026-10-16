@@ -34,6 +34,7 @@ Use native button/input semantics and the shared control states.
 | Icon buttons | `qz-icon-btn` with `qz-icon-btn--secondary` or `qz-icon-btn--danger`; sizes `qz-icon-btn--xs/sm/md` |
 | Fields | `qz-field`, `qz-field-label`, `qz-field-hint`; combine `qz-field qz-select` for selects |
 | Choice inputs | `qz-checkbox`, `qz-radio`, `qz-switch`, driven by native input state |
+| Result choices | `qz-choice-card` family, built with `renderResultChoice` from SDK DOM; single-column cards with a native radio or checkbox |
 | Popovers and menus | `qz-popover`, `qz-menu`, `qz-menu-item` |
 | Lists and decisions | `qz-list-toolbar` and `qz-decision-dialog` families; use the SDK dialog interaction |
 | Scrolling | `qz-scroll`; add `qz-scroll--native` for native scrollbars |
@@ -42,6 +43,19 @@ Control overrides use the declared `--qz-control-*`, `--qz-field-*`, and `--qz-p
 Preserve accessible names, keyboard focus, and disabled semantics. DOM helpers and renderer
 contracts are available through [SDK DOM](../src/sdk/sidepanel/dom.ts) and
 [renderers](../src/sdk/sidepanel/renderers.ts).
+
+Use `renderResultChoice(document, options)` for selectable tool results. Supply a unique `id`, the
+form field `name`, a stable result `value`, and its `label`; `multiple` selects checkbox or radio
+semantics. Optional `description`, short `meta` labels, an HTTP(S) `imageUrl`, and an HTTP(S) `url`
+add detail. The source link sits outside the selection label so opening a source preserves the
+selection. Pass `checked` and `disabled` from the owning form. The helper owns no listeners or
+state; its native input events bubble to the form, which handles validation and submission.
+
+Result cards use the theme's field, choice, and focus tokens. Keep them in one column in narrow
+panels, with metadata wrapping below the title and a small optional thumbnail. Group related cards
+with an accessible field label; use the existing form controls for the selection count and action.
+Title, description, metadata, and source text share the 18px `--choice-card-line-height`. Separate
+text blocks by 2px, cards by 8px, and use the small field padding token (8px) for card insets.
 
 | Utility examples | Semantic source |
 | --- | --- |

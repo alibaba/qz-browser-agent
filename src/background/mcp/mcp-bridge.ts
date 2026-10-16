@@ -1,5 +1,5 @@
 interface BridgeConfig {
-  enabled: boolean; endpoint: string; clientId: string; token: string;
+  enabled: boolean; endpoint: string; clientId: string;
   pollIntervalMs: number; pollTimeoutMs: number; requestTimeoutMs: number;
   maxBatch: number; includeCapabilities: boolean;
 }
@@ -10,31 +10,57 @@ interface BridgeDependencies {
 }
 const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+// Only recovery metadata with known owners crosses the bridge; provider/request details may contain credentials.
+function errorDetails(error: unknown) {
+  const value = record(error), details = record(value.details);
+  const keys = value.code === "DOWNLOAD_INTERRUPTED" ? ["downloadId", "filename", "reason"]
+    : value.code === "SKILL_NOT_FOUND" ? ["name"] : value.code === "SKILL_RESOURCE_NOT_FOUND" ? ["name", "path"] : [];
+  return Object.fromEntries(keys.filter(key => typeof details[key] === "string" || typeof details[key] === "number")
+    .map(key => [key, details[key]]));
+}
 
 const BRIDGE_STORAGE_KEY = "_qingzhou_mcp_bridge";
-const LLM_CONFIG_STORAGE_KEY = "llmConfig";
+const BRIDGE_CLIENT_ID_KEY = "_qingzhou_mcp_bridge_client_id";
 const BRIDGE_PROTOCOL_VERSION = 1;
 const DEFAULT_ENDPOINT = "http://127.0.0.1:18765";
 const DEFAULT_POLL_INTERVAL_MS = 750;
-const DEFAULT_POLL_TIMEOUT_MS = 30000;
+// Leave headroom below Chrome's 30-second service-worker fetch deadline.
+const DEFAULT_POLL_TIMEOUT_MS = 20000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 120000;
 const DEFAULT_MAX_BATCH = 4;
 const STATUS_TRACE_MIN_INTERVAL_MS = 60000;
+const MAX_POLL_FAILURES = 3;
+const RECONNECT_ALARM = "qingzhou-mcp-bridge-reconnect";
+let clientIdentity: Promise<string> | undefined;
 
 export function qingzhouMcpBridgeStorageKey() {
   return BRIDGE_STORAGE_KEY;
 }
 
 export async function getQingzhouMcpBridgeConfig() {
-  const data = await chrome.storage.local.get([BRIDGE_STORAGE_KEY, LLM_CONFIG_STORAGE_KEY]);
-  return normalizeBridgeConfig(data?.[BRIDGE_STORAGE_KEY], {
-    debugMode: record(data?.[LLM_CONFIG_STORAGE_KEY]).debugMode === true,
-  });
+  const [data, clientId] = await Promise.all([
+    chrome.storage.local.get(BRIDGE_STORAGE_KEY),
+    getDefaultClientId(),
+  ]);
+  const raw = record(data?.[BRIDGE_STORAGE_KEY]);
+  return normalizeBridgeConfig({ ...raw, clientId: String(raw.clientId || "").trim() || clientId });
+}
+
+function getDefaultClientId(): Promise<string> {
+  return clientIdentity ??= (async () => {
+    const data = await chrome.storage.local.get(BRIDGE_CLIENT_ID_KEY);
+    const saved = data?.[BRIDGE_CLIENT_ID_KEY];
+    if (typeof saved === "string" && saved.trim()) return saved.trim();
+    const clientId = `qingzhou-${crypto.randomUUID()}`;
+    await chrome.storage.local.set({ [BRIDGE_CLIENT_ID_KEY]: clientId });
+    return clientId;
+  })().catch(error => { clientIdentity = undefined; throw error; });
 }
 
 export async function saveQingzhouMcpBridgeConfig(patch: Partial<BridgeConfig> = {}) {
   const current = await getQingzhouMcpBridgeConfig();
-  const next = normalizeBridgeConfig({ ...current, ...(patch || {}) });
+  const clientId = String(patch?.clientId ?? current.clientId).trim() || await getDefaultClientId();
+  const next = normalizeBridgeConfig({ ...current, ...(patch || {}), clientId });
   await chrome.storage.local.set({ [BRIDGE_STORAGE_KEY]: next });
   return next;
 }
@@ -51,12 +77,18 @@ class QingzhouMcpBridgeRuntime {
   started = false;
   generation = 0;
   inFlight = false;
+  pollController: AbortController | null = null;
   activeRequests = new Map<string, Promise<void>>();
   failureCount = 0;
   storageListener: ((changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void) | null = null;
+  private alarmListener: ((alarm: chrome.alarms.Alarm) => void) | null = null;
+  private reconnectAlarmEnabled = false;
+  private alarmRevision = 0;
+  private alarmUpdate: Promise<void> = Promise.resolve();
   connected = false;
   lastStatusTraceAt = 0;
   lastStatusTraceKey = "";
+  private configReadRevision = 0;
   private trace: (message: string) => void;
   constructor(private readonly dependencies: BridgeDependencies = {}) {
     this.trace = dependencies.trace || defaultTrace;
@@ -65,27 +97,54 @@ class QingzhouMcpBridgeRuntime {
   start() {
     if (this.started) return this;
     this.started = true;
+    this.failureCount = 0;
     this.storageListener = (changes, areaName) => {
       if (areaName !== "local") return;
-      if (!changes?.[BRIDGE_STORAGE_KEY] && !changes?.[LLM_CONFIG_STORAGE_KEY]) return;
-      getQingzhouMcpBridgeConfig()
-        .then((config) => this.applyConfig(config))
+      if (!changes?.[BRIDGE_STORAGE_KEY]) return;
+      this.refreshConfig()
         .catch((err) => this.trace(`[mcp-bridge] config refresh failed: ${err?.message || err}`));
     };
     chrome.storage?.onChanged?.addListener?.(this.storageListener);
-    getQingzhouMcpBridgeConfig()
-      .then((config) => this.applyConfig(config))
+    this.alarmListener = alarm => {
+      if (alarm.name !== RECONNECT_ALARM || !this.started || !this.config.enabled
+        || this.connected || this.failureCount < MAX_POLL_FAILURES) return;
+      // The alarm survives a worker restart; only a previously connected profile has one.
+      this.reconnectAlarmEnabled = true;
+      this.resumePolling(MAX_POLL_FAILURES - 1);
+    };
+    chrome.alarms?.onAlarm?.addListener?.(this.alarmListener);
+    this.refreshConfig()
       .catch((err) => this.trace(`[mcp-bridge] config load failed: ${err?.message || err}`));
     return this;
   }
 
   stop() {
     this.generation += 1;
+    this.configReadRevision += 1;
     this.started = false;
+    this.connected = false;
+    this.pollController?.abort();
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (this.storageListener) chrome.storage?.onChanged?.removeListener?.(this.storageListener);
     this.storageListener = null;
+    if (this.alarmListener) chrome.alarms?.onAlarm?.removeListener?.(this.alarmListener);
+    this.alarmListener = null;
+    this.updateReconnectAlarm(false);
+  }
+
+  private async refreshConfig() {
+    const revision = ++this.configReadRevision;
+    const isCurrent = () => this.started && revision === this.configReadRevision;
+    try {
+      const config = await getQingzhouMcpBridgeConfig();
+      if (!isCurrent()) return false;
+      this.applyConfig(config);
+      return true;
+    } catch (error) {
+      if (!isCurrent()) return false;
+      throw error;
+    }
   }
 
   applyConfig(config: unknown) {
@@ -96,6 +155,7 @@ class QingzhouMcpBridgeRuntime {
       return;
     }
     this.generation += 1;
+    this.pollController?.abort();
     const previousKey = this.configKey();
     const wasEnabled = this.config.enabled === true;
     this.config = next;
@@ -105,6 +165,7 @@ class QingzhouMcpBridgeRuntime {
       if (this.timer) clearTimeout(this.timer);
       this.timer = null;
       this.connected = false;
+      this.updateReconnectAlarm(false);
       if (wasEnabled) {
         this.traceStatus("disabled", "[mcp-bridge] disabled", { force: true });
       }
@@ -113,22 +174,32 @@ class QingzhouMcpBridgeRuntime {
     this.connected = false;
     this.traceStatus(
       `enabled:${nextKey}`,
-      `[mcp-bridge] enabled; polling ${this.config.endpoint} client=${this.config.clientId} token=${this.config.token ? "set" : "none"}`,
+      `[mcp-bridge] enabled; polling ${this.config.endpoint} client=${this.config.clientId}`,
       { force: previousKey !== nextKey },
     );
     this.schedulePoll(0);
   }
 
+  /** A verified local connection page explicitly resumes an idle connection. */
+  wake() {
+    this.resumePolling(0);
+  }
+
+  private resumePolling(failureCount: number) {
+    if (!this.started) return;
+    this.failureCount = failureCount;
+    void this.refreshConfig().then(current => {
+      if (current && !this.inFlight) this.schedulePoll(0);
+    }).catch(error => this.trace(`[mcp-bridge] config wake failed: ${errorMessage(error)}`));
+  }
+
   schedulePoll(delayMs: number) {
-    if (!this.started || !this.config.enabled) return;
+    if (!this.started || !this.config.enabled || this.failureCount >= MAX_POLL_FAILURES) return;
     if (this.timer) clearTimeout(this.timer);
     const delay = Math.max(0, Math.floor(Number(delayMs) || 0));
     this.timer = setTimeout(() => {
       this.timer = null;
-      this.pollOnce().catch((err) => {
-        this.handlePollFailure(err);
-        this.schedulePoll(this.nextDelayMs());
-      });
+      void this.pollOnce();
     }, delay);
   }
 
@@ -137,12 +208,23 @@ class QingzhouMcpBridgeRuntime {
     this.inFlight = true;
     const generation = this.generation;
     const config = this.config;
+    const controller = new AbortController();
+    this.pollController = controller;
+    let supersededConfig = false;
     try {
+      // Reconcile permission/config changes at each network boundary, including after a worker wake.
+      if (!(await this.refreshConfig())) {
+        supersededConfig = true;
+        return;
+      }
+      if (generation !== this.generation || !this.started) return;
       const payload = await this.buildPollPayload();
       if (generation !== this.generation || !this.started) return;
-      const response = await postJson(config.endpoint, "/v1/qingzhou/poll", payload, config.token, config.pollTimeoutMs + 5000);
+      const response = await postJson(config.endpoint, "/v1/qingzhou/poll", payload, config.pollTimeoutMs + 5000, controller);
       if (generation !== this.generation || !this.started) return;
+      if (!Array.isArray(response.requests)) throw new Error("Invalid bridge poll response: requests must be an array");
       this.failureCount = 0;
+      this.updateReconnectAlarm(true);
       if (!this.connected) {
         this.connected = true;
         this.traceStatus(
@@ -154,9 +236,15 @@ class QingzhouMcpBridgeRuntime {
       const requests = Array.isArray(response?.requests) ? response.requests.slice(0, this.config.maxBatch) : [];
       for (const request of requests) this.startRequest(request, config);
       this.schedulePoll(requests.length ? 0 : this.config.pollIntervalMs);
+    } catch (error) {
+      if (generation === this.generation && this.started) {
+        this.handlePollFailure(error);
+        this.schedulePoll(this.nextDelayMs());
+      }
     } finally {
       this.inFlight = false;
-      if (generation !== this.generation && this.started) this.schedulePoll(0);
+      this.pollController = null;
+      if ((supersededConfig || generation !== this.generation) && this.started) this.schedulePoll(0);
     }
   }
 
@@ -167,6 +255,7 @@ class QingzhouMcpBridgeRuntime {
       name: "qingzhou",
       protocolVersion: BRIDGE_PROTOCOL_VERSION,
       pollTimeoutMs: this.config.pollTimeoutMs,
+      pollIntervalMs: this.config.pollIntervalMs,
       maxBatch: this.config.maxBatch,
       connectedAt: Date.now(),
     };
@@ -221,6 +310,7 @@ class QingzhouMcpBridgeRuntime {
         ok: false,
         error: errorMessage(err),
         code: record(err).code || "",
+        details: errorDetails(err),
         durationMs: Date.now() - startedAt,
       }, config);
     }
@@ -234,7 +324,6 @@ class QingzhouMcpBridgeRuntime {
         clientId: config.clientId || defaultClientId(),
         ...payload,
       },
-      config.token,
       15000,
     );
   }
@@ -245,18 +334,37 @@ class QingzhouMcpBridgeRuntime {
     return Math.min(15000, delay);
   }
 
+  private updateReconnectAlarm(enabled: boolean) {
+    if (enabled && this.reconnectAlarmEnabled) return;
+    this.reconnectAlarmEnabled = enabled;
+    if (!chrome.alarms?.create || !chrome.alarms?.clear) return;
+    const revision = ++this.alarmRevision;
+    // Serialize alarm writes so disabling/stopping also revokes an unfinished create.
+    this.alarmUpdate = this.alarmUpdate.then(async () => {
+      if (this.started && this.config.enabled && this.reconnectAlarmEnabled) {
+        await chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 1 });
+      } else {
+        await chrome.alarms.clear(RECONNECT_ALARM);
+      }
+    }).catch(error => {
+      if (revision === this.alarmRevision) this.reconnectAlarmEnabled = false;
+      this.traceStatus("reconnect-alarm-failed", `[mcp-bridge] reconnect alarm failed: ${normalizeTraceError(error)}`);
+    });
+  }
+
   handlePollFailure(err: unknown) {
     this.failureCount += 1;
     this.connected = false;
     const message = normalizeTraceError(err);
     this.traceStatus(
       `failed:${this.configKey()}:${message}`,
-      `[mcp-bridge] local bridge unavailable (${message}); retrying in debug mode`,
+      `[mcp-bridge] local bridge unavailable (${message}); ${this.failureCount >= MAX_POLL_FAILURES ? "polls paused; qz connect resumes immediately" : "reconnecting"}`,
+      { force: this.failureCount === MAX_POLL_FAILURES },
     );
   }
 
   configKey() {
-    return `${this.config.enabled ? 1 : 0}|${this.config.endpoint}|${this.config.clientId}|${this.config.token ? 1 : 0}`;
+    return `${this.config.enabled ? 1 : 0}|${this.config.endpoint}|${this.config.clientId}`;
   }
 
   traceStatus(key: string, message: string, { force = false } = {}) {
@@ -269,18 +377,14 @@ class QingzhouMcpBridgeRuntime {
   }
 }
 
-function normalizeBridgeConfig(value: unknown = {}, options: { debugMode?: boolean } = {}): BridgeConfig {
+function normalizeBridgeConfig(value: unknown = {}): BridgeConfig {
   const raw = record(value);
-  const enabled = typeof raw.enabled === "boolean"
-    ? raw.enabled
-    : options.debugMode === true;
   return {
-    enabled: enabled && Boolean(String(raw.token || "").trim()),
+    enabled: raw.enabled !== false,
     endpoint: normalizeEndpoint(raw.endpoint || DEFAULT_ENDPOINT),
     clientId: String(raw.clientId || defaultClientId()).trim().slice(0, 120),
-    token: String(raw.token || "").trim(),
     pollIntervalMs: normalizePositiveInteger(raw.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS, 100, 60000),
-    pollTimeoutMs: normalizePositiveInteger(raw.pollTimeoutMs, DEFAULT_POLL_TIMEOUT_MS, 1000, 120000),
+    pollTimeoutMs: normalizePositiveInteger(raw.pollTimeoutMs, DEFAULT_POLL_TIMEOUT_MS, 1000, DEFAULT_POLL_TIMEOUT_MS),
     requestTimeoutMs: normalizePositiveInteger(raw.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS, 1000, 10 * 60 * 1000),
     maxBatch: normalizePositiveInteger(raw.maxBatch, DEFAULT_MAX_BATCH, 1, 16),
     includeCapabilities: raw.includeCapabilities !== false,
@@ -313,8 +417,7 @@ function defaultClientId() {
   return `qingzhou-${id || "extension"}`;
 }
 
-async function postJson(endpoint: string, path: string, body: unknown, token: string, timeoutMs: number): Promise<Record<string, unknown>> {
-  const controller = new AbortController();
+async function postJson(endpoint: string, path: string, body: unknown, timeoutMs: number, controller = new AbortController()): Promise<Record<string, unknown>> {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${endpoint}${path}`, {
@@ -322,18 +425,18 @@ async function postJson(endpoint: string, path: string, body: unknown, token: st
       redirect: "error",
       headers: {
         "content-type": "application/json",
-        ...(token ? { "x-qingzhou-bridge-token": token } : {}),
       },
       body: JSON.stringify(body || {}),
       signal: controller.signal,
     });
-    const text = await response.text().catch(() => "");
+    const text = await response.text();
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${text.slice(0, 240)}`);
     }
-    if (!text.trim()) return {};
     try {
-      return record(JSON.parse(text) as unknown);
+      const result = JSON.parse(text) as unknown;
+      if (result === null || typeof result !== "object" || Array.isArray(result)) throw new Error("Expected a JSON object");
+      return result as Record<string, unknown>;
     } catch (_err) {
       throw new Error(`Invalid bridge JSON: ${text.slice(0, 240)}`);
     }

@@ -278,7 +278,7 @@ assert.match(openTabSchema.function.description, /network_watch/);
 assert.match(openTabSchema.function.parameters.properties.watchNetwork.description, /页面已打开后的交互监听请用 network_watch/);
 const navigateSchema = toolSchemas.find(schema => schema.function.name === "navigate");
 assert.match(navigateSchema.function.description, /本次导航请求/);
-assert.match(navigateSchema.function.description, /后续交互请求/);
+assert.match(navigateSchema.function.description, /后续交互的?请求/);
 assert.match(navigateSchema.function.description, /network_watch/);
 assert.match(navigateSchema.function.parameters.properties.watchNetwork.description, /页面已加载后的交互监听请用 network_watch/);
 const networkWatchSchema = toolSchemas.find(schema => schema.function.name === "network_watch");

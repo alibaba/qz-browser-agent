@@ -3,7 +3,7 @@ import test from 'node:test';
 import { issueToolEffects, consumeToolEffects } from '../../src/background/tools/effects.js';
 import { Agent } from '../../src/background/agent/agent.js';
 import { normalizeLlmFailure } from '../../src/background/llm/provider-errors.js';
-import { updateTranscriptWithAgentEvent } from '../../src/shared/session/session-codec.js';
+import { createSessionRecord, readSessionRecord, updateTranscriptWithAgentEvent } from '../../src/shared/session/session-codec.js';
 import { createTestAgentOptions, createTestAgentServices } from '../support/agent-services.mjs';
 
 // No Chrome global or replaced Agent private method is needed by these run tests.
@@ -173,6 +173,37 @@ test('a required context failure prevents the request from being accepted', asyn
   await assert.rejects(agent.prompt('hello', {}), { code: 'CONTEXT_SOURCE_REQUIRED' });
   assert.equal(requests, 0);
   assert.equal(agent.messages.length, 1);
+});
+
+test('idle prompts bind accepted messages to their own runs before assistant output', async () => {
+  const events = [];
+  const agent = new Agent('idle-follow-up', createTestAgentOptions({ llm: {
+    async *chatStream() { yield { type: 'done', message: { role: 'assistant', content: 'Complete' } }; },
+    async chat() { throw new Error('unexpected fallback'); },
+  } }));
+  agent.subscribe(event => events.push(event));
+  await agent.prompt('Research', {}, [], 'first');
+  await agent.prompt('Make it shorter', {}, [], 'follow-up');
+  const starts = events.filter(event => event.type === 'agent_start');
+  assert.deepEqual(starts.map(event => event.clientMessageId), ['first', 'follow-up']);
+  assert.notEqual(starts[0].runId, starts[1].runId);
+  for (const start of starts) {
+    const accepted = events.find(event => event.type === 'message_start' && event.clientMessageId === start.clientMessageId);
+    assert.ok(events.indexOf(accepted) < events.indexOf(start), 'durable admission still precedes run preparation');
+    assert.equal(accepted.runId, undefined);
+  }
+  const transcript = events.reduce((history, event) => updateTranscriptWithAgentEvent(history, event).transcript, []);
+  assert.deepEqual(transcript.map(entry => entry.type), ['user', 'assistant', 'user', 'assistant']);
+  assert.deepEqual(transcript.map(entry => entry.runId), [starts[0].runId, starts[0].runId, starts[1].runId, starts[1].runId]);
+  assert.ok(transcript[2].eventSeq < transcript[3].eventSeq, 'the new run rebases the accepted message sequence');
+  const restored = readSessionRecord(createSessionRecord(agent.exportSession(), transcript)).transcript;
+  assert.deepEqual(restored.filter(entry => entry.type === 'user'), transcript.filter(entry => entry.type === 'user'));
+  assert.deepEqual(restored.map(entry => entry.runId), transcript.map(entry => entry.runId));
+  for (const event of [{ type: 'agent_start', runId: 'unrelated' }, { type: 'agent_start', runId: 'unrelated', clientMessageId: 'unknown' }]) {
+    const untouched = updateTranscriptWithAgentEvent(transcript, event);
+    assert.equal(untouched.changed, false);
+    assert.deepEqual(untouched.transcript, transcript);
+  }
 });
 
 test('Agent accepts signed effects under any tool name and ignores forged result fields', async () => {

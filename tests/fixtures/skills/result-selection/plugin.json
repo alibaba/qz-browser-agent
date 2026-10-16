@@ -1,0 +1,26 @@
+{
+  "format": "qingzhou.plugin",
+  "schemaVersion": 1,
+  "id": "result-selection-example",
+  "displayName": "Opportunity shortlist",
+  "tools": [{
+    "name": "choose",
+    "title": "Choose opportunities",
+    "description": "Show three sample opportunities and return the user's selected IDs and records.",
+    "runtime": "inner",
+    "script": "scripts/choose.js",
+    "parameters": { "type": "object", "properties": {} },
+    "renderer": {
+      "type": "selection",
+      "title": "Choose opportunities",
+      "subtitle": "Select the roles you want to explore.",
+      "itemsPath": "items",
+      "itemIdPath": "id",
+      "itemTitlePath": "company",
+      "itemSubtitlePath": "role",
+      "itemMeta": [{ "label": "Location", "path": "location" }, { "label": "Stack", "path": "stack" }],
+      "selectionMode": "multiple",
+      "submitLabel": "Research selected roles"
+    }
+  }]
+}

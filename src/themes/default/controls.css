@@ -430,6 +430,135 @@ textarea.qz-field {
   cursor: default;
 }
 
+/* Result choices share native form state and fit a single narrow column. */
+.qz-choice-card {
+  min-width: 0;
+  border: 1px solid var(--field-border);
+  border-radius: var(--control-radius);
+  background: var(--field-surface);
+  color: var(--text-primary);
+  line-height: var(--choice-card-line-height);
+  text-align: start;
+  transition: background-color var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+
+.qz-choice-card:has(input:not(:disabled)):hover {
+  border-color: var(--field-border-hover);
+  background: var(--control-surface-hover);
+}
+
+.qz-choice-card:has(input:checked),
+.qz-choice-card:has(input:checked):hover {
+  border-color: var(--field-border-focus);
+  background: var(--control-surface-pressed);
+}
+
+.qz-choice-card:has(input[aria-invalid="true"]),
+.qz-choice-card:has(input[aria-invalid="true"]):hover {
+  border-color: var(--red);
+}
+
+.qz-choice-card:has(input:focus-visible) {
+  box-shadow: var(--field-focus-ring);
+}
+
+.qz-choice-card-label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: var(--field-padding-sm);
+  cursor: pointer;
+}
+
+.qz-choice-card-label:has(.qz-choice-card-image) {
+  grid-template-columns: auto minmax(0, 1fr) 40px;
+}
+
+.qz-choice-card:has(.qz-choice-card-footer) .qz-choice-card-label {
+  padding-bottom: 0;
+}
+
+.qz-choice-card-label > input {
+  margin-top: 2px;
+}
+
+.qz-choice-card:has(input:disabled) .qz-choice-card-label {
+  cursor: default;
+}
+
+.qz-choice-card:has(input:disabled):not(:has(input:checked)) .qz-choice-card-label {
+  opacity: var(--control-disabled-opacity);
+}
+
+.qz-choice-card-content {
+  min-width: 0;
+  display: grid;
+  gap: calc(var(--control-gap-xs) / 2);
+  overflow-wrap: anywhere;
+}
+
+.qz-choice-card-title {
+  color: var(--text-primary);
+  font-size: var(--field-font-md);
+  font-weight: 600;
+}
+
+.qz-choice-card-description {
+  color: var(--text-secondary);
+  font-size: var(--field-font-sm);
+  text-wrap: pretty;
+}
+
+.qz-choice-card-meta {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--control-gap-xs) / 2) 8px;
+}
+
+.qz-choice-card-tag {
+  max-width: 100%;
+  color: var(--text-secondary);
+  font-size: var(--field-font-sm);
+}
+
+.qz-choice-card-image {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--control-radius);
+  background: var(--bg-tertiary);
+  object-fit: cover;
+}
+
+.qz-choice-card-footer {
+  min-width: 0;
+  margin: calc(var(--control-gap-xs) / 2) var(--field-padding-sm) var(--field-padding-sm);
+  margin-inline-start: calc(var(--field-padding-sm) + var(--choice-size-md) + 8px);
+}
+
+.qz-choice-card-source {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: var(--control-radius);
+  color: var(--text-muted);
+  font-size: var(--field-font-sm);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.qz-choice-card-source:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.qz-choice-card-source:focus-visible {
+  outline: none;
+  box-shadow: var(--field-focus-ring);
+}
+
 .qz-switch {
   position: relative;
   width: var(--switch-width);

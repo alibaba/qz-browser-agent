@@ -15,14 +15,16 @@ export function directEntrypoint(argv) {
     report: { command: ["node_modules/@playwright/test/cli.js", "show-report", "tests/results/playwright-report"], help: "Native show-report options: --host <host>, --port <port>." },
     behavior: { command: ["tests/behavior/run.mjs"], help: "Options: --journey <ids>, --actor <actors>, --coverage <ratings>, --layer <layers>, --include-explicit, --list, --fail-fast, --report <path>." },
     grid: { command: ["tests/data-grid/extension-page.mjs"], fixed: true, help: "Environment: DATA_GRID_EXTENSION_HEADLESS=1, CHROME_EXECUTABLE. No test arguments." },
-    live: { commands: [node(deepseek), node(agent, "--suite", "realworld")], fixed: true, prepareBrowser: true, help: "Runs DeepSeek extension checks, then real-world Agent tasks. Choose agent, realworld, deepseek or rate to run one target." },
+    live: { commands: [node(deepseek), node(agent, "--suite", "realworld")], fixed: true, prepareBrowser: true, help: "Runs DeepSeek extension checks, then real-world Agent tasks. Choose agent, realworld, deepseek, rate or cli-mcp to run one target." },
     "live agent": { command: [agent], help: "Options: --suite base|journeys|journeys-vision|realworld|all, --cases <ids>, --provider <name>, --model <name>, --ak-file <path>, --concurrency <1..12>, --repetitions <1..10>, --bridge-timeout <30..600>, --report <path>, --capture-dir <path>, --vision, --window-target-probe." },
     "live realworld": { command: [agent, "--suite", "realworld"], help: "Agent options as in live agent, except --suite (fixed to realworld)." },
     "live deepseek": { command: [deepseek], fixed: true, help: "Environment: QINGZHOU_DEEPSEEK_MODEL, QINGZHOU_DEEPSEEK_AK_FILE, QINGZHOU_LIVE_HEADLESS=1, QINGZHOU_LIVE_CASES, QINGZHOU_LIVE_SESSION_MANAGEMENT=1, QINGZHOU_LIVE_SESSION_MANAGEMENT_EXTENDED=1. No test arguments." },
     "live rate": { command: ["tests/live/deepseek-rate-governor.mjs"], fixed: true, help: "Environment: QINGZHOU_DEEPSEEK_MODEL, QINGZHOU_DEEPSEEK_AK_FILE. No test arguments." },
+    "live cli-mcp-supplement": { command: ["tests/live/deepseek-cli-mcp-supplement.mjs"], help: "Additional real CLI input and MCP resource coverage against an active isolated soak. Required: --report <live-soak-report.json>." },
+    "live cli-mcp": { command: ["tests/live/deepseek-cli-mcp-soak.mjs"], help: "Real DeepSeek CLI/MCP soak. Options: --duration-seconds 1800, --task-timeout-seconds 360, --cases id,id. Requires DEEPSEEK_API_KEY; QINGZHOU_DEEPSEEK_MODEL selects the model." },
   };
   const route = routes[name];
-  if (!route) throw new Error(`Unknown live target: ${name.slice(5)}. Available: agent, realworld, deepseek, rate`);
+  if (!route) throw new Error(`Unknown live target: ${name.slice(5)}. Available: agent, realworld, deepseek, rate, cli-mcp, cli-mcp-supplement`);
   if (name !== "behavior" && args.some(arg => arg === "--coverage" || arg.startsWith("--coverage="))) {
     throw new Error("--coverage is only available for unattended unit or --all suites");
   }

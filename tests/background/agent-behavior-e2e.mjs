@@ -69,7 +69,6 @@ try {
   let regressionError = null;
   try {
     await runBridgePython(fileURLToPath(new URL("./agent-behavior-regression.py", import.meta.url)), pythonArgs, { env: {
-      QINGZHOU_MCP_BRIDGE_TOKEN: environment.bridge.token,
       ...(options.captureDir ? { QINGZHOU_CAPTURE_API_KEY: apiKey } : {}),
     } });
   } catch (error) {

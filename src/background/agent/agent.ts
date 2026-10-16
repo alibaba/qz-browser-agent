@@ -875,7 +875,7 @@ export class Agent {
     this._emitUserMessageAccepted(userMsg);
     void Promise.resolve().then(() => onAccepted?.(userMsg)).catch(error => this._trace(`agent accepted hook failed: ${error?.message || error}`));
 
-    await this._runWithLifecycle();
+    await this._runWithLifecycle([], { clientMessageId });
   }
 
   async editUserMessageAndRerun({ clientMessageId = "", text = "", images = [], documents = [], context = null, onReplaced = null }: {clientMessageId?: string; text?: string; images?: unknown[]; documents?: unknown[]; context?: DynamicContext | null; onReplaced?: ((replacement: {conversation: unknown; message: AgentMessage; targetIndex: number}) => unknown) | null} = {}) {
@@ -954,7 +954,7 @@ export class Agent {
     });
     this._assertActiveLease();
 
-    await this._runWithLifecycle();
+    await this._runWithLifecycle([], { clientMessageId: replacement.clientMessageId || "" });
   }
 
   _findPendingUserMessage(clientMessageId = "") {
@@ -1012,7 +1012,7 @@ export class Agent {
     return clean;
   }
 
-  async _runWithLifecycle(initialPendingMessages: AgentMessage[] = [], { requireSteeringHandoff = false } = {}) {
+  async _runWithLifecycle(initialPendingMessages: AgentMessage[] = [], { requireSteeringHandoff = false, clientMessageId = "" } = {}) {
     if (this._activeRun) throw new Error("Already running");
     this._clearScheduledFollowUpRun();
 
@@ -1051,7 +1051,9 @@ export class Agent {
     this._lastContextUsageSnapshot = null;
     this._currentRunId = createRunId(this.sessionId, ++this._runSeq);
     const runId = this._currentRunId;
-    this._emit({ type: "agent_start", runId });
+    this._emit({ type: "agent_start", runId,
+      ...(clientMessageId ? { clientMessageId, eventSeq: ++this._timelineSeq } : {}),
+    });
 
     try {
       await this._runLoop(signal, initialPendingMessages, { requireSteeringHandoff });

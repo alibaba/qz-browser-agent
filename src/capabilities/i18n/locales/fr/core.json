@@ -116,6 +116,7 @@
   "core.newWaitRequested": "L’agent attend maintenant autre chose",
   "core.waitNotQueued": "Cette demande n’est plus en attente",
   "core.agentContinued": "L’agent poursuit la tâche",
+  "core.choiceSelectedCount": "Sélectionnés : {count}",
   "core.selectThisOption": "Sélectionner cette option",
   "core.fillThisField": "Remplir ce champ",
   "core.cannotExport": "Export impossible",

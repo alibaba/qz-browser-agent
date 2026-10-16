@@ -22,7 +22,8 @@ test("help and plans do not build, launch children or read live credentials", as
     ["--help"], ["--all", "--coverage", "--list"], ["unit", "--list"],
     ["live", "--help"], ["live", "--list"], ["live", "agent", "--help"],
     ["live", "agent", "--cases", "example", "--list"], ["live", "deepseek", "--help"],
-    ["live", "rate", "--list"], ["grid", "--help"], ["grid", "--list"],
+    ["live", "rate", "--list"], ["live", "cli-mcp", "--help"], ["live", "cli-mcp", "--list"],
+    ["grid", "--help"], ["grid", "--list"],
     ["playwright", "--help"], ["behavior", "--help"], ["report", "--help"],
   ]) {
     const plan = select(args);
@@ -33,6 +34,10 @@ test("help and plans do not build, launch children or read live credentials", as
   }
   assert.match(fixture.run(["live", "agent", "--help"]).stdout, /--provider <name>, --model <name>/);
   assert.match(fixture.run(["live", "rate", "--help"]).stdout, /QINGZHOU_DEEPSEEK_MODEL/);
+  assert.match(fixture.run(["live", "cli-mcp", "--help"]).stdout, /--duration-seconds 1800/);
+  const soakPlan = fixture.run(["live", "cli-mcp", "--list"]);
+  assert.equal(soakPlan.status, 0, soakPlan.stderr);
+  assert.match(soakPlan.stdout, /tests\/live\/deepseek-cli-mcp-soak\.mjs/);
   assert.deepEqual(await fixture.events(), []);
 });
 
@@ -67,6 +72,7 @@ test("native runners receive their exact arguments, including spaces and equals"
     [["grid"], "tests/data-grid/extension-page.mjs", []],
     [["live", "deepseek"], "tests/live/deepseek-extension.mjs", []],
     [["live", "rate"], "tests/live/deepseek-rate-governor.mjs", []],
+    [["live", "cli-mcp", "--duration-seconds", "1800", "--cases", "research,forms"], "tests/live/deepseek-cli-mcp-soak.mjs", ["--duration-seconds", "1800", "--cases", "research,forms"]],
   ];
   for (const [args, path, expectedArgs] of cases) {
     const result = fixture.run(args);
@@ -154,7 +160,7 @@ async function createFixture(t) {
   for (const path of [
     "tests/unit/example.mjs", "tests/coverage/check-critical.mjs", "tests/behavior/run.mjs",
     "tests/background/agent-behavior-e2e.mjs", "tests/data-grid/extension-page.mjs",
-    "tests/live/deepseek-extension.mjs", "tests/live/deepseek-rate-governor.mjs",
+    "tests/live/deepseek-extension.mjs", "tests/live/deepseek-rate-governor.mjs", "tests/live/deepseek-cli-mcp-soak.mjs",
   ]) await put(path, recorder);
   await put("node_modules/@playwright/test/package.json", '{"type":"module"}');
   await put("node_modules/@playwright/test/cli.js", recorder);

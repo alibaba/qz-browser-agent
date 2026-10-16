@@ -1,5 +1,5 @@
 interface BrowserLocation { latitude: number; longitude: number; accuracy: number; timestamp: string }
-interface DynamicContext { location?: BrowserLocation }
+interface DynamicContext { location?: BrowserLocation; locationError?: { code: number; message: string } }
 interface ContextRequest { fields?: string[]; requestId?: string }
 interface ContextOptions {
   geolocation?: Pick<Geolocation, "getCurrentPosition">;
@@ -12,8 +12,7 @@ export function createDynamicContextProvider(options: ContextOptions = {}) {
   async function handle(event: ContextRequest) {
     const context: DynamicContext = {};
     if (event.fields?.includes("location")) {
-      const location = await getBrowserLocation();
-      if (location) context.location = location;
+      Object.assign(context, await getBrowserLocation());
     }
     options.send?.({
       type: "dynamic_context_response",
@@ -22,24 +21,27 @@ export function createDynamicContextProvider(options: ContextOptions = {}) {
     });
   }
 
-  function getBrowserLocation(): Promise<BrowserLocation | null> {
+  function getBrowserLocation(): Promise<DynamicContext> {
     const geolocation = options.geolocation;
-    if (!geolocation) return Promise.resolve(null);
-    return new Promise<BrowserLocation | null>(resolve => {
-      geolocation.getCurrentPosition(
-        position => resolve({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy,
-          timestamp: formatBeijingDateTime(position.timestamp),
-        }),
-        () => resolve(null),
-        {
-          enableHighAccuracy: false,
-          maximumAge: 300000,
-          timeout: 10_000,
-        },
-      );
+    if (!geolocation) return Promise.resolve({ locationError: { code: 0, message: "Geolocation API is unavailable" } });
+    return new Promise<DynamicContext>(resolve => {
+      try {
+        geolocation.getCurrentPosition(
+          position => resolve({ location: {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+            timestamp: formatBeijingDateTime(position.timestamp),
+          } }),
+          error => resolve({ locationError: { code: error.code, message: error.message } }),
+          { enableHighAccuracy: false, maximumAge: 300000, timeout: 10_000 },
+        );
+      } catch (error) {
+        resolve({ locationError: {
+          code: error instanceof DOMException && error.name === "SecurityError" ? 1 : 0,
+          message: error instanceof Error ? error.message : String(error),
+        } });
+      }
     });
   }
 

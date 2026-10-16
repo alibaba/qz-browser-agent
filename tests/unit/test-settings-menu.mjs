@@ -379,6 +379,46 @@ test("settings require a context window when automatic capability matching has n
   assert.doesNotMatch(validation, /请选择是否支持图片/u);
 });
 
+test("runtime preference patches work before model setup and preserve stored model and preset fields", async () => {
+  resetStorage();
+  const fresh = await llm.saveConfig({ debugMode: true });
+  assert.equal(fresh.debugMode, true);
+  assert.equal(fresh.model, "");
+  assert.equal(storageData.llmConfig.model, "");
+  assert.deepEqual(storageData.llmConfig.presets, []);
+  assert.equal(storageData.llmConfig.activePresetId, "");
+  const freshStored = structuredClone(storageData.llmConfig);
+  const rateLimited = await llm.saveConfig({ requestRateLimit: true });
+  assert.equal(rateLimited.requestRateLimit, true);
+  assert.deepEqual(storageData.llmConfig, { ...freshStored, requestRateLimit: true });
+  assert.equal(fetchCalls.length, 0);
+
+  await llm.saveConfig({
+    provider: "custom", model: "saved-model", apiKey: "private-key", customEndpoint: "https://model.invalid/v1", customProtocol: "openai",
+    modelParameters: { temperature: 0.3 },
+    debugMode: true, requestRateLimit: true,
+  });
+  const raw = structuredClone(storageData.llmConfig);
+  await llm.saveConfig({ debugMode: false, requestRateLimit: false });
+  assert.deepEqual(storageData.llmConfig, { ...raw, debugMode: false, requestRateLimit: false });
+  assert.equal(fetchCalls.length, 0);
+});
+
+test("runtime preferences still reject invalid types and mixed invalid model patches without writes", async () => {
+  resetStorage();
+  storageData.llmConfig = { debugMode: false, requestRateLimit: false };
+  for (const patch of [
+    { debugMode: "true" }, { requestRateLimit: 1 }, { debugMode: true, requestRateLimit: null },
+    { debugMode: true, provider: "custom", customEndpoint: "", model: "" },
+  ]) {
+    await assert.rejects(llm.saveConfig(patch));
+    assert.deepEqual(storageData.llmConfig, { debugMode: false, requestRateLimit: false });
+  }
+  await assert.rejects(llm.saveModelPreset({ debugMode: true }));
+  assert.deepEqual(storageData.llmConfig, { debugMode: false, requestRateLimit: false });
+  assert.equal(fetchCalls.length, 0);
+});
+
 test("config persistence rejects an explicitly missing or invalid context window", async () => {
   resetStorage();
   const base = {

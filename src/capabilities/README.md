@@ -7,6 +7,8 @@ automatically.
 Start with the [working example](../../tests/fixtures/capabilities/example/README.md) and keep the
 parts you need. Capabilities compile with the extension and use its trusted SDK. User-installed
 Skills are runtime file packages with access to controlled scripts and declarative rendering.
+They can use [result selection cards](../../docs/skill-result-selection.md) to let users choose
+candidates before an Agent continues.
 
 ## Start with a tool
 

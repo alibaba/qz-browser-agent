@@ -25,6 +25,12 @@ Side Panel / Chrome message / MCP
 
 The [manifest](../src/manifest.json) declares the runtime entries.
 
+The local CLI declares command syntax, help, and direct MCP routes in
+[`commands.mjs`](../services/mcp-bridge/src/commands.mjs). A command lazily opens one MCP client and
+closes it when the command finishes. CLI and MCP task observation both use
+[`waitForTask`](../services/mcp-bridge/src/task-stream.mjs); it projects status, text, and actionable
+input from Background snapshots. Task execution and persistence remain in the extension.
+
 | Context | Entry and responsibility |
 | --- | --- |
 | Background | [service-worker.ts](../src/background/service-worker.ts) composes state owners, capabilities, transports, and Chrome listeners. |
@@ -47,8 +53,10 @@ run admission. Scheduler and MCP startup wait for consent.
 
 Location is collected by the `get_location` tool when a task needs local information. The
 [location service](../src/background/services/location.ts) requests a separate first-use approval
-through the Session's wait lifecycle. Only a Side Panel click can save that approval. Collection
-checks the run before and after asynchronous work; stop and stale waits revoke the pending request.
+through the Session's wait lifecycle. A Side Panel click or an explicit CLI/MCP approval of the
+current disclosure version saves that approval. Continuing a task alone does not grant consent.
+Approval writes recheck the pending wait and run; cancelled writes roll back before another
+approval or consent read proceeds. Collection checks the run before and after asynchronous work.
 
 ## A task from submission to completion
 
@@ -77,6 +85,20 @@ data. [Lifecycle observers](../src/background/lifecycle-observers.ts) receive id
 metadata. Their `committed` phase indicates successful terminal persistence.
 [Automation](../src/background/automation/runtime.ts) creates independent Sessions and reconciles
 results through `automationRunId`; Chrome alarms wake the scheduler.
+
+## Task input
+
+[User input commands](../src/background/session/user-input.ts) expose a live wait's form and
+confirmation through the Background API. CLI, MCP, and Side Panel responses use the same
+validation. Each response names its Session and wait ID; stale replies leave newer waits intact.
+Invalid field values keep the form pending. The supervisor settles a valid response once.
+Task snapshots and rejected responses include the current input, its field IDs and option values,
+and a response template bound to the wait ID. Clients can complete the next response from that
+result. Templates contain defaults or placeholders; callers fill them from the user's answers.
+
+Native Chrome permission requests remain paused until the user grants access in the Side Panel.
+External approval checks the actual permission and returns `requiresUserAction` while it is absent.
+The [CLI guide](../services/mcp-bridge/README.md#respond-to-a-task) covers input and response commands.
 
 ## Message transport
 

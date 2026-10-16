@@ -44,8 +44,8 @@ test.beforeEach(async ({ page }) => {
       composer: { consumeOutgoingEntry: () => null }, math: {},
       getSessionId: () => state.sessionId, isCurrentSession: id => id === state.sessionId,
       isChatActive: () => state.active,
-      send(command) {
-        state.commands.push(command);
+      request(type, payload) {
+        state.commands.push({ ...payload, type });
         return new Promise((resolve, reject) => state.sends.push({ resolve, reject }));
       },
     });
@@ -141,7 +141,8 @@ test("reconcile replaces a mismatched row and releases its waiting handlers", as
     await Promise.resolve(); await Promise.resolve();
     old.querySelector('[data-wait-action="cancel"]').dispatchEvent(new MouseEvent("click"));
     return { replaced: next !== old, count: messages.querySelectorAll("[data-transcript-key]").length,
-      removed: !old.isConnected, unchanged: next.innerHTML === before, commands: state.commands.length };
+      removed: !old.isConnected, unchanged: next.innerHTML === before, commands: state.commands };
   });
-  expect(result).toEqual({ replaced: true, count: 1, removed: true, unchanged: true, commands: 1 });
+  expect(result).toEqual({ replaced: true, count: 1, removed: true, unchanged: true,
+    commands: [{ type: "continue_task", sessionId: "a", waitId: "wait-a" }] });
 });

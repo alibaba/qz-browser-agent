@@ -309,5 +309,14 @@
   "backend.locationTitle": "Standort verwenden?",
   "backend.locationDisclosure": "Für lokale Informationen ruft qz deine Koordinaten, deren Genauigkeit und den Erfassungszeitpunkt ab und sendet sie an deinen Modelldienst. Wenn du zustimmst, gilt diese Erlaubnis auch für spätere Standortanfragen ohne erneute Nachfrage.",
   "backend.locationRequired": "Deine Zustimmung zur Standortnutzung ist erforderlich. Bestätige in der Seitenleiste oder gib eine Stadt oder Region an.",
-  "backend.locationUnavailable": "Der Standort konnte nicht ermittelt werden. Öffne die Seitenleiste und prüfe die Standorteinstellungen deines Geräts oder gib eine Stadt oder Region an."
+  "backend.locationUnavailable": "Der Standort konnte nicht ermittelt werden. Öffne die Seitenleiste und prüfe die Standorteinstellungen deines Geräts oder gib eine Stadt oder Region an.",
+  "backend.locationPermissionDenied": "Der Browser oder das Betriebssystem hat den Standortzugriff verweigert. Erlaube den Zugriff in den Browser- und Geräteeinstellungen oder gib eine Stadt oder Region an.",
+  "backend.locationPositionUnavailable": "Der Standortdienst des Systems konnte deinen Standort nicht bestimmen. Prüfe das Netzwerk und die Standortdienste deines Geräts, versuche es später erneut oder gib eine Stadt oder Region an.",
+  "backend.locationTimeout": "Die Standortabfrage hat zu lange gedauert. Versuche es später erneut oder gib eine Stadt oder Region an.",
+  "backend.locationPanelUnavailable": "Die Seitenleiste im Aufgabenfenster ist geschlossen oder die Verbindung wurde getrennt. Öffne sie erneut und versuche es noch einmal oder gib eine Stadt oder Region an.",
+  "backend.locationResponseTimeout": "Die Seitenleiste hat nicht rechtzeitig einen Standort zurückgegeben. Öffne sie erneut und versuche es noch einmal oder gib eine Stadt oder Region an.",
+  "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "Ungültige Kandidaten. Bis zu 50 Einträge mit eindeutigen, nicht leeren String-IDs und Titeln zurückgeben.",
+  "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "Ungültige Kandidaten",
+  "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "Ungültige Auswahl. Das Tool erneut ausführen und aus den aktuellen Kandidaten auswählen.",
+  "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.label": "Ungültige Auswahl"
 }

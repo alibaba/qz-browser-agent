@@ -76,7 +76,8 @@ export function printHelp(defaultTestJobs) {
   npm test -- live [target] [arguments]  # explicit real-model tests
 
 Suites: ${AUTOMATED_SUITES.join(", ")}
-Live targets: agent, realworld, deepseek, rate (no target: deepseek + realworld)
+Live targets: agent, realworld, deepseek, rate, cli-mcp, cli-mcp-supplement
+  (no target: deepseek + realworld)
 
 Options:
   --match <text>    filter unit paths or suite commands

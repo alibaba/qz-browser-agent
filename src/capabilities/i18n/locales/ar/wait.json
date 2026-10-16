@@ -1,4 +1,5 @@
 {
+  "wait.cardsTooManyOptions": "اختر ما يصل إلى 50 خيارًا قبل عرض بطاقات الاختيار.",
   "wait.submitted": "تم الإرسال",
   "wait.notSubmitted": "لم يتم الإرسال",
   "wait.button": "الزر: {label}",

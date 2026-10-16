@@ -1,5 +1,22 @@
 import { expect, test } from "./fixtures.mjs";
 
+async function showResultChoices(page, multiple = true) {
+  await page.evaluate(multiple => {
+    const f = window.waitFixture;
+    f.entry = { ...f.entry, title: "Shortlist roles", message: "Choose the roles to research next.", form: {
+      title: "Shortlist roles", submitLabel: "Research selected roles", fields: [{
+        id: "selectedIds", label: "Open positions", type: multiple ? "multi_choice" : "single_choice", presentation: "cards",
+        options: [
+          { value: "job-1", label: "Backend engineer · Northstar", description: "Build distributed infrastructure for open-source projects.", meta: ["Remote · Europe", "€90–120k"], url: "https://example.com/jobs/1" },
+          { value: "job-2", label: "Senior systems engineer · Cedar", description: "Own storage performance and reliability.", meta: ["Berlin / Remote", "Rust"], url: "https://example.com/jobs/2" },
+          { value: "job-3", label: "Platform engineer · Signal Works", description: "Work on tools for small engineering teams.", meta: ["Remote", "Go · PostgreSQL"] },
+        ],
+      }],
+    } };
+    f.cards.patch(f.el, f.entry, "session-a");
+  }, multiple);
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto("/__test_health");
   await page.addStyleTag({ url: "/extension/sidepanel/sidepanel.css" });
@@ -40,6 +57,106 @@ test("identical snapshots preserve draft, focus and selection, including legacy 
   });
   expect(result).toEqual({ same: true, focused: true, value: "用户正在编辑", selection: [2, 5] });
 });
+
+test("result cards validate, preserve selection, lock during submit and recover after transport failure", async ({ page }) => {
+  await showResultChoices(page);
+  await expect(page.locator('.waiting-hint')).toBeHidden();
+  const first = page.locator('.qz-choice-card input[value="job-1"]');
+  const second = page.locator('.qz-choice-card input[value="job-2"]');
+  await expect(page.locator('[data-choice-count]')).toHaveText("已选 0 项");
+  await page.locator('[data-wait-action="continue"]').click();
+  await expect(first).toBeFocused();
+  await expect(first).toHaveAttribute("aria-invalid", "true");
+  await first.press("Space");
+  await second.check();
+  await expect(page.locator('[data-choice-count]')).toHaveText("已选 2 项");
+  await page.evaluate(() => {
+    const f = window.waitFixture;
+    f.cards.patch(f.el, structuredClone(f.entry), "session-a");
+  });
+  await expect(first).toBeChecked();
+  await expect(second).toBeChecked();
+  await page.locator('[data-wait-action="continue"]').click();
+  await expect(first).toBeDisabled();
+  expect(await page.evaluate(() => window.waitFixture.state.commands[0].payload.answers)).toEqual({ selectedIds: ["job-1", "job-2"] });
+  await page.evaluate(() => window.waitFixture.state.sends[0].reject(new Error("port disconnected")));
+  await expect(page.locator('.waiting-hint')).toBeVisible();
+  await expect(page.locator('.waiting-hint')).toContainText("失败，请重试");
+  await expect(first).toBeEnabled();
+  await expect(first).toBeChecked();
+  await second.uncheck();
+  await page.locator('[data-wait-action="continue"]').click();
+  expect(await page.evaluate(() => window.waitFixture.state.commands[1].payload.answers)).toEqual({ selectedIds: ["job-1"] });
+  await page.evaluate(() => {
+    const f = window.waitFixture;
+    f.cards.patch(f.el, { ...f.entry, status: "submitted" }, "session-a");
+    f.state.sends[1].resolve();
+  });
+  await expect(page.locator('.qz-choice-card')).toHaveCount(0);
+  await expect(page.locator('[data-wait-action]')).toHaveCount(0);
+});
+
+test("single result choice submits one stable ID and cancellation submits no answer", async ({ page }) => {
+  await showResultChoices(page, false);
+  await page.locator('.qz-choice-card input[value="job-1"]').check();
+  await page.locator('.qz-choice-card input[value="job-2"]').check();
+  await expect(page.locator('.qz-choice-card input[value="job-1"]')).not.toBeChecked();
+  await page.locator('[data-wait-action="continue"]').click();
+  expect(await page.evaluate(() => window.waitFixture.state.commands[0].payload.answers)).toEqual({ selectedIds: "job-2" });
+  await page.evaluate(() => {
+    const f = window.waitFixture;
+    f.cards.patch(f.el, { ...f.entry, waitId: "next-wait" }, "session-a");
+  });
+  await page.locator('[data-wait-action="cancel"]').click();
+  expect(await page.evaluate(() => window.waitFixture.state.commands[1])).toEqual({ type: "cancel_wait", sessionId: "session-a", waitId: "next-wait" });
+});
+
+test("long result lists scroll within the card and keep counts and actions below the list", async ({ page }) => {
+  await showResultChoices(page);
+  await page.evaluate(() => {
+    const f = window.waitFixture;
+    const field = f.entry.form.fields[0];
+    field.label = f.entry.form.title;
+    f.entry.message = f.entry.form.title;
+    field.options = Array.from({ length: 12 }, (_, index) => ({
+      ...field.options[index % 3], value: `job-${index + 1}`, label: `Role ${index + 1} · Distributed systems engineer`,
+    }));
+    document.querySelector('#messages').style.cssText = 'width:320px;padding:8px';
+    f.cards.patch(f.el, f.entry, "session-a");
+  });
+  await expect(page.locator('.waiting-field-label')).toHaveCount(0);
+  await expect(page.locator('.waiting-message')).toHaveCount(0);
+  const geometry = await page.evaluate(() => {
+    const list = document.querySelector('.waiting-options');
+    return { scrolls: list.scrollHeight > list.clientHeight, listBottom: list.getBoundingClientRect().bottom,
+      countTop: document.querySelector('[data-choice-count]').getBoundingClientRect().top,
+      actionTop: document.querySelector('.waiting-actions').getBoundingClientRect().top };
+  });
+  expect(geometry.scrolls).toBe(true);
+  expect(geometry.countTop).toBeGreaterThanOrEqual(geometry.listBottom);
+  expect(geometry.actionTop).toBeGreaterThan(geometry.countTop);
+  await page.locator('.qz-choice-card input[value="job-12"]').check();
+  await page.locator('[data-wait-action="continue"]').click();
+  expect(await page.evaluate(() => window.waitFixture.state.commands[0].payload.answers)).toEqual({ selectedIds: ["job-12"] });
+});
+
+for (const scheme of ["light", "dark"]) {
+  test(`result selection fits a 320px ${scheme} panel with visible action and translated count`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await showResultChoices(page);
+    await page.evaluate(async () => {
+      const { withLanguage } = await import("/extension/shared/i18n/index.js");
+      const f = window.waitFixture;
+      document.querySelector('#messages').style.cssText = 'width:320px;padding:8px';
+      withLanguage("en", () => f.cards.patch(f.el, { ...f.entry, waitId: "en-wait" }, "session-a"));
+    });
+    await expect(page.locator('[data-choice-count]')).toHaveText("Selected: 0");
+    const geometry = await page.locator('.waiting-card').evaluate(el => ({ width: el.clientWidth, scrollWidth: el.scrollWidth }));
+    expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.width);
+    await expect(page.locator('[data-wait-action="continue"]')).toBeVisible();
+    await page.locator('#messages').screenshot({ path: testInfo.outputPath(`selection-wait-${scheme}.png`) });
+  });
+}
 
 test("required fields validate before sending and form submission delivers all typed answers once", async ({ page }) => {
   const name = page.locator('input[data-field-id="name"]');

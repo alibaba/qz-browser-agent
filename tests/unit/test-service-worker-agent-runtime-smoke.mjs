@@ -11,6 +11,7 @@ import {
 import { SKILL_SETTINGS_STORAGE_KEY } from "../../src/background/skills/skill-settings.js";
 
 const storageData = {};
+storageData._qingzhou_mcp_bridge = { enabled: false };
 const postedMessages = [];
 const COVERAGE_PLUGIN_SKILL_NAME = "coverage-plugin-skill";
 const COVERAGE_PLUGIN_TOOL_NAME = "coverage_helper__ping";
@@ -192,6 +193,7 @@ try {
   await import("../../src/background/service-worker.js");
   const pluginRuntime = await import("../../src/background/skills/skill-tool-runtime.js");
 
+  assert.equal(state.alarmsOnAlarm.length, 1, "only the automation alarm router should register before data consent");
   const consentReply = await new Promise(resolve => state.runtimeOnMessage[0](
     { type: "accept_data_consent", version: 1 },
     { id: chrome.runtime.id, url: chrome.runtime.getURL("sidepanel/sidepanel.html") }, resolve,
@@ -199,7 +201,13 @@ try {
   assert.equal(consentReply.ok, true);
   assert.equal(storageData.qz_data_consent.version, 1);
 
-  assert.equal(state.alarmsOnAlarm.length, 1, "service worker should register one top-level alarm router");
+  assert.equal(state.alarmsOnAlarm.length, 2, "data consent should add the MCP reconnect listener alongside the automation router");
+  for (const name of ["unrelated-alarm", "qingzhou-mcp-bridge-reconnect"]) {
+    for (const listener of state.alarmsOnAlarm) listener({ name });
+  }
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(state.bridgePolls, 0, "alarm delivery must not enable a disabled MCP bridge");
+  assert.equal(state.alarms.has("qingzhou-mcp-bridge-reconnect"), false, "a disabled bridge must not schedule reconnect alarms");
   assert.equal(state.commandsOnCommand.length, 1, "service worker should register one custom command router");
   const sidePanelOpenCount = state.sidePanelOpens.length;
   state.commandsOnCommand[0]("unrelated-command", state.tabs[0]);
@@ -700,10 +708,12 @@ try {
       bridgeResult.result?.tools?.some(tool => tool.name === COVERAGE_PLUGIN_TOOL_NAME),
       "MCP list_tools should refresh the registry and preserve the loaded Skill tool",
     );
+    assert.equal(state.alarms.has("qingzhou-mcp-bridge-reconnect"), true, "a connected bridge should schedule its reconnect alarm");
   } finally {
     state.bridgeListToolsSessionId = "";
     await setMcpBridgeEnabled(false);
   }
+  assert.equal(state.alarms.has("qingzhou-mcp-bridge-reconnect"), false, "disabling the bridge should clear its reconnect alarm");
 
   await waitFor(() => storageData[`_session_runtime_${sessionId}`]?.workingTabId === 3);
   assert.equal(
@@ -1356,7 +1366,6 @@ async function setMcpBridgeEnabled(enabled) {
     enabled,
     endpoint: "http://127.0.0.1:18765",
     clientId: "coverage-client",
-    token: "test-pairing-token",
     pollIntervalMs: 60000,
     pollTimeoutMs: 1000,
     requestTimeoutMs: 2000,

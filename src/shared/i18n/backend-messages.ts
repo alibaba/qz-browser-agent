@@ -2,10 +2,19 @@ import { defineMessages } from "./definition.js";
 
 /** Browser, session and tool host messages. Protocol identifiers remain language neutral. */
 export const backendMessages = defineMessages("backend", {
+  "toolError.SKILL_SELECTION_INVALID_ITEMS.label": { "zh-CN": "候选结果格式无效", "en": "Invalid candidates" },
+  "toolError.SKILL_SELECTION_INVALID_ITEMS.message": { "zh-CN": "候选结果格式不正确。请返回最多 50 项，并为每项提供唯一、非空的字符串 ID 和标题。", "en": "Invalid candidates. Return up to 50 items, each with a unique nonempty string ID and a title." },
+  "toolError.SKILL_SELECTION_INVALID_ANSWER.label": { "zh-CN": "选择结果无效", "en": "Invalid selection" },
+  "toolError.SKILL_SELECTION_INVALID_ANSWER.message": { "zh-CN": "选择结果无效。请重新运行工具，并选择当前卡片中的候选项。", "en": "Invalid selection. Run the tool again and choose from the current candidates." },
   locationTitle: { en: "Use your location?", "zh-CN": "允许获取位置？" },
   locationDisclosure: { en: "To provide local information, qz will get your coordinates, accuracy, and location timestamp and send them to your configured model service. If you agree, future location requests will use this permission without asking again.", "zh-CN": "为提供本地信息，轻舟会获取你的经纬度、精度和定位时间，并发送至你配置的模型服务。同意后，后续定位请求将沿用此授权，不再重复询问。" },
   locationRequired: { en: "Location permission is required. Confirm in the side panel, or provide a city or area instead.", "zh-CN": "需要定位授权。请在侧边栏确认，或直接提供城市、区域。" },
   locationUnavailable: { en: "Could not get your location. Open the side panel and check your device’s location settings, or provide a city or area.", "zh-CN": "未能获取位置。请打开侧边栏并检查设备定位设置，或直接提供城市、区域。" },
+  locationPermissionDenied: { en: "Location access was denied by the browser or operating system. Allow location access in your browser and device settings, or provide a city or area.", "zh-CN": "浏览器或操作系统拒绝了定位访问。请检查浏览器与设备的定位权限，或直接提供城市、区域。" },
+  locationPositionUnavailable: { en: "The system location service could not determine your position. Check your network and device location services, try again later, or provide a city or area.", "zh-CN": "系统定位服务暂时无法确定你的位置。请检查网络与设备定位服务，稍后重试，或直接提供城市、区域。" },
+  locationTimeout: { en: "Location lookup timed out. Try again later, or provide a city or area.", "zh-CN": "获取位置超时。请稍后重试，或直接提供城市、区域。" },
+  locationPanelUnavailable: { en: "The task window's side panel is closed or disconnected. Reopen it and try again, or provide a city or area.", "zh-CN": "任务所在窗口的侧边栏已关闭或连接中断。请重新打开后重试，或直接提供城市、区域。" },
+  locationResponseTimeout: { en: "The side panel did not return a location result in time. Reopen it and try again, or provide a city or area.", "zh-CN": "侧边栏未及时返回定位结果。请重新打开侧边栏后重试，或直接提供城市、区域。" },
   dataConsentRequired: { en: "Open the side panel and agree to the data disclosure before using qz.", "zh-CN": "请打开侧边栏，同意数据使用说明后再使用轻舟。" },
   "artifact.imageCollection": { "zh-CN": "图集", "en": "Image collection" },
   "artifact.dataTable": { "zh-CN": "数据表", "en": "Data table" },

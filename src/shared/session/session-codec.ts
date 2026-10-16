@@ -219,6 +219,16 @@ export function updateTranscriptWithAgentEvent(transcript: readonly TranscriptEn
   const message = typeof event.message === "object" ? event.message : undefined;
   const messageText = typeof event.message === "string" ? event.message : "";
   switch (event.type) {
+    case "agent_start": {
+      const clientMessageId = normalizeClientMessageId(event.clientMessageId);
+      const runId = eventRunId(event);
+      const index = clientMessageId ? findTranscriptEntryIndex(history, "user", { clientMessageId }) : -1;
+      if (index < 0 || !runId) return { transcript: history, changed: false };
+      // Admission precedes run allocation; bind only the explicitly identified initiating message.
+      history[index] = { ...history[index], runId, eventSeq: event.eventSeq };
+      return { transcript: history, changed: true };
+    }
+
     case "state": {
       const phase = terminalToolPhaseFromRuntimeStatus(event);
       if (!phase) return { transcript: history, changed: false };

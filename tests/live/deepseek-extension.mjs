@@ -6,6 +6,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureTestExtension } from "../support/extension-build.mjs";
 import { readTestApiKey } from "../support/local-credentials.mjs";
+import { acceptDataDisclosure } from "../support/data-consent.mjs";
+import { skillFromSkillMarkdown } from "../../src/shared/skills/skill-package.js";
+import { normalizeModernSkill } from "../../src/shared/skills/skill-utils.js";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const akFile = String(process.env.QINGZHOU_DEEPSEEK_AK_FILE || "").trim();
@@ -57,6 +60,11 @@ try {
     if (message.type() === "error") diagnostics.push(redact(message.text(), apiKey));
   });
   await page.goto(`chrome-extension://${extensionId}/sidepanel/sidepanel.html`);
+  await acceptDataDisclosure(page);
+  await page.waitForFunction(() => {
+    const app = document.querySelector("#app");
+    return app && !app.hasAttribute("data-workspace-booting") && !app.hasAttribute("data-workspace-boot-fallback");
+  });
   await page.waitForSelector("#input", { state: "attached" });
   await installHarness(page);
 
@@ -67,8 +75,7 @@ try {
     report.sessionManagement = result;
     console.log(JSON.stringify({ ok: true, provider: "deepseek", model, sessionManagement: result }, null, 2));
   } else {
-    currentCase = "invalidKey";
-    report.invalidKey = await assertInvalidKeyFailureAndRecovery(page, model);
+    report.invalidKey = await runSelected("invalidKey", () => assertInvalidKeyFailureAndRecovery(page, model));
     const basic = await runSelected("basic", () => assertBasicStreaming(page));
 
     const tool = await runSelected("tool", () => assertToolRoundTrip(page));
@@ -91,6 +98,9 @@ try {
 
     const userWait = await runSelected("userWait", () => assertUserWaitLifecycle(page));
 
+    const skillSelection = String(process.env.QINGZHOU_LIVE_CASES || "").split(",").includes("skillSelection")
+      ? await runSelected("skillSelection", () => assertSkillSelection(page)) : { skipped: true };
+
     const editRerun = await runSelected("editRerun", () => assertEditAndRerun(page));
 
 
@@ -112,6 +122,7 @@ try {
         workerRestart,
         followUp,
         userWait,
+        skillSelection,
         editRerun,
       },
     }, null, 2));
@@ -497,6 +508,101 @@ async function assertEditAndRerun(page) {
   assert.equal(runtime.status, "completed");
   await deleteSession(page, sessionId);
   return { branchReplaced: true, completed: true };
+}
+
+async function assertSkillSelection(page) {
+  const directory = join(root, "tests/fixtures/skills/result-selection");
+  const skill = normalizeModernSkill({
+    ...skillFromSkillMarkdown(readFileSync(join(directory, "SKILL.md"), "utf8")),
+    resources: ["plugin.json", "scripts/choose.js"].map(path => ({ path, content: readFileSync(join(directory, path), "utf8") })),
+  });
+  const saved = await request(page, "save_workspace_skill", { name: skill.name, expected: null, skill }, "skill_workspace_saved");
+  assert.equal(saved.registryReady, true);
+  const sessionId = await createSession(page, "Choose my next role");
+  const prompt = "Use the result-selection-example Skill to let me choose roles, then summarize only my picks.";
+  const selectedIds = ["harbor-platform", "fieldwork-systems"];
+  const providerRequests = [];
+  const onRequest = request => {
+    if (request.method() !== "POST" || !new URL(request.url()).hostname.endsWith("deepseek.com")) return;
+    let body;
+    try { body = request.postDataJSON(); } catch { return; }
+    if (!Array.isArray(body?.messages)) return;
+    const selectionMessage = body.messages.find(message => message.role === "tool" && /"selectedIds"/.test(String(message.content)));
+    providerRequests.push({
+      hasSelection: Boolean(selectionMessage),
+      selectionContent: selectionMessage?.content || "",
+      containsUnselected: JSON.stringify(body.messages).includes("northstar-backend"),
+    });
+  };
+  page.context().on("request", onRequest);
+  try {
+    await page.setViewportSize({ width: 360, height: 1000 });
+    await page.locator('.tab-btn[data-tab="sessions"]').click();
+    await page.locator(`.session-card[data-id="${sessionId}"]`).click();
+    await page.locator('#input').fill(prompt);
+    const after = await eventCount(page);
+    await page.locator('#input').press("Enter");
+    const waiting = await waitEvent(page, { type: "waiting_for_user", sessionId }, after, 180_000);
+    assert.equal(waiting.form.fields[0].presentation, "cards");
+    assert.deepEqual(waiting.form.fields[0].options.map(option => option.value), ["northstar-backend", ...selectedIds]);
+    const card = page.locator(`.waiting-active[data-wait-id="${waiting.waitId}"]`);
+    await card.waitFor();
+    assert.equal(await card.locator(".qz-choice-card").count(), 3);
+    const callsBeforeSelection = providerRequests.length;
+    for (const value of selectedIds) await card.locator(`input[value="${value}"]`).check();
+    assert.equal(providerRequests.length, callsBeforeSelection, "choosing cards stays local until submission");
+    const screenshotDirectory = process.env.QINGZHOU_LIVE_REPORT ? dirname(resolve(process.env.QINGZHOU_LIVE_REPORT)) : "";
+    const screenshots = [];
+    if (screenshotDirectory) {
+      const screenshot = join(screenshotDirectory, "selection-live-waiting.png");
+      await page.screenshot({ path: screenshot, animations: "disabled" });
+      screenshots.push(screenshot);
+    }
+    const actionAfter = await eventCount(page);
+    await card.locator('[data-wait-action="continue"]').click();
+    const completed = await waitEvent(page, { type: "tool_execution_end", sessionId, toolName: "result_selection_example__choose" }, actionAfter, 30_000);
+    assert.equal(completed.isError, false);
+    const selection = completed.result.result || completed.result;
+    assert.deepEqual(selection.selectedIds, selectedIds);
+    assert.deepEqual(selection.selectedItems.map(item => item.id), selectedIds);
+    assert.equal(selection.totalItems, 3);
+    assert.equal(Object.hasOwn(selection, "items"), false);
+    await waitEvent(page, { type: "agent_end", sessionId }, actionAfter, 180_000);
+    const state = await requestWithoutId(page, "get_state", { sessionId }, "state", 20_000, { sessionId });
+    assert.equal(state.status, "completed");
+    const assistantText = await latestAssistantText(page, sessionId);
+    assert.match(assistantText, /Harbor/);
+    assert.match(assistantText, /Fieldwork/);
+    assert.doesNotMatch(assistantText, /Northstar/);
+    await page.waitForFunction(expected => {
+      const message = [...document.querySelectorAll("#messages .msg-assistant")].at(-1);
+      const text = message?.querySelector(".msg-content")?.textContent || "";
+      return message?.dataset.content === expected && text.includes("Harbor") && text.includes("Fieldwork");
+    }, assistantText, { timeout: 20_000 });
+    await page.locator("#messages .msg-assistant").last().scrollIntoViewIfNeeded();
+    const resumedRequests = providerRequests.filter(item => item.hasSelection);
+    assert.ok(resumedRequests.length > 0, "the real model request must contain the selected tool result");
+    assert.equal(resumedRequests.some(item => item.containsUnselected), false, "unselected candidate records stay out of model context");
+    assert.ok(resumedRequests.every(item => selectedIds.every(id => item.selectionContent.includes(id))));
+    const events = await eventsSince(page, after);
+    assert.equal(events.filter(event => event.type === "waiting_for_user" && event.sessionId === sessionId).length, 1);
+    if (screenshotDirectory) {
+      const screenshot = join(screenshotDirectory, "selection-live-completed.png");
+      await page.screenshot({ path: screenshot, animations: "disabled" });
+      screenshots.push(screenshot);
+    }
+    return {
+      prompt, sessionId, waitId: waiting.waitId, candidateCount: 3, selectedIds,
+      toolCalls: events.filter(event => event.type === "tool_execution_start" && event.sessionId === sessionId).map(event => event.toolName),
+      providerRequestCount: providerRequests.length, resumedRequestCount: resumedRequests.length,
+      selectedRecordsOnly: true, assistantRendered: true, assistantText, screenshots,
+    };
+  } finally {
+    page.context().off("request", onRequest);
+    await deleteSession(page, sessionId);
+    await request(page, "delete_workspace_skill", { name: skill.name, expected: saved.skill }, "skill_workspace_deleted");
+    await page.setViewportSize({ width: 980, height: 860 });
+  }
 }
 
 async function runPrompt(page, sessionId, text, { timeoutMs = 90_000 } = {}) {

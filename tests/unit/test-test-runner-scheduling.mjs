@@ -232,8 +232,12 @@ async function createFixture(t, { secondaryPeer = SECONDARY } = {}) {
     "tests/background/provider-header-rules-e2e.mjs",
     "tests/background/extension-e2e.mjs",
     "tests/background/mcp-tab-ownership-e2e.mjs",
+    "tests/background/mcp-resilience-e2e.mjs",
+    "tests/background/mcp-user-input-e2e.mjs",
+    "tests/background/mcp-resources-e2e.mjs",
     "tests/data-grid/extension-page.mjs",
     "tests/release/bundle-release.test.mjs",
+    "tests/release/npm-package.mjs",
     "tests/release/chrome-smoke.mjs",
     "tests/support/run-python-browser.mjs",
   ]) await put(root, path, childSource);

@@ -101,6 +101,15 @@ async function saveConfiguration(config: ConfigInput, preserveRuntime: boolean, 
   signal?.throwIfAborted();
   const raw = await readRawConfig();
   signal?.throwIfAborted();
+  const fields = Object.keys(config);
+  if (!preserveRuntime && fields.length && fields.every(key => key === "debugMode" || key === "requestRateLimit")) {
+    for (const key of fields) {
+      if (typeof config[key] !== "boolean") throw new TypeError(`${key} requires a boolean.`);
+    }
+    // These preferences also apply before a model has been configured.
+    await writeRawConfig({ ...raw, ...config }, signal);
+    return getConfig();
+  }
   const providerApiKeys = getStoredProviderApiKeys(raw);
   const presets = normalizePresets(raw.presets);
   const current = normalizeStoredConfigForConnection(raw, providerApiKeys);

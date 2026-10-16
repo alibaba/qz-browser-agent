@@ -1,4 +1,5 @@
 {
+  "wait.cardsTooManyOptions": "選択カードを表示する前に、候補を50件以内に絞り込んでください。",
   "wait.submitted": "送信済み",
   "wait.notSubmitted": "未送信",
   "wait.button": "ボタン：{label}",

@@ -159,6 +159,12 @@
         selectors: [".tool-slim-list", ".tool-slim-row"],
         text: ["视频 A", "作者"],
       },
+      selection: {
+        renderer: { type: "selection", sourcePath: "collected", itemsPath: "candidates", itemTitlePath: "company", itemSubtitlePath: "role", itemMeta: [{ label: "Location", path: "location" }] },
+        result: { selectedIds: ["role-b"], selectedItems: [{ id: "role-b", company: "Harbor", role: "Platform engineer", location: "Remote" }], totalItems: 3 },
+        selectors: [".tool-slim-list", ".tool-slim-row"],
+        text: ["Harbor", "Platform engineer", "Remote"],
+      },
       table: {
         renderer: { type: "table", columns: [{ label: "标题", path: "title" }, { label: "UP主", path: "owner" }] },
         result: { rows: [{ title: "视频 A", owner: "作者 A" }, { title: "视频 B", owner: "作者 B" }] },

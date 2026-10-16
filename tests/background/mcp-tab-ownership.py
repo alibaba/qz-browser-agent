@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 from typing import Any
 
 from mcp import ClientSession
@@ -72,7 +71,7 @@ async def expect_foreign(session: ClientSession, session_id: str, name: str, arg
 
 
 async def claim_with_client(bridge_url: str, session_id: str, tab_id: int) -> dict[str, Any]:
-    async with streamablehttp_client(bridge_url, headers={"Authorization": "Bearer " + os.environ.get("QINGZHOU_MCP_BRIDGE_TOKEN", "")}, timeout=30, sse_read_timeout=120) as (read, write, _):
+    async with streamablehttp_client(bridge_url, timeout=30, sse_read_timeout=120) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
             try:
@@ -84,7 +83,7 @@ async def claim_with_client(bridge_url: str, session_id: str, tab_id: int) -> di
 
 async def amain(args: argparse.Namespace) -> int:
     base_url = args.base_url.rstrip("/")
-    async with streamablehttp_client(args.bridge_url, headers={"Authorization": "Bearer " + os.environ.get("QINGZHOU_MCP_BRIDGE_TOKEN", "")}, timeout=30, sse_read_timeout=120) as (read, write, _):
+    async with streamablehttp_client(args.bridge_url, timeout=30, sse_read_timeout=120) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
             bridge = await call(session, "qingzhou_bridge_status", {})
@@ -140,7 +139,7 @@ async def amain(args: argparse.Namespace) -> int:
     assert len(winners) == 1 and len(losers) == 1, claims
     assert "另一个任务" in losers[0]["error"] or "foreign" in losers[0]["error"].lower(), losers[0]
 
-    async with streamablehttp_client(args.bridge_url, headers={"Authorization": "Bearer " + os.environ.get("QINGZHOU_MCP_BRIDGE_TOKEN", "")}, timeout=30, sse_read_timeout=120) as (read, write, _):
+    async with streamablehttp_client(args.bridge_url, timeout=30, sse_read_timeout=120) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
             winner = winners[0]["sessionId"]

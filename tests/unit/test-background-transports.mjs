@@ -63,6 +63,16 @@ const api = createBackgroundApi({
       instructionApplied: Boolean(input.instruction),
     }),
     continueWait: async input => ({ accepted: true, waitId: input.waitId }),
+    userInput: async input => {
+      calls.push(["user_input", input]);
+      return { sessionId: input.sessionId, waiting: true, waitId: "wait-input", kind: "location_consent", consentVersion: 1 };
+    },
+    respondToUserInput: async input => {
+      calls.push(["respond_to_user_input", input]);
+      if (input.sessionId === "native") return { accepted: false, requiresUserAction: true, code: "BROWSER_PERMISSION_REQUIRED", waitId: input.waitId };
+      if (input.waitId === "old") return { accepted: false, stale: true, code: "STALE_WAIT", waitId: input.waitId };
+      return { accepted: true, sessionId: input.sessionId, waitId: input.waitId, runId: "run-1" };
+    },
     submitWaitForm: async input => ({ accepted: true, waitId: input.waitId }),
     cancelWait: async input => ({ accepted: true, waitId: input.waitId }),
     state: async sessionId => ({ sessionId, status: runtimes.get(sessionId)?.status || "idle", runtime: runtimes.get(sessionId) || {} }),
@@ -120,11 +130,20 @@ const api = createBackgroundApi({
       };
     },
   },
-  data: { listTables: async () => ({ tables: [] }) },
+  data: {
+    listTables: async () => ({ tables: [{ name: "prices", count: 2 }] }),
+    deleteTable: async params => ({ table: params.table, deleted: true }),
+    exportTable: async params => ({ ...params, downloadId: 1 }),
+    listImageCollections: async () => ({ collections: [{ name: "photos", count: 3 }] }),
+    deleteImageCollection: async params => ({ ...params, deleted: true }),
+    exportImageCollection: async params => ({ ...params, downloadId: 2 }),
+    listDownloads: async params => ({ downloads: [{ downloadId: params.id || 1, state: "complete" }] }),
+  },
   skills: {
     list: async () => ({ skills: [] }),
     get: async params => ({ name: params.name }),
     resource: async params => ({ name: params.name, path: params.path }),
+    export: async params => ({ ...params, downloadId: 3 }),
     contributions: async () => ({ tools: [] }),
     refresh: async () => ({ skillToolRegistry: {} }),
   },
@@ -133,6 +152,10 @@ const api = createBackgroundApi({
       if (message.fail) throw new Error("bad import");
       return { sessionId: message.sessionId, sourceTabId: sender?.tab?.id || null };
     },
+  },
+  settings: {
+    get: async params => ({ config: { model: "m1" }, ...params }),
+    update: async params => ({ config: params.config, updated: Object.keys(params.config) }),
   },
   config: {
     get: async () => ({ provider: "deepseek", model: "test" }),
@@ -174,6 +197,41 @@ assert.deepEqual(
   { model: "m1", saved: true },
 );
 assert.equal((await mcp.dispatch({ method: "stop_session", params: { sessionId: "s1", cascade: false } })).stopped, true);
+assert.equal(mcp.methods.includes("get_user_input"), true);
+assert.equal(mcp.methods.includes("respond_to_user_input"), true);
+for (const [method, params, expected] of [
+  ["list_data_tables", {}, { tables: [{ name: "prices", count: 2 }] }],
+  ["delete_data_table", { table: "prices" }, { table: "prices", deleted: true }],
+  ["export_data_table", { table: "prices", format: "xlsx" }, { table: "prices", format: "xlsx", downloadId: 1 }],
+  ["list_image_collections", {}, { collections: [{ name: "photos", count: 3 }] }],
+  ["delete_image_collection", { collection: "photos" }, { collection: "photos", deleted: true }],
+  ["export_image_collection", { collection: "photos" }, { collection: "photos", downloadId: 2 }],
+  ["list_downloads", { id: 2 }, { downloads: [{ downloadId: 2, state: "complete" }] }],
+  ["export_skill", { name: "demo", filename: "demo.zip" }, { name: "demo", filename: "demo.zip", downloadId: 3 }],
+  ["get_settings", { key: "model" }, { config: { model: "m1" }, key: "model" }],
+  ["update_settings", { config: { model: "m2" } }, { config: { model: "m2" }, updated: ["model"] }],
+]) {
+  assert.ok(mcp.methods.includes(method), `Method must be discoverable: ${method}`);
+  assert.deepEqual(await mcp.dispatch({ method, params }), expected, `Wrong owner dispatch: ${method}`);
+}
+assert.deepEqual(await mcp.dispatch({ method: "get_user_input", params: { sessionId: "s1" } }), {
+  sessionId: "s1", waiting: true, waitId: "wait-input", kind: "location_consent", consentVersion: 1,
+});
+assert.deepEqual(calls.at(-1), ["user_input", { sessionId: "s1" }]);
+const inputResponse = { sessionId: "s1", waitId: "wait-input", action: "approve", consentVersion: 1 };
+assert.deepEqual(await mcp.dispatch({ method: "respond_to_user_input", params: inputResponse }), {
+  accepted: true, sessionId: "s1", waitId: "wait-input", runId: "run-1",
+});
+assert.deepEqual(calls.at(-1), ["respond_to_user_input", inputResponse]);
+const formResponse = { sessionId: "s1", waitId: "wait-form", action: "submit", answers: { city: "Hangzhou", selectedIds: ["a", "b"] } };
+await mcp.dispatch({ method: "respond_to_user_input", params: formResponse });
+assert.deepEqual(calls.at(-1), ["respond_to_user_input", formResponse]);
+assert.deepEqual(await mcp.dispatch({ method: "respond_to_user_input", params: { sessionId: "native", waitId: "wait-permission", action: "approve" } }), {
+  accepted: false, requiresUserAction: true, code: "BROWSER_PERMISSION_REQUIRED", waitId: "wait-permission",
+});
+assert.deepEqual(await mcp.dispatch({ method: "respond_to_user_input", params: { sessionId: "s1", waitId: "old", action: "reject" } }), {
+  accepted: false, stale: true, code: "STALE_WAIT", waitId: "old",
+});
 await assert.rejects(
   mcp.dispatch({ method: "does_not_exist" }),
   error => error?.code === "METHOD_NOT_FOUND",
@@ -571,3 +629,19 @@ async function invokeRuntimeMessage(transport, message, sender = {}) {
 }
 
 console.log("background API transport parity tests passed");
+
+// Wait validation failures are request-correlated replies, so the card can unlock and retry.
+{
+  const inputApi = createBackgroundApi({ system: { ready: async () => {} }, sessions: {
+    continueWait: async () => ({ accepted: false, sessionId: "s1", waitId: "w1", code: "BROWSER_PERMISSION_REQUIRED", requiresUserAction: true }),
+    cancelWait: async () => ({ accepted: true, sessionId: "s1", waitId: "w1", reason: "cancelled" }),
+  } });
+  const adapter = createSidepanelTransport(inputApi);
+  const replies = [];
+  const port = { postMessage: message => replies.push(message) };
+  await adapter.dispatch({ type: "continue_task", sessionId: "s1", waitId: "w1", requestId: "reply-1" }, port);
+  assert.deepEqual(replies[0], { type: "user_input_response", requestId: "reply-1", accepted: false, sessionId: "s1", waitId: "w1", code: "BROWSER_PERMISSION_REQUIRED", requiresUserAction: true });
+  await adapter.dispatch({ type: "cancel_wait", sessionId: "s1", waitId: "w1", requestId: "reply-2" }, port);
+  assert.equal(replies[1].accepted, true);
+  assert.equal(replies[1].requestId, "reply-2");
+}

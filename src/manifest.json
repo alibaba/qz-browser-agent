@@ -45,6 +45,11 @@
   },
   "content_scripts": [
     {
+      "matches": ["http://127.0.0.1/*", "http://localhost/*"],
+      "js": ["content/mcp-connect-bridge.js"],
+      "run_at": "document_idle"
+    },
+    {
       "matches": [
         "<all_urls>"
       ],

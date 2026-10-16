@@ -99,14 +99,16 @@ export function validateBehaviorIndex(index) {
 
 export function classifyEvidence(target) {
   const normalized = normalizeEvidenceTarget(target);
+  if (["unit/test-node-mcp-bridge.mjs", "unit/test-node-mcp-cli.mjs"].includes(normalized)) {
+    return evidence(normalized, "automated", "service", "service:node-mcp");
+  }
   if (/^unit\/test-.*\.mjs$/u.test(normalized)) {
     return evidence(normalized, "automated", "unit", "unit");
   }
   if (/^browser\/.*\.spec\.mjs$/u.test(normalized)) {
     return evidence(normalized, "automated", "browser", "browser");
   }
-  if (normalized === "integration/test-qingzhou-mcp-bridge.py"
-    || normalized === "integration/test-agent-behavior-acceptance.py") {
+  if (normalized === "integration/test-agent-behavior-acceptance.py") {
     return evidence(normalized, "automated", "service", "service:mcp");
   }
   if (normalized === "background/image-conversion-e2e.mjs") {
@@ -249,13 +251,13 @@ export function commandForGroup(group) {
   }
   if (group.key === "service:mcp") {
     return command(common, "uv", [
-      "run", "--project", "services/mcp-bridge",
-      "--index", "https://pypi.org/simple",
+      "run", "--project", "tests/python",
       "--default-index", "https://pypi.org/simple",
-      "--locked", "pytest", "-c", "services/mcp-bridge/pyproject.toml",
+      "--locked", "pytest",
       "-q", "--durations=5", ...paths,
     ]);
   }
+  if (group.key === "service:node-mcp") return command(common, "node", ["--test", ...paths]);
   const exact = {
     "e2e:image-conversion": ["node", ["tests/background/image-conversion-e2e.mjs"]],
     "e2e:extension": ["node", ["tests/background/extension-e2e.mjs"]],

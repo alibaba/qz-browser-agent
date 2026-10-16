@@ -78,5 +78,9 @@
   "skill-renderers.treeDescription": "展示層級結構，適合 DOM、AX Tree、目錄、導航樹。",
   "skill-renderers.treeReturn": "- 預設 return { title?, url?, nodes:[...] } 或 { lines:[...] }；node 建議包含 depth/role/name/text/meta/url/selector。",
   "skill-renderers.treeShape": "{ title?: string, url?: string, nodes?: Array<object> } 或 { lines: Array<string | object> }",
-  "skill-renderers.treeTitle": "樹結構"
+  "skill-renderers.treeTitle": "樹結構",
+  "skill-renderers.selectionTitle": "選擇結果",
+  "skill-renderers.selectionDescription": "將候選結果顯示為可選擇的卡片，等待使用者確認後傳回所選內容。",
+  "skill-renderers.selectionReturn": "- 傳回最多 50 個候選物件，每項具有唯一且非空的字串 ID 和標題。僅用於頂層結果 renderer。確認後，工具傳回 selectedIds、selectedItems 和 totalItems；等待使用者不計入指令碼逾時。",
+  "skill-renderers.selectionCompleted": "已選擇 {count} / {total} 項"
 }

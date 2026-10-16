@@ -47,6 +47,10 @@ const messages = defineMessages("wait-tools", {
     "zh-CN": "字段类型",
     en: "Field type.",
   },
+  askUserPresentation: {
+    "zh-CN": "选择题可设为 cards，以竖排卡片展示候选结果，最多 50 项。",
+    en: "Set to cards for a vertical result-selection list, with up to 50 choices.",
+  },
   askUserPlaceholder: {
     "zh-CN": "输入提示",
     en: "Input placeholder.",
@@ -70,6 +74,18 @@ const messages = defineMessages("wait-tools", {
   askUserOptions: {
     "zh-CN": "选择题选项。每项为 {label,value,description}；value 不填时可与 label 相同。",
     en: "Choice options. Each entry is {label,value,description}; if omitted, value may be the same as label.",
+  },
+  askUserOptionMeta: {
+    "zh-CN": "卡片标签，最多 6 个，每个最多 80 字符。",
+    en: "Card metadata: up to 6 labels of 80 characters each.",
+  },
+  askUserOptionImageUrl: {
+    "zh-CN": "卡片缩略图的 HTTP(S) 地址。",
+    en: "HTTP(S) URL for the card thumbnail.",
+  },
+  askUserOptionUrl: {
+    "zh-CN": "卡片来源链接的 HTTP(S) 地址。",
+    en: "HTTP(S) source link for the card.",
   },
   waitForNavigationNoImages: {
     "zh-CN": "等待标签页加载完成。在 click/navigate 后调用。默认只返回加载状态、URL、标题；already_complete 只表示调用时页面已完成加载，不证明上一动作成功或失败。当前模型不支持图片，加载后请用 get_ax_tree/read_article/find_elements 确认状态。",

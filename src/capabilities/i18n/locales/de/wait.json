@@ -1,4 +1,5 @@
 {
+  "wait.cardsTooManyOptions": "Grenzen Sie die Auswahl auf höchstens 50 Kandidaten ein, bevor Sie Auswahlkarten anzeigen.",
   "wait.submitted": "Gesendet",
   "wait.notSubmitted": "Nicht gesendet",
   "wait.button": "Schaltfläche: {label}",

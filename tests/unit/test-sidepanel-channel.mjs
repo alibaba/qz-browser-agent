@@ -87,13 +87,27 @@ first.onPosted = message => {
 };
 assert.deepEqual(await channel.requestLocation({ timeoutMs: 100 }), { href: "https://example.test/" });
 first.onPosted = null;
-assert.equal(await channel.requestLocation({ timeoutMs: 5 }), null);
-assert.equal(await channel.requestLocation({ windowId: 999 }), null);
+await assert.rejects(channel.requestLocation({ timeoutMs: 5 }), { code: "LOCATION_RESPONSE_TIMEOUT" });
+const timedOutId = first.sent.at(-1).requestId;
+assert.equal(channel.acceptDynamicContextResponse({ requestId: timedOutId, context: { location: { latitude: 1 } } }), false);
+await assert.rejects(channel.requestLocation({ windowId: 999 }), { code: "LOCATION_PANEL_UNAVAILABLE" });
 const locationAbort = new AbortController();
 const pendingLocation = channel.requestLocation({ signal: locationAbort.signal });
 locationAbort.abort();
 assert.equal(await pendingLocation, null);
 assert.equal(await channel.requestLocation({ signal: locationAbort.signal }), null);
+
+for (const [browserCode, code] of [[1, "LOCATION_PERMISSION_DENIED"], [2, "LOCATION_POSITION_UNAVAILABLE"], [3, "LOCATION_TIMEOUT"], [0, "LOCATION_UNAVAILABLE"]]) {
+  const pending = channel.requestLocation({ timeoutMs: 100 });
+  const requestId = first.sent.at(-1).requestId;
+  channel.acceptDynamicContextResponse({ requestId, context: { locationError: { code: browserCode, message: "Browser diagnostic" } } });
+  await assert.rejects(pending, error => error.code === code && error.details.browserCode === browserCode
+    && error.details.browserMessage === "Browser diagnostic");
+  assert.equal(channel.acceptDynamicContextResponse({ requestId }), false);
+  const retry = channel.requestLocation({ timeoutMs: 100 });
+  channel.acceptDynamicContextResponse({ requestId: first.sent.at(-1).requestId, context: { location: { latitude: 30.25 } } });
+  assert.deepEqual(await retry, { latitude: 30.25 });
+}
 
 
 first.onMessage.emit({ type: "ok", requestId: "request-ok" });
@@ -113,7 +127,14 @@ assert.deepEqual(first.sent.at(-1), {
   details: { retryable: false },
 });
 
+const disconnectedLocation = channel.requestLocation({ windowId: 1 });
+const disconnectedRequestId = first.sent.at(-1).requestId;
 first.onDisconnect.emit();
+await assert.rejects(disconnectedLocation, { code: "LOCATION_PANEL_UNAVAILABLE" });
+assert.equal(channel.acceptDynamicContextResponse({ requestId: disconnectedRequestId }), false);
+const otherWindowLocation = channel.requestLocation({ windowId: 2 });
+channel.acceptDynamicContextResponse({ requestId: second.sent.at(-1).requestId, context: { location: { latitude: 31 } } });
+assert.deepEqual(await otherWindowLocation, { latitude: 31 });
 second.onDisconnect.emit();
 assert.equal(channel.getWindowId(first), null);
 assert.equal(channel.size(), 0);
@@ -121,6 +142,9 @@ assert.equal(first.onMessage.size, 0);
 assert.equal(first.onDisconnect.size, 0);
 const third = createPort("sidepanel");
 runtime.onConnect.emit(third);
+const reconnectedLocation = channel.requestLocation();
+channel.acceptDynamicContextResponse({ requestId: third.sent.at(-1).requestId, context: { location: { latitude: 32 } } });
+assert.deepEqual(await reconnectedLocation, { latitude: 32 });
 unregister();
 assert.equal(runtime.onConnect.size, 0);
 assert.equal(third.onMessage.size, 0);

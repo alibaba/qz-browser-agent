@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import { createMcpRuntime } from "../../src/background/mcp/mcp-runtime.js";
 
-const broadcasts = [];
 const executed = [];
 const toolReadinessReasons = [];
 const loadedNames = [];
 const loadedDocumentResources = [];
 const promptTasks = [];
+let messageDisposition = "started";
 let activeRunId = "run-1";
 const waits = new Map([["wait-1", true], ["wait-2", true]]);
 const runtimeState = {
   sessionId: "s1",
   status: "completed",
+  waitId: "wait-1",
   runId: "run-1",
   workingTabId: 8,
   workingUrl: "https://example.test/page",
@@ -40,6 +41,7 @@ const sessions = {
     return id;
   },
   supervisor: {
+    getUserWait: sessionId => sessionId === "s1" && waits.has(runtimeState.waitId) ? { sessionId, waitId: runtimeState.waitId, runId: activeRunId } : null,
     isRunCurrent(sessionId, runId) {
       return sessionId === "s1" && runId === activeRunId;
     },
@@ -54,9 +56,9 @@ const sessions = {
       return true;
     },
   },
-  async startPromptTask(input) {
+  async submitMessage(input) {
     promptTasks.push(input);
-    return { promise: Promise.resolve(), runId: "run-2" };
+    return { promise: Promise.resolve(), runId: "run-2", disposition: messageDisposition };
   },
   waitForRunObserved: async () => true,
   getRuntimeOutput: async () => ({ ...runtimeState }),
@@ -108,6 +110,7 @@ const skills = {
 };
 const runtime = createMcpRuntime({
   sessions,
+  userInputPermissions: { hasBrowserPermission: async () => false, locationConsent: { isAccepted: async () => false, acceptExternal: async () => { throw new Error("not configured"); } } },
   tools,
   skills,
   artifacts: {
@@ -119,7 +122,6 @@ const runtime = createMcpRuntime({
     port.postMessage({ type: "first", requestId: message.requestId });
     port.postMessage({ type: "second", requestId: message.requestId });
   },
-  broadcast: event => broadcasts.push(event),
   storageKey: () => "_mcp_config",
 });
 
@@ -130,16 +132,25 @@ const dispatched = await runtime.dispatchRuntimeMessage({ type: "test", requestI
 assert.equal(dispatched.response.type, "first");
 assert.equal(dispatched.responses.length, 2);
 
-assert.deepEqual(runtime.continueUserWait({ sessionId: "s1", waitId: "wait-1" }), {
+assert.deepEqual(await runtime.continueUserWait({ sessionId: "s1", waitId: "wait-1" }), {
   accepted: true,
   sessionId: "s1",
   waitId: "wait-1",
+  runId: "run-1",
   submitted: false,
   reason: "continued",
 });
-assert.equal(runtime.cancelUserWait({ sessionId: "s1", waitId: "missing" }).stale, true);
-assert.equal(broadcasts.at(-1).type, "user_wait_resolved");
-assert.equal(runtime.submitWaitForm({ sessionId: "s1", waitId: "wait-2", answers: { choice: "a" } }).submitted, true);
+assert.equal((await runtime.cancelUserWait({ sessionId: "s1", waitId: "missing" })).stale, true);
+runtimeState.waitId = "wait-2";
+runtimeState.waitForm = { fields: [{ id: "choice", type: "text" }] };
+const pending = await runtime.getSnapshot("s1");
+assert.deepEqual(pending.input, runtime.getUserInput({ sessionId: "s1" }));
+assert.equal(pending.input.responseTemplate.answers.choice, "<text>");
+assert.deepEqual((await runtime.getState("s1")).input, pending.input);
+assert.deepEqual((await runtime.sendMessage({ sessionId: "s1", text: "pending" })).input, pending.input);
+promptTasks.length = 0;
+assert.equal((await runtime.submitWaitForm({ sessionId: "s1", waitId: "wait-2", answers: { choice: "a" } })).submitted, true);
+assert.deepEqual((await runtime.getSnapshot("s1")).input, { sessionId: "s1", waiting: false });
 
 await assert.rejects(() => runtime.sendMessage({ text: "missing id" }), /requires sessionId/);
 await assert.rejects(() => runtime.sendMessage({ sessionId: "s1", text: "  " }), /requires text/);
@@ -149,11 +160,38 @@ const sent = await runtime.sendMessage({
 });
 assert.equal(sent.accepted, true);
 assert.equal(sent.wait, true);
+assert.equal(sent.disposition, "started");
+assert.equal(sent.deliveryMode, "follow_up");
+assert.ok(sent.clientMessageId);
+assert.equal(sent.clientMessageId, promptTasks[0].clientMessageId);
 assert.equal(promptTasks.length, 1);
 assert.equal(promptTasks[0].onMessageAccepted, onMessageAccepted);
 assert.equal(promptTasks[0].swallowErrors, true);
+assert.equal(promptTasks[0].deliveryMode, "follow_up");
 await runtime.sendMessage({ sessionId: "s1", text: "surface acceptance errors", swallowErrors: false });
 assert.equal(promptTasks.at(-1).swallowErrors, false);
+messageDisposition = "queued";
+const queued = await runtime.sendMessage({ sessionId: "s1", text: "next task", clientMessageId: "follow-up-1", wait: true });
+assert.equal(queued.disposition, "queued");
+assert.equal(queued.wait, false, "a queued message acknowledges admission rather than claiming its future run completed");
+assert.equal(queued.clientMessageId, "follow-up-1");
+assert.equal(promptTasks.at(-1).clientMessageId, "follow-up-1");
+assert.equal(queued.deliveryMode, "follow_up");
+const steering = await runtime.sendMessage({ sessionId: "s2", text: "Change course", steer: true, clientMessageId: "steering-1" });
+assert.equal(steering.sessionId, "s2");
+assert.equal(steering.deliveryMode, "steer");
+assert.equal(steering.disposition, "queued");
+assert.equal(promptTasks.at(-1).deliveryMode, "steer");
+assert.equal(promptTasks.at(-1).sessionId, "s2");
+assert.equal(promptTasks.at(-1).clientMessageId, "steering-1");
+await runtime.sendMessage({ sessionId: "s1", text: "Follow up", steer: false });
+assert.equal(promptTasks.at(-1).deliveryMode, "follow_up");
+const callsBeforeInvalidSteering = promptTasks.length;
+for (const steer of ["true", 1, null, {}]) {
+  await assert.rejects(() => runtime.sendMessage({ sessionId: "s1", text: "Invalid mode", steer }), { code: "INVALID_ARGUMENTS" });
+}
+assert.equal(promptTasks.length, callsBeforeInvalidSteering, "malformed steering flags must fail before message admission");
+messageDisposition = "started";
 
 const state = await runtime.getState("s1");
 assert.equal(state.status, "completed");

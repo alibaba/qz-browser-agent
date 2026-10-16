@@ -3,6 +3,10 @@ import { createTranslator } from "../i18n/index.js";
 
 /** Authored renderer documentation; result paths and user-provided labels remain literal. */
 const messages = defineMessages("skill-renderers", {
+  "selectionTitle": { "zh-CN": "选择结果", "en": "Choose results" },
+  "selectionDescription": { "zh-CN": "将候选结果显示为可选择卡片，等待用户确认后返回所选内容。", "en": "Show candidates as selectable cards and return the user's confirmed selection." },
+  "selectionReturn": { "zh-CN": "- 返回最多 50 个候选对象，每项具有唯一、非空的字符串 ID 和标题。仅用于顶层结果 renderer。用户确认后，工具返回 selectedIds、selectedItems 和 totalItems；等待用户不计入脚本超时。", "en": "- Return up to 50 candidate objects with unique nonempty string IDs and titles. Use as a top-level result renderer. After confirmation, the tool returns selectedIds, selectedItems and totalItems; user waiting time is outside the script timeout." },
+  "selectionCompleted": { "zh-CN": "已选择 {count} / {total} 项", "en": "Selected {count} of {total}" },
   "metadataSeparator": {
     "zh-CN": "；",
     "en": "; "

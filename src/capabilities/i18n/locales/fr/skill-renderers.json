@@ -78,5 +78,9 @@
   "skill-renderers.defaultReturnContract": "Contrat de retour : la valeur finale du script doit respecter la structure JSON du moteur de rendu.",
   "skill-renderers.avoidRawJson": "- Ne renvoyez pas de longues chaînes JSON brutes. Placez les diagnostics dans trace ou quelques petits champs de débogage.",
   "skill-renderers.summaryFieldsLabel": "Renvoyez un objet avec ces champs au premier niveau ou aux chemins configurés",
-  "skill-renderers.summaryReturn": "- Renvoyez un objet concis dont les valeurs sont des chaînes, nombres, booléens ou tableaux courts."
+  "skill-renderers.summaryReturn": "- Renvoyez un objet concis dont les valeurs sont des chaînes, nombres, booléens ou tableaux courts.",
+  "skill-renderers.selectionTitle": "Choisir des résultats",
+  "skill-renderers.selectionDescription": "Afficher les candidats sous forme de cartes sélectionnables et renvoyer la sélection confirmée.",
+  "skill-renderers.selectionReturn": "- Renvoyer au plus 50 candidats avec un ID textuel unique et non vide et un titre. Utiliser comme renderer de résultat de premier niveau. Après confirmation, renvoyer selectedIds, selectedItems et totalItems ; le temps d’attente utilisateur est exclu du délai du script.",
+  "skill-renderers.selectionCompleted": "{count} sur {total} sélectionnés"
 }

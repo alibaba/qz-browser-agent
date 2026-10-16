@@ -78,5 +78,9 @@
   "skill-renderers.defaultReturnContract": "Contrato de retorno: el valor final del script debe coincidir con la estructura JSON del renderizador.",
   "skill-renderers.avoidRawJson": "- No devuelvas grandes cadenas JSON sin procesar. Pon el diagnóstico en trace o en unos pocos campos pequeños de depuración.",
   "skill-renderers.summaryFieldsLabel": "Devuelve un objeto con estos campos en el nivel superior o en las rutas configuradas",
-  "skill-renderers.summaryReturn": "- Devuelve un objeto conciso con cadenas, números, booleanos o arrays cortos como valores."
+  "skill-renderers.summaryReturn": "- Devuelve un objeto conciso con cadenas, números, booleanos o arrays cortos como valores.",
+  "skill-renderers.selectionTitle": "Elegir resultados",
+  "skill-renderers.selectionDescription": "Mostrar candidatos como tarjetas seleccionables y devolver la selección confirmada.",
+  "skill-renderers.selectionReturn": "- Devolver hasta 50 candidatos con ID de texto únicos y no vacíos y un título. Usar como renderer de resultado de nivel superior. Tras confirmar, devolver selectedIds, selectedItems y totalItems; la espera del usuario no cuenta para el tiempo límite del script.",
+  "skill-renderers.selectionCompleted": "{count} de {total} seleccionados"
 }

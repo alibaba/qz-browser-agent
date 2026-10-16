@@ -1,0 +1,851 @@
+[
+  {
+    "name": "qingzhou_bridge_status",
+    "description": "查看本地 bridge 和当前在线的轻舟扩展客户端。",
+    "inputSchema": {
+      "properties": {
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_bridge_statusArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_bridge_enable_snippet",
+    "description": "生成在轻舟扩展 DevTools Console 中启用 bridge 的 chrome.storage snippet。",
+    "inputSchema": {
+      "properties": {
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_bridge_enable_snippetArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_call",
+    "description": "调用扩展端原始 bridge method，用于调试未包装的新接口。",
+    "inputSchema": {
+      "properties": {
+        "method": {"title": "Method", "type": "string"},
+        "params": {"anyOf": [{"additionalProperties": true, "type": "object"}, {"type": "null"}], "default": null, "title": "Params"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["method"],
+      "title": "qingzhou_callArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_list_capabilities",
+    "description": "列出扩展端 qz-browser-agent-mcp-bridge 当前暴露的方法。",
+    "inputSchema": {
+      "properties": {
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_list_capabilitiesArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_list_sessions",
+    "description": "列出轻舟会话及运行态。",
+    "inputSchema": {
+      "properties": {
+        "limit": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Limit"},
+        "excludeSessionId": {"default": "", "title": "Excludesessionid", "type": "string"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_list_sessionsArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_create_session",
+    "description": "Create a task with an optional first message. Set wait=true to return its completed snapshot, or stream=true for progress events. User-input waits keep observation open. Cancellation stops observing; the browser task continues.",
+    "inputSchema": {
+      "properties": {
+        "wait": {"type": "boolean", "default": false, "description": "Keep observing until the task finishes, including user-input waits."},
+        "stream": {"type": "boolean", "default": false, "description": "Implies wait. Send task text, status, and input events through MCP progress notifications when a progressToken is supplied."},
+        "waitTimeoutSeconds": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 86400, "default": null, "description": "Optional total observation deadline; null waits indefinitely. timeoutSeconds bounds each browser request."},
+        "title": {"default": "", "title": "Title", "type": "string"},
+        "firstMessage": {"default": "", "title": "Firstmessage", "type": "string"},
+        "parentSessionId": {"default": "", "title": "Parentsessionid", "type": "string"},
+        "timeoutSeconds": {"anyOf": [{"type": "number", "exclusiveMinimum": 0, "maximum": 86400}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_create_sessionArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_send_message",
+    "description": "Send a message to the specified task. By default, a busy task queues a follow-up for its next run. Set steer=true to guide its current run at the next safe boundary. An idle task starts with either mode. Returns deliveryMode, disposition, and clientMessageId for tracking. Set wait=true to observe the submitted message through completion, including queued follow-ups and user-input waits. stream=true also emits text through MCP progress notifications.",
+    "inputSchema": {
+      "properties": {
+        "wait": {"type": "boolean", "default": false, "description": "Keep observing until the task finishes, including user-input waits."},
+        "stream": {"type": "boolean", "default": false, "description": "Implies wait. Send task text, status, and input events through MCP progress notifications when a progressToken is supplied."},
+        "waitTimeoutSeconds": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 86400, "default": null, "description": "Optional total observation deadline; null waits indefinitely. timeoutSeconds bounds each browser request."},
+        "text": {"title": "Text", "type": "string"},
+        "clientMessageId": {"type": "string", "description": "Optional stable message ID for idempotent submission."},
+        "steer": {"type": "boolean", "default": false, "description": "Guide the current run at its next safe boundary; false queues a follow-up for the next run."},
+        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
+        "waitForStart": {"default": true, "title": "Waitforstart", "type": "boolean"},
+        "waitForStartMs": {"default": 2000, "title": "Waitforstartms", "type": "number"},
+        "timeoutSeconds": {"anyOf": [{"type": "number", "exclusiveMinimum": 0, "maximum": 86400}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["text"],
+      "title": "qingzhou_send_messageArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_follow_up",
+    "description": "向轻舟会话追加 follow-up 消息；如果会话正在运行，会在当前 run 完全停下后排队处理。",
+    "inputSchema": {
+      "properties": {
+        "text": {"title": "Text", "type": "string"},
+        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
+        "images": {"anyOf": [{"items": {}, "type": "array"}, {"type": "null"}], "default": null, "title": "Images"},
+        "clientMessageId": {"default": "", "title": "Clientmessageid", "type": "string"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["text"],
+      "title": "qingzhou_follow_upArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_abort_session",
+    "description": "中止轻舟会话当前运行；语义化 abort 封装，底层调用扩展端 stop_session。",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"title": "Sessionid", "type": "string"},
+        "cascade": {"default": true, "title": "Cascade", "type": "boolean"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["sessionId"],
+      "title": "qingzhou_abort_sessionArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_get_user_input",
+    "description": "Read a task's pending question, full form fields and option values, or consent notice. Returns waitId, kind, actions, instructions, and responseTemplate for qingzhou_respond_to_user_input. Fill template placeholders with the user's answers. Native Chrome permissions return requiresUserAction and side-panel instructions. Task snapshots also include this input.",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"type": "string", "minLength": 1},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null},
+        "clientId": {"type": "string", "default": ""}
+      },
+      "required": ["sessionId"],
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_respond_to_user_input",
+    "description": "Respond using the pending input's responseTemplate: fill answers keyed by field IDs with option values for choices (arrays for multi_choice), then submit; approve a completed action or application consent, or reject. Show location disclosures and obtain explicit user consent before approving with consentVersion. Native Chrome permissions require the user's click in qz. Invalid or stale replies return the current input for correction and keep the request pending.",
+    "inputSchema": {
+      "properties": {
+        "wait": {"type": "boolean", "default": false, "description": "Keep observing until the task finishes, including user-input waits."},
+        "stream": {"type": "boolean", "default": false, "description": "Implies wait. Send task text, status, and input events through MCP progress notifications when a progressToken is supplied."},
+        "waitTimeoutSeconds": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 86400, "default": null, "description": "Optional total observation deadline; null waits indefinitely. timeoutSeconds bounds each browser request."},
+        "sessionId": {"type": "string", "minLength": 1},
+        "waitId": {"type": "string", "minLength": 1},
+        "action": {"type": "string", "enum": ["submit", "approve", "reject"]},
+        "answers": {"type": "object", "additionalProperties": true},
+        "consentVersion": {"type": "integer", "minimum": 1, "description": "The version returned with the location disclosure the user explicitly approved."},
+        "timeoutSeconds": {"anyOf": [{"type": "number", "exclusiveMinimum": 0, "maximum": 86400}, {"type": "null"}], "default": null},
+        "clientId": {"type": "string", "default": ""}
+      },
+      "required": ["sessionId", "waitId", "action"],
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_continue_task",
+    "description": "Continue a pending confirmation after the user completes the requested action. Supply the sessionId and waitId from the current input. Use qingzhou_respond_to_user_input for forms and versioned application consent.",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"title": "Sessionid", "type": "string"},
+        "waitId": {"title": "Waitid", "type": "string", "minLength": 1},
+        "payload": {"anyOf": [{"additionalProperties": true, "type": "object"}, {"type": "null"}], "default": null, "title": "Payload"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["sessionId", "waitId"],
+      "title": "qingzhou_continue_taskArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_submit_wait_form",
+    "description": "Submit form answers keyed by field IDs, using option values for choices. Supply sessionId, waitId, and answers from the current input's responseTemplate. Invalid or stale replies include the current input for correction.",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"title": "Sessionid", "type": "string"},
+        "answers": {"additionalProperties": true, "title": "Answers", "type": "object"},
+        "waitId": {"title": "Waitid", "type": "string", "minLength": 1},
+        "reason": {"default": "submitted", "title": "Reason", "type": "string"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["sessionId", "answers", "waitId"],
+      "title": "qingzhou_submit_wait_formArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_cancel_wait",
+    "description": "Decline the pending request identified by sessionId and waitId from the current input. The agent can continue after the rejection. Use qingzhou_abort_session to stop the whole task.",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"title": "Sessionid", "type": "string"},
+        "waitId": {"title": "Waitid", "type": "string", "minLength": 1},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["sessionId", "waitId"],
+      "title": "qingzhou_cancel_waitArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_get_session_state",
+    "description": "Read task runtime state and the current input, including complete fields, choices, instructions, and a responseTemplate when waiting for a response.",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_get_session_stateArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_get_session_snapshot",
+    "description": "Read a task snapshot: session, runtime, current input, transcript, recent messages, artifacts, and optional trace/tools. Pending input includes field IDs, option values, instructions, and responseTemplate for answering directly. Tool transcript argsState/argsGenerating distinguish generating arguments from final empty arguments.",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
+        "compact": {"default": true, "title": "Compact", "type": "boolean"},
+        "tail": {"default": true, "title": "Tail", "type": "boolean"},
+        "num": {"default": 50, "title": "Num", "type": "number"},
+        "includeArtifacts": {"default": true, "title": "Includeartifacts", "type": "boolean"},
+        "includeTrace": {"default": false, "title": "Includetrace", "type": "boolean"},
+        "traceLimit": {"default": 40, "title": "Tracelimit", "type": "number"},
+        "includeTools": {"default": false, "title": "Includetools", "type": "boolean"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_get_session_snapshotArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_get_messages",
+    "description": "读取轻舟会话消息；compact/tail 可返回较短尾部摘要。",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
+        "compact": {"default": true, "title": "Compact", "type": "boolean"},
+        "tail": {"default": true, "title": "Tail", "type": "boolean"},
+        "num": {"default": 50, "title": "Num", "type": "number"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_get_messagesArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_stop_session",
+    "description": "停止轻舟会话运行。",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"title": "Sessionid", "type": "string"},
+        "cascade": {"default": true, "title": "Cascade", "type": "boolean"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["sessionId"],
+      "title": "qingzhou_stop_sessionArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_list_tools",
+    "description": "列出当前 session 可用的轻舟内置工具和插件工具 schema。",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_list_toolsArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_list_skills",
+    "description": "列出轻舟 skill 目录；只返回摘要和资源清单，不返回正文与资源内容。",
+    "inputSchema": {
+      "properties": {
+        "scope": {"default": "all", "title": "Scope", "type": "string"},
+        "query": {"default": "", "title": "Query", "type": "string"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_list_skillsArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_get_skill",
+    "description": "读取轻舟 skill 正文和资源清单；默认不内联资源内容，按需再调用 qingzhou_get_skill_resource。",
+    "inputSchema": {
+      "properties": {
+        "name": {"title": "Name", "type": "string"},
+        "includeContent": {"default": true, "title": "Includecontent", "type": "boolean"},
+        "includeResources": {"default": false, "title": "Includeresources", "type": "boolean"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["name"],
+      "title": "qingzhou_get_skillArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_get_skill_resource",
+    "description": "读取轻舟 skill 包内单个资源文件内容，支持 start/maxChars 分块。",
+    "inputSchema": {
+      "properties": {
+        "name": {"title": "Name", "type": "string"},
+        "path": {"title": "Path", "type": "string"},
+        "start": {"default": 0, "title": "Start", "type": "number"},
+        "maxChars": {"default": 300000, "title": "Maxchars", "type": "number"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["name", "path"],
+      "title": "qingzhou_get_skill_resourceArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_execute_tool",
+    "description": "直接执行轻舟工具，用于系统 skill/plugin 调试。依赖 Agent 生命周期的页面工具请传当前 runId；wait=false 时后台执行并立即返回 jobId。",
+    "inputSchema": {
+      "properties": {
+        "name": {"title": "Name", "type": "string"},
+        "args": {"anyOf": [{"additionalProperties": true, "type": "object"}, {"type": "null"}], "default": null, "title": "Args"},
+        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
+        "runId": {"default": "", "title": "Runid", "type": "string"},
+        "wait": {"default": true, "title": "Wait", "type": "boolean"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["name"],
+      "title": "qingzhou_execute_toolArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_watch_task",
+    "description": "Observe an existing task until it finishes without resubmitting it. Questions and Chrome permission requests keep observation open; MCP progress notifications include their full input and responseTemplate. stream=true includes text updates. Cancellation stops observing while the task continues.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "sessionId": {"type": "string", "minLength": 1},
+        "stream": {"type": "boolean", "default": false},
+        "waitTimeoutSeconds": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 86400, "default": null, "description": "Optional total observation deadline; null waits indefinitely."},
+        "timeoutSeconds": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 86400, "default": null, "description": "Deadline for each browser request; defaults to 180 seconds."},
+        "clientId": {"type": "string", "default": ""}
+      },
+      "required": ["sessionId"]
+    }
+  },
+  {
+    "name": "qingzhou_get_tool",
+    "description": "Read one browser tool's description and input schema by exact name in the selected task's context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "sessionId": {"type": "string", "default": "default"},
+        "timeoutSeconds": {"type": ["number", "null"], "default": null},
+        "clientId": {"type": "string", "default": ""}
+      },
+      "required": ["name"]
+    }
+  },
+  {
+    "name": "qingzhou_get_tool_job",
+    "description": "读取 qingzhou_execute_tool(wait=false) 后台 job 的状态和结果。",
+    "inputSchema": {
+      "properties": {
+        "jobId": {"title": "Jobid", "type": "string"},
+        "includeResult": {"default": true, "title": "Includeresult", "type": "boolean"}
+      },
+      "required": ["jobId"],
+      "title": "qingzhou_get_tool_jobArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_get_config",
+    "description": "读取轻舟模型、安全策略等配置。",
+    "inputSchema": {
+      "properties": {
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_get_configArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_save_config",
+    "description": "保存轻舟配置。",
+    "inputSchema": {
+      "properties": {
+        "config": {"additionalProperties": true, "title": "Config", "type": "object"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "required": ["config"],
+      "title": "qingzhou_save_configArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_list_plugins",
+    "description": "列出当前页面/session 上下文下的插件贡献。",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_list_pluginsArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_list_automations",
+    "description": "列出轻舟定时任务。",
+    "inputSchema": {
+      "properties": {
+        "limit": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Limit"},
+        "runLimit": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Runlimit"},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_list_automationsArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_get_trace",
+    "description": "读取轻舟 LLM/工具 trace 日志。",
+    "inputSchema": {
+      "properties": {
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+      },
+      "title": "qingzhou_get_traceArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_list_data_tables",
+    "description": "List local data tables with names, kinds, columns, and row counts. Use the exact table name to export or delete.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "qingzhou_delete_data_table",
+    "description": "Delete one local data table and all its rows by exact table name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "table"
+      ]
+    }
+  },
+  {
+    "name": "qingzhou_export_data_table",
+    "description": "Export all rows of a local data table as Excel (.xlsx) or CSV. Returns the Chrome download ID, filename, state, and file path when available.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string",
+          "minLength": 1
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "csv",
+            "xlsx"
+          ],
+          "default": "xlsx"
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "table"
+      ]
+    }
+  },
+  {
+    "name": "qingzhou_list_image_collections",
+    "description": "List local image collections with their exact names and image counts. Use the name to export or delete.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "qingzhou_delete_image_collection",
+    "description": "Delete one image collection and its rows by exact collection name. Shared asset files are retained.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "collection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "collection"
+      ]
+    }
+  },
+  {
+    "name": "qingzhou_export_image_collection",
+    "description": "Export an image collection as a ZIP of its stored images. Returns the Chrome download ID, filename, state, and file path when available.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "collection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "collection"
+      ]
+    }
+  },
+  {
+    "name": "qingzhou_export_skill",
+    "description": "Export one user-installed Skill as a ZIP containing SKILL.md and its resources. Built-in Skills that require packaged host code cannot be exported independently.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "qingzhou_get_settings",
+    "description": "Read current model and language settings, editable fields, providers, and protocols. Credentials are redacted. Supply key to read one setting.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "qingzhou_update_settings",
+    "description": "Update the supplied model or language settings. Get settings first to discover supported keys and provider IDs. API keys are write-only; results redact credentials.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        },
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "config"
+      ]
+    }
+  },
+  {
+    "name": "qingzhou_run_automation",
+    "description": "Run a saved automation once by its automationId. Returns its created task/run information.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "automationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "automationId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "qingzhou_clear_trace",
+    "description": "Clear local diagnostic trace logs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "qingzhou_list_downloads",
+    "description": "Read a download by ID, or list recent Chrome downloads. Returns state and real filepath/fileUrl when available. Use the ID from an export result to check completion without exporting again.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        },
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "clientId": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+]

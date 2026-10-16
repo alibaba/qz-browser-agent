@@ -1,4 +1,5 @@
 {
+  "wait.cardsTooManyOptions": "Reduce la lista a un máximo de 50 candidatos antes de mostrar las tarjetas de selección.",
   "wait.submitted": "Enviado",
   "wait.notSubmitted": "Sin enviar",
   "wait.button": "Botón: {label}",

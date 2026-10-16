@@ -14,6 +14,10 @@ versions in the lockfile. Build, test, and benchmark commands accept `--help`.
 | `npm run docs` | Generate the API reference at `dist/docs/api.md` |
 | `npm run doctor` | Check the local tools, dependencies, and test browser |
 | `npm run release` | Build a versioned ZIP locally |
+| `npm run qz -- --help` | Show the local CLI commands for tasks, resources, and MCP |
+
+For npm installation and CLI package publishing, see the
+[CLI and MCP guide](../services/mcp-bridge/README.md#quick-start).
 
 ## Build the extension
 
@@ -187,6 +191,75 @@ supplements](../scripts/vendor/licenses/supplements.json) pin the exact version,
 license hash. Review the supplement again when upgrading.
 
 ## Other tools
+
+Connect a local MCP client or use qz from the terminal:
+
+```bash
+npm run qz -- connect
+npm run qz -- status
+npm run qz -- mcp
+npm run qz -- create "Summarize the current page." --wait
+npm run qz -- create "Compare these two laptops." --title "Research" --stream
+npm run qz -- send TASK_ID "Add the source links." --stream
+npm run qz -- send TASK_ID "Focus on open-source options." --steer --stream
+npm run qz -- tasks
+npm run qz -- show TASK_ID
+npm run qz -- submit TASK_ID '{"selectedIds":["option-a"]}' --stream
+npm run qz -- approve TASK_ID --wait
+npm run qz -- reject TASK_ID
+npm run qz -- watch TASK_ID --stream
+npm run qz -- cancel TASK_ID
+npm run qz -- data
+npm run qz -- data export TABLE --format xlsx
+npm run qz -- images export COLLECTION
+npm run qz -- skills --query research
+npm run qz -- skills export NAME
+npm run qz -- settings get model
+npm run qz -- settings set vision true
+npm run qz -- automations
+npm run qz -- stop
+```
+
+`connect` starts the local service and connects the extension. `mcp` prints its MCP URL;
+`stop` stops the service. `create` accepts the task text directly, with an optional title.
+`--wait` waits for the result; `--stream` also displays progress. Both stay connected through
+questions and permission requests, then continue automatically after you respond. Pending output
+includes the full request, field IDs, option values, and a submission template. Use `show TASK_ID` to
+read the request again, answer fields with `submit`, continue a confirmation with
+`approve`, or decline it with `reject`. Responses bind to the current wait; `--wait-id ID` selects a
+specific request. `submit`, `approve`, and `reject` also accept `--wait` and `--stream`. Review the displayed
+application consent notice before approving. Native Chrome permissions require a click in the
+side panel; the CLI preserves the wait and tells you where to confirm. Respond in the side panel or
+another terminal while the original command keeps watching. `watch` follows an existing task.
+Task observation has no default time limit. Add `--timeout SECONDS` to set a total deadline,
+including user-input pauses. Each individual connection request remains bounded (180 seconds by
+default). Timeout or Ctrl-C ends watching; `watch TASK_ID --stream` resumes observation and
+`cancel TASK_ID` stops the task.
+
+`send TASK_ID MESSAGE` follows up on a specific task and supports the same waiting options. A busy
+task queues the follow-up for its next run. Add `--steer` to deliver the message to the current run
+at its next safe boundary. Both start a new run when idle; pending questions and permissions still
+require a response. Streaming shows responses after the submitted message.
+
+`data` and `images` list, export, or delete saved tables and image collections. Table exports support
+`xlsx` (default) and `csv`; image collections and individual user-installed Skills export as ZIPs
+through Chrome downloads. `skills` lists or searches installed Skills; `skills show NAME` reads one,
+`skills read NAME PATH` reads a resource in chunks, and `skills tools -s TASK_ID` lists contributions.
+`settings` reads redacted configuration and editable fields; `settings set KEY VALUE` updates a
+field, and `settings set -` reads a JSON patch from stdin. Use stdin for credentials.
+`automations` lists saved automations, and `automations run ID` starts one. Export results include
+the download status and path when available; check pending downloads in `chrome://downloads`.
+
+Exports accept `--filename NAME`; `skills --scope site` filters Skills by scope. CLI commands reuse
+one MCP connection for all their requests. Use `--client ID` to select a browser from `status`.
+MCP supports the same task waiting, streaming, and input flows, plus direct browser tool calls and
+diagnostic logs; see the [operation mapping](../services/mcp-bridge/README.md#task-and-resource-operations).
+
+Interactive terminals show text; pipes receive JSON. `--json` and `--plain` select the output
+format explicitly. `--no-color` or `NO_COLOR` disables color. JSON waiting and streaming produce one
+final result on stdout, with pending-input notices on stderr. Node.js 24 is the only runtime needed.
+See the [connection guide](../services/mcp-bridge/README.md) for short options, stdin input, and
+MCP browser tools.
 
 ```bash
 node scripts/source-inventory.mjs --baseline <git-ref> --check-reduction

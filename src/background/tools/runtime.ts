@@ -9,6 +9,7 @@ import type { ToolRuntimeDependencies } from "../../sdk/background/services.js";
 import type { ToolDefinition, ToolSchema, ToolParameter, ToolModelPolicy } from "../../shared/contracts/tool.js";
 import type { RegisteredTool } from "./registry.js";
 import type { SkillTool, SkillManifest } from "../../shared/skills/skill-manifest.js";
+import type { SkillRenderer } from "../../shared/skills/skill-renderers.js";
 import type { SecurityGuardrails } from "../../shared/security-guardrails.js";
 import type { CdpCommand } from "./cdp-runtime.js";
 import type { ScreenshotOptions, PageState } from "./page-observation.js";
@@ -16,7 +17,7 @@ import type { ToolExtensionAPI, ToolExtensionRuntime, NetworkWatchOptions, Prepa
 import contributions from "#capabilities/tools";
 import type { ElementReply, PagePoint } from "../../shared/contracts/page-content.js";
 type Fields = Record<string, unknown>;
-type RuntimeTool = ToolDefinition<ToolSchema, unknown, ToolContext, AbortSignal> & ReturnType<typeof normalizeToolIdentity> & { source: "core" | "plugin"; plugin?: SkillManifest };
+type RuntimeTool = ToolDefinition<ToolSchema, unknown, ToolContext, AbortSignal> & ReturnType<typeof normalizeToolIdentity> & { source: "core" | "plugin"; plugin?: SkillManifest; selectionRenderer?: SkillRenderer };
 type ToolOptions = NonNullable<Parameters<typeof getSkillToolDefinition>[1]>;
 type RuntimeContext = ToolContext & { [TOOL_RUNTIME_CONTEXT]?: ToolRuntimeDependencies };
 type ToolPolicy = ReturnType<typeof normalizeToolPolicy>;
@@ -28,6 +29,7 @@ export { consumeToolEffects } from "./effects.js";
 import { summarizeToolArgsForTrace } from "./trace-summary.js";
 import { createToolRegistry, isCoreToolSnapshot, withCommonToolParameters } from "./registry.js";
 import { ensureToolBrowserPermission } from "./browser-permissions.js";
+import { selectSkillResults } from "../skills/skill-selection.js";
 import { assertPageUrlAccessible } from "./page-access.js";
 import { assertScriptPageLifecycle } from "./behavior.js";
 /**
@@ -236,6 +238,7 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
   const entry = getSkillToolDefinition(runtimeName, options);
   if (!entry) return null;
   const hostDefinition = snapshot.get(getHostCoreToolTarget(entry.plugin, entry.tool));
+  const renderer = entry.tool.renderer || entry.plugin.renderers.tools[entry.tool.name];
   const identity = normalizeToolIdentity({
     name: entry.tool.name,
     capabilityId: entry.tool.capabilityId,
@@ -252,6 +255,7 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
     behavior: hostDefinition?.behavior,
     source: "plugin",
     plugin: entry.plugin,
+    ...(renderer?.type === "selection" ? { selectionRenderer: renderer } : {}),
     validateArgs: args => {
       if (isSkillScriptTool(entry.tool)) scriptTimeout(args, runtimeName);
       return hostDefinition?.validateArgs?.(args);
@@ -385,6 +389,11 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     } catch (err) {
       await attachPageContextToToolError(definition, executionArgs, err);
       throw err;
+    }
+    if (definition.selectionRenderer) {
+      result = await selectSkillResults(definition.selectionRenderer, result, signal, context,
+        (nestedName, nestedArgs, nestedSignal, nestedContext) => executeTool(nestedName, nestedArgs, nestedSignal,
+          withToolRuntimeContext(nestedContext, getToolRuntimeDependencies(context))));
     }
     const enrichedResult = await attachPageContextToToolResult(definition, executionArgs, result);
     const localizedResult = copyToolEffects(result, withLanguage(language, () => localizeToolFailurePayload(enrichedResult, { toolName: name })));

@@ -78,5 +78,9 @@
   "skill-renderers.defaultReturnContract": "Rückgabevertrag: Der endgültige Skriptrückgabewert muss der JSON-Struktur des Renderers entsprechen.",
   "skill-renderers.avoidRawJson": "- Keine großen rohen JSON-Strings zurückgeben. Diagnosedaten in trace oder wenigen kleinen Debug-Feldern ablegen.",
   "skill-renderers.summaryFieldsLabel": "Objekt mit diesen Feldern auf oberster Ebene oder unter den konfigurierten Pfaden zurückgeben",
-  "skill-renderers.summaryReturn": "- Knappes Objekt mit Strings, Zahlen, booleschen Werten oder kurzen Arrays als Feldwerten zurückgeben."
+  "skill-renderers.summaryReturn": "- Knappes Objekt mit Strings, Zahlen, booleschen Werten oder kurzen Arrays als Feldwerten zurückgeben.",
+  "skill-renderers.selectionTitle": "Ergebnisse auswählen",
+  "skill-renderers.selectionDescription": "Kandidaten als auswählbare Karten anzeigen und die bestätigte Auswahl zurückgeben.",
+  "skill-renderers.selectionReturn": "- Bis zu 50 Kandidaten mit eindeutigen, nicht leeren String-IDs und Titeln zurückgeben. Als Ergebnis-renderer auf oberster Ebene verwenden. Nach Bestätigung werden selectedIds, selectedItems und totalItems zurückgegeben; die Wartezeit des Nutzers zählt nicht zum Skript-Timeout.",
+  "skill-renderers.selectionCompleted": "{count} von {total} ausgewählt"
 }

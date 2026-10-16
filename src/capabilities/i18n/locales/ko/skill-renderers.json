@@ -78,5 +78,9 @@
   "skill-renderers.defaultReturnContract": "반환 규약: 스크립트의 최종 반환값은 렌더러의 JSON 구조와 일치해야 합니다.",
   "skill-renderers.avoidRawJson": "- 큰 원시 JSON 문자열은 반환하지 마세요. 진단 정보는 trace 또는 몇 가지 작은 디버그 필드에 넣으세요.",
   "skill-renderers.summaryFieldsLabel": "최상위 또는 설정된 경로에 다음 필드를 가진 객체를 반환하세요",
-  "skill-renderers.summaryReturn": "- 문자열, 숫자, 불리언 또는 짧은 배열을 필드값으로 가진 간결한 객체를 반환하세요."
+  "skill-renderers.summaryReturn": "- 문자열, 숫자, 불리언 또는 짧은 배열을 필드값으로 가진 간결한 객체를 반환하세요.",
+  "skill-renderers.selectionTitle": "결과 선택",
+  "skill-renderers.selectionDescription": "후보를 선택 가능한 카드로 표시하고 사용자가 확정한 항목을 반환합니다.",
+  "skill-renderers.selectionReturn": "- 고유한 비어 있지 않은 문자열 ID와 제목이 있는 후보 객체를 최대 50개 반환합니다. 최상위 결과 renderer로 사용합니다. 확인 후 selectedIds, selectedItems, totalItems를 반환하며 사용자 대기 시간은 스크립트 제한 시간에 포함되지 않습니다.",
+  "skill-renderers.selectionCompleted": "{total}개 중 {count}개 선택됨"
 }

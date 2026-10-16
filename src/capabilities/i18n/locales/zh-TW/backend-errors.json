@@ -309,5 +309,14 @@
   "backend.locationTitle": "允許取得位置？",
   "backend.locationDisclosure": "為提供當地資訊，輕舟會取得你的經緯度、精確度和定位時間，並傳送至你設定的模型服務。同意後，後續定位請求將沿用此授權，不再重複詢問。",
   "backend.locationRequired": "需要定位授權。請在側邊欄確認，或直接提供城市、區域。",
-  "backend.locationUnavailable": "無法取得位置。請開啟側邊欄並檢查裝置定位設定，或直接提供城市、區域。"
+  "backend.locationUnavailable": "無法取得位置。請開啟側邊欄並檢查裝置定位設定，或直接提供城市、區域。",
+  "backend.locationPermissionDenied": "瀏覽器或作業系統拒絕了定位存取。請在瀏覽器和裝置設定中允許定位存取，或直接提供城市、區域。",
+  "backend.locationPositionUnavailable": "系統定位服務無法確定你的位置。請檢查網路與裝置的定位服務、稍後重試，或直接提供城市、區域。",
+  "backend.locationTimeout": "取得位置逾時。請稍後重試，或直接提供城市、區域。",
+  "backend.locationPanelUnavailable": "任務所在視窗的側邊欄已關閉或連線中斷。請重新開啟側邊欄後重試，或直接提供城市、區域。",
+  "backend.locationResponseTimeout": "側邊欄未及時傳回定位結果。請重新開啟側邊欄後重試，或直接提供城市、區域。",
+  "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "候選結果格式不正確。請傳回最多 50 項，並為每項提供唯一且非空的字串 ID 和標題。",
+  "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "候選結果格式無效",
+  "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "選擇結果無效。請重新執行工具，並選擇目前卡片中的候選項。",
+  "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.label": "選擇結果無效"
 }

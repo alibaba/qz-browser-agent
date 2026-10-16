@@ -309,5 +309,14 @@
   "backend.locationTitle": "¿Permitir el acceso a tu ubicación?",
   "backend.locationDisclosure": "Para ofrecer información local, qz obtendrá tus coordenadas, precisión y hora de ubicación y las enviará al servicio de modelos configurado. Si aceptas, las futuras solicitudes de ubicación usarán este permiso sin volver a preguntar.",
   "backend.locationRequired": "Se requiere permiso de ubicación. Confirma en el panel lateral o indica una ciudad o zona.",
-  "backend.locationUnavailable": "No se pudo obtener tu ubicación. Abre el panel lateral y revisa los ajustes de ubicación del dispositivo, o indica una ciudad o zona."
+  "backend.locationUnavailable": "No se pudo obtener tu ubicación. Abre el panel lateral y revisa los ajustes de ubicación del dispositivo, o indica una ciudad o zona.",
+  "backend.locationPermissionDenied": "El navegador o el sistema operativo denegó el acceso a tu ubicación. Permite el acceso en los ajustes del navegador y del dispositivo, o indica una ciudad o zona.",
+  "backend.locationPositionUnavailable": "El servicio de ubicación del sistema no pudo determinar tu posición. Revisa la red y los servicios de ubicación del dispositivo, inténtalo de nuevo más tarde o indica una ciudad o zona.",
+  "backend.locationTimeout": "Se agotó el tiempo de espera para obtener tu ubicación. Inténtalo de nuevo más tarde o indica una ciudad o zona.",
+  "backend.locationPanelUnavailable": "El panel lateral de la ventana de la tarea está cerrado o desconectado. Vuelve a abrirlo e inténtalo de nuevo, o indica una ciudad o zona.",
+  "backend.locationResponseTimeout": "El panel lateral no devolvió una ubicación a tiempo. Vuelve a abrirlo e inténtalo de nuevo, o indica una ciudad o zona.",
+  "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "Candidatos no válidos. Devuelve hasta 50 elementos con ID de texto únicos y no vacíos y un título.",
+  "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "Candidatos no válidos",
+  "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "Selección no válida. Vuelve a ejecutar la herramienta y elige entre los candidatos actuales.",
+  "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.label": "Selección no válida"
 }

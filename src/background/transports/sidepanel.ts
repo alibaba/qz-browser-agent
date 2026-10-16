@@ -256,11 +256,11 @@ export function createSidepanelTransport(api: BackgroundApi, {
         return true;
       }
       case "continue_task":
-        await call("sessions.continueWait", message);
+      case "cancel_wait": {
+        const result = await call(message.type === "continue_task" ? "sessions.continueWait" : "sessions.cancelWait", message);
+        post(port, "user_input_response", message, result);
         return true;
-      case "cancel_wait":
-        await call("sessions.cancelWait", message);
-        return true;
+      }
       case "get_messages": {
         const result = await call("sessions.messages", message.sessionId);
         post(port, "messages", message, { ...object(result), save: message.save !== false });

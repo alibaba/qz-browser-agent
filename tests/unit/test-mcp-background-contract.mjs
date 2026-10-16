@@ -70,7 +70,7 @@ async function readinessAndBusinessFailuresRemainObservable() {
 }
 
 function createApiFixture(calls = [], overrides = {}) {
-  const namespaces = ["system", "sessions", "tools", "data", "skills", "config", "automations", "trace"];
+  const namespaces = ["system", "sessions", "tools", "data", "skills", "config", "settings", "automations", "trace"];
   return Object.fromEntries(namespaces.map(namespace => [namespace, new Proxy({}, {
     get(_target, method) {
       const path = `${namespace}.${String(method)}`;

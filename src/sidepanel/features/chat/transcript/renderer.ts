@@ -145,7 +145,7 @@ export function createTranscriptRenderer(options: TranscriptOptions) {
         event === "ui_render_timer_set" ? { ...meta, live: isLiveTranscriptActive(id, sessionTranscript(id)) } : meta);
     },
   });
-  const waitingCards = createWaitingCards({ send, isCurrentSession });
+  const waitingCards = createWaitingCards({ send: command => request(command.type, command), isCurrentSession });
   const toolPresentationState = createToolPresentationState();
   const assistantHighlightScopes = new WeakMap<HTMLElement, object>();
   const messageActions = createMessageActions({

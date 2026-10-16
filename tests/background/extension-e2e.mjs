@@ -1,7 +1,7 @@
 import { acceptDataDisclosure } from "../support/data-consent.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import { createDocumentBytes } from "../../src/shared/documents/document-codecs.
 import { AUTOMATION_SCHEDULER_ALARM } from "../../src/background/automation/runtime.js";
 import {
   createZip,
+  skillFromSkillMarkdown,
   skillToSkillMarkdown,
 } from "../../src/shared/skills/skill-package.js";
 import { normalizeModernSkill } from "../../src/shared/skills/skill-utils.js";
@@ -73,6 +74,7 @@ try {
   await composerAttachmentsSurviveSessionSwitchAndSend(page, attachmentFixtureBase64, provider);
   await saveConfig(page, provider.endpoint);
   await gitSkillSourceAuthenticatedArchive(page, gitRepository);
+  await skillResultSelectionRoundTrip(page, provider);
   await uiComposerRoundTrip(page);
   await manualCompactRendersLifecycleCard(page);
   await queuedComposerBubbleUsesOutgoingMotion(page);
@@ -89,7 +91,7 @@ try {
 
   console.log(JSON.stringify({
     ok: true,
-    scenarios: ["data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart"],
+    scenarios: ["data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "skill_selection_reload_submit_cancel", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart"],
     providerRequests: provider.requests.length,
     providerFaultCases: 16,
   }));
@@ -207,7 +209,9 @@ async function screenActionFeedbackRoundTrip(page, browserContext, providerServe
   assert.equal(observedState.wheelDeltaX, 30);
   assert.equal(observedState.wheelDeltaY, 360);
   assert.equal(observedState.scrollY, 0);
-  assert.ok(observedState.dragMoves >= 8);
+  assert.equal(observedState.dragStarted, true);
+  // Chrome can coalesce DOM moves; the unit suite checks all eight dispatched steps.
+  assert.ok(observedState.dragMoves >= 1);
   assert.equal(observedState.dragReleased, true);
   assert.equal(observedState.dropped, true);
 
@@ -692,6 +696,126 @@ async function gitSkillSourceAuthenticatedArchive(page, repositoryServer) {
     delete skills["git-auth-e2e-skill"];
     await chrome.storage.local.set({ _skills: skills });
   });
+}
+
+async function skillResultSelectionRoundTrip(page, providerServer) {
+  const directory = join(root, "tests/fixtures/skills/result-selection");
+  const evidenceDirectory = join(root, "tests/results/result-selection-task");
+  mkdirSync(evidenceDirectory, { recursive: true });
+  const manifest = JSON.parse(readFileSync(join(directory, "plugin.json"), "utf8"));
+  Object.assign(manifest.tools[0].renderer, { itemImagePath: "imageUrl", urlPath: "url" });
+  const sampleScript = readFileSync(join(directory, "scripts/choose.js"), "utf8");
+  const script = `async () => {
+    const result = await (${sampleScript})();
+    return { items: result.items.map((item, index) => ({ ...item,
+      imageUrl: ${JSON.stringify(providerServer.selectionImageUrl)} + "?portrait=" + (index % 2),
+      url: ${JSON.stringify(providerServer.selectionImageUrl)} + "?role=" + item.id,
+    })) };
+  }`;
+  const skill = normalizeModernSkill({
+    ...skillFromSkillMarkdown(readFileSync(join(directory, "SKILL.md"), "utf8")),
+    resources: [{ path: "plugin.json", content: JSON.stringify(manifest) }, { path: "scripts/choose.js", content: script }],
+  });
+  const saved = await request(page, "save_workspace_skill", { name: skill.name, expected: null, skill }, "skill_workspace_saved");
+  assert.equal(saved.registryReady, true);
+  const candidateIds = ["northstar-backend", "harbor-platform", "fieldwork-systems"];
+  await page.setViewportSize({ width: 360, height: 920 });
+  await page.emulateMedia({ colorScheme: "light" });
+
+  for (const cancel of [false, true]) {
+    const marker = cancel ? "QZ_E2E_SELECTION_CANCEL" : "QZ_E2E_SELECTION_PICK";
+    const sessionId = await createSession(page, marker);
+    await switchUiToSession(page, sessionId);
+    const after = await eventCount(page);
+    await submitComposerMessage(page, marker);
+    const waiting = await waitEvent(page, { type: "waiting_for_user", sessionId }, after);
+    assert.equal(waiting.form.fields[0].presentation, "cards");
+    assert.deepEqual(waiting.form.fields[0].options.map(option => option.value), candidateIds);
+    assert.deepEqual(waiting.form.fields[0].options[1].meta, ["Location: London · Hybrid", "Stack: Go · Kubernetes"]);
+    assert.equal(waiting.form.fields[0].options[1].imageUrl, `${providerServer.selectionImageUrl}?portrait=1`);
+    assert.equal(providerServer.count(marker), 2, "the model waits after loading and calling the Skill");
+
+    if (!cancel) {
+      await page.reload();
+      await waitForWorkspaceReady(page);
+      await installHarness(page);
+      await switchUiToSession(page, sessionId);
+    }
+    const card = page.locator(`.waiting-active[data-wait-id="${waiting.waitId}"]`);
+    await card.waitFor();
+    assert.deepEqual(await card.locator(".qz-choice-card input").evaluateAll(inputs => inputs.map(input => input.value)), candidateIds);
+    for (const image of await card.locator(".qz-choice-card-image").all()) {
+      await image.scrollIntoViewIfNeeded();
+      await image.evaluate(element => element.decode());
+    }
+    const rendered = await card.locator(".qz-choice-card").evaluateAll(cards => cards.map(element => {
+      const image = element.querySelector("img");
+      const rect = image.getBoundingClientRect();
+      return {
+        title: element.querySelector(".qz-choice-card-title").textContent,
+        meta: [...element.querySelectorAll(".qz-choice-card-tag")].map(tag => tag.textContent),
+        url: element.querySelector(".qz-choice-card-source").href,
+        decoded: image.complete && image.naturalWidth > 0,
+        imageSize: [rect.width, rect.height],
+        overflow: element.scrollWidth > element.clientWidth + 1,
+      };
+    }));
+    assert.deepEqual(rendered.map(item => item.title), ["Northstar", "Harbor", "Fieldwork"]);
+    assert.deepEqual(rendered[1].meta, waiting.form.fields[0].options[1].meta);
+    assert.equal(rendered[1].url, `${providerServer.selectionImageUrl}?role=harbor-platform`);
+    assert.ok(rendered.every(item => item.decoded && !item.overflow));
+    assert.deepEqual(rendered.map(item => item.imageSize), [[40, 40], [40, 40], [40, 40]]);
+    assert.equal(providerServer.count(marker), 2, "restoring and rendering the wait must not resume the model");
+    const actionAfter = await eventCount(page);
+    if (cancel) {
+      await card.locator('[data-wait-action="cancel"]').click();
+      const failed = await waitEvent(page, { type: "tool_execution_end", sessionId, toolCallId: "selection_choose" }, actionAfter);
+      assert.equal(failed.isError, true);
+      assert.equal(failed.result.code, "USER_CANCELLED_WAIT");
+    } else {
+      await card.locator('input[value="harbor-platform"]').check();
+      await card.locator('input[value="fieldwork-systems"]').check();
+      assert.match(await card.locator("[data-choice-count]").innerText(), /2/);
+      assert.equal(providerServer.count(marker), 2, "local selection must not call the model");
+      await card.locator(".waiting-options").evaluate(element => { element.scrollTop = 0; });
+      await page.screenshot({ path: join(evidenceDirectory, "waiting-light.png"), animations: "disabled" });
+      await page.emulateMedia({ colorScheme: "dark" });
+      await page.screenshot({ path: join(evidenceDirectory, "waiting-dark.png"), animations: "disabled" });
+      await page.emulateMedia({ colorScheme: "light" });
+      const locked = await card.locator('[data-wait-action="continue"]').evaluate(button => {
+        button.click();
+        button.click();
+        return button.disabled;
+      });
+      assert.equal(locked, true, "submission locks immediately, including a second click in the same event loop");
+      const completed = await waitEvent(page, { type: "tool_execution_end", sessionId, toolCallId: "selection_choose" }, actionAfter);
+      assert.equal(completed.isError, false);
+      assert.deepEqual(completed.result.result.selectedIds, candidateIds.slice(1));
+      assert.equal(Object.hasOwn(completed.result.result, "items"), false);
+    }
+    await waitForTerminalState(page, sessionId, 20_000);
+    await card.waitFor({ state: "detached" });
+    const modelRequests = providerServer.requests.filter(item => item.marker === marker);
+    assert.equal(modelRequests.length, 3, "the task resumes once after the user settles the selection");
+    const modelResult = modelRequests.at(-1).selectionResult;
+    if (cancel) {
+      assert.equal(modelResult.code, "USER_CANCELLED_WAIT");
+      assert.equal(modelResult.selectedItems, undefined);
+    } else {
+      const selection = modelResult.result || modelResult;
+      assert.deepEqual(selection.selectedIds, candidateIds.slice(1));
+      assert.deepEqual(selection.selectedItems.map(item => item.id), candidateIds.slice(1));
+      assert.equal(selection.selectedItems[0].company, "Harbor");
+      assert.equal(selection.totalItems, 3);
+      assert.equal(modelRequests.at(-1).selectionContainsUnselected, false, "unselected candidate data stays out of model context");
+      assert.match(await latestAssistantText(page, sessionId), /QZ_E2E_SELECTION_PICK_OK/);
+      await page.screenshot({ path: join(evidenceDirectory, "submitted-light.png"), animations: "disabled" });
+    }
+    await deleteSession(page, sessionId);
+  }
+  await request(page, "delete_workspace_skill", { name: skill.name, expected: saved.skill }, "skill_workspace_deleted");
+  await page.setViewportSize({ width: 980, height: 860 });
+  await page.emulateMedia({ colorScheme: "light" });
 }
 
 async function uiComposerRoundTrip(page) {
@@ -1662,6 +1786,13 @@ async function createProviderServer() {
   };
   const server = createServer(async (req, res) => {
     const requestPath = new URL(req.url || "/", "http://127.0.0.1").pathname;
+    if (req.method === "GET" && requestPath === "/selection-image.svg") {
+      const portrait = new URL(req.url, "http://127.0.0.1").searchParams.get("portrait") === "1";
+      const [width, height] = portrait ? [40, 80] : [80, 40];
+      res.writeHead(200, { "content-type": "image/svg+xml", "cache-control": "no-store" });
+      res.end(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" fill="#d8d6d1"/><circle cx="${width / 2}" cy="${height / 2}" r="12" fill="#55534f"/></svg>`);
+      return;
+    }
     if (requestPath === "/mcp-output-schema") {
       if (req.method !== "POST") { res.writeHead(405); res.end(); return; }
       const rpc = await readJsonBody(req);
@@ -1709,6 +1840,10 @@ async function createProviderServer() {
       ...imageProjectionStats(body.messages),
       documentCapsuleCount: documentCapsuleCount(body),
       containsDisplayProjection: JSON.stringify(body?.messages || []).includes("imageWithAction"),
+      ...(marker.startsWith("QZ_E2E_SELECTION_") ? {
+        selectionResult: selectionToolResult(body),
+        selectionContainsUnselected: JSON.stringify(body.messages).includes("northstar-backend"),
+      } : {}),
     });
 
     if (marker.startsWith("QZ_E2E_FAULT_")) {
@@ -1752,6 +1887,17 @@ async function createProviderServer() {
     if (marker === "QZ_E2E_LOCATION" && count <= 2) {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(`data: ${JSON.stringify(streamToolCall(`location_${count}`, "get_location", "{}"))}\n\n`);
+      res.write(`data: ${JSON.stringify(streamToolCallsDone())}\n\n`);
+      res.end("data: [DONE]\n\n");
+      return;
+    }
+
+    if (marker.startsWith("QZ_E2E_SELECTION_") && count <= 2) {
+      const [toolCallId, name, args] = count === 1
+        ? ["selection_load", "load_skill", { name: "result-selection-example" }]
+        : ["selection_choose", "result_selection_example__choose", { timeout: 10 }];
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: ${JSON.stringify(streamToolCall(toolCallId, name, JSON.stringify(args)))}\n\n`);
       res.write(`data: ${JSON.stringify(streamToolCallsDone())}\n\n`);
       res.end("data: [DONE]\n\n");
       return;
@@ -1920,7 +2066,9 @@ async function createProviderServer() {
     || state.wheelDeltaX !== 30
     || state.wheelDeltaY !== 360
     || state.scrollY !== 0
-    || state.dragMoves < 8
+    || state.dragStarted !== true
+    // Chrome can coalesce the eight dispatched steps into fewer DOM moves.
+    || state.dragMoves < 1
     || state.dragReleased !== true
     || state.dropped !== true) {
     throw new Error("screen action HTML state did not match the expected sequence: " + JSON.stringify(state));
@@ -1975,6 +2123,7 @@ async function createProviderServer() {
   const address = server.address();
   return {
     endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
+    selectionImageUrl: `http://127.0.0.1:${address.port}/selection-image.svg`,
     screenActionUrl: `http://127.0.0.1:${address.port}/screen-action-target`,
     requests,
     mcpRequests,
@@ -2072,6 +2221,8 @@ function outputForMarker(marker) {
     QZ_E2E_DELETE_RUNNING_AUTOMATION: "QZ_E2E_DELETE_RUNNING_AUTOMATION_OK",
     QZ_E2E_SCREEN_ACTION: "QZ_E2E_SCREEN_ACTION_OK",
     QZ_E2E_MCP_OUTPUT_SCHEMA: "QZ_E2E_MCP_OUTPUT_SCHEMA_OK",
+    QZ_E2E_SELECTION_PICK: "QZ_E2E_SELECTION_PICK_OK",
+    QZ_E2E_SELECTION_CANCEL: "QZ_E2E_SELECTION_CANCEL_OK",
     QZ_E2E_RETRY: "QZ_E2E_RETRY_OK",
     QZ_E2E_STEER_TWO: "QZ_E2E_STEER_OK",
     QZ_E2E_STEER_SINGLE_MESSAGE: "QZ_E2E_STEER_SINGLE_OK",
@@ -2092,7 +2243,7 @@ function outputForMarker(marker) {
 
 function detectMarker(body) {
   const messages = Array.isArray(body?.messages) ? body.messages : [];
-  const markers = ["QZ_E2E_LOCATION",
+  const markers = ["QZ_E2E_LOCATION", "QZ_E2E_SELECTION_PICK", "QZ_E2E_SELECTION_CANCEL",
     "QZ_E2E_MANAGED_CHILD", "QZ_E2E_MANAGE", "QZ_E2E_HTTP_ERROR", "QZ_E2E_UNSUPPORTED_IMAGE", "QZ_E2E_RETRY", "QZ_E2E_BASIC", "QZ_E2E_UI",
     "QZ_E2E_ATTACHMENT_HISTORY_SEED", "QZ_E2E_ATTACHMENT_HISTORY", "QZ_E2E_ATTACHMENT_NEW",
     "QZ_E2E_AUTOMATION", "QZ_E2E_DELETE_RUNNING_AUTOMATION", "QZ_E2E_SCREEN_ACTION", "QZ_E2E_MCP_OUTPUT_SCHEMA", "QZ_E2E_RECOVER",
@@ -2114,6 +2265,12 @@ function detectMarker(body) {
   }
   const fallbackText = JSON.stringify(body?.input ?? body ?? {});
   return markers.find(marker => fallbackText.includes(marker)) || "validation";
+}
+
+function selectionToolResult(body) {
+  const message = (body.messages || []).find(item => item.role === "tool" && item.tool_call_id === "selection_choose");
+  if (!message) return null;
+  try { return JSON.parse(messageText(message)); } catch { return null; }
 }
 
 function isTitleGenerationRequest(body = {}) {

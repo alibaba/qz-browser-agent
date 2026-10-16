@@ -1,4 +1,5 @@
 {
+  "wait.cardsTooManyOptions": "चयन कार्ड दिखाने से पहले सूची में अधिकतम 50 विकल्प रखें।",
   "wait.submitted": "भेजा गया",
   "wait.notSubmitted": "नहीं भेजा गया",
   "wait.button": "बटन: {label}",

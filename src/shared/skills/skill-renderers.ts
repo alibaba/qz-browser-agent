@@ -9,13 +9,15 @@ type RendererTextKey = "type" | "source" | "action" | "title" | "subtitle" | "ti
   | "totalPath" | "truncatedPath" | "itemTitlePath" | "itemSubtitlePath" | "authorPath" | "timePath"
   | "sourceNamePath" | "urlPath" | "bodyPath" | "bodyFormat" | "commentsPath" | "commentsTitle"
   | "commentTitlePath" | "commentAuthorPath" | "commentBodyPath" | "commentTimePath"
-  | "language" | "languagePath" | "filenamePath";
+  | "language" | "languagePath" | "filenamePath" | "itemIdPath" | "itemImagePath" | "submitLabel";
 export interface SkillRenderer extends Partial<Record<RendererTextKey, string>> {
   fields?: SkillRendererField[]; columns?: SkillRendererField[]; itemMeta?: SkillRendererField[];
   metaFields?: SkillRendererField[]; commentMeta?: SkillRendererField[];
   maxItems?: number; maxBodyChars?: number; maxComments?: number;
   states?: Record<string, { title: string; subtitle: string; empty: string; fields: SkillRendererField[] }>;
   layout?: SkillRendererLayout;
+  selectionMode?: "single" | "multiple";
+  required?: boolean;
 }
 export interface SkillRendererLayout { type: string; title?: string; subtitle?: string; blocks: SkillRenderer[] }
 
@@ -125,6 +127,15 @@ export const SKILL_RENDERER_DEFINITIONS = Object.freeze([
     ],
   }),
   Object.freeze<PrimitiveDescriptor>({
+    type: "selection",
+    title: rendererT("selectionTitle"),
+    description: rendererT("selectionDescription"),
+    returnShape: "{ items: Array<{ id: string, title: string, ...fields }> }",
+    defaultPaths: ["itemsPath", "itemIdPath", "itemTitlePath", "itemSubtitlePath", "itemMeta[].path", "itemImagePath", "urlPath"],
+    pathHints: renderer => [renderer.itemsPath || "items", renderer.itemIdPath || "id", renderer.itemTitlePath || "title"],
+    returnLines: [rendererT("selectionReturn")],
+  }),
+  Object.freeze<PrimitiveDescriptor>({
     type: "table",
     title: rendererT("tableTitle"),
     description: rendererT("tableDescription"),
@@ -226,7 +237,7 @@ export const SKILL_RENDERER_DEFINITIONS = Object.freeze([
 ]);
 
 export const SKILL_RENDERER_TYPES = new Set<string>(SKILL_RENDERER_DEFINITIONS.map(item => item.type));
-export const SKILL_LAYOUT_COMPONENT_TYPES = new Set(["stack", ...SKILL_RENDERER_TYPES]);
+export const SKILL_LAYOUT_COMPONENT_TYPES = new Set(["stack", ...[...SKILL_RENDERER_TYPES].filter(type => type !== "selection")]);
 export const SKILL_RENDERER_SOURCES = new Set(["result", "args"]);
 
 export function listSkillRendererDefinitions() {

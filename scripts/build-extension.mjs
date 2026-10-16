@@ -28,6 +28,7 @@ export const EXTENSION_ENTRIES = Object.freeze([
   { path: "sidepanel/sidepanel.js", format: "esm" },
   { path: "offscreen.js", format: "esm" },
   { path: "content/session-export-bridge.js", format: "iife" },
+  { path: "content/mcp-connect-bridge.js", format: "iife" },
   { path: "content/article-extractor.js", format: "iife" },
   { path: "content/run-script-tool-bridge.js", format: "iife" },
   { path: "content/content-script.js", format: "iife" },

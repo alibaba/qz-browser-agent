@@ -116,6 +116,7 @@
   "core.newWaitRequested": "エージェントは別の対応を待っています",
   "core.waitNotQueued": "この依頼は待機中ではありません",
   "core.agentContinued": "エージェントが続行しています",
+  "core.choiceSelectedCount": "選択済み: {count} 件",
   "core.selectThisOption": "この選択肢を選ぶ",
   "core.fillThisField": "この欄を入力",
   "core.cannotExport": "エクスポートできません",

@@ -78,5 +78,9 @@
   "skill-renderers.defaultReturnContract": "रिटर्न अनुबंध: स्क्रिप्ट का अंतिम मान रेंडरर की JSON संरचना से मेल खाना चाहिए।",
   "skill-renderers.avoidRawJson": "- बड़ी कच्ची JSON स्ट्रिंग न लौटाएँ। निदान trace या कुछ छोटे डीबग फ़ील्ड में रखें।",
   "skill-renderers.summaryFieldsLabel": "इन फ़ील्ड वाला ऑब्जेक्ट शीर्ष स्तर या सेट किए गए पथ पर लौटाएँ",
-  "skill-renderers.summaryReturn": "- फ़ील्ड मानों में स्ट्रिंग, संख्या, बूलियन या छोटी सरणियों वाला संक्षिप्त ऑब्जेक्ट लौटाएँ।"
+  "skill-renderers.summaryReturn": "- फ़ील्ड मानों में स्ट्रिंग, संख्या, बूलियन या छोटी सरणियों वाला संक्षिप्त ऑब्जेक्ट लौटाएँ।",
+  "skill-renderers.selectionTitle": "नतीजे चुनें",
+  "skill-renderers.selectionDescription": "विकल्पों को चुनने योग्य कार्ड के रूप में दिखाएँ और उपयोगकर्ता की पुष्टि की गई पसंद लौटाएँ।",
+  "skill-renderers.selectionReturn": "- अद्वितीय, गैर-रिक्त स्ट्रिंग ID और शीर्षक वाले अधिकतम 50 विकल्प लौटाएँ। इसे शीर्ष-स्तरीय परिणाम renderer के रूप में उपयोग करें। पुष्टि के बाद selectedIds, selectedItems और totalItems लौटते हैं; उपयोगकर्ता के प्रतीक्षा समय को स्क्रिप्ट की समय सीमा में नहीं गिना जाता।",
+  "skill-renderers.selectionCompleted": "{total} में से {count} चुने गए"
 }

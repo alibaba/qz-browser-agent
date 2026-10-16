@@ -1,4 +1,5 @@
 {
+  "wait.cardsTooManyOptions": "선택 카드를 표시하기 전에 후보를 50개 이하로 줄이세요.",
   "wait.submitted": "제출됨",
   "wait.notSubmitted": "제출 안 됨",
   "wait.button": "버튼: {label}",

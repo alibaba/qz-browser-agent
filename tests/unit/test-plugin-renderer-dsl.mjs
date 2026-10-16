@@ -10,6 +10,7 @@ import {
   listSkillRendererDefinitions,
 } from "../../src/shared/skills/skill-renderers.js";
 import { createDeclarativeRenderer } from "../../src/sidepanel/tools/primitives/declarative-renderer.js";
+import { withLanguage } from "../../src/shared/i18n/index.js";
 
 const diagnostics = [];
 const plugin = normalizeSkillManifest({
@@ -129,7 +130,7 @@ assert.match(inputContract, /不要求脚本把输入复制到 return/);
 const defaultHints = {
   summary: "", compact: "", metrics: "", fields: "", chips: "chips", note: "note", text: "text",
   article: "title, author, publishedAt/time, source/site/platform, url/link/href, body/text/content, meta, comments/replies/answers, comments[].meta",
-  list: "title, url", table: "rows", records: "records", image_grid: "images", tree: "nodes/lines",
+  list: "title, url", selection: "items, id, title", table: "rows", records: "records", image_grid: "images", tree: "nodes/lines",
   diff: "patch/diff/changes", markdown: "markdown", json: "", code: "code, language, filename", skill: "",
 };
 const publicDefinitions = listSkillRendererDefinitions();
@@ -193,6 +194,33 @@ assert.match(invalidSourceDiagnostics[0].message, /source ignored because it is 
 const previousDocument = globalThis.document;
 globalThis.document = { createElement: () => fakeRendererParent() };
 const structuredRenderer = createDeclarativeRenderer({ genericRenderer: {} });
+
+const completedSelectionParent = fakeRendererParent();
+assert.equal(structuredRenderer.render(completedSelectionParent, {
+  type: "selection", sourcePath: "payload", itemsPath: "jobs", itemTitlePath: "company", itemSubtitlePath: "role",
+}, { selectedIds: ["selected"], selectedItems: [{ id: "selected", company: "Chosen company", role: "Engineer" }], totalItems: 3 }), true);
+assert.match(completedSelectionParent.children[0].innerHTML, /Chosen company/,
+  "completed selections render their compact data independently of original source and collection paths");
+assert.match(completedSelectionParent.children[0].innerHTML, /1.*3/);
+
+for (const language of ["en", "zh-CN"]) for (const totalItems of [0, 3]) {
+  const emptySelectionParent = fakeRendererParent();
+  assert.equal(withLanguage(language, () => structuredRenderer.render(emptySelectionParent, {
+    type: "selection", required: totalItems === 0, sourcePath: "payload", itemsPath: "jobs",
+  }, { selectedIds: [], selectedItems: [], totalItems })), true);
+  assert.equal(emptySelectionParent.childElementCount, 1,
+    "empty candidates and optional empty selections retain their completion summary");
+  assert.ok(emptySelectionParent.children[0].innerHTML.includes(language === "en"
+    ? `Selected 0 of ${totalItems}` : `已选择 0 / ${totalItems} 项`));
+  assert.ok(emptySelectionParent.children[0].innerHTML.includes(language === "en" ? "No items." : "没有条目。"));
+}
+
+const authoredEmptySelectionParent = fakeRendererParent();
+structuredRenderer.render(authoredEmptySelectionParent, {
+  type: "selection", required: false, empty: "No roles selected.",
+}, { selectedIds: [], selectedItems: [], totalItems: 3 });
+assert.match(authoredEmptySelectionParent.children[0].innerHTML, /No roles selected\./,
+  "selection completion preserves authored empty-state copy");
 
 const allMissingParent = fakeRendererParent();
 assert.equal(

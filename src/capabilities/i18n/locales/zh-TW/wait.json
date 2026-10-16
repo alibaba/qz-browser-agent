@@ -1,4 +1,5 @@
 {
+  "wait.cardsTooManyOptions": "候選卡片最多支援 50 項，請先縮小候選範圍。",
   "wait.submitted": "已送出",
   "wait.notSubmitted": "未送出",
   "wait.button": "按鈕：{label}",

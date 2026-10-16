@@ -443,7 +443,8 @@ async function sidepanelChannelOwnsPortsPendingDeliveryAndDynamicContext() {
   assert.equal(enriched.runtime.status, "running");
   assert.equal(port.sent.at(-1).runtime.status, "running");
 
-  const locationPromise = channel.requestLocation({ timeoutMs: 100 });
+  port.emitMessage({ type: "sidepanel_attach", windowId: 7 });
+  const locationPromise = channel.requestLocation({ timeoutMs: 100, windowId: 7 });
   const request = port.sent.at(-1);
   assert.equal(request.type, "dynamic_context_request");
   port.emitMessage({
@@ -466,7 +467,7 @@ async function sidepanelChannelOwnsPortsPendingDeliveryAndDynamicContext() {
   });
   port.emitDisconnect();
   assert.equal(channel.size(), 0);
-  assert.equal(await channel.requestLocation({ timeoutMs: 1 }), null);
+  await assert.rejects(channel.requestLocation({ timeoutMs: 1, windowId: 7 }), { code: "LOCATION_PANEL_UNAVAILABLE" });
   unregister();
   assert.equal(connectListeners.size, 0);
 }

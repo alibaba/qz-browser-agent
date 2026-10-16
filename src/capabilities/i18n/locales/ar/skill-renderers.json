@@ -78,5 +78,9 @@
   "skill-renderers.defaultReturnContract": "عقد الإرجاع: يجب أن تطابق القيمة النهائية للبرنامج بنية JSON الخاصة بالعارض.",
   "skill-renderers.avoidRawJson": "- لا تُعد نصوص JSON خامًا كبيرة. ضع التشخيص في trace أو بضعة حقول تصحيح صغيرة.",
   "skill-renderers.summaryFieldsLabel": "أعد كائنًا بهذه الحقول في المستوى الأعلى أو المسارات المضبوطة",
-  "skill-renderers.summaryReturn": "- أعد كائنًا موجزًا بقيم حقول من نصوص أو أرقام أو قيم منطقية أو مصفوفات قصيرة."
+  "skill-renderers.summaryReturn": "- أعد كائنًا موجزًا بقيم حقول من نصوص أو أرقام أو قيم منطقية أو مصفوفات قصيرة.",
+  "skill-renderers.selectionTitle": "اختيار النتائج",
+  "skill-renderers.selectionDescription": "عرض الخيارات كبطاقات قابلة للتحديد وإرجاع اختيار المستخدم بعد تأكيده.",
+  "skill-renderers.selectionReturn": "- أعد ما يصل إلى 50 خيارًا بمعرّفات نصية فريدة غير فارغة وعناوين. يُستخدم كعارض نتائج في المستوى الأعلى. بعد التأكيد، تُعاد selectedIds وselectedItems وtotalItems؛ ولا يُحتسب انتظار المستخدم ضمن مهلة السكربت.",
+  "skill-renderers.selectionCompleted": "تم اختيار {count} من {total}"
 }

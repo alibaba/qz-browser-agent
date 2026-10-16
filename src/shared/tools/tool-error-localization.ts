@@ -10,8 +10,15 @@ const UPPER_ERROR_CODE_RE = /^[A-Z][A-Z0-9_]+$/;
 
 // Each error owns its label and optional fixed recovery message; contextual messages stay below.
 const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message?: BackendMessageKey }>> = Object.freeze({
+  SKILL_SELECTION_INVALID_ITEMS: { label: "toolError.SKILL_SELECTION_INVALID_ITEMS.label", message: "toolError.SKILL_SELECTION_INVALID_ITEMS.message" },
+  SKILL_SELECTION_INVALID_ANSWER: { label: "toolError.SKILL_SELECTION_INVALID_ANSWER.label", message: "toolError.SKILL_SELECTION_INVALID_ANSWER.message" },
   LOCATION_CONSENT_REQUIRED: { label: "locationRequired", message: "locationRequired" },
   LOCATION_UNAVAILABLE: { label: "locationUnavailable", message: "locationUnavailable" },
+  LOCATION_PERMISSION_DENIED: { label: "locationPermissionDenied", message: "locationPermissionDenied" },
+  LOCATION_POSITION_UNAVAILABLE: { label: "locationPositionUnavailable", message: "locationPositionUnavailable" },
+  LOCATION_TIMEOUT: { label: "locationTimeout", message: "locationTimeout" },
+  LOCATION_PANEL_UNAVAILABLE: { label: "locationPanelUnavailable", message: "locationPanelUnavailable" },
+  LOCATION_RESPONSE_TIMEOUT: { label: "locationResponseTimeout", message: "locationResponseTimeout" },
   ABORTED: { label: "toolError.ABORTED.label", message: "toolError.ABORTED.message" },
   AGENT_ALREADY_RUNNING: { label: "toolError.AGENT_ALREADY_RUNNING.label" },
   SESSION_PERSIST_FAILED: { label: "toolError.SESSION_PERSIST_FAILED.label" },

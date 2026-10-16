@@ -16,6 +16,7 @@ await submittedMessageStartsOrQueuesAtomically();
 await acceptedCleanupIsPostCommitAndNonBlocking();
 await queuedFollowUpWaitsForDurableRuntime();
 await stopDoesNotWaitForBestEffortObservers();
+await explicitTaskTitleSkipsGeneration();
 await titleGenerationWaitsForAcceptedPrompt();
 await manualTitleWinsGenerationRace();
 await queuedFollowUpAttachmentDeletionFlow();
@@ -390,6 +391,31 @@ async function stopDoesNotWaitForBestEffortObservers() {
     "Lifecycle stop observation starts without retaining the Session queue",
   );
   observationGate.resolve();
+}
+
+async function explicitTaskTitleSkipsGeneration() {
+  for (const { title, parentSessionId = ROOT_SESSION_ID, source } of [
+    { title: "Chosen task title", source: "manual" },
+    { title: "", source: "first_message" },
+    { title: "   ", source: "first_message" },
+    { title: "Child task title", parentSessionId: "parent-task", source: "fixed" },
+  ]) {
+    const fixture = createFixture();
+    const created = await fixture.commands.createSessionRuntime({ title, parentSessionId, firstMessage: "Summarize this page" });
+    assert.equal(created.started, true);
+    assert.equal(created.session.titleSource, source);
+    await waitUntil(() => fixture.runtimes.get(created.session.id)?.status === "completed", "the task should finish");
+    if (source === "first_message") {
+      await waitUntil(async () => (await fixture.repository.getMetadata(created.session.id))?.titleSource === "generated",
+        "a task without an explicit title should still generate one");
+      assert.equal(fixture.titleRequests.length, 1);
+      assert.equal((await fixture.repository.getMetadata(created.session.id)).title, "Generated title");
+    } else {
+      await nextTurn();
+      assert.equal(fixture.titleRequests.length, 0, "an explicit root title or fixed child title needs no title model request");
+      assert.equal((await fixture.repository.getMetadata(created.session.id)).title, title);
+    }
+  }
 }
 
 async function titleGenerationWaitsForAcceptedPrompt() {

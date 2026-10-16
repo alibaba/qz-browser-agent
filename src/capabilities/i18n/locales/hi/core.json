@@ -116,6 +116,7 @@
   "core.newWaitRequested": "एजेंट अब किसी और चीज़ की प्रतीक्षा में है",
   "core.waitNotQueued": "यह अनुरोध अब लंबित नहीं है",
   "core.agentContinued": "एजेंट आगे बढ़ रहा है",
+  "core.choiceSelectedCount": "चयनित: {count}",
   "core.selectThisOption": "यह विकल्प चुनें",
   "core.fillThisField": "यह फ़ील्ड भरें",
   "core.cannotExport": "एक्सपोर्ट नहीं हो सकता",

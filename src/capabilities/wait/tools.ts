@@ -146,6 +146,17 @@ function canReturnImages(context: ToolContext = {}) {
     && context?.runProfile?.features?.toolImages !== false;
 }
 
+function cardWebUrl(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  if (!text || text.length > 4096) return undefined;
+  try {
+    const url = new URL(text);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password
+      ? url.href : undefined;
+  } catch { return undefined; }
+}
+
 function normalizeQuestionField(field: QuestionField = {}, index = 0) {
   const rawType = String(field.type || "text").trim().toLowerCase();
   const typeMap: Record<string, string> = {
@@ -159,17 +170,31 @@ function normalizeQuestionField(field: QuestionField = {}, index = 0) {
   const type = ["text", "textarea", "single_choice", "multi_choice"].includes(rawType)
     ? rawType
     : (typeMap[rawType] || "text");
+  const cards = field.presentation === "cards" && (type === "single_choice" || type === "multi_choice");
   const id = String(field.id || field.name || `field_${index + 1}`).trim().replace(/[^\w.-]+/g, "_") || `field_${index + 1}`;
+  if (cards && Array.isArray(field.options) && field.options.length > 50) {
+    throw new ToolExecutionError("INVALID_ARGUMENTS", t("cardsTooManyOptions"), { fieldId: id, maxOptions: 50 });
+  }
   const options = Array.isArray(field.options)
     ? field.options.map((option, optionIndex) => {
-      if (typeof option === "string") return { label: option, value: option };
+      if (typeof option === "string") return { label: cards ? option.trim().slice(0, 240) : option, value: option };
       const label = String(option?.label ?? option?.value ?? t("option", { index: String(optionIndex + 1) })).trim();
       // Answer values cross the wire/storage boundary; preserve the legacy fallback independently of UI language.
       const value = String(option?.value ?? option?.label ?? `选项 ${optionIndex + 1}`).trim();
+      const description = String(option?.description || "").trim();
+      const meta = cards && Array.isArray(option?.meta)
+        ? option.meta.filter((entry: unknown): entry is string => typeof entry === "string")
+          .map((entry: string) => entry.trim().slice(0, 80)).filter(Boolean).slice(0, 6)
+        : [];
+      const imageUrl = cards ? cardWebUrl(option?.imageUrl) : undefined;
+      const url = cards ? cardWebUrl(option?.url) : undefined;
       return {
-        label,
+        label: cards ? label.slice(0, 240) : label,
         value,
-        description: String(option?.description || "").trim(),
+        description: cards ? description.slice(0, 1000) : description,
+        ...(meta.length ? { meta } : {}),
+        ...(imageUrl ? { imageUrl } : {}),
+        ...(url ? { url } : {}),
       };
     }).filter(option => option.label && option.value)
     : [];
@@ -183,6 +208,7 @@ function normalizeQuestionField(field: QuestionField = {}, index = 0) {
     required: field.required !== false,
     defaultValue: normalizeQuestionFieldDefaultValue(field, normalizedType),
     options,
+    ...(cards && normalizedType !== "text" ? { presentation: "cards" as const } : {}),
   };
 }
 
@@ -322,6 +348,7 @@ registerTool({
             id: { type: "string", description: toolT("askUserId") },
             label: { type: "string", description: toolT("askUserLabel") },
             type: { type: "string", enum: ["text", "textarea", "single_choice", "multi_choice"], description: toolT("askUserType") },
+            presentation: { type: "string", enum: ["cards"], description: toolT("askUserPresentation") },
             placeholder: { type: "string", description: toolT("askUserPlaceholder") },
             help: { type: "string", description: toolT("askUserHelp") },
             defaultValue: {
@@ -343,6 +370,9 @@ registerTool({
                   label: { type: "string" },
                   value: { type: "string" },
                   description: { type: "string" },
+                  meta: { type: "array", maxItems: 6, items: { type: "string", maxLength: 80 }, description: toolT("askUserOptionMeta") },
+                  imageUrl: { type: "string", maxLength: 4096, description: toolT("askUserOptionImageUrl") },
+                  url: { type: "string", maxLength: 4096, description: toolT("askUserOptionUrl") },
                 },
               },
             },

@@ -16,8 +16,15 @@ const testPythonSecondary = (...args) => secondaryBrowserCommand("node", "tests/
 export function createSuiteCatalog({ root: ROOT, match, unitConcurrency }) {
   const pathFromRoot = (...parts) => relative(ROOT, join(ROOT, ...parts));
   const browserUnitConcurrency = Math.min(2, unitConcurrency);
+  const serviceNodeTests = [
+    "test-node-mcp-bridge.mjs", "test-node-mcp-cli.mjs", "test-qz-cli-args.mjs",
+    "test-qz-terminal.mjs", "test-qz-task-stream.mjs", "test-qz-cli-output.mjs", "test-qz-cli-resources.mjs",
+    "test-qz-cli-version-compat.mjs", "test-qz-task-stream-recovery.mjs", "test-mcp-tool-arguments.mjs",
+    "test-qz-client-scope.mjs", "test-mcp-task-observation.mjs", "test-qz-cli-launcher.mjs",
+  ];
   const unitTestFiles = readdirSync(join(ROOT, "tests/unit"))
     .filter(name => /^test-.*\.mjs$/.test(name))
+    .filter(name => !serviceNodeTests.includes(name))
     .map(name => pathFromRoot("tests/unit", name))
     .sort();
 
@@ -47,22 +54,18 @@ export function createSuiteCatalog({ root: ROOT, match, unitConcurrency }) {
       command("node", "tests/sidepanel-rendering/run.mjs"),
     ],
     services: [
+      command("node", "--test", ...serviceNodeTests.map(name => pathFromRoot("tests/unit", name))),
       command(
         "uv",
         "run",
         "--project",
-        "services/mcp-bridge",
-        "--index",
-        "https://pypi.org/simple",
+        "tests/python",
         "--default-index",
         "https://pypi.org/simple",
         "--locked",
         "pytest",
-        "-c",
-        "services/mcp-bridge/pyproject.toml",
         "-q",
         "--durations=5",
-        "tests/integration/test-qingzhou-mcp-bridge.py",
         "tests/integration/test-agent-behavior-acceptance.py",
       ),
     ],
@@ -84,6 +87,9 @@ export function createSuiteCatalog({ root: ROOT, match, unitConcurrency }) {
       commandWith({ id: "image-conversion-e2e" }, "node", "tests/background/image-conversion-e2e.mjs"),
       commandWith({ id: "extension-e2e", resource: "browser-secondary" }, "node", "tests/background/extension-e2e.mjs"),
       commandWith({ id: "mcp-tab-ownership-e2e", resource: "browser-secondary" }, "node", "tests/background/mcp-tab-ownership-e2e.mjs"),
+      commandWith({ id: "mcp-resilience-e2e", resource: "browser-secondary" }, "node", "tests/background/mcp-resilience-e2e.mjs"),
+      commandWith({ id: "mcp-user-input-e2e", resource: "browser-secondary" }, "node", "tests/background/mcp-user-input-e2e.mjs"),
+      commandWith({ id: "mcp-resources-e2e", resource: "browser-secondary" }, "node", "tests/background/mcp-resources-e2e.mjs"),
       commandWith(
         {
           resource: "general",
@@ -112,6 +118,7 @@ export function createSuiteCatalog({ root: ROOT, match, unitConcurrency }) {
       testPythonSecondary("tests/tool-timeline/e2e-check.py"),
     ],
     release: [
+      parallelCommand("node", "tests/release/npm-package.mjs"),
       parallelCommand("node", "--test", "--test-reporter=spec", "tests/release/build-extension.test.mjs", "tests/release/bundle-release.test.mjs"),
       commandWith(
         { id: "release-chrome-smoke", resource: "browser-secondary" },

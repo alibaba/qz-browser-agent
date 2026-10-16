@@ -13,6 +13,8 @@ export const QINGZHOU_MCP_METHODS = Object.freeze([
   "create_session",
   "send_message",
   "follow_up",
+  "get_user_input",
+  "respond_to_user_input",
   "continue_task",
   "submit_wait_form",
   "cancel_wait",
@@ -26,13 +28,22 @@ export const QINGZHOU_MCP_METHODS = Object.freeze([
   "execute_tool",
   "call_tool",
   "list_data_tables",
+  "delete_data_table",
+  "export_data_table",
+  "list_image_collections",
+  "delete_image_collection",
+  "export_image_collection",
+  "list_downloads",
   "list_skills",
   "get_skill",
   "load_skill",
   "get_skill_resource",
+  "export_skill",
   "load_skill_resource",
   "get_config",
   "save_config",
+  "get_settings",
+  "update_settings",
   "get_runtime_config",
   "set_runtime_config",
   "list_plugins",
@@ -61,6 +72,8 @@ export function createMcpTransport(api: BackgroundApi, { bridge = {} }: { bridge
       case "create_session": return call("sessions.create", params);
       case "send_message": return call("sessions.send", params);
       case "follow_up": return call("sessions.followUp", params);
+      case "get_user_input": return call("sessions.userInput", params);
+      case "respond_to_user_input": return call("sessions.respondToUserInput", params);
       case "continue_task": return call("sessions.continueWait", params);
       case "submit_wait_form": return call("sessions.submitWaitForm", params);
       case "cancel_wait": return call("sessions.cancelWait", params);
@@ -74,13 +87,22 @@ export function createMcpTransport(api: BackgroundApi, { bridge = {} }: { bridge
       case "execute_tool":
       case "call_tool": return call("tools.execute", params);
       case "list_data_tables": return call("data.listTables");
+      case "delete_data_table": return call("data.deleteTable", params);
+      case "export_data_table": return call("data.exportTable", params);
+      case "list_image_collections": return call("data.listImageCollections");
+      case "delete_image_collection": return call("data.deleteImageCollection", params);
+      case "export_image_collection": return call("data.exportImageCollection", params);
+      case "list_downloads": return call("data.listDownloads", params);
       case "list_skills": return call("skills.list", params);
       case "get_skill":
       case "load_skill": return call("skills.get", params);
       case "get_skill_resource":
       case "load_skill_resource": return call("skills.resource", params);
+      case "export_skill": return call("skills.export", params);
       case "get_config": return call("config.get");
       case "save_config": return call("config.save", params.config || {});
+      case "get_settings": return call("settings.get", params);
+      case "update_settings": return call("settings.update", params);
       case "get_runtime_config": return call("config.getRuntime");
       case "set_runtime_config": return call("config.setRuntime", isPlainObject(params.config) ? params.config : params);
       case "list_plugins": return call("skills.contributions", params.sessionId);

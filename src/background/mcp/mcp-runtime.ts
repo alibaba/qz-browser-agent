@@ -1,3 +1,4 @@
+import { createSessionUserInput } from "../session/user-input.js";
 import type { createSessionCommands } from "../session/commands.js";
 import type { createSessionAgentHost } from "../session/agent-host.js";
 import type { createSessionRuntimeState } from "../session/runtime-state.js";
@@ -19,8 +20,8 @@ type Transcript = ReturnType<typeof createSessionTranscript>;
 type Artifacts = ReturnType<typeof createSessionArtifacts>;
 interface McpSessionPort {
   normalizeId(value: unknown): string; requireId(value: unknown, operation: string): string;
-  supervisor: Pick<ReturnType<typeof createSessionSupervisor<Agent>>, "resolveUserWait" | "rejectUserWait" | "isRunCurrent">;
-  startPromptTask: Commands["startSessionPromptTask"]; waitForRunObserved: Commands["waitForSessionRunObserved"];
+  supervisor: Pick<ReturnType<typeof createSessionSupervisor<Agent>>, "resolveUserWait" | "rejectUserWait" | "isRunCurrent" | "getUserWait">;
+  submitMessage: Commands["submitSessionMessageRuntime"]; waitForRunObserved: Commands["waitForSessionRunObserved"];
   getRuntimeOutput: Commands["getSessionRuntimeStateForOutput"]; getRuntime: Commands["getSessionRuntimeState"];
   getLiveAgentEntry: Host["getLiveEntry"]; getAgent: Host["getAgent"]; setRuntime: Runtime["set"];
   getLastMessages: Commands["getLastMessagesRuntime"]; getTranscript: Transcript["get"]; getConversation: Transcript["getConversation"];
@@ -45,7 +46,8 @@ interface McpOptions {
   sessions: McpSessionPort; tools: McpToolsPort; skills: McpSkillsPort;
   artifacts: Pick<Artifacts, "collect" | "empty">; trace: { get(): Promise<readonly unknown[]> };
   dispatchSidepanel(message: Fields, port: ResponsePort): Promise<unknown>;
-  broadcast?(event: Fields): unknown; storageKey?(): string;
+  storageKey?(): string;
+  userInputPermissions: Pick<Parameters<typeof createSessionUserInput>[0], "hasBrowserPermission" | "locationConsent">;
 }
 import {
   isBase64SkillResource,
@@ -68,7 +70,7 @@ export function createMcpRuntime({
   artifacts,
   trace,
   dispatchSidepanel,
-  broadcast = () => {},
+  userInputPermissions,
   storageKey = () => "",
 }: McpOptions) {
   if (typeof dispatchSidepanel !== "function") throw new TypeError("dispatchSidepanel is required");
@@ -89,9 +91,11 @@ export function createMcpRuntime({
       methods: [
         "ping", "capabilities", "get_bridge_config", "save_bridge_config", "runtime_message",
         "list_sessions", "create_session", "send_message", "follow_up", "continue_task",
-        "submit_wait_form", "cancel_wait", "get_session_state", "get_session_snapshot",
+        "submit_wait_form", "cancel_wait", "get_user_input", "respond_to_user_input", "get_session_state", "get_session_snapshot",
         "get_messages", "get_history", "stop_session", "clear_goal", "list_tools",
         "execute_tool", "list_data_tables", "list_skills", "get_skill", "get_skill_resource",
+        "delete_data_table", "export_data_table", "list_image_collections", "delete_image_collection", "export_image_collection",
+        "list_downloads", "export_skill", "get_settings", "update_settings",
         "get_config", "save_config", "get_runtime_config", "set_runtime_config", "list_plugins",
         "refresh_skill_registry", "list_automations", "run_automation", "get_trace", "clear_trace",
       ],
@@ -115,81 +119,53 @@ export function createMcpRuntime({
     return { requestId, response: response || null, responses };
   }
 
-  function continueUserWait(params: Fields = {}) {
-    const sessionId = sessions.normalizeId(params.sessionId);
-    const waitId = String(params.waitId || "").trim();
-    const payload = params.payload == null ? null : plainObject(params.payload);
-    if (!sessions.supervisor.resolveUserWait({ sessionId, waitId, payload })) {
-      return staleWaitResult(sessionId, waitId);
-    }
-    return {
-      accepted: true,
-      sessionId,
-      waitId,
-      submitted: payload?.submitted === true,
-      reason: String(payload?.reason || "continued"),
-    };
-  }
-
-  function submitWaitForm(params: Fields = {}) {
-    const sessionId = sessions.normalizeId(params.sessionId);
-    const waitId = String(params.waitId || "").trim();
-    const answers = plainObject(params.answers);
-    const payload = {
-      submitted: true,
-      reason: String(params.reason || "submitted"),
-      answers,
-    };
-    if (!sessions.supervisor.resolveUserWait({ sessionId, waitId, payload })) {
-      return staleWaitResult(sessionId, waitId);
-    }
-    return {
-      accepted: true,
-      sessionId,
-      waitId,
-      submitted: true,
-      answerKeys: Object.keys(answers),
-      reason: payload.reason,
-    };
-  }
-
-  function cancelUserWait(params: Fields = {}) {
-    const sessionId = sessions.normalizeId(params.sessionId);
-    const waitId = String(params.waitId || "").trim();
-    if (!sessions.supervisor.rejectUserWait({ sessionId, waitId })) {
-      return staleWaitResult(sessionId, waitId);
-    }
-    return { accepted: true, sessionId, waitId, reason: "cancelled" };
-  }
+  const userInput = createSessionUserInput({
+    getWait: sessions.supervisor.getUserWait,
+    getRuntime: sessions.getRuntime,
+    resolve: sessions.supervisor.resolveUserWait,
+    reject: sessions.supervisor.rejectUserWait,
+    ...userInputPermissions,
+  });
 
   async function sendMessage(params: Fields = {}) {
     const sessionId = sessions.requireId(params.sessionId, "send_message");
+    if (params.steer !== undefined && typeof params.steer !== "boolean") {
+      throw Object.assign(new Error("steer must be a boolean."), { code: "INVALID_ARGUMENTS" });
+    }
+    const deliveryMode = params.steer === true ? "steer" : "follow_up";
     const text = String(params.text || params.message || "").trim();
     const images = Array.isArray(params.images) ? params.images : [];
     const documents = Array.isArray(params.documents) ? params.documents : [];
     if (!text && !images.length && !documents.length) throw new Error("send_message requires text or attachments");
     const acceptedHook = params.onMessageAccepted;
-    const taskInfo = await sessions.startPromptTask({
+    const clientMessageId = String(params.clientMessageId || randomRequestId());
+    const taskInfo = await sessions.submitMessage({
       sessionId,
       text,
       images,
       documents,
       sourceWindowId: typeof params.sourceWindowId === "number" ? params.sourceWindowId : null,
-      clientMessageId: String(params.clientMessageId || ""),
-      onMessageAccepted: typeof acceptedHook === "function" ? acceptedHook as NonNullable<NonNullable<Parameters<Commands["startSessionPromptTask"]>[0]>["onMessageAccepted"]> : null,
+      clientMessageId,
+      deliveryMode,
+      onMessageAccepted: typeof acceptedHook === "function" ? acceptedHook as NonNullable<NonNullable<Parameters<Commands["submitSessionMessageRuntime"]>[0]>["onMessageAccepted"]> : null,
       swallowErrors: params.swallowErrors !== false,
     });
-    if (params.wait === true) {
+    const started = taskInfo.disposition === "started";
+    if (params.wait === true && started) {
       await taskInfo.promise;
-    } else if (params.waitForStart !== false) {
+    } else if (started && params.waitForStart !== false) {
       await sessions.waitForRunObserved(sessionId, taskInfo, Number(params.waitForStartMs ?? 2000));
     }
     return {
       accepted: true,
       sessionId,
-      wait: params.wait === true,
-      waitForStart: params.wait !== true && params.waitForStart !== false,
+      clientMessageId,
+      deliveryMode,
+      disposition: taskInfo.disposition,
+      wait: params.wait === true && started,
+      waitForStart: started && params.wait !== true && params.waitForStart !== false,
       runtime: await sessions.getRuntimeOutput(sessionId),
+      input: userInput.get({ sessionId }),
     };
   }
 
@@ -205,6 +181,7 @@ export function createMcpRuntime({
         hasHistory: false,
         status: runtime.status,
         runtime,
+        input: userInput.get({ sessionId: id }),
       };
     }
     const liveState = entry.agent.getRunState();
@@ -217,6 +194,7 @@ export function createMcpRuntime({
       runId: runtime.runId || liveState.runId || null,
       status: runtime.status,
       runtime,
+      input: userInput.get({ sessionId: id }),
     };
   }
 
@@ -251,6 +229,7 @@ export function createMcpRuntime({
       session: metadata[id] || null,
       state,
       runtime,
+      input: state.input,
       isStreaming: !!state.isStreaming,
       status: state.status || state.runtime?.status || "",
       runId: state.runId || state.runtime?.runId || null,
@@ -429,23 +408,14 @@ export function createMcpRuntime({
     };
   }
 
-  function staleWaitResult(sessionId: string, waitId: string, reason = "stale") {
-    broadcast({
-      type: "user_wait_resolved",
-      sessionId,
-      waitId,
-      reason,
-      runtime: sessions.getRuntime(sessionId),
-    });
-    return { accepted: false, stale: true, sessionId, waitId, reason };
-  }
-
   return Object.freeze({
     describe,
     dispatchRuntimeMessage,
-    continueUserWait,
-    submitWaitForm,
-    cancelUserWait,
+    continueUserWait: userInput.continueWait,
+    submitWaitForm: userInput.submitWaitForm,
+    cancelUserWait: userInput.cancelWait,
+    getUserInput: userInput.get,
+    respondToUserInput: userInput.respond,
     sendMessage,
     getState,
     getMessages,

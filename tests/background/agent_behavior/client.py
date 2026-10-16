@@ -13,7 +13,7 @@ try:
 except Exception as exc:  # pragma: no cover - exercised by CLI users.
     raise SystemExit(
         "Missing MCP client dependencies. Run with:\n"
-        "  uv run --project services/mcp-bridge python tests/background/agent-behavior-regression.py\n"
+        "  uv run --project tests/python --locked python tests/background/agent-behavior-regression.py\n"
         f"Original error: {exc}"
     ) from exc
 

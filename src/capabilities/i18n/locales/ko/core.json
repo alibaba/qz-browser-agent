@@ -116,6 +116,7 @@
   "core.newWaitRequested": "에이전트가 다른 응답을 기다리고 있습니다",
   "core.waitNotQueued": "이 요청은 더 이상 대기 중이 아닙니다",
   "core.agentContinued": "에이전트가 계속하고 있습니다",
+  "core.choiceSelectedCount": "선택됨: {count}개",
   "core.selectThisOption": "이 옵션 선택",
   "core.fillThisField": "이 필드 입력",
   "core.cannotExport": "내보낼 수 없음",

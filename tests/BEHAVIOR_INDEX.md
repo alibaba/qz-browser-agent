@@ -493,7 +493,7 @@ extension E2E and live tests for persistence and real-model behavior.
 - **Steps**: Call `qingzhou_mcp__mcp_list_tools({limit})` or `qingzhou_mcp__mcp_search_tools({query,limit})` → inspect with `qingzhou_mcp__mcp_inspect_server({url,headers?})` if needed. Use `qingzhou_mcp__mcp_call_tool({url,tool,args,validate?})` only for one-off validation of an unregistered server. For registered tools, load the owning Skill and call the returned `pluginTool.name`.
 - **Expected outcome**: Advertised capabilities match dispatch. Call identity retains server/tool information. Error codes and recovery are stable. Results use shared artifact/timeline protocols.
 - **Failure and recovery**: Offline servers, missing tools, invalid arguments, and timeouts are diagnosable. Verify the called tool's business result. External writes still respect confirmation and safety rules.
-- **Evidence**: [MCP probe Agent regression](background/agent-behavior-regression.py), [MCP tools unit](unit/test-mcp-tools.mjs), [MCP runtime unit](unit/test-mcp-runtime.mjs), [bridge integration](integration/test-qingzhou-mcp-bridge.py)
+- **Evidence**: [MCP probe Agent regression](background/agent-behavior-regression.py), [MCP tools unit](unit/test-mcp-tools.mjs), [MCP runtime unit](unit/test-mcp-runtime.mjs), [connection service](unit/test-node-mcp-bridge.mjs), [CLI lifecycle](unit/test-node-mcp-cli.mjs)
 - **Coverage**: Medium
 - **Next test**: Find a synthetic MCP tool, call it with invalid arguments, correct them, and complete the task; verify large-result and artifact projections.
 

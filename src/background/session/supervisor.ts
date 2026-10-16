@@ -323,6 +323,14 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     });
   }
 
+  function getUserWait(sessionId: string) {
+    const entry = handles.get(normalizeOptionalSessionId(sessionId));
+    const wait = entry?.wait;
+    if (!wait || wait.settled || wait.signal?.aborted || !isCurrentEpoch(entry, wait.epoch)
+      || (wait.runId && entry?.activeRunId !== wait.runId)) return null;
+    return { sessionId: wait.sessionId, waitId: wait.waitId, runId: wait.runId };
+  }
+
   function isWaitingForUser(sessionId = "") {
     const id = normalizeOptionalSessionId(sessionId);
     if (id) return Boolean(handles.get(id)?.wait);
@@ -575,6 +583,7 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     resolveUserWait,
     rejectUserWait,
     isWaitingForUser,
+    getUserWait,
     has,
     hasAgent,
     size,

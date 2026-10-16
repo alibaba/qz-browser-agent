@@ -452,6 +452,10 @@ function normalizeSkillLayoutBlock(block: unknown = {}, diagnostics: SkillDiagno
   const input = objectOrNull(block);
   if (!input) return null;
   const rawType = String(input.type || "").trim();
+  if (rawType === "selection") {
+    diagnostics.push({ level: "error", pluginId: context.pluginId, message: "Selection must be a top-level tool renderer." });
+    return null;
+  }
   if (rawType && !SKILL_RENDERER_TYPES.has(rawType)) {
     diagnostics.push({
       level: "warning",
@@ -651,6 +655,14 @@ function normalizeSkillToolRenderer(renderer: unknown = null, diagnostics: Skill
   }
   const type = requestedType || "summary";
   const requestedSource = cleanString(input.source);
+  if (type === "selection" && (requestedSource === "args" || objectOrNull(input.layout))) {
+    diagnostics.push({ level: "error", pluginId: context.pluginId, message: "Selection requires the tool result and a top-level renderer without layout blocks." });
+    return null;
+  }
+  if (type === "selection" && input.selectionMode != null && !["single", "multiple"].includes(String(input.selectionMode))) {
+    diagnostics.push({ level: "error", pluginId: context.pluginId, message: "Selection mode must be single or multiple." });
+    return null;
+  }
   if (requestedSource && !SKILL_RENDERER_SOURCES.has(requestedSource)) {
     diagnostics.push({
       level: "warning",
@@ -703,6 +715,14 @@ function normalizeSkillToolRenderer(renderer: unknown = null, diagnostics: Skill
     maxItems: normalizePositiveInteger(input.maxItems),
     states: normalizeSkillRendererStates(input.states, diagnostics, context),
     layout,
+    ...(type === "selection" ? {
+      itemIdPath: cleanString(input.itemIdPath || "id"),
+      itemImagePath: cleanString(input.itemImagePath),
+      itemSubtitlePath: cleanString(input.itemSubtitlePath || "description"),
+      selectionMode: input.selectionMode === "single" ? "single" as const : "multiple" as const,
+      submitLabel: cleanString(input.submitLabel),
+      required: input.required !== false,
+    } : {}),
   };
   if (!normalized.source) delete normalized.source;
   if (!normalized.action) delete normalized.action;

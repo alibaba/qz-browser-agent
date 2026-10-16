@@ -1,6 +1,7 @@
 import { createPortTransport } from "../../shared/transport/port-transport.js";
 import { transportFailure, TransportError } from "../../shared/transport/message-codec.js";
 import { backgroundReceiveBudget, backgroundTransferBudget } from "./transfer-budget.js";
+import { ToolExecutionError } from "../tools/arguments.js";
 
 type Fields = Record<string, unknown>;
 type Port = chrome.runtime.Port;
@@ -48,7 +49,7 @@ export function createSidepanelChannel({
   const senders = new WeakMap<Port, (message: Fields) => Promise<void>>();
   const connections = new Map<Port, () => void>();
   const portWindowIds = new Map<Port, number | null>();
-  const dynamicContextRequests = new Map<string, { resolve(value: unknown): void }>();
+  const dynamicContextRequests = new Map<string, { port: Port; resolve(value: unknown): void; disconnect(): void }>();
   const pendingEvents = new Map<string, PendingEvent>();
   const streamTraceState = new Map<string, { count: number; chars: number; lastAt: number }>();
   let dynamicContextSeq = 0;
@@ -95,6 +96,7 @@ export function createSidepanelChannel({
         connections.delete(port);
         ports.delete(port);
         portWindowIds.delete(port);
+        for (const pending of dynamicContextRequests.values()) if (pending.port === port) pending.disconnect();
       };
       connections.set(port, cleanup);
       native.onDisconnect.addListener(cleanup);
@@ -158,21 +160,35 @@ export function createSidepanelChannel({
   function requestLocation({ timeoutMs = 12_000, windowId = null, signal }: { timeoutMs?: number; windowId?: number | null; signal?: AbortSignal } = {}) {
     if (signal?.aborted) return Promise.resolve(null);
     const port = [...ports].find(port => windowId == null || portWindowIds.get(port) === windowId);
-    if (!port) return Promise.resolve(null);
+    if (!port) return Promise.reject(new ToolExecutionError("LOCATION_PANEL_UNAVAILABLE", "No side panel is connected to the task window"));
     const requestId = `ctx_${++dynamicContextSeq}`;
-    return new Promise<Fields | null>(resolve => {
-      function cancel() { clearTimeout(timer); signal?.removeEventListener("abort", cancel); dynamicContextRequests.delete(requestId); resolve(null); }
-      const timer = setTimeout(cancel, timeoutMs);
+    return new Promise<Fields | null>((resolve, reject) => {
+      function cleanup() { clearTimeout(timer); signal?.removeEventListener("abort", cancel); dynamicContextRequests.delete(requestId); }
+      function cancel() { cleanup(); resolve(null); }
+      function fail(code: string, message: string, details: Fields = {}) { cleanup(); reject(new ToolExecutionError(code, message, details)); }
+      const timer = setTimeout(() => fail("LOCATION_RESPONSE_TIMEOUT", "The side panel did not return a location result", { timeoutMs }), timeoutMs);
       signal?.addEventListener("abort", cancel, { once: true });
       dynamicContextRequests.set(requestId, {
+        port,
+        disconnect: () => fail("LOCATION_PANEL_UNAVAILABLE", "The side panel disconnected during location lookup"),
         resolve(value) {
-          clearTimeout(timer);
-          signal?.removeEventListener("abort", cancel);
+          cleanup();
+          const error = object(object(value).locationError);
+          if (Object.keys(error).length) {
+            const code = error.code === 1 ? "LOCATION_PERMISSION_DENIED"
+              : error.code === 2 ? "LOCATION_POSITION_UNAVAILABLE"
+                : error.code === 3 ? "LOCATION_TIMEOUT" : "LOCATION_UNAVAILABLE";
+            reject(new ToolExecutionError(code, "Browser location lookup failed", {
+              browserCode: error.code, browserMessage: String(error.message || ""),
+            }));
+            return;
+          }
           const location = object(value).location;
           resolve(location && typeof location === "object" ? object(location) : null);
         },
       });
-      void send(port, { type: "dynamic_context_request", requestId, fields: ["location"] }).catch(cancel);
+      void send(port, { type: "dynamic_context_request", requestId, fields: ["location"] })
+        .catch(() => { if (dynamicContextRequests.has(requestId)) fail("LOCATION_PANEL_UNAVAILABLE", "Could not send the location request to the side panel"); });
     });
   }
 

@@ -4,14 +4,15 @@ import { t as backendT } from "../../../../shared/i18n/backend.js";
 import { t, tHtml } from "../../../i18n/index.js";
 import { escapeHtml, escapeHtmlAttribute } from "../../../ui/ui-utils.js";
 import { record } from "../../../tools/renderer-input.js";
+import { renderResultChoice } from "../../../ui/result-choice.js";
 
 type Answer = string | string[];
 interface FieldBase { id: string; label: string; help: string; required: boolean }
-interface ChoiceOption { label: string; value: string; description: string }
+interface ChoiceOption { label: string; value: string; description: string; meta?: string[]; imageUrl?: string; url?: string }
 export type WaitingField = FieldBase & (
   | { type: "text" | "textarea"; placeholder: string; defaultValue: string }
-  | { type: "single_choice"; options: ChoiceOption[]; defaultValue: string }
-  | { type: "multi_choice"; options: ChoiceOption[]; defaultValue: string[] }
+  | { type: "single_choice"; presentation?: "cards"; options: ChoiceOption[]; defaultValue: string }
+  | { type: "multi_choice"; presentation?: "cards"; options: ChoiceOption[]; defaultValue: string[] }
 );
 interface WaitingForm { locationConsent?: boolean; browserPermission?: ToolBrowserPermission; title: string; submitLabel: string; fields: WaitingField[] }
 interface WaitCard {
@@ -74,8 +75,12 @@ export function createWaitingCards(options: CardOptions) {
       control.addEventListener("input", () => clearWaitingFieldInvalid(control.closest(".waiting-field")), { signal });
     });
     form?.querySelectorAll<HTMLElement>(".waiting-options input").forEach(control => {
-      control.addEventListener("change", () => clearWaitingFieldInvalid(control.closest(".waiting-field")), { signal });
+      control.addEventListener("change", () => {
+        clearWaitingFieldInvalid(control.closest(".waiting-field"));
+        updateChoiceCounts(el);
+      }, { signal });
     });
+    updateChoiceCounts(el);
     continueButton?.addEventListener("click", () => { void submit(el, state, "continue_task"); }, { signal });
     cancelButton?.addEventListener("click", () => { void submit(el, state, "cancel_wait"); }, { signal });
     return true;
@@ -109,8 +114,9 @@ export function createWaitingCards(options: CardOptions) {
         if (!owns(el, state)) return;
         if (!response?.ok || response.accepted !== true) throw new Error("Location consent was not saved");
       }
-      // send confirms transport delivery, not wait completion. Keep controls locked until the accepted event.
-      await options.send(command);
+      // Background acknowledges validation; accepted events still own the completed card.
+      const response = record(await options.send(command));
+      if (response.accepted === false) throw new Error(String(response.code || "USER_INPUT_REJECTED"));
     } catch (_error) {
       if (!owns(el, state)) return;
       state.pending = false;
@@ -123,8 +129,16 @@ export function createWaitingCards(options: CardOptions) {
 
 function setWaitActions(el: HTMLElement, disabled: boolean, label: string) {
   el.querySelectorAll<HTMLButtonElement>(".waiting-actions button").forEach(button => { button.disabled = disabled; });
+  el.querySelectorAll<HTMLInputElement>(".qz-choice-card input").forEach(input => { input.disabled = disabled; });
   const hint = el.querySelector<HTMLElement>(".waiting-hint");
-  if (hint) hint.textContent = label;
+  if (hint) { hint.textContent = label; hint.hidden = false; }
+}
+
+function updateChoiceCounts(el: HTMLElement) {
+  el.querySelectorAll<HTMLElement>("[data-choice-count]").forEach(counter => {
+    const count = counter.closest(".waiting-field")?.querySelectorAll(".qz-choice-card input:checked").length || 0;
+    counter.textContent = t("choiceSelectedCount", { count });
+  });
 }
 
 function normalizeWaitCard(value: unknown): WaitCard {
@@ -155,13 +169,18 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
   const form = entry.form;
   const waiting = isWaitingTranscriptActive(entry);
   const hasForm = waiting && form.fields.length > 0;
+  const hasResultChoices = hasForm && form.fields.some(field =>
+    (field.type === "single_choice" || field.type === "multi_choice") && field.presentation === "cards");
   const statusClass = waiting ? "" : " resolved";
   const title = waiting
     ? (form.title || entry.title || t("actionRequired"))
     : waitResolvedTitle(entry);
-  const message = entry.message || "";
+  const repeatedCardTitle = form.fields.length === 1 && form.fields.some(field =>
+    (field.type === "single_choice" || field.type === "multi_choice") && field.presentation === "cards")
+    && entry.message === form.title;
+  const message = repeatedCardTitle ? "" : entry.message || "";
   const hint = waiting
-    ? (form.browserPermission ? permissionT("hint") : hasForm ? t("agentAfterSubmit") : t("agentAfterAction"))
+    ? (form.browserPermission ? permissionT("hint") : hasResultChoices ? "" : hasForm ? t("agentAfterSubmit") : t("agentAfterAction"))
     : waitResolvedHint(entry);
   return `
     <div class="waiting-card${statusClass} qz:relative qz:overflow-hidden qz:px-3 qz:pt-2.5 qz:pb-3">
@@ -169,8 +188,8 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
       <div class="waiting-body qz:mb-2.5">
         <div class="waiting-title qz:mb-1">${escapeHtml(title)}</div>
         ${message ? `<div class="waiting-message qz:mb-1">${escapeHtml(message)}</div>` : ""}
-        ${hasForm ? `<form class="waiting-form qz:mt-2 qz:grid qz:gap-2">${renderWaitingFormFields(form.fields)}</form>` : ""}
-        ${hint ? `<div class="waiting-hint qz:mt-1.5">${escapeHtml(hint)}</div>` : ""}
+        ${hasForm ? `<form class="waiting-form qz:mt-2 qz:grid qz:gap-2">${renderWaitingFormFields(form.fields, form.title)}</form>` : ""}
+        ${hint || hasResultChoices ? `<div class="waiting-hint qz:mt-1.5"${hint ? "" : " hidden"}>${escapeHtml(hint)}</div>` : ""}
       </div>
       ${waiting ? `
         <div class="waiting-actions qz:flex qz:gap-1.5">
@@ -214,26 +233,30 @@ export function normalizeWaitingForm(value: unknown = {}): WaitingForm {
         const option = record(value);
         return {
           label: String(option.label ?? option.value ?? value ?? "").trim(),
-          value: String(option.value ?? option.label ?? value ?? "").trim(),
+          value: String(option.value ?? option.label ?? value ?? ""),
           description: String(option.description || "").trim(),
+          ...(Array.isArray(option.meta) ? { meta: option.meta.filter((item): item is string => typeof item === "string").slice(0, 6) } : {}),
+          ...(typeof option.imageUrl === "string" ? { imageUrl: option.imageUrl } : {}),
+          ...(typeof option.url === "string" ? { url: option.url } : {}),
         };
       }).filter(option => option.label && option.value) : [];
       const base: FieldBase = { id, label: String(field.label || id).trim(), help: String(field.help || "").trim(), required: field.required !== false };
+      const presentation = field.presentation === "cards" ? { presentation: "cards" as const } : {};
       const defaultValue = Object.hasOwn(field, "defaultValue") ? field.defaultValue
         : Object.hasOwn(field, "defaultValues") ? field.defaultValues
           : Object.hasOwn(field, "default") ? field.default : field.value;
       if (field.type === "multi_choice" && options.length) {
         const values = Array.isArray(defaultValue) ? defaultValue : defaultValue == null || defaultValue === "" ? [] : [defaultValue];
-        return { ...base, type: "multi_choice", options, defaultValue: values.map(value => String(value).trim()).filter(Boolean) };
+        return { ...base, ...presentation, type: "multi_choice", options, defaultValue: values.map(value => String(value)).filter(Boolean) };
       }
-      const scalar = defaultValue == null ? "" : String(defaultValue).trim();
-      if (field.type === "single_choice" && options.length) return { ...base, type: "single_choice", options, defaultValue: scalar };
-      return { ...base, type: field.type === "textarea" ? "textarea" : "text", placeholder: String(field.placeholder || "").trim(), defaultValue: scalar };
+      const scalar = defaultValue == null ? "" : String(defaultValue);
+      if (field.type === "single_choice" && options.length) return { ...base, ...presentation, type: "single_choice", options, defaultValue: scalar };
+      return { ...base, type: field.type === "textarea" ? "textarea" : "text", placeholder: String(field.placeholder || "").trim(), defaultValue: scalar.trim() };
     }).filter(field => field.id && field.label),
   };
 }
 
-function renderWaitingFormFields(fields: WaitingField[]) {
+function renderWaitingFormFields(fields: WaitingField[], title: string) {
   return fields.map((field, fieldIndex) => {
     const name = `wait_${field.id}`;
     const controlId = `wait_${field.id}_${fieldIndex}`;
@@ -247,9 +270,12 @@ function renderWaitingFormFields(fields: WaitingField[]) {
       const inputType = field.type === "single_choice" ? "radio" : "checkbox";
       const defaultValues = new Set(Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue].filter(Boolean));
       control = `
-        <div class="waiting-options qz:grid qz:gap-1" data-field-id="${escapeHtmlAttribute(field.id)}" role="group" aria-label="${escapeHtmlAttribute(field.label)}" aria-required="${String(field.required)}">
+        <div class="waiting-options qz:grid ${field.presentation === "cards" ? "qz:gap-2 qz:-mx-1 qz:p-1 qz-scroll qz:max-h-80 qz:overflow-y-auto qz:overscroll-contain" : "qz:gap-1"}" data-field-id="${escapeHtmlAttribute(field.id)}" role="group" aria-label="${escapeHtmlAttribute(field.label)}" aria-required="${String(field.required)}">
           ${field.options.map((option, optionIndex) => {
             const optionId = `${controlId}_${optionIndex}`;
+            if (field.presentation === "cards") return renderResultChoice(document, {
+              ...option, id: optionId, name, multiple: field.type === "multi_choice", checked: defaultValues.has(option.value),
+            }).outerHTML;
             const checked = defaultValues.has(option.value) ? " checked" : "";
             return `
             <label class="waiting-option qz:grid qz:cursor-pointer qz:grid-cols-[auto_minmax(0,1fr)] qz:items-start qz:gap-1.75 qz:px-1.75 qz:py-1.5">
@@ -262,14 +288,17 @@ function renderWaitingFormFields(fields: WaitingField[]) {
           `;
           }).join("")}
         </div>
+        ${field.presentation === "cards" ? '<div class="qz-field-hint qz:mt-1" data-choice-count role="status" aria-live="polite"></div>' : ""}
       `;
     } else {
       control = `<input id="${escapeHtmlAttribute(controlId)}" class="qz-field qz-field--sm waiting-field-control" data-field-id="${escapeHtmlAttribute(field.id)}" type="text" placeholder="${escapeHtmlAttribute(field.placeholder)}" value="${escapeHtmlAttribute(field.defaultValue)}" aria-required="${String(field.required)}">`;
     }
     const labelFor = field.type === "single_choice" || field.type === "multi_choice" ? "" : ` for="${escapeHtmlAttribute(controlId)}"`;
+    const redundantCardLabel = fields.length === 1 && (field.type === "single_choice" || field.type === "multi_choice")
+      && field.presentation === "cards" && field.label === title;
     return `
       <div class="waiting-field qz:grid qz:gap-1" data-field-id="${escapeHtmlAttribute(field.id)}" data-required="${String(field.required)}" data-type="${escapeHtmlAttribute(field.type)}">
-        <label class="waiting-field-label"${labelFor}>${escapeHtml(field.label)}${required}</label>
+        ${redundantCardLabel ? "" : `<label class="waiting-field-label"${labelFor}>${escapeHtml(field.label)}${required}</label>`}
         ${control}
         ${help}
         ${error}

@@ -78,5 +78,9 @@
   "skill-renderers.defaultReturnContract": "戻り値の契約: スクリプトの最終戻り値はレンダラーの JSON 構造に合わせてください。",
   "skill-renderers.avoidRawJson": "- 大きな生の JSON 文字列は返さないでください。診断情報は trace または少数の小さなデバッグフィールドに入れてください。",
   "skill-renderers.summaryFieldsLabel": "最上位または設定済みパスに次のフィールドを持つオブジェクトを返します",
-  "skill-renderers.summaryReturn": "- フィールド値が文字列、数値、真偽値、短い配列の簡潔なオブジェクトを返します。"
+  "skill-renderers.summaryReturn": "- フィールド値が文字列、数値、真偽値、短い配列の簡潔なオブジェクトを返します。",
+  "skill-renderers.selectionTitle": "結果を選択",
+  "skill-renderers.selectionDescription": "候補を選択可能なカードとして表示し、ユーザーが確定した選択を返します。",
+  "skill-renderers.selectionReturn": "- 一意で空でない文字列 ID とタイトルを持つ候補を最大 50 件返します。最上位の結果 renderer として使用します。確定後は selectedIds、selectedItems、totalItems を返します。ユーザーの待機時間はスクリプトのタイムアウトに含まれません。",
+  "skill-renderers.selectionCompleted": "{total} 件中 {count} 件を選択"
 }

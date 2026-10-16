@@ -1,4 +1,5 @@
 {
+  "wait.cardsTooManyOptions": "Перед отображением карточек выбора сократите список до 50 кандидатов.",
   "wait.submitted": "Отправлено",
   "wait.notSubmitted": "Не отправлено",
   "wait.button": "Кнопка: {label}",

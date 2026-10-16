@@ -116,6 +116,7 @@
   "core.newWaitRequested": "الوكيل ينتظر شيئًا آخر الآن",
   "core.waitNotQueued": "هذا الطلب لم يعد معلقًا",
   "core.agentContinued": "الوكيل يتابع العمل",
+  "core.choiceSelectedCount": "تم تحديد: {count}",
   "core.selectThisOption": "تحديد هذا الخيار",
   "core.fillThisField": "ملء هذا الحقل",
   "core.cannotExport": "تعذّر التصدير",
