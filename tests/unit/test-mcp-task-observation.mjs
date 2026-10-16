@@ -152,6 +152,46 @@ test("observation timeout preserves the task ID and stale runs fail without repl
   });
 });
 
+for (const scenario of [
+  { name: "shorter total deadline", total: 2, request: 5, expiresMs: 2000, code: "timeout" },
+  { name: "equal deadlines", total: 5, request: 5, expiresMs: 5000, code: "timeout" },
+  { name: "earlier request deadline", total: 5, request: 2, expiresMs: 2000, code: "request_timeout" },
+  { name: "caller cancellation", total: 5, request: 2, code: "interrupted" },
+]) test(`MCP observation preserves request budgets and causes: ${scenario.name}`, async t => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  const controller = new AbortController();
+  const reason = new DOMException("User stopped watching.", "AbortError");
+  const readReady = Promise.withResolvers();
+  const calls = [];
+  const state = connectedState(t, async (method, params, options) => {
+    calls.push(method);
+    if (method === "send_message") return { accepted: true, clientMessageId: "message-1" };
+    readReady.resolve({ params, options });
+    return new Promise(() => {});
+  });
+  const pending = executeMcpTool(state, "qingzhou_send_message", {
+    sessionId: "task", text: "Keep working", wait: true,
+    timeoutSeconds: scenario.request, waitTimeoutSeconds: scenario.total,
+  }, { signal: controller.signal }).catch(error => error);
+  const read = await readReady.promise;
+  assert.equal(read.params.timeoutSeconds, scenario.request);
+  assert.equal(read.options.timeoutSeconds, scenario.request);
+  if (scenario.code === "interrupted") controller.abort(reason);
+  else t.mock.timers.tick(scenario.expiresMs);
+  const error = await pending;
+  assert.equal(error.code, scenario.code);
+  assert.equal(error.cause, read.options.signal.reason, "MCP preserves the downstream cancellation cause");
+  assert.equal(read.options.signal.aborted, true);
+  if (scenario.code === "interrupted") assert.equal(error.cause, reason);
+  else if (scenario.code === "timeout") assert.equal(error.cause.name, "TimeoutError");
+  else assert.equal(error.cause.code, "request_timeout");
+  assert.deepEqual(error.details.recovery, {
+    tool: "qingzhou_watch_task", arguments: { sessionId: "task", clientId: "browser-a" },
+  });
+  assert.deepEqual(calls, ["send_message", "get_session_snapshot"],
+    "ending observation must neither stop the browser task nor replay its accepted message");
+});
+
 test("tool lookup uses task context and returns the exact schema or a useful missing-tool error", async t => {
   const tool = { name: "read_article", inputSchema: { type: "object", properties: { tabId: { type: "number" } } } };
   const state = connectedState(t, async (method, params, options) => {

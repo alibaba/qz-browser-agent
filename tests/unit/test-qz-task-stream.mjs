@@ -5,6 +5,103 @@ import { waitForTask } from "../../services/mcp-bridge/src/task-stream.mjs";
 const assistant = (content, extra = {}) => ({ type: "assistant", runId: "run-1", spanId: "answer-1", content, streaming: true, ...extra });
 const snapshot = (status, transcript = [], extra = {}) => ({ sessionId: "session-1", status,
   runId: status === "idle" ? null : "run-1", runtime: { status }, transcript, ...extra });
+
+function controlledClock(t) {
+  let now = 1000;
+  const timers = new Set();
+  t.mock.method(Date, "now", () => now);
+  t.mock.method(globalThis, "setTimeout", (callback, milliseconds) => {
+    const timer = { callback, deadline: now + milliseconds };
+    timers.add(timer);
+    return timer;
+  });
+  t.mock.method(globalThis, "clearTimeout", timer => timers.delete(timer));
+  return { timers, advance: milliseconds => { now += milliseconds; },
+    fireNext() {
+      const timer = [...timers].sort((a, b) => a.deadline - b.deadline)[0];
+      assert.ok(timer, "a pending deadline must exist");
+      timers.delete(timer);
+      now = Math.max(now, timer.deadline);
+      timer.callback();
+    },
+  };
+}
+
+for (const [name, total, request, expectedName, timerCount] of [
+  ["total deadline first", 0.02, 1, "TimeoutError", 1],
+  ["request deadline first", 1, 0.02, "Error", 2],
+  ["equal deadlines belong to total", 0.02, 0.02, "TimeoutError", 1],
+  ["unlimited observation", null, 0.02, "Error", 1],
+]) {
+  test(`controlled observation deadlines: ${name}`, async t => {
+    const clock = controlledClock(t);
+    let read, calls = 0;
+    const outcome = waitForTask({ sessionId: "session-1", timeoutSeconds: total, requestTimeoutSeconds: request,
+      getSnapshot(value) {
+        calls++;
+        read = value;
+        // Delay rejection handling beyond both deadlines: the first reason must survive.
+        read.signal.addEventListener("abort", () => clock.advance(2000), { once: true });
+        return new Promise(() => {});
+      },
+    }).then(() => assert.fail("a hung read must time out"), error => error);
+    await Promise.resolve();
+    assert.equal(read.timeoutSeconds, request, "downstream keeps its independent request budget");
+    assert.equal(clock.timers.size, timerCount, "equal or later request deadlines must not compete with total");
+    clock.fireNext();
+    const error = await outcome;
+    assert.equal(error.name, expectedName);
+    assert.equal(error, read.signal.reason, "the caller and downstream observe the identical cancellation");
+    if (expectedName === "Error") assert.equal(error.code, "request_timeout");
+    assert.equal(calls, 1, "observation cannot replay or cancel a task");
+    assert.equal(clock.timers.size, 0, "all observation timers are cleared");
+  });
+}
+
+test("external cancellation owns the request reason and clears both deadlines", async t => {
+  const clock = controlledClock(t);
+  const controller = new AbortController();
+  const reason = new DOMException("Stopped watching", "AbortError");
+  let read;
+  const outcome = waitForTask({ sessionId: "session-1", timeoutSeconds: 1, requestTimeoutSeconds: 0.02,
+    signal: controller.signal, getSnapshot(value) { read = value; return new Promise(() => {}); },
+  }).catch(error => error);
+  await Promise.resolve();
+  clock.advance(10);
+  controller.abort(reason);
+  assert.equal(await outcome, reason);
+  assert.equal(read.signal.reason, reason);
+  assert.equal(clock.timers.size, 0);
+});
+
+for (const settle of ["resolve", "reject"]) {
+  test(`a synchronous ${settle} after both deadlines still attributes the earlier request timeout`, async t => {
+    const clock = controlledClock(t);
+    let read;
+    await assert.rejects(waitForTask({ sessionId: "session-1", timeoutSeconds: 0.1, requestTimeoutSeconds: 0.02,
+      getSnapshot(value) {
+        read = value;
+        clock.advance(200);
+        if (settle === "reject") throw new Error("late transport failure");
+        return snapshot("completed");
+      },
+    }), error => error.code === "request_timeout" && error === read.signal.reason);
+    assert.equal(clock.timers.size, 0);
+  });
+}
+
+test("successful observation clears its total and request deadlines", async t => {
+  const clock = controlledClock(t);
+  let read;
+  const result = await waitForTask({ sessionId: "session-1", timeoutSeconds: 1, requestTimeoutSeconds: 0.02,
+    getSnapshot(value) { read = value; return snapshot("completed"); },
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(clock.timers.size, 0);
+  clock.advance(2000);
+  assert.equal(read.signal.aborted, false);
+});
+
 async function sequence(snapshots, options = {}) {
   const updates = [];
   let calls = 0;

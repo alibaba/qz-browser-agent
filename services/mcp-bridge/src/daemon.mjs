@@ -42,7 +42,17 @@ async function atomicJson(path, value) {
 
 function processExists(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; }
+  try { process.kill(pid, 0); } catch (error) { return error.code === "EPERM"; }
+  if (process.platform !== "linux") return true;
+  try {
+    // Unreaped processes still accept signal 0, but can no longer serve requests or own locks.
+    const status = readFileSync(`/proc/${pid}/status`, "utf8");
+    const state = /^State:[ \t]+([A-Z])(?:[ \t]+\([^\r\n]*\))?[ \t]*$/m.exec(status)?.[1];
+    return state !== "Z" && state !== "X";
+  } catch {
+    // Restricted or unavailable procfs must not turn a live process into a stale owner.
+    return true;
+  }
 }
 
 export async function findDaemon(options = {}) {

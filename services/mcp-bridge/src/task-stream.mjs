@@ -59,22 +59,25 @@ export async function waitForTask({ sessionId, clientId, timeoutSeconds = null, 
     undefined, { signal: activeSignal });
   const readSnapshot = async () => {
     checkActive();
-    const seconds = deadline === null ? requestTimeoutSeconds : Math.min(requestTimeoutSeconds, Math.max(0, (deadline - Date.now()) / 1000));
-    if (seconds <= 0) {
-      controller.abort(timeout);
-      activeSignal.throwIfAborted();
-    }
-    const requestController = new AbortController();
-    const requestSignal = AbortSignal.any([activeSignal, requestController.signal]);
-    const requestTimeout = Object.assign(new Error(`Reading task ${sessionId} timed out after ${seconds} seconds. Check the browser connection, then resume watching this task.`),
+    const milliseconds = Math.max(1, Math.ceil(requestTimeoutSeconds * 1000));
+    const requestDeadline = Date.now() + milliseconds;
+    const requestExpiresFirst = deadline === null || requestDeadline < deadline;
+    const requestTimeout = Object.assign(new Error(`Reading task ${sessionId} timed out after ${requestTimeoutSeconds} seconds. Check the browser connection, then resume watching this task.`),
       { code: "request_timeout" });
-    const requestTimer = setTimeout(() => requestController.abort(requestTimeout), Math.max(1, Math.ceil(seconds * 1000)));
-    try {
-      return await abortable(() => getSnapshot({ sessionId, clientId, signal: requestSignal, timeoutSeconds: seconds }), requestSignal);
-    } catch (error) {
-      // Caller cancellation and an explicit total deadline take precedence over a request timeout.
+    // A request timeout ends observation too. One controller preserves the first reason,
+    // and equal deadlines belong to the total timer. Downstream keeps its full request budget.
+    const requestTimer = requestExpiresFirst ? setTimeout(() => controller.abort(requestTimeout), milliseconds) : null;
+    const checkRequest = () => {
+      if (requestExpiresFirst && Date.now() >= requestDeadline) controller.abort(requestTimeout);
       checkActive();
-      if (requestSignal.aborted) throw requestSignal.reason;
+    };
+    try {
+      const snapshot = await abortable(() => getSnapshot({ sessionId, clientId, signal: activeSignal, timeoutSeconds: requestTimeoutSeconds }), activeSignal);
+      checkRequest();
+      return snapshot;
+    } catch (error) {
+      // Synchronous work can cross a deadline before its timer gets an event-loop turn.
+      checkRequest();
       throw error;
     } finally {
       clearTimeout(requestTimer);

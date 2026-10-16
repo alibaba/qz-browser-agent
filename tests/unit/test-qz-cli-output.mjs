@@ -239,7 +239,7 @@ for (const argv of [["create", "Wait for a choice", "--stream"], ["watch", "task
         accepted: true, sessionId: "task-1", runId: "run-1", waitId: "wait-1",
       };
       assert.equal(name, "qingzhou_get_session_snapshot");
-      now += 240_000;
+      now += 120_000;
       if (++polls === 1) return snapshot("waiting_user", "", {
         runtime: { status: "waiting_user", runId: "run-1", waitId: "wait-2" },
         input: { ...pendingInput, waitId: "wait-2" },
@@ -252,6 +252,7 @@ for (const argv of [["create", "Wait for a choice", "--stream"], ["watch", "task
     const output = JSON.parse(deps.stdout.text);
     assert.equal(output.result.snapshot.status, "completed");
     assert.equal(polls, 3);
+    assert.ok(now - 1_000_000 > 180_000, "total observation may exceed each individual request budget");
     assert.deepEqual(updates.filter(update => update.type === "status").map(update => update.status), ["waiting_user", "running", "completed"]);
     assert.match(deps.stderr.text, /Waiting for you/);
     assert.match(deps.stderr.text, /Task resumed/);
@@ -283,6 +284,47 @@ test("an explicit wait deadline reports observation timeout with same-task recov
   assert.match(error.command, /qz watch task-1.*--client fixture/);
   assert.doesNotMatch(error.command, /qz (create|cancel)/);
   assert.deepEqual(methods, ["qingzhou_get_session_snapshot"]);
+});
+
+for (const scenario of [
+  { name: "equal deadlines", timeout: 5, elapsedMs: 0, expiresMs: 5000, code: "timeout" },
+  { name: "less total time after sending", timeout: 5, elapsedMs: 2000, expiresMs: 3000, code: "timeout" },
+  { name: "request timeout without a total deadline", elapsedMs: 0, expiresMs: 180000, code: "request_timeout" },
+  { name: "caller cancellation", timeout: 5, elapsedMs: 2000, code: "interrupted" },
+]) test(`CLI observation preserves request budgets and causes: ${scenario.name}`, async t => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  const controller = new AbortController();
+  const reason = new DOMException("User stopped watching.", "AbortError");
+  const readReady = Promise.withResolvers();
+  const calls = [];
+  const deps = setup({ signal: controller.signal, callTool: async (_endpoint, name, args, options) => {
+    calls.push({ name, args, options });
+    if (name === "qingzhou_send_message") {
+      t.mock.timers.tick(scenario.elapsedMs);
+      return { accepted: true, clientMessageId: "message-1" };
+    }
+    readReady.resolve({ args, options });
+    return new Promise(() => {});
+  } });
+  const pending = main(["send", "task-1", "Keep working", "--wait", "--json",
+    ...(scenario.timeout ? ["--timeout", String(scenario.timeout)] : [])], deps);
+  const read = await readReady.promise;
+  const requestSeconds = scenario.timeout ?? 180;
+  assert.equal(read.args.timeoutSeconds, requestSeconds);
+  assert.equal(read.options.timeoutMs, requestSeconds * 1000);
+  if (scenario.code === "interrupted") controller.abort(reason);
+  else t.mock.timers.tick(scenario.expiresMs);
+  assert.equal(await pending, scenario.code === "interrupted" ? 130 : 1);
+  const error = JSON.parse(deps.stdout.text).error;
+  assert.equal(error.code, scenario.code);
+  assert.equal(error.sessionId, "task-1");
+  assert.match(error.command, /qz watch task-1.*--client fixture/);
+  assert.equal(read.options.signal.aborted, true);
+  if (scenario.code === "interrupted") assert.equal(read.options.signal.reason, reason);
+  else if (scenario.code === "timeout") assert.equal(read.options.signal.reason.name, "TimeoutError");
+  else assert.equal(read.options.signal.reason.code, "request_timeout");
+  assert.deepEqual(calls.map(call => call.name), ["qingzhou_send_message", "qingzhou_get_session_snapshot"],
+    "ending observation must neither stop the browser task nor replay its accepted message");
 });
 
 test("a timed-out snapshot request is distinguished from the total wait deadline", async () => {

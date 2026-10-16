@@ -20,7 +20,7 @@ export function createSuiteCatalog({ root: ROOT, match, unitConcurrency }) {
     "test-node-mcp-bridge.mjs", "test-node-mcp-cli.mjs", "test-qz-cli-args.mjs",
     "test-qz-terminal.mjs", "test-qz-task-stream.mjs", "test-qz-cli-output.mjs", "test-qz-cli-resources.mjs",
     "test-qz-cli-version-compat.mjs", "test-qz-task-stream-recovery.mjs", "test-mcp-tool-arguments.mjs",
-    "test-qz-client-scope.mjs", "test-mcp-task-observation.mjs", "test-qz-cli-launcher.mjs",
+    "test-qz-client-scope.mjs", "test-mcp-task-observation.mjs", "test-qz-cli-launcher.mjs", "test-qz-daemon-liveness.mjs",
   ];
   const unitTestFiles = readdirSync(join(ROOT, "tests/unit"))
     .filter(name => /^test-.*\.mjs$/.test(name))
