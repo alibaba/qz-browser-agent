@@ -259,8 +259,7 @@ video { display: block; width: 100%; max-height: 70dvh; aspect-ratio: 16 / 9; ba
 .result-grid, .skill-examples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px; margin-top: 38px; }
 .screen-link { display: block; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: zoom-in; }
 .screen-link img { display: block; width: 100%; height: auto; }
-.result-example .screen-link { max-width: 470px; margin-inline: auto; }
-.result-example { min-width: 0; }
+.result-example, .skill-examples > figure { min-width: 0; width: 100%; max-width: 470px; margin-inline: auto; }
 .result-grid { padding: 30px 34px 0; background: var(--soft); border: 1px solid var(--line); border-radius: 8px; }
 .example-copy { padding: 25px 0 30px; }
 .example-copy h3 { font-size: 20px; font-weight: 520; letter-spacing: -.4px; line-height: 1.35; }
@@ -268,7 +267,7 @@ video { display: block; width: 100%; max-height: 70dvh; aspect-ratio: 16 / 9; ba
 .extend .section-heading { align-items: center; }
 .extend .section-heading > p, .extend .example-copy p { color: #aaa; }
 .skill-examples { padding: 30px 34px 0; background: #202020; border: 1px solid #383838; border-radius: 8px; }
-.skill-examples .screen-link { max-width: 470px; margin-inline: auto; border-color: #383838; }
+.skill-examples .screen-link { border-color: #383838; }
 .extension-list { margin-top: 40px; }
 #image-dialog { width: fit-content; max-width: calc(100% - 32px); overflow: auto; }
 .image-top { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 25px; padding: 12px 18px; background: #181818; border-bottom: 1px solid #444; }
@@ -283,8 +282,8 @@ video { display: block; width: 100%; max-height: 70dvh; aspect-ratio: 16 / 9; ba
 @media (max-width: 700px) {
   :lang(zh-CN) h1 { font-size: clamp(42px, 10.5vw, 68px); }
   .result-grid, .skill-examples { grid-template-columns: 1fr; padding: 14px 14px 0; gap: 10px; margin-top: 28px; }
-  .result-example .screen-link, .skill-examples .screen-link { max-width: 100%; }
-  .example-copy { padding: 20px 4px 26px; }
+  .result-example, .skill-examples > figure { max-width: 100%; }
+  .example-copy { padding: 20px 0 26px; }
   .example-copy h3 { font-size: 19px; }
   .example-copy p { font-size: 13px; }
   .ownership { grid-template-columns: 1fr; gap: 22px; padding-block: 35px; }
