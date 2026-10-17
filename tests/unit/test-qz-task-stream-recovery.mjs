@@ -40,7 +40,7 @@ test("a stale preceding runtime waits until it catches up with the submitted mes
 test("CLI replacement recovery inspects the conversation without resending or watching the later run", async () => {
   let calls = 0;
   await assert.rejects(runCli(["send", "task", "Requested message", "--wait"], {
-    findDaemon: async () => ({ endpoint: "http://127.0.0.1:23456", health: {
+    findDaemon: async () => ({ endpoint: "http://127.0.0.1:23456", health: { features: { browserPairing: 1 },
       status: { connected: true, clients: [{ clientId: "browser" }] },
     } }),
     callTool: async (_endpoint, name) => {
@@ -64,7 +64,7 @@ test("CLI recovery commands preserve shell-sensitive IDs and option-like values"
     const clientId = "-browser '$(printf unwanted);";
     for (const tracked of [false, true]) {
       await assert.rejects(runCli(["send", `--client=${clientId}`, "--wait", "--", sessionId, "Requested message"], {
-        findDaemon: async () => ({ endpoint: "http://127.0.0.1:23456", health: {
+        findDaemon: async () => ({ endpoint: "http://127.0.0.1:23456", health: { features: { browserPairing: 1 },
           status: { connected: true, clients: [{ clientId }] },
         } }),
         callTool: async (_endpoint, name) => name === "qingzhou_send_message"

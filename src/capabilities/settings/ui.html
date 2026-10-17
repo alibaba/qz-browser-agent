@@ -152,6 +152,47 @@
           </div>
         </div>
         <div id="settings-panel-advanced" class="settings-body settings-tab-panel hidden" role="tabpanel" aria-labelledby="settings-tab-advanced" data-settings-panel="advanced">
+          <section id="settings-cli-connection" class="advanced-section qz:grid qz:grid-cols-1 qz:gap-2 qz:min-w-0" aria-label="CLI">
+            <div class="qz:flex qz:items-center qz:justify-between qz:gap-3 qz:min-h-8 qz:min-w-0">
+              <span class="advanced-setting-title qz:shrink-0">CLI</span>
+              <div class="qz:flex qz:flex-1 qz:justify-end qz:items-center qz:gap-1 qz:min-w-0">
+                <button id="cli-edit" type="button" class="qz-icon-btn qz-icon-btn--sm hidden" aria-label="修改连接" data-i18n-aria-label="settings.cliEdit" title="修改连接" data-i18n-title="settings.cliEdit">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m10 3 3 3M3 13l3-.7L13 5.4a1.4 1.4 0 0 0-2-2L4 10.3 3 13Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+                </button>
+                <button id="cli-toggle" type="button" class="qz-btn qz-btn--secondary qz-btn--sm cli-connection-action" disabled><span id="cli-toggle-label" class="qz:min-w-0 qz:truncate" data-i18n="settings.cliConnect">连接 CLI</span></button>
+              </div>
+            </div>
+            <p id="cli-status" class="qz-field-hint qz:m-0 hidden" role="status" aria-live="polite"></p>
+            <div id="cli-start" class="hidden qz:grid qz:gap-1">
+              <div class="qz:flex qz:items-center qz:justify-between qz:gap-2 qz:min-w-0">
+                <span class="qz-field-hint qz:m-0" data-i18n="settings.cliStartHint">在终端运行后重试：</span>
+                <button id="cli-copy" type="button" class="qz-icon-btn qz-icon-btn--sm qz:shrink-0" aria-label="复制启动命令" data-i18n-aria-label="settings.cliCopyCommand" title="复制启动命令" data-i18n-title="settings.cliCopyCommand">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M3 10H2.5A1.5 1.5 0 0 1 1 8.5v-6A1.5 1.5 0 0 1 2.5 1h6A1.5 1.5 0 0 1 10 2.5V3" stroke="currentColor" stroke-width="1.3"/></svg>
+                </button>
+              </div>
+              <code id="cli-start-command" class="cli-start-command qz:block qz:min-w-0 qz:p-2 qz:bg-surface-muted qz:rounded-control" dir="ltr"></code>
+            </div>
+            <div id="cli-connect-popover" class="qz-popover cli-connect-popover qz:fixed qz:m-0 qz:p-3" popover="auto" role="dialog" aria-labelledby="cli-name-label">
+              <form id="cli-connect-form" class="qz:grid qz:gap-3">
+                <div class="qz:grid qz:gap-1">
+                  <label id="cli-name-label" for="cli-name" class="qz-field-label" data-i18n="settings.cliName">浏览器标识</label>
+                  <input id="cli-name" class="qz-field qz:w-full" type="text" autocomplete="off" spellcheck="false" dir="auto" maxlength="64" placeholder="供 CLI 选择，例如 work" data-i18n-placeholder="settings.cliNamePlaceholder">
+                </div>
+                <details id="cli-address-details">
+                  <summary class="cli-address-summary qz:flex qz:items-center qz:gap-1.5 qz:min-h-7">
+                    <svg class="cli-address-chevron qz:shrink-0" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <span class="qz-field-label qz:flex-1 qz:min-w-0" data-i18n="settings.cliAddress">本地服务地址</span>
+                  </summary>
+                  <input id="cli-address" class="qz-field qz:w-full qz:mt-2" type="url" autocomplete="off" spellcheck="false" dir="ltr" value="http://127.0.0.1:18765" aria-label="本地服务地址" data-i18n-aria-label="settings.cliAddress" required>
+                </details>
+                <p id="cli-popover-status" class="qz-field-hint qz:m-0 hidden" role="status" aria-live="polite"></p>
+                <div class="qz:flex qz:items-center qz:justify-end qz:gap-2">
+                  <button id="cli-cancel" type="button" class="qz-btn qz-btn--ghost qz-btn--sm" data-i18n="settings.cliCancel">取消</button>
+                  <button id="cli-submit" type="submit" class="qz-btn qz-btn--primary qz-btn--sm" data-i18n="settings.cliConnect">连接 CLI</button>
+                </div>
+              </form>
+            </div>
+          </section>
           <section class="advanced-section qz:grid qz:gap-2" aria-label="高级设置" data-i18n-aria-label="settings.advancedSettings">
             <div id="cfg-trim-old-tool-results-field" class="hidden" aria-hidden="true">
               <label class="settings-toggle-row qz:flex qz:items-center qz:justify-between qz:gap-3 qz:min-h-8">
@@ -176,7 +217,7 @@
               <span class="advanced-setting-title" data-i18n="settings.modelRateLimiting">模型限速</span>
               <input id="cfg-request-rate-limit" class="qz-checkbox" type="checkbox">
             </label>
-            <label class="settings-toggle-row qz:flex qz:items-center qz:justify-between qz:gap-3 qz:min-h-8">
+            <label class="settings-toggle-row hidden qz:flex qz:items-center qz:justify-between qz:gap-3 qz:min-h-8" aria-hidden="true">
               <span class="advanced-setting-title" data-i18n="settings.debugMode">调试模式</span>
               <input id="cfg-debug-mode" class="qz-checkbox" type="checkbox">
             </label>
@@ -186,9 +227,9 @@
               <div class="advanced-setting-title" data-i18n="settings.securityPolicies">安全策略</div>
             </div>
             <div class="guardrail-form qz:grid qz:gap-2" aria-label="新增访问规则" data-i18n-aria-label="settings.newAccessRule">
-              <div class="guardrail-form-header qz:flex qz:flex-wrap qz:items-start qz:justify-between qz:min-w-0">
-                <div class="guardrail-form-title" data-i18n="settings.newRule">新增规则</div>
-                <div class="guardrail-form-hint" data-i18n="settings.allowAccessCreatesExceptionsToBlockRulesOrdinaryAccessNeeds">“允许访问”用于反向加白，普通访问无需配置。</div>
+              <div class="guardrail-form-header qz:flex qz:items-baseline qz:min-w-0">
+                <div class="guardrail-form-title qz:shrink-0" data-i18n="settings.newRule">新增规则</div>
+                <div id="guardrail-allow-hint" class="guardrail-form-hint hidden qz:flex-1 qz:min-w-0" data-i18n="settings.allowAccessCreatesExceptionsToBlockRulesOrdinaryAccessNeeds">“允许访问”用于反向加白，普通访问无需配置。</div>
               </div>
               <div class="guardrail-add-row qz:grid qz:gap-2">
                 <div class="guardrail-filter-row qz:grid-cols-2">

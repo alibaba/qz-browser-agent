@@ -1277,6 +1277,7 @@ async function waitFor(predicate, timeoutMs = 2000) {
 
 function createFetchMock(responses = []) {
   const queue = responses.slice();
+  let bridgeIdentity;
   return async function fetchMock(url, init = {}) {
     const href = String(url || "");
     state.networkRequests.push(href);
@@ -1305,6 +1306,15 @@ function createFetchMock(responses = []) {
         headers: { "Content-Type": "text/event-stream" },
       });
     }
+    if (href === "http://127.0.0.1:18765/health") {
+      return Response.json({ service: "qz-browser-agent", protocolVersion: 1, features: { browserPairing: 1 }, instanceId: "smoke-instance" });
+    }
+    if (href === "http://127.0.0.1:18765/v1/qingzhou/pair") {
+      const paired = JSON.parse(String(init.body || "{}"));
+      bridgeIdentity = { clientId: paired.clientId, name: paired.name, connectionId: paired.connectionId, instanceId: paired.instanceId };
+      return Response.json({ ok: true, ...paired });
+    }
+    if (href === "http://127.0.0.1:18765/v1/qingzhou/disconnect") return Response.json({ ok: true });
     if (href === "http://127.0.0.1:18765/v1/qingzhou/poll") {
       state.bridgePolls += 1;
       const requests = state.bridgePolls === 1 && state.bridgeListToolsSessionId
@@ -1317,7 +1327,7 @@ function createFetchMock(responses = []) {
             },
           }]
         : [];
-      return Response.json({ requests });
+      return Response.json({ requests, ...bridgeIdentity });
     }
     if (href === "http://127.0.0.1:18765/v1/qingzhou/result") {
       state.bridgeResults.push(JSON.parse(String(init.body || "{}")));
@@ -1328,10 +1338,10 @@ function createFetchMock(responses = []) {
 }
 
 function isTitleGenerationRequest(request = {}) {
-  return (request.messages || []).some(message => (
-    message?.role === "system"
-    && String(message.content || "").includes("会话标题生成器")
-  ));
+  const [system, source] = request.messages || [];
+  if (request.stream !== false || request.messages?.length !== 2 || system?.role !== "system" || source?.role !== "user") return false;
+  try { return typeof JSON.parse(String(source.content)).source_text === "string"; }
+  catch { return false; }
 }
 
 async function invokeRuntimeMessage(message, sender = {}) {
@@ -1360,21 +1370,13 @@ async function invokeRuntimeMessage(message, sender = {}) {
 }
 
 async function setMcpBridgeEnabled(enabled) {
-  const key = "_qingzhou_mcp_bridge";
-  const oldValue = storageData[key];
-  const newValue = {
-    enabled,
+  const response = await invokeRuntimeMessage({
+    type: enabled ? "mcp_connection_connect" : "mcp_connection_disconnect",
     endpoint: "http://127.0.0.1:18765",
-    clientId: "coverage-client",
-    pollIntervalMs: 60000,
-    pollTimeoutMs: 1000,
-    requestTimeoutMs: 2000,
-  };
-  storageData[key] = newValue;
-  for (const listener of state.storageOnChanged.slice()) {
-    listener({ [key]: { oldValue, newValue } }, "local");
-  }
-  await new Promise(resolve => setTimeout(resolve, 0));
+    name: "coverage-client",
+  }, { id: chrome.runtime.id, url: `chrome-extension://${chrome.runtime.id}/sidepanel.html` });
+  assert.equal(response.ok, true);
+  assert.equal(response.result?.state, enabled ? "connected" : "disconnected", "the bridge fixture must complete the requested connection transition");
 }
 
 function openAiSse(chunks = []) {

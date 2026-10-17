@@ -60,55 +60,59 @@ export function createMcpTransport(api: BackgroundApi, { bridge = {} }: { bridge
   async function dispatch(request: Fields = {}) {
     const method = String(request.method || "").trim();
     const params = isPlainObject(request.params) ? request.params : {};
+    const signal = request.signal instanceof AbortSignal ? request.signal : undefined;
+    signal?.throwIfAborted();
     await call("system.ready");
+    // A disconnected client must not start queued browser work after readiness resolves.
+    signal?.throwIfAborted();
 
     switch (method) {
       case "ping": return call("system.ping");
       case "capabilities": return bridge.describe?.() || { protocolVersion: 1, methods: QINGZHOU_MCP_METHODS };
       case "get_bridge_config": return bridge.getConfig?.() || {};
       case "save_bridge_config": return bridge.saveConfig?.(params.config || params);
-      case "runtime_message": return call("system.runtimeMessage", params.message || {}, params);
+      case "runtime_message": return call("system.runtimeMessage", params.message || {}, params, signal);
       case "list_sessions": return call("sessions.list", params);
-      case "create_session": return call("sessions.create", params);
-      case "send_message": return call("sessions.send", params);
-      case "follow_up": return call("sessions.followUp", params);
+      case "create_session": return call("sessions.create", params, signal);
+      case "send_message": return call("sessions.send", params, signal);
+      case "follow_up": return call("sessions.followUp", params, signal);
       case "get_user_input": return call("sessions.userInput", params);
-      case "respond_to_user_input": return call("sessions.respondToUserInput", params);
-      case "continue_task": return call("sessions.continueWait", params);
-      case "submit_wait_form": return call("sessions.submitWaitForm", params);
-      case "cancel_wait": return call("sessions.cancelWait", params);
+      case "respond_to_user_input": return call("sessions.respondToUserInput", params, signal);
+      case "continue_task": return call("sessions.continueWait", params, signal);
+      case "submit_wait_form": return call("sessions.submitWaitForm", params, signal);
+      case "cancel_wait": return call("sessions.cancelWait", params, signal);
       case "get_session_state": return call("sessions.state", params.sessionId);
       case "get_session_snapshot": return call("sessions.snapshot", params.sessionId, params);
       case "get_messages": return call("sessions.messages", params.sessionId, params);
       case "get_history": return call("sessions.history", params.sessionId);
-      case "stop_session": return call("sessions.stop", params.sessionId, { source: "mcp_bridge", cascade: params.cascade !== false });
-      case "clear_goal": return call("sessions.clearGoal", params.sessionId, "mcp_bridge");
+      case "stop_session": return call("sessions.stop", params.sessionId, { source: "mcp_bridge", cascade: params.cascade !== false }, signal);
+      case "clear_goal": return call("sessions.clearGoal", params.sessionId, "mcp_bridge", signal);
       case "list_tools": return call("tools.list", params);
       case "execute_tool":
-      case "call_tool": return call("tools.execute", params);
+      case "call_tool": return call("tools.execute", params, signal);
       case "list_data_tables": return call("data.listTables");
-      case "delete_data_table": return call("data.deleteTable", params);
-      case "export_data_table": return call("data.exportTable", params);
+      case "delete_data_table": return call("data.deleteTable", params, signal);
+      case "export_data_table": return call("data.exportTable", params, signal);
       case "list_image_collections": return call("data.listImageCollections");
-      case "delete_image_collection": return call("data.deleteImageCollection", params);
-      case "export_image_collection": return call("data.exportImageCollection", params);
+      case "delete_image_collection": return call("data.deleteImageCollection", params, signal);
+      case "export_image_collection": return call("data.exportImageCollection", params, signal);
       case "list_downloads": return call("data.listDownloads", params);
       case "list_skills": return call("skills.list", params);
       case "get_skill":
       case "load_skill": return call("skills.get", params);
       case "get_skill_resource":
       case "load_skill_resource": return call("skills.resource", params);
-      case "export_skill": return call("skills.export", params);
+      case "export_skill": return call("skills.export", params, signal);
       case "get_config": return call("config.get");
-      case "save_config": return call("config.save", params.config || {});
+      case "save_config": return call("config.save", params.config || {}, signal);
       case "get_settings": return call("settings.get", params);
-      case "update_settings": return call("settings.update", params);
+      case "update_settings": return call("settings.update", params, signal);
       case "get_runtime_config": return call("config.getRuntime");
       case "set_runtime_config": return call("config.setRuntime", isPlainObject(params.config) ? params.config : params);
       case "list_plugins": return call("skills.contributions", params.sessionId);
       case "refresh_skill_registry": return call("skills.refresh", params);
       case "list_automations": return call("automations.list", params);
-      case "run_automation": return call("automations.run", params.automationId);
+      case "run_automation": return call("automations.run", params.automationId, signal);
       case "get_trace": return { logs: await call("trace.get") };
       case "clear_trace":
         await call("trace.clear");

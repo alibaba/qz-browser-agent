@@ -58,7 +58,6 @@ h1 span { color: #8d8d88; }
 .source-link { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
 .source-link:hover { text-decoration: underline; text-underline-offset: 5px; }
 .source-link svg { width: 19px; height: 19px; }
-.small-note { font-size: 10px; line-height: 1.6; color: var(--secondary); margin-top: 16px; }
 .showcase { overflow: hidden; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 14px 40px rgba(0, 0, 0, .055); }
 .workspace-link { display: block; background: #fff; }
 .workspace { display: block; width: 100%; height: auto; }
@@ -99,8 +98,7 @@ h2 { font-weight: 480; font-size: clamp(36px, 4vw, 53px); line-height: 1.12; let
 .get-started .button { margin-top: 30px; }
 .install-guide { display: flex; width: fit-content; margin-top: 22px; }
 .steps { list-style: none; padding: 0; margin: 0; }
-.steps li { display: flex; gap: 28px; padding: 25px 0; }
-.steps li:first-child { padding-top: 25px; }
+.steps li { display: flex; gap: 28px; padding: 18px 0; }
 .steps .index { padding-top: 5px; }
 .steps h3 { font-size: 17px; font-weight: 520; }
 .steps p { font-size: 13px; line-height: 1.85; color: var(--secondary); margin-top: 12px; }
@@ -142,7 +140,6 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .agent-connector svg { width: 24px; height: 24px; }
 .agent-panel-link { align-self: start; }
 .agent-setup-note { display: flex; justify-content: space-between; align-items: baseline; gap: 24px; margin-top: 32px; font-size: 12px; line-height: 1.8; color: var(--secondary); }
-.agent-setup-note .text-link { flex-shrink: 0; }
 #agent-target { max-width: 150px; border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 11px; }
 #agent-target:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 #agent-target[hidden], .agent-target-fallback[hidden] { display: none; }
@@ -214,7 +211,6 @@ video { display: block; width: 100%; max-height: 70dvh; aspect-ratio: 16 / 9; ba
   .hero-aside, :lang(zh-CN) .hero-aside { max-width: 440px; justify-self: start; }
   .intro { font-size: 15px; line-height: 1.75; max-width: 360px; }
   .actions { margin-top: 20px; }
-  .small-note { font-size: 10px; margin-top: 12px; }
   .film-strip { padding: 13px; gap: 10px; min-height: 64px; }
   .film-label { font-size: 10px; max-width: 160px; }
 
@@ -231,6 +227,7 @@ video { display: block; width: 100%; max-height: 70dvh; aspect-ratio: 16 / 9; ba
   .ownership-copy > p { font-size: 15px; }
   .get-grid { gap: 45px; }
   .get-started .button { margin-top: 24px; }
+  .steps li { padding-block: 16px; }
   .first-prompt { margin-top: 30px; padding: 19px 20px 25px; }
   .first-prompt > p { font-size: 17px; }
   .integration-grid { grid-template-columns: 1fr; gap: 35px; margin-top: 28px; }
@@ -310,7 +307,6 @@ video { display: block; width: 100%; max-height: 70dvh; aspect-ratio: 16 / 9; ba
   .console-body { padding: 20px 15px; font-size: 12px; gap: 18px; }
   .console-command { gap: 8px; }
   .agent-setup-note { display: block; margin-top: 26px; }
-  .agent-setup-note .text-link { margin-top: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

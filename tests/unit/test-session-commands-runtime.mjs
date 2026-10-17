@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createMemoryStorage } from "../support/memory-storage.mjs";
 import { buildSessionTitleMessages } from "../../src/background/agent/prompts.js";
 import { createSessionCommands } from "../../src/background/session/commands.js";
+import { createMcpRuntime } from "../../src/background/mcp/mcp-runtime.js";
 import { createSessionRepository } from "../../src/background/session/repository.js";
 import {
   deserializeConversation,
@@ -25,12 +26,85 @@ await compactContextCommandFlow();
 await recordExchangeAndFallbackFlow();
 await rejectedRecordWritePreservesTranscript();
 await goalWaitAndPermissionFlow();
+await atomicRuntimeInputSnapshots();
 await sessionWindowDraftFlow();
 await serializedSessionDraftMutations();
 await stopCascadeAndDeleteFlow();
 await stopPortOrderingAndIdleNoOp();
+await cancelledRemoteAdmissionsDoNotStartWork();
+await cancelledRemoteTerminalCommandsLeaveTasksIntact();
 
 console.log("session command runtime integration tests passed");
+
+async function cancelledRemoteTerminalCommandsLeaveTasksIntact() {
+  for (const method of ["stopSessionRuntime", "deleteSessionRuntime"]) {
+    const f = createFixture(), controller = new AbortController();
+    const id = `cancel-${method}`;
+    await f.repository.createMetadata({ id, title: "Still active" });
+    const agent = f.agent(id); f.setRuntime(id, { status: "running", running: true, runId: "active" });
+    const pending = f.commands[method](id, { cascade: false }, controller.signal);
+    controller.abort(new Error("disconnected before terminal admission"));
+    await assert.rejects(pending, /disconnected before terminal admission/);
+    assert.equal(f.agent(id), agent);
+    assert.equal(f.runtimes.get(id).status, "running");
+    assert.ok(await f.repository.getMetadata(id)); assert.equal(f.releasedRuns.length, 0);
+  }
+  for (const method of ["stopSessionRuntime", "deleteSessionRuntime"]) {
+    const controller = new AbortController();
+    const f = createFixture({ releaseRunResources: async () => controller.abort(new Error("disconnected after admission")) });
+    const id = `admitted-${method}`; await f.repository.createMetadata({ id, title: "Finish cleanup" });
+    f.agent(id); f.setRuntime(id, { status: "running", running: true, runId: "active" });
+    await f.commands[method](id, { cascade: false }, controller.signal);
+    if (method === "deleteSessionRuntime") assert.equal(await f.repository.getMetadata(id), null);
+    else assert.equal(f.runtimes.get(id).status, "aborted");
+  }
+}
+
+async function cancelledRemoteAdmissionsDoNotStartWork() {
+  for (const method of ["createSessionFromApi", "createSessionMetadataRuntime"]) {
+    const database = deferred(), writing = deferred(), createController = new AbortController();
+    const creation = createFixture({ wrapRepository: base => ({ ...base, async createMetadata(input) {
+      writing.resolve(); await database.promise; return base.createMetadata(input);
+    } }) });
+    const creating = creation.commands[method]({ firstMessage: "must not launch" }, createController.signal);
+    await writing.promise; createController.abort(new Error("disconnected during metadata write")); database.resolve();
+    await assert.rejects(creating, /disconnected during metadata write/);
+    assert.equal(creation.agentCalls.length, 0);
+    assert.equal(creation.broadcasts.some(event => event.type === "session_created"), false);
+    assert.equal(Object.keys(await creation.repository.listMetadata()).length, 1, "committed metadata is retained; cancellation does not roll back unrelated writes");
+  }
+
+  const metadata = deferred(), reading = deferred(), startController = new AbortController();
+  const starting = createFixture({ wrapRepository: base => ({ ...base, async getMetadata(id) {
+    reading.resolve(); await metadata.promise; return base.getMetadata(id);
+  } }) });
+  await starting.repository.createMetadata({ id: "delayed-start", title: "Delayed start" });
+  const admission = starting.commands.submitSessionMessageRuntime({ sessionId: "delayed-start", text: "must not start" }, startController.signal);
+  await reading.promise; startController.abort(new Error("disconnected before launch")); metadata.resolve();
+  await assert.rejects(admission, /disconnected before launch/);
+  assert.equal(starting.agentCalls.length, 0); assert.equal(starting.supervisor.getTask("delayed-start"), null);
+
+  for (const mode of ["follow_up", "send", "steer"]) {
+    const queued = createFixture(), entered = deferred(), gate = deferred(), controller = new AbortController();
+    await queued.repository.createMetadata({ id: mode, title: mode }); queued.agent(mode).isStreaming = true;
+    const method = mode === "follow_up" ? "withAgent" : "submitMessage";
+    const original = queued.supervisor[method];
+    queued.supervisor[method] = async function (...args) { entered.resolve(); await gate.promise; return original.apply(this, args); };
+    const params = { sessionId: mode, text: "must not enqueue", clientMessageId: "cancelled", deliveryMode: mode === "steer" ? "steer" : "follow_up" };
+    const pending = mode === "follow_up" ? queued.commands.followUpSessionRuntime(params, controller.signal)
+      : queued.commands.submitSessionMessageRuntime(params, controller.signal);
+    await entered.promise; controller.abort(new Error("connection revoked while waiting for agent")); gate.resolve();
+    await assert.rejects(pending, /connection revoked while waiting for agent/);
+    assert.equal(queued.agentCalls.length, 0); assert.deepEqual(queued.agent(mode).getPendingFollowUps(), []);
+  }
+
+  const runningGate = deferred(), running = createFixture({ beforePromptAccept: () => runningGate.promise }), controller = new AbortController();
+  await running.repository.createMetadata({ id: "already-admitted", title: "Admitted" });
+  const admitted = await running.commands.submitSessionMessageRuntime({ sessionId: "already-admitted", text: "complete independently" }, controller.signal);
+  controller.abort(new Error("observer disconnected")); runningGate.resolve(); await admitted.promise;
+  assert.ok(running.agentCalls.some(call => call[0] === "prompt"));
+  assert.equal(running.runtimes.get("already-admitted").status, "completed", "admitted tasks remain independent of their connection");
+}
 
 async function creationRunAndHistoryFlow() {
   const fixture = createFixture();
@@ -981,6 +1055,76 @@ async function recordExchangeAndFallbackFlow() {
   });
 }
 
+async function atomicRuntimeInputSnapshots() {
+  for (const route of ["live-state", "inactive-state", "snapshot", "send"]) {
+    for (const transition of ["new-wait", "resolved-wait", "new-run", "revoked-agent"]) {
+      const reading = deferred(), gate = deferred(); let block = false;
+      const f = createFixture({ wrapRepository: base => ({ ...base, async listMetadata() {
+        if (block) { reading.resolve(); await gate.promise; }
+        return base.listMetadata();
+      } }) });
+      const sessionId = `${route}-${transition}`;
+      const hiddenGoal = transition === "resolved-wait" || transition === "new-run";
+      await f.repository.createMetadata({ id: sessionId, title: "Atomic snapshot",
+        ...(transition === "resolved-wait" ? { parentSessionId: "parent" } : transition === "new-run" ? { source: "automation" } : {}) });
+      const form = { fields: [{ id: "city", type: "text", required: true }] };
+      let wait = transition === "new-wait" ? null : { sessionId, waitId: "wait-first", runId: "run-first" };
+      f.setRuntime(sessionId, { status: wait ? "waiting_user" : "running", running: true, runId: "run-first", waitId: wait?.waitId || "", waitForm: wait ? form : null,
+        goal: { objective: "private goal", status: "active", createdAt: "fixture", updatedAt: "fixture" } });
+      const handle = { agent: {
+        getContextUsageState: async () => ({ inputTokensEstimate: 7 }),
+        getRunState: () => { const current = f.runtimes.get(sessionId); return { isStreaming: current.running, runId: transition === "new-run" ? "run-first" : current.runId, hasHistory: true }; },
+        exportSession: () => [],
+      } };
+      const runtime = createMcpRuntime({
+        sessions: {
+          normalizeId: value => String(value), requireId: value => String(value),
+          getRuntime: f.commands.getSessionRuntimeState,
+          getRuntimeOutput: f.commands.getSessionRuntimeStateForOutput,
+          getLiveAgentEntry: async () => route === "inactive-state" || !handle.agent ? null : handle,
+          setRuntime: f.setRuntime,
+          supervisor: { getUserWait: () => wait, resolveUserWait() {}, rejectUserWait() {} },
+          submitMessage: async () => ({ disposition: "started", promise: Promise.resolve() }),
+          listMetadata: async () => ({ [sessionId]: { id: sessionId } }),
+          getConversation: async () => [], getTranscript: async () => [], compactTranscriptEvent: value => value,
+        },
+        userInputPermissions: { hasBrowserPermission: async () => false, locationConsent: {} },
+        tools: {}, skills: {}, artifacts: { empty: () => ({ items: [] }) }, trace: {}, dispatchSidepanel() {},
+      });
+      block = true;
+      const pending = route === "send" ? runtime.sendMessage({ sessionId, text: "Continue", waitForStart: false })
+        : route === "snapshot" ? runtime.getSnapshot(sessionId, { includeArtifacts: false }) : runtime.getState(sessionId);
+      await reading.promise;
+      const runId = transition === "new-run" ? "run-second" : "run-first";
+      wait = transition === "resolved-wait" || transition === "revoked-agent" ? null : { sessionId, waitId: "wait-second", runId };
+      f.setRuntime(sessionId, { status: transition === "revoked-agent" ? "aborted" : wait ? "waiting_user" : "running",
+        running: transition !== "revoked-agent", runId, waitId: wait?.waitId || "", waitForm: wait ? form : null, inputTokensEstimate: 11 });
+      if (transition === "revoked-agent") handle.agent = null;
+      gate.resolve(); const result = await pending;
+      assert.equal(result.runtime.runId, runId, `${route}/${transition} must sample the current run after metadata`);
+      assert.equal(result.runtime.waitId, wait?.waitId || "");
+      if (transition === "new-run") assert.equal(result.runtime.inputTokensEstimate, 11, "an old live Agent's context must not overwrite the new run's snapshot");
+      assert.equal(result.input.waiting, !!wait);
+      if (wait) {
+        assert.equal(result.input.waitId, result.runtime.waitId);
+        assert.equal(result.input.runId, result.runtime.runId);
+        assert.deepEqual(result.input.form, result.runtime.waitForm);
+      }
+      if (route !== "send") {
+        assert.equal(result.runId, result.runtime.runId);
+        assert.equal(result.status, result.runtime.status);
+        assert.equal(result.isStreaming, transition !== "revoked-agent");
+      }
+      if (hiddenGoal) assert.equal(result.runtime.goal, null, "child and automation goals stay redacted inside the projection");
+      else assert.equal(result.runtime.goal.objective, "private goal");
+      assert.equal(f.runtimes.get(sessionId).goal.objective, "private goal", "output redaction must not modify the owning store");
+      assert.equal((await f.commands.getSessionRuntimeStateForOutput(sessionId)).waitId, wait?.waitId || "", "existing non-projecting callers keep their runtime result");
+    }
+  }
+  const f = createFixture();
+  await assert.rejects(f.commands.getSessionRuntimeStateForOutput("missing", async value => value), /projection must be synchronous/);
+}
+
 async function goalWaitAndPermissionFlow() {
   const fixture = createFixture();
   await fixture.repository.createMetadata({ id: "root", title: "Root" });
@@ -1000,6 +1144,9 @@ async function goalWaitAndPermissionFlow() {
   assert.equal(goal.goal.status, "active");
   const readGoal = await fixture.commands.updateSessionGoal({ sessionId: "root", action: "get" });
   assert.equal(readGoal.goal.objective, "finish reliably");
+  const disconnected = new AbortController(); disconnected.abort(new Error("connection revoked"));
+  await assert.rejects(fixture.commands.clearSessionGoalFromApi("root", "mcp_bridge", disconnected.signal), { code: "OPERATION_ABORTED" });
+  assert.equal((await fixture.commands.updateSessionGoal({ sessionId: "root", action: "get" })).goal.objective, "finish reliably");
   await assert.rejects(
     fixture.commands.updateSessionGoal({ sessionId: "child", action: "create", objective: "forbidden" }),
     error => error?.code === "GOAL_SESSION_FORBIDDEN",
@@ -1636,6 +1783,7 @@ function createFixture(options = {}) {
 
   return {
     commands,
+    supervisor,
     repository,
     runtimes,
     transcripts,

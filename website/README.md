@@ -20,8 +20,8 @@ path `/qz-browser-agent/`.
 
 - Use the product's default black, white, and gray design tokens at website sizes. The website
   follows the system color scheme and reduced-motion preference.
-- Download links point to the latest GitHub release. Add a verified store URL when the extension
-  becomes available in the Chrome Web Store.
+- Primary installation links point to the [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm).
+  The installation section also links to the latest GitHub release for manual installation.
 - The Agent-friendly section pairs an illustrative terminal session with actual narrow Side Panel
   screenshots from the documentation-research task. The console is authored HTML, not a recording.
   `assets/screens/agent-en.png` and `agent-zh.png` show the same original English conversation in

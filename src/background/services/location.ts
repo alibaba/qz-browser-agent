@@ -64,15 +64,16 @@ export function createLocationService({ storage, sessions, emit, locate }: Locat
     assertSidePanelSender(sender);
     return saveAcceptance(waitId, sessionId);
   }
-  async function acceptExternal(waitId: string, sessionId: string, consentVersion: unknown) {
+  async function acceptExternal(waitId: string, sessionId: string, consentVersion: unknown, signal?: AbortSignal) {
     if (consentVersion !== DATA_CONSENT_VERSION) {
       throw new ToolExecutionError("LOCATION_CONSENT_VERSION_MISMATCH", "The location disclosure has changed. Read the task input before approving it.");
     }
-    return saveAcceptance(waitId, sessionId);
+    return saveAcceptance(waitId, sessionId, signal);
   }
-  function saveAcceptance(waitId: string, sessionId: string) {
+  function saveAcceptance(waitId: string, sessionId: string, signal?: AbortSignal) {
     const approval = approvals.get(waitId);
     function assertPending() {
+      signal?.throwIfAborted();
       if (!approval || approval.context.sessionId !== sessionId || approvals.get(waitId) !== approval) {
         throw new ToolExecutionError("STALE_RUN", "Location approval has expired");
       }

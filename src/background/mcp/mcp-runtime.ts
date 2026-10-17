@@ -102,11 +102,13 @@ export function createMcpRuntime({
     };
   }
 
-  async function dispatchRuntimeMessage(message: Fields = {}, options: Fields = {}) {
+  async function dispatchRuntimeMessage(message: Fields = {}, options: Fields = {}, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const requestId = String(message.requestId || options.requestId || randomRequestId());
     const responses: Fields[] = [];
     const port = {
       name: "mcp_bridge",
+      signal,
       postMessage(response: unknown) {
         responses.push(plainObject(response));
       },
@@ -127,7 +129,8 @@ export function createMcpRuntime({
     ...userInputPermissions,
   });
 
-  async function sendMessage(params: Fields = {}) {
+  async function sendMessage(params: Fields = {}, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const sessionId = sessions.requireId(params.sessionId, "send_message");
     if (params.steer !== undefined && typeof params.steer !== "boolean") {
       throw Object.assign(new Error("steer must be a boolean."), { code: "INVALID_ARGUMENTS" });
@@ -149,14 +152,14 @@ export function createMcpRuntime({
       deliveryMode,
       onMessageAccepted: typeof acceptedHook === "function" ? acceptedHook as NonNullable<NonNullable<Parameters<Commands["submitSessionMessageRuntime"]>[0]>["onMessageAccepted"]> : null,
       swallowErrors: params.swallowErrors !== false,
-    });
+    }, signal);
     const started = taskInfo.disposition === "started";
     if (params.wait === true && started) {
       await taskInfo.promise;
     } else if (started && params.waitForStart !== false) {
       await sessions.waitForRunObserved(sessionId, taskInfo, Number(params.waitForStartMs ?? 2000));
     }
-    return {
+    return sessions.getRuntimeOutput(sessionId, runtime => ({
       accepted: true,
       sessionId,
       clientMessageId,
@@ -164,38 +167,44 @@ export function createMcpRuntime({
       disposition: taskInfo.disposition,
       wait: params.wait === true && started,
       waitForStart: started && params.wait !== true && params.waitForStart !== false,
-      runtime: await sessions.getRuntimeOutput(sessionId),
+      runtime,
       input: userInput.get({ sessionId }),
-    };
+    }));
   }
 
   async function getState(sessionId: unknown) {
     const id = sessions.normalizeId(sessionId);
     const entry = id ? await sessions.getLiveAgentEntry(id) : null;
-    if (!entry) {
-      const runtime = await sessions.getRuntimeOutput(id);
-      return {
+    const agent = entry?.agent;
+    if (!agent) {
+      return sessions.getRuntimeOutput(id, runtime => ({
         sessionId: id,
-        isStreaming: false,
+        isStreaming: !!runtime.running,
         runId: runtime.runId,
         hasHistory: false,
         status: runtime.status,
         runtime,
         input: userInput.get({ sessionId: id }),
-      };
+      }));
     }
-    const liveState = entry.agent.getRunState();
-    const contextState = await entry.agent.getContextUsageState();
-    if (contextState.inputTokensEstimate) sessions.setRuntime(id, contextState);
-    const runtime = { ...(await sessions.getRuntimeOutput(id)), ...contextState };
-    return {
-      sessionId: id,
-      ...liveState,
-      runId: runtime.runId || liveState.runId || null,
-      status: runtime.status,
-      runtime,
-      input: userInput.get({ sessionId: id }),
-    };
+    const contextRunId = agent.getRunState().runId;
+    const contextState = await agent.getContextUsageState();
+    return sessions.getRuntimeOutput(id, current => {
+      const observed = entry.agent?.getRunState();
+      const sameRun = entry.agent === agent && observed && observed.runId === current.runId;
+      const liveState = sameRun ? observed : { isStreaming: !!current.running, runId: current.runId, hasHistory: !!observed?.hasHistory };
+      const contextCurrent = sameRun && observed.runId === contextRunId;
+      if (contextCurrent && contextState.inputTokensEstimate) sessions.setRuntime(id, contextState);
+      const runtime = contextCurrent ? { ...current, ...contextState } : current;
+      return {
+        sessionId: id,
+        ...liveState,
+        runId: runtime.runId || liveState.runId || null,
+        status: runtime.status,
+        runtime,
+        input: userInput.get({ sessionId: id }),
+      };
+    });
   }
 
   async function getMessages(sessionId: unknown, options: Fields = {}) {
@@ -213,8 +222,9 @@ export function createMcpRuntime({
     const id = sessions.normalizeId(sessionId);
     const [metadata, state] = await Promise.all([sessions.listMetadata(), getState(id)]);
     const entry = await sessions.getLiveAgentEntry(id);
-    const conversation = entry
-      ? entry.agent.exportSession()
+    const agent = entry?.agent;
+    const conversation = agent
+      ? agent.exportSession()
       : await sessions.getConversation(id).catch(() => null);
     const transcript = await sessions.getTranscript(id, conversation).catch(() => []);
     const compact = options.compact !== false;
@@ -284,13 +294,17 @@ export function createMcpRuntime({
     };
   }
 
-  async function executeTool(params: Fields = {}) {
+  async function executeTool(params: Fields = {}, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const name = String(params.name || params.toolName || "").trim();
     if (!name) throw new Error("execute_tool requires name");
     await waitForToolsReady("mcp_execute_tool");
+    signal?.throwIfAborted();
     const sessionId = sessions.normalizeId(params.sessionId);
     const canManageSessions = await tools.canManageSessions(sessionId);
+    signal?.throwIfAborted();
     const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions });
+    signal?.throwIfAborted();
     const runtime = sessions.getRuntime(sessionId);
     const requestedRunId = String(params.runId || "").trim();
     const runtimeRunId = String(runtime.runId || "").trim();
@@ -306,7 +320,7 @@ export function createMcpRuntime({
     dynamicContext.workingTab = runtime.workingTab || null;
     dynamicContext.pageUrl = runtime.workingUrl || "";
     dynamicContext.taskSiteTabs = runtime.visitedTaskSites || [];
-    const result = await tools.runtime.execute(name, plainObject(params.args), undefined, {
+    const result = await tools.runtime.execute(name, plainObject(params.args), signal, {
       sessionId,
       runId,
       workingTabId: runtime.workingTabId || null,
@@ -315,6 +329,7 @@ export function createMcpRuntime({
       dynamicContext,
       loadedPluginSkillNames: loadedNames,
     });
+    signal?.throwIfAborted();
     if (name === "load_skill" && result && typeof result === "object" && !plainObject(result).error) {
       tools.recordLoadedSkillNames(sessionId, [plainObject(result).name, plainObject(result).displayName]);
     }

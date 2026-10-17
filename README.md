@@ -36,7 +36,14 @@ See the [privacy policy and browser permissions](docs/permissions.md).
 
 ### Install
 
-1. Download the [latest release](https://github.com/alibaba/qz-browser-agent/releases/latest).
+Open [qz in the Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm)
+and click **Add to Chrome**.
+
+#### Manual installation
+
+To install from a ZIP:
+
+1. Download the ZIP from the [latest release](https://github.com/alibaba/qz-browser-agent/releases/latest).
 2. Extract the ZIP.
 3. Open `chrome://extensions` and enable **Developer mode**.
 4. Click **Load unpacked** and select the extracted `qz-browser-agent-extension` folder.
@@ -50,7 +57,7 @@ npm ci
 npm run build
 ```
 
-Follow the Chrome installation steps above, selecting `dist/extension/` as the extension folder.
+Follow the [manual installation steps](#manual-installation), selecting `dist/extension/` as the extension folder.
 
 ### Run
 
@@ -61,11 +68,10 @@ Follow the Chrome installation steps above, selecting `dist/extension/` as the e
 
 ## CLI and coding agents
 
-Give qz a goal and the output you need. It plans and runs the browser work, then returns results
-or questions for the user. Follow the same task in your terminal and the qz side panel.
+**Agent-friendly.** Let your agent delegate browser tasks to qz via CLI, Skill, or MCP.
 
 Use Node.js 24 or later on the same machine as Chrome. Install the extension from the
-[latest release](https://github.com/alibaba/qz-browser-agent/releases/latest) and configure its
+[Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm) and configure its
 model in qz Settings, then install the CLI:
 
 ```bash
@@ -74,10 +80,29 @@ qz connect
 qz create "Compare SQLite, DuckDB, and PostgreSQL for local analytics. Save trade-offs and source links in a table." --stream
 ```
 
-`connect` opens a connection page when needed. Use the Chrome profile where qz is installed and
-accept its first-use data notice. `--stream` displays progress, pending questions, and the result.
-You can also run any command without a global install by replacing `qz` with
-`npx --yes qz-browser-agent@latest`.
+`connect` opens the local connection page in the system’s default browser for first pairing.
+Open it in the Chrome profile where qz is installed and complete its first-use data notice. The first browser is named `default`; repeating
+`connect` reuses the connection. `--stream` displays progress, pending questions, and the result.
+You can replace `qz` with `npx --yes qz-browser-agent@latest` to run without a global install.
+
+To pair a specific Profile from the shell, get its connection URL:
+
+```bash
+qz connect --no-open --name work --json
+```
+
+Open `result.url` in the intended Profile, then check `qz browsers`. Omit `--name` to keep its
+existing identifier or assign one automatically. See the [browser launch commands](services/mcp-bridge/README.md#pair-a-selected-browser-from-the-shell).
+You can also connect in that Profile's **qz Settings → Advanced → CLI**.
+When several browsers are online, select one by name or UUID:
+
+```bash
+qz browsers
+qz create "Summarize the current page." --client work --stream
+```
+
+Disconnect one browser in its qz Settings. `qz stop` stops the local service and disconnects all
+browsers. See [connection and upgrade instructions](services/mcp-bridge/README.md#connect-and-stop).
 
 ### Install the agent Skill
 

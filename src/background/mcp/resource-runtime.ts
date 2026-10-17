@@ -29,21 +29,25 @@ export function createMcpResourceRuntime(overrides: Partial<ResourceDependencies
     ...overrides,
   };
 
-  async function requireTable(value: unknown, collection = false) {
+  async function requireTable(value: unknown, collection = false, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     // Match the stored name exactly before calling the store (which normalizes/truncates names).
     if (typeof value !== "string" || !value.trim()) fail("INVALID_ARGUMENTS", `${collection ? "collection" : "table"} is required.`);
     const table = (await deps.listTables()).find(table => table.name === value);
+    signal?.throwIfAborted();
     if (!table) fail("RESOURCE_NOT_FOUND", `No ${collection ? "image collection" : "data table"} named ${value}.`);
     if (collection && !isImageCollection(table)) fail("INVALID_RESOURCE_KIND", `${value} is a data table, not an image collection.`);
     return table;
   }
 
-  async function allRows(table: DataTable) {
+  async function allRows(table: DataTable, signal?: AbortSignal) {
     const rows: DataRow[] = [];
     const seen = new Set<string>();
     let total: number | undefined;
     do {
+      signal?.throwIfAborted();
       const page = await deps.queryRows({ table: table.name, limit: PAGE_SIZE, offset: rows.length });
+      signal?.throwIfAborted();
       if (total !== undefined && total !== page.totalMatched) fail("RESOURCE_CHANGED", "The table changed during export. Retry after its task finishes.");
       total = page.totalMatched;
       for (const row of page.rows) {
@@ -59,41 +63,46 @@ export function createMcpResourceRuntime(overrides: Partial<ResourceDependencies
   async function listTables() { return { tables: await deps.listTables() }; }
   async function listImageCollections() { return { collections: (await deps.listTables()).filter(isImageCollection) }; }
 
-  async function deleteTable(params: Params = {}) {
-    const table = await requireTable(params.table);
+  async function deleteTable(params: Params = {}, signal?: AbortSignal) {
+    const table = await requireTable(params.table, false, signal);
+    signal?.throwIfAborted();
     return deps.clearTable(table.name);
   }
 
-  async function deleteImageCollection(params: Params = {}) {
-    const table = await requireTable(params.collection, true);
+  async function deleteImageCollection(params: Params = {}, signal?: AbortSignal) {
+    const table = await requireTable(params.collection, true, signal);
+    signal?.throwIfAborted();
     const result = await deps.clearTable(table.name);
     // Asset blobs can be referenced by other tables and Session transcripts. The owning asset
     // store retains them, matching workspace whole-collection deletion; this is not a GC entry.
     return { collection: table.name, ...result, retainedAssets: true };
   }
 
-  async function exportTable(params: Params = {}) {
+  async function exportTable(params: Params = {}, signal?: AbortSignal) {
     const format = params.format ?? "xlsx";
     if (format !== "csv" && format !== "xlsx") fail("INVALID_ARGUMENTS", "format must be csv or xlsx.");
-    const table = await requireTable(params.table);
-    const rows = await allRows(table);
+    const table = await requireTable(params.table, false, signal);
+    const rows = await allRows(table, signal);
     const columns = exportColumns(table, rows);
     const bytes = await spreadsheet(format, table.name, columns, rows.map(row => row.data));
+    signal?.throwIfAborted();
     const download = await deps.download({ bytes, filename: exportFilename(params.filename, table.name, format), mimeType: MIME[format] });
     return { table: table.name, format, rows: rows.length, columns, ...download };
   }
 
-  async function exportImageCollection(params: Params = {}) {
-    const table = await requireTable(params.collection, true);
-    const rows = await allRows(table);
+  async function exportImageCollection(params: Params = {}, signal?: AbortSignal) {
+    const table = await requireTable(params.collection, true, signal);
+    const rows = await allRows(table, signal);
     const columns = exportColumns(table, rows);
     const files: { name: string; data: string | Uint8Array }[] = [];
     const metadata: Record<string, unknown>[] = [];
     const names = new Set<string>();
     let missingImages = 0;
     for (const [index, row] of rows.entries()) {
+      signal?.throwIfAborted();
       const assetId = typeof row.data.assetId === "string" ? row.data.assetId.trim() : "";
       const asset = assetId && assetId.length <= 180 ? await deps.getImage(assetId, { touch: false }) : null;
+      signal?.throwIfAborted();
       let imageFile = "";
       if (asset?.blob) {
         const extension = imageExtension(asset.mimeType || asset.blob.type);
@@ -117,6 +126,7 @@ export function createMcpResourceRuntime(overrides: Partial<ResourceDependencies
       rows: rows.length, images: rows.length - missingImages, missingImages,
     }, null, 2) });
     const bytes = createZipBytes(files, text => encoder.encode(text), new Date());
+    signal?.throwIfAborted();
     const download = await deps.download({ bytes, filename: exportFilename(params.filename, table.name, "zip"), mimeType: "application/zip" });
     return { collection: table.name, format: "zip", rows: rows.length, images: rows.length - missingImages, missingImages, ...download };
   }

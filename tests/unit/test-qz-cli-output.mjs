@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { main, runCli } from "../../services/mcp-bridge/src/cli.mjs";
 import { createLiveOutput } from "../../services/mcp-bridge/src/output.mjs";
 
-const running = { endpoint: "http://127.0.0.1:23456", health: { status: { connected: true, clients: [{ clientId: "fixture" }] } } };
+const running = { endpoint: "http://127.0.0.1:23456", health: { features: { browserPairing: 1 }, status: { connected: true, clients: [{ clientId: "fixture" }] } } };
 const created = { session: { id: "task-1", title: "杭州天气" }, started: true };
 const snapshot = (status, text = "", extra = {}) => ({ sessionId: "task-1", session: created.session,
   runId: "run-1", status, runtime: { status, runId: "run-1" },
@@ -85,7 +85,7 @@ test("human errors use stderr, JSON errors use stdout, argument errors exit 2", 
 test("stdin prompt is validated before discovery and is submitted only once", async () => {
   const calls = [];
   const deps = setup({ readStdin: async () => "  Read this page\n", callTool: async (...args) => { calls.push(args); return created; } });
-  assert.deepEqual((await runCli(["create", "-", "-t", "Research"], deps)).result, created);
+  assert.deepEqual((await runCli(["create", "-", "-t", "Research"], deps)).result, { ...created, clientId: "fixture" });
   assert.equal(calls.length, 1);
   assert.equal(calls[0][1], "qingzhou_create_session");
   assert.equal(calls[0][2].firstMessage, "  Read this page\n");
@@ -138,7 +138,7 @@ test("waiting stays bound to the creating browser across connection changes", as
   const clients = [{ clientId: "creator" }];
   const methods = [];
   const deps = setup({
-    findDaemon: async () => ({ ...running, health: { status: { connected: true, clients } } }),
+    findDaemon: async () => ({ ...running, health: { features: { browserPairing: 1 }, status: { connected: true, clients } } }),
     callTool: async (_endpoint, name, args) => {
       methods.push(name);
       assert.equal(args.clientId, "creator");

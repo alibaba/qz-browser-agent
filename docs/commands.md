@@ -197,6 +197,7 @@ Connect a local MCP client or use qz from the terminal:
 ```bash
 npm run qz -- connect
 npm run qz -- status
+npm run qz -- browsers
 npm run qz -- mcp
 npm run qz -- create "Summarize the current page." --wait
 npm run qz -- create "Compare these two laptops." --title "Research" --stream
@@ -220,8 +221,38 @@ npm run qz -- automations
 npm run qz -- stop
 ```
 
-`connect` starts the local service and connects the extension. `mcp` prints its MCP URL;
-`stop` stops the service. `create` accepts the task text directly, with an optional title.
+`connect` starts the local service and opens its connection page for first pairing. The first
+browser is named `default`; repeating the command reuses an online connection. `status` shows the
+actual service address and `mcp` prints its MCP URL. The default port is 18765, with a free-port
+fallback when occupied; `connect --port PORT` requests another port. A running service keeps its
+existing address. Use the reported address when connecting another profile.
+
+To pair a chosen browser Profile from the shell:
+
+```bash
+npm run qz -- connect --no-open --name work --json
+```
+
+Open `result.url` in that Profile and verify its online UUID with `browsers --json`.
+`--no-open` returns the URL immediately. `--name` sets or updates the identifier of the Profile
+opening it; omit it to preserve an existing name or allocate `default`, `browser-2`, and so on.
+`connect --name work` opens the URL and also returns without waiting for pairing. Neither mode
+accepts `--client`. See [platform launch commands](../services/mcp-bridge/README.md#pair-a-selected-browser-from-the-shell).
+Pairing is also available in **qz Settings → Advanced → CLI**.
+
+`--client NAME|UUID` selects a browser for task and resource commands. With one online browser,
+selection is automatic; with several, it is required. Unknown or offline selections fail without
+falling back. Names are persistent and case-sensitive. Disconnect one profile in its qz Settings;
+`stop` stops the service and disconnects all browsers. To release an offline name, run
+`npm run qz -- browsers forget NAME`. Each command and its suggested next steps remain bound to
+the resolved profile UUID.
+
+Connections require opening a pairing URL or the settings action. Ordinary connection failures
+pause after three attempts; reopen the URL in that Profile or use its settings to retry. Use the current CLI and extension together. Source edits do not
+restart a working service. To update, finish current tasks, run `stop`, update and reload the extension, then run `connect`. See
+[connection and upgrade details](../services/mcp-bridge/README.md#connect-and-stop).
+
+`create` accepts the task text directly, with an optional title.
 `--wait` waits for the result; `--stream` also displays progress. Both stay connected through
 questions and permission requests, then continue automatically after you respond. Pending output
 includes the full request, field IDs, option values, and a submission template. Use `show TASK_ID` to
@@ -251,7 +282,7 @@ field, and `settings set -` reads a JSON patch from stdin. Use stdin for credent
 the download status and path when available; check pending downloads in `chrome://downloads`.
 
 Exports accept `--filename NAME`; `skills --scope site` filters Skills by scope. CLI commands reuse
-one MCP connection for all their requests. Use `--client ID` to select a browser from `status`.
+one MCP connection for all their requests. Use `--client NAME|UUID` to select a profile from `browsers`.
 MCP supports the same task waiting, streaming, and input flows, plus direct browser tool calls and
 diagnostic logs; see the [operation mapping](../services/mcp-bridge/README.md#task-and-resource-operations).
 

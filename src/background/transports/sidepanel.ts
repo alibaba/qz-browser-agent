@@ -1,7 +1,7 @@
 import type { BackgroundApi } from "../background-api.js";
 import { resolveBackgroundApiMethod } from "../background-api.js";
 type Fields = Record<string, unknown>;
-export interface ResponsePort { postMessage(message: unknown): void; name?: string }
+export interface ResponsePort { postMessage(message: unknown): void; name?: string; sender?: chrome.runtime.MessageSender; signal?: AbortSignal }
 interface TransportOptions {
   onMessage?: ((message: Fields) => unknown) | null;
   onDynamicContext?: ((message: Fields) => unknown) | null;
@@ -22,6 +22,9 @@ export function createSidepanelTransport(api: BackgroundApi, {
 }: TransportOptions = {}) {
   const call = (path: string, ...args: unknown[]) => resolveBackgroundApiMethod(api, path)(...args);
   const replies: Readonly<Record<string, ReplyRoute>> = {
+    mcp_connection_status: { method: "system.mcpConnectionStatus", response: "mcp_connection_status_result", envelope: "result", args: (_message, port) => [port?.sender || {}] },
+    mcp_connection_connect: { method: "system.connectMcpFromSettings", response: "mcp_connection_connect_result", envelope: "result", args: (message, port) => [port?.sender || {}, { name: message.name, endpoint: message.endpoint }] },
+    mcp_connection_disconnect: { method: "system.disconnectMcp", response: "mcp_connection_disconnect_result", envelope: "result", args: (_message, port) => [port?.sender || {}] },
     start_element_picker: { method: "ui.startElementPicker", response: "element_picker_result", args: message => [message.tabId] },
     confirm_element_picker: { method: "ui.confirmElementPicker", response: "element_picker_confirmed", args: message => [message.tabId] },
     cancel_element_picker: { method: "ui.cancelElementPicker", response: "element_picker_cancelled", args: message => [message.tabId] },
@@ -66,10 +69,10 @@ export function createSidepanelTransport(api: BackgroundApi, {
     list_automations: { method: "automations.list", response: "automations", args: message => [{ limit: message.limit || 100, runLimit: message.runLimit || 5 }] },
     save_automation: { method: "automations.save", response: "automation_saved", args: message => [{ automation: message.automation || {} }] },
     delete_automation: { method: "automations.remove", response: "automation_deleted", args: message => [String(message.automationId || "").trim()] },
-    run_automation: { method: "automations.run", response: "automation_run_started", args: message => [String(message.automationId || "").trim()] },
+    run_automation: { method: "automations.run", response: "automation_run_started", args: (message, port) => [String(message.automationId || "").trim(), port?.signal] },
     list_automation_runs: { method: "automations.runs", response: "automation_runs", args: message => [{ automationId: message.automationId, limit: message.limit || 20 }] },
     get_config: { method: "config.get", response: "config", args: () => [], envelope: "config" },
-    save_config: { method: "config.save", response: "config_saved", args: message => [message.config || {}], envelope: "config" },
+    save_config: { method: "config.save", response: "config_saved", args: (message, port) => [message.config || {}, port?.signal], envelope: "config" },
     save_model_preset: { method: "config.savePreset", response: "config", args: message => [message.preset || message.config || {}], envelope: "config" },
     apply_model_preset: { method: "config.applyPreset", response: "config", args: message => [message.presetId], envelope: "config" },
     delete_model_preset: { method: "config.deletePreset", response: "config", args: message => [message.presetId], envelope: "config" },
@@ -96,14 +99,16 @@ export function createSidepanelTransport(api: BackgroundApi, {
       args: message => [{ sessionId: message.sessionId, conversation: message.session ?? message.messages, transcript: message.transcript, }], requestOnly: true
     },
     import_session_exchange: { method: "exchange.import", response: "import_session_exchange_result", args: (message, port) => [message.payload, { sourceWindowId: getWindowId(port) }] },
-    delete_session: { method: "sessions.remove", response: "delete_session_result", args: message => [message.sessionId, { source: "ui" }], requestOnly: true },
-    clear_goal: { method: "sessions.clearGoal", response: "goal_cleared", args: message => [message.sessionId, message.source || "ui"], requestOnly: true },
+    delete_session: { method: "sessions.remove", response: "delete_session_result", args: (message, port) => [message.sessionId, { source: "ui" }, port?.signal], requestOnly: true },
+    clear_goal: { method: "sessions.clearGoal", response: "goal_cleared", args: (message, port) => [message.sessionId, message.source || "ui", port?.signal], requestOnly: true },
     get_history: { method: "sessions.history", response: "history", args: message => [message.sessionId] },
     restore_session: { method: "sessions.restore", response: "session_restored", args: message => [message.sessionId, message.session ?? message.messages] },
     get_state: { method: "sessions.state", response: "state", args: message => [message.sessionId] },
   };
 
   async function dispatch(message: Fields = {}, port?: ResponsePort) {
+    const signal = port?.signal;
+    signal?.throwIfAborted();
     const type = String(message.type || "");
     if (type === "ping") return true;
     if (type === "dynamic_context_response") {
@@ -112,11 +117,14 @@ export function createSidepanelTransport(api: BackgroundApi, {
     }
 
     await call("system.ready");
+    signal?.throwIfAborted();
     await onMessage?.(message);
+    signal?.throwIfAborted();
 
     const productResponse = await (api.product ? call("product.dispatch", message, {
       sourceWindowId: getWindowId(port), progress: (event: unknown) => port?.postMessage?.(event),
     }) : null);
+    signal?.throwIfAborted();
     if (productResponse) {
       const response = object(productResponse);
       post(port, String(response.type || ""), message, response.payload);
@@ -180,7 +188,7 @@ export function createSidepanelTransport(api: BackgroundApi, {
                 elapsedMs: Date.now() - startedAt,
               });
             },
-          });
+          }, signal);
           await object(submission).promise;
           traceMessageDelivery(message, "background.run_completed", {
             accepted,
@@ -203,7 +211,7 @@ export function createSidepanelTransport(api: BackgroundApi, {
       case "follow_up": {
         const windowId = getWindowId(port);
         await updateSubmittedDraft(message, windowId, "sync");
-        await call("sessions.followUp", message);
+        await call("sessions.followUp", message, signal);
         await updateSubmittedDraft(message, windowId, "consume");
         return true;
       }
@@ -227,7 +235,7 @@ export function createSidepanelTransport(api: BackgroundApi, {
         await call("sessions.reset", message.sessionId);
         return true;
       case "create_session":
-        await call("sessions.create", message);
+        await call("sessions.create", message, signal);
         return true;
       case "get_session_artifacts": {
         const artifacts = await call("artifacts.list", message.sessionId);
@@ -240,7 +248,7 @@ export function createSidepanelTransport(api: BackgroundApi, {
         return true;
       }
       case "stop_session": {
-        const stopped = await call("sessions.stop", message.sessionId, { source: message.source || "ui" });
+        const stopped = await call("sessions.stop", message.sessionId, { source: message.source || "ui" }, signal);
         if (message.requestId) {
           const stoppedRecord = object(stopped);
           const runtime = object(stoppedRecord.runtime);
@@ -257,7 +265,7 @@ export function createSidepanelTransport(api: BackgroundApi, {
       }
       case "continue_task":
       case "cancel_wait": {
-        const result = await call(message.type === "continue_task" ? "sessions.continueWait" : "sessions.cancelWait", message);
+        const result = await call(message.type === "continue_task" ? "sessions.continueWait" : "sessions.cancelWait", message, signal);
         post(port, "user_input_response", message, result);
         return true;
       }

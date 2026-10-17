@@ -6,7 +6,7 @@ import { parseCommand } from "../../services/mcp-bridge/src/args.mjs";
 import { renderResult } from "../../services/mcp-bridge/src/terminal.mjs";
 import { QzError } from "../../services/mcp-bridge/src/client.mjs";
 
-const running = { endpoint: "http://127.0.0.1:23456", health: { status: { connected: true, clients: [{ clientId: "profile" }] } } };
+const running = { endpoint: "http://127.0.0.1:23456", health: { features: { browserPairing: 1 }, status: { connected: true, clients: [{ clientId: "profile" }] } } };
 const dependencies = { findDaemon: async () => running };
 
 test("resource commands map once to MCP names and preserve names, format, and selected browser", async () => {
@@ -43,7 +43,7 @@ test("resource commands map once to MCP names and preserve names, format, and se
       assert.deepEqual(args, { timeoutSeconds: 180, clientId: "profile", ...parameters });
       return { fixture: true };
     } });
-    assert.equal(count, 1); assert.deepEqual(result, { result: { fixture: true } });
+    assert.equal(count, 1); assert.deepEqual(result, { result: { fixture: true, clientId: "profile" } });
   }
 });
 
@@ -83,7 +83,7 @@ test("resource mutation failures are never replayed and JSON preserves export do
     let stdout = "";
     const code = await main([command, "export", "source", "--json"], { ...dependencies,
       stdout: { write: value => { stdout += value; } }, callTool: async () => download });
-    assert.equal(code, 0); assert.deepEqual(JSON.parse(stdout), { ok: true, result: download });
+    assert.equal(code, 0); assert.deepEqual(JSON.parse(stdout), { ok: true, result: { ...download, clientId: "profile" } });
   }
 });
 
@@ -111,7 +111,7 @@ test("send --steer targets the selected task once and streams only responses aft
     { type: "assistant", runId: "current-run", spanId: "next", content: "Sources checked." },
   ] };
   const result = await runCli(["send", "chosen-task", "Focus on sources.", "--steer", "--stream", "-c", "chosen-profile"], {
-    findDaemon: async () => ({ ...running, health: { status: { connected: true, clients: [{ clientId: "chosen-profile" }] } } }),
+    findDaemon: async () => ({ ...running, health: { features: { browserPairing: 1 }, status: { connected: true, clients: [{ clientId: "chosen-profile" }] } } }),
     onTaskUpdate: event => updates.push(event),
     callTool: async (_endpoint, name, args) => {
       assert.equal(args.sessionId, "chosen-task"); assert.equal(args.clientId, "chosen-profile");
@@ -232,7 +232,7 @@ test("task limits and child creation expose MCP capabilities without passthrough
     await runCli(argv, { ...dependencies, callTool: async (_endpoint, actualName, args) => {
       count++;
       assert.equal(actualName, name);
-      assert.deepEqual(args, { timeoutSeconds: 180, ...parameters });
+      assert.deepEqual(args, { timeoutSeconds: 180, clientId: "profile", ...parameters });
       return { accepted: true };
     } });
     assert.equal(count, 1);

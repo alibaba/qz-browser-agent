@@ -110,10 +110,71 @@ The default idle window is 125 seconds. During that window, Chrome runs without 
 debugger attached; Node only reads the local service health endpoint. The test briefly reconnects
 to a regular page to stop the extension worker, disconnects again, and verifies automatic recovery.
 It also covers service interruption during navigation, three observed HTTP poll failures followed by
-automatic reconnection without a connection page, and an occupied port with fallback to a free port.
+a pause with no further requests, explicit reconnection, and an occupied port with fallback to a free port.
 Interrupted actions are checked for accidental replay. Evidence is saved to
 `tests/results/mcp-bridge/resilience-e2e.json`. Protocol, cancellation, concurrent-client and daemon
 lifecycle regressions run in `npm test -- services`.
+
+Run the [three-browser stress test](background/mcp-multi-browser-soak.mjs) manually from the repository root with Node.js 24:
+
+```bash
+node tests/background/mcp-multi-browser-soak.mjs --duration-seconds 300
+```
+
+The measured window starts after three independent Chrome processes and Profiles have paired.
+Each runs tasks through real CLI subprocesses and MCP, using separate content markers and a local
+deterministic model. The test disconnects one browser while the others work, restarts the service,
+stops a Worker, and closes and reopens Chrome. Recovery runs with extension pages closed and CDP
+clients detached. It verifies full histories and an inventory above the default 100-task limit,
+request queues, and zero requests to the default port. Registry and Profiles use temporary paths.
+
+Results, Chrome versions, process logs, protocol dispatch/result metadata, network logs, and actual
+320px Settings screenshots are saved under `tests/results/multi-browser/<timestamp>/`. A failure
+captures screenshots and health before cleanup. The minimum run is five minutes; this entry is
+excluded from default CI. Linux containers running as root use test-only `--no-sandbox`;
+`QZ_TEST_NO_SANDBOX=1` enables it explicitly on Linux. `CHROME_EXECUTABLE` selects another binary.
+
+Run the shorter [pairing edge test](background/mcp-pairing-edges-e2e.mjs) with:
+
+```bash
+node tests/background/mcp-pairing-edges-e2e.mjs
+```
+
+Two independent Chrome Profiles verify name conflicts, copied connection identities, and recovery
+after a registry write failure. Each rejection leaves the original browser able to complete a page
+task through MCP. The test also drops a successful rename response after the service commits it,
+then checks that a real poll reconciles the extension's browser name. It copies only the connection
+storage keys to simulate a copied Profile and injects a rejected registry write; it does not simulate
+a full disk. It uses local deterministic
+model responses, writes a redacted report under `tests/results/multi-browser/pairing-edges-<timestamp>/`,
+and removes its Chrome processes, Profiles, registry, and network captures. It is a manual entry.
+
+For a shell-pairing check, obtain a URL with `connect --no-open --json` and open it in the selected
+test Profile using the [platform launch command](../services/mcp-bridge/README.md#pair-a-selected-browser-from-the-shell).
+Confirm that `browsers --json` lists that Profile online, and use its UUID for the next browser
+operation. URL creation alone does not establish a connection. `--name` should update only the
+Profile opening that URL; verify other Profiles keep their names and remain usable.
+
+The Settings UI fixture runs with `npm test -- playwright settings-cli-connection.spec.mjs --workers 1`.
+It covers local-only status reads, immediate connect/disconnect, editable conflicts, endpoint recovery,
+stale replies after another panel disconnects, draft and focus preservation, and narrow layouts in
+both color schemes across all 12 languages. Its screenshots use deterministic
+transport fixtures; the stress test captures the loaded extension against a real service.
+
+Run the [current Settings connection test](background/mcp-connection-settings-e2e.mjs) with:
+
+```bash
+node tests/background/mcp-connection-settings-e2e.mjs
+```
+
+It builds the current production extension into a temporary directory, loads it in an independent
+Chrome Profile, and uses the real Settings controls to read status, name a connection, preserve
+inputs after an unavailable-service error, connect, and disconnect. An actual CLI/MCP round trip
+runs a browser page task using a deterministic local model. It captures real 320px Settings in light
+and dark themes for disconnected, naming, unavailable, and connected states, plus the allow-only
+access-rule hint. Reports and screenshots
+are saved under `tests/results/multi-browser/settings-<timestamp>/`. The test cleans up its browser,
+service, registry, and temporary Profile and does not use an existing user connection.
 
 The resource scenario uses an isolated profile and temporary download directory to exercise CLI
 table CSV/XLSX exports, image ZIP exports, exact deletion, shared asset retention, Skill packages,
@@ -186,6 +247,7 @@ npm test -- live realworld
 npm test -- live deepseek
 npm test -- live rate
 npm test -- live cli-mcp --duration-seconds 1800
+npm test -- live multi-browser
 ```
 
 `agent` calls a real model against constructed pages; `realworld` and `cli-mcp` visit public sites.
@@ -198,6 +260,20 @@ Set `QINGZHOU_DEEPSEEK_MODEL` to select a model. Use `--cases id,id` or
 `--task-timeout-seconds 360` to narrow a follow-up run. While that isolated run is active,
 `npm test -- live cli-mcp-supplement --report <live-soak-report.json>` checks MCP-created input
 through CLI responses and compares resource exports across the two interfaces.
+
+`multi-browser` runs six English/Chinese public-site tasks once, in two concurrent batches across
+three independent Chrome processes and temporary profiles. It uses real DeepSeek responses through
+CLI and MCP, answers the cases' explicit form/confirmation requests, follows up an existing task,
+disconnects one profile, restarts its isolated service, and checks cross-profile task ownership.
+It builds one production extension outside `dist/extension`; set `QINGZHOU_TEST_EXTENSION_DIR` to
+reuse an existing production build. Use `--task-timeout-seconds 450` to bound each task,
+`--cases id,id` for a focused follow-up, and `--output <directory>` to choose the evidence directory. Full CLI output, MCP progress, provider
+request bodies/SSE, snapshots, CSV data and browser diagnostics are retained with credentials
+redacted. USGS rows are checked against the captured feed when available; UTC timestamps may retain
+milliseconds or whole seconds, and the report records that precision. It distinguishes independent
+event checks from exact feed-membership verification. Browser profiles and the service
+are removed on exit. The runner does not connect to a user's Chrome profile or daemon.
+
 Without a scenario, `live` selects DeepSeek extension tests and real-world Agent tests. Use `--list`
 to inspect the selection. Provider and model overrides are accepted by `agent`; see
 [`background/agent-behavior-e2e.mjs`](background/agent-behavior-e2e.mjs).
@@ -250,6 +326,44 @@ viewport; scrolling has separate page-tool coverage. Redacted request counts, pr
 click evidence and a final screenshot are saved under `tests/results/deepseek-vision/` for nine
 steps and its `retention-30/` subdirectory for thirty. The script removes its temporary profile on
 exit.
+
+### Pi shell pairing
+
+Run [the Pi multi-browser check](live/pi-multi-browser.mjs) with Node.js 24, Pi installed, and
+a DeepSeek key in `.env.local`. Build the current production extension first, then provide its
+directory:
+
+```bash
+QINGZHOU_TEST_EXTENSION_DIR="$PWD/dist/extension" npm test -- live pi-multi-browser
+```
+
+`PI_EXECUTABLE` selects the Pi executable; `QINGZHOU_DEEPSEEK_MODEL` selects the model used by
+Pi and qz. Pi receives only `read` and `bash`, loads the repository Skill, and opens pairing URLs
+through the browser executable in three isolated Profiles. Chrome runs with visible windows and
+requires a local graphical session. It starts three browser tasks
+concurrently, renames one connection by URL, and follows up in the same task. The harness supplies
+first-use consent and model settings, plus the current repository CLI as `qz` on an isolated PATH;
+this checks current source rather than a published npm release.
+
+Reports, native Pi session JSONL and an HTML export, CLI responses, task snapshots, screenshots,
+and redacted provider request/SSE captures are retained in `tests/results/skill-pi/multi-<timestamp>/`.
+The test removes its temporary Profiles and service after the run.
+
+To check independent calling agents, run the [concurrent Pi test](live/pi-concurrent-browsers.mjs)
+with the same prerequisites:
+
+```bash
+QINGZHOU_TEST_EXTENSION_DIR="$PWD/dist/extension" npm test -- live pi-concurrent-browsers
+```
+
+First, three separate Pi processes use supplied Profile paths and unique browser identifiers to
+pair through shell commands. Each creates a real public-source task and follows up in the same
+task. Then two new Pi processes share one existing Profile, with separate tasks and follow-ups.
+The checks cover explicit UUID selection, isolated histories, actual source access and selected
+source facts. Original Pi sessions, JSON streams, CLI responses, snapshots, screenshots and redacted
+provider captures are saved under `tests/results/final-validation/pi-concurrent-<timestamp>/`.
+Both stages use one isolated service and remove their temporary Profiles afterward. This manual
+live entry is excluded from unattended suites.
 
 ## Behavior evidence
 

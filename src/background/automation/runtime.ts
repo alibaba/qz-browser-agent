@@ -5,8 +5,8 @@ import type { SessionMetadata } from "../../shared/session/session-store.js";
 import type { createAutomationRepository } from "./repository.js";
 type Fields = Record<string, unknown>;
 interface AutomationSessionPort {
-  create(input: { automation: Automation; run: AutomationRun; prompt: string }): Promise<{ id: string }>;
-  launch(id: string, prompt: string): boolean;
+  create(input: { automation: Automation; run: AutomationRun; prompt: string; signal?: AbortSignal }): Promise<{ id: string }>;
+  launch(id: string, prompt: string, signal?: AbortSignal): boolean | Promise<boolean>;
   remove(id: string, options: { source: string }): Promise<unknown>;
   getRuntime(id: string): Fields;
   getMetadata?(id: string): Promise<SessionMetadata | null>;
@@ -207,15 +207,18 @@ export function createAutomationRuntime({
     return deletion.result;
   }
 
-  function run(automationId = "") {
+  function run(automationId = "", signal?: AbortSignal) {
     return operations.run(async () => {
+      signal?.throwIfAborted();
       await ready();
+      signal?.throwIfAborted();
       const id = requireId(automationId, "automationId");
       const automation = (await repository.listDefinitions()).find(item => item.id === id);
       if (!automation) throw new Error("automation not found");
       const started = await startRun(automation, {
         triggerType: "manual",
         plannedAt: nowBeijingDateTime(),
+        signal,
       });
       if (!started) throw new Error(t("automation.alreadyRunning"));
       return { run: started };
@@ -355,12 +358,15 @@ export function createAutomationRuntime({
     plannedAt = "",
     delayed = false,
     delayReason = "",
-  } = {}) {
+    signal,
+  }: { triggerType?: string; plannedAt?: string; delayed?: boolean; delayReason?: string; signal?: AbortSignal } = {}) {
     await ready();
+    signal?.throwIfAborted();
     const current = (await repository.listDefinitions()).find(item => item.id === automation.id);
     if (!current || current.runningRunId) return null;
     if (!current.enabled && triggerType !== "manual") return null;
     if (await hasActiveRun(current.id)) return null;
+    signal?.throwIfAborted();
 
     const startedAt = nowBeijingDateTime();
     let run = await repository.createRun({
@@ -371,16 +377,21 @@ export function createAutomationRuntime({
       startedAt,
       delayed,
       delayReason,
-    });
+    }, signal);
 
+    let createdSessionId = "";
     try {
+      signal?.throwIfAborted();
       const prompt = buildPrompt(current, run);
-      const session = await sessions.create({ automation: current, run, prompt });
+      const session = await sessions.create({ automation: current, run, prompt, signal });
+      createdSessionId = session.id;
+      signal?.throwIfAborted();
       run = await repository.patchRun(run.id, {
         sessionId: session.id,
         status: AUTOMATION_RUN_STATUS.RUNNING,
         startedAt,
       });
+      signal?.throwIfAborted();
       const nextPatch = triggerType === "manual" ? {} : nextPatchAfterScheduledRun(current.schedule, clock());
       await repository.patchDefinition(current.id, {
         ...nextPatch,
@@ -390,11 +401,18 @@ export function createAutomationRuntime({
         lastRunStatus: AUTOMATION_RUN_STATUS.RUNNING,
         lastRunAt: startedAt,
       });
-      if (!sessions.launch(session.id, prompt)) throw new Error("automation prompt is empty");
+      signal?.throwIfAborted();
+      if (!await sessions.launch(session.id, prompt, signal)) throw new Error("automation prompt is empty");
       broadcastChanged({ action: "run_start", automationId: current.id, runId: run.id, sessionId: session.id });
       return run;
     } catch (error) {
-      await finalizeRun(run, { status: AUTOMATION_RUN_STATUS.ERROR, error: errorMessage(error) });
+      await finalizeRun(run, { status: signal?.aborted ? AUTOMATION_RUN_STATUS.ABORTED : AUTOMATION_RUN_STATUS.ERROR, error: errorMessage(error) });
+      if (signal?.aborted && createdSessionId) {
+        // Session deletion can reconcile Automation state through this same operation queue.
+        void sessions.remove(createdSessionId, { source: "automation_start_cancelled" }).catch(cleanupError => {
+          logger?.warn?.("[轻舟] cancelled automation session cleanup failed:", cleanupError);
+        });
+      }
       if (triggerType === "manual") throw error;
       return null;
     }

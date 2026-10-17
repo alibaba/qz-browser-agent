@@ -5,21 +5,26 @@ Requires Node.js 24 or later and Chrome. CLI and MCP share the same browser conn
 
 ## Quick start
 
+Install [qz from the Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm)
+with **Add to Chrome**. Open the qz side panel, complete its first-use data notice, and configure
+your provider and model in Settings.
+
 Run the published package with npx:
 
 ```bash
-npx qz-browser-agent@latest install
 npx qz-browser-agent@latest connect
 npx qz-browser-agent@latest create "Summarize the current page." --stream
 ```
 
-`install` opens the [latest extension release](https://github.com/alibaba/qz-browser-agent/releases/latest).
-Extract its ZIP, open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked**.
-Select the extracted extension folder. Open qz and accept its first-use data notice.
+`npx qz-browser-agent@latest install` opens the same Chrome Web Store page. For a manual ZIP
+installation, download the [latest GitHub release](https://github.com/alibaba/qz-browser-agent/releases/latest)
+and follow the [manual installation steps](https://github.com/alibaba/qz-browser-agent/blob/main/README.md#manual-installation).
 
-`connect` starts the local MCP service and opens a connection page if a browser has not connected.
-Open that page in the Chrome profile where qz is installed. The connection page identifies the
-local service to the extension; no token or DevTools configuration is required.
+`connect` starts the local MCP service and opens its connection page for first pairing. Use the
+Chrome profile where qz is installed. The first new profile is named `default`;
+accepting the data notice alone does not enable the local connection. Repeating `connect` reuses
+an online browser. Add further profiles with a [pairing URL](#pair-a-selected-browser-from-the-shell)
+or from their own qz Settings.
 
 The examples and suggested next commands use `qz`. Replace it with
 `npx qz-browser-agent@latest`, or install the command globally:
@@ -31,35 +36,138 @@ qz --version
 
 On Windows, use PowerShell 7.3 or newer with its default native argument passing. After a global
 install, use `qz.ps1` for commands containing JSON or quoted names; Windows command suggestions
-use that wrapper. For automation, pin an exact npm version such as `qz-browser-agent@0.1.0`.
+use that wrapper. For automation, pin a compatible release version verified with your extension.
 
 ## Connect and stop
 
 ```bash
 qz connect
 qz status
+qz browsers
 qz mcp
 qz stop
 ```
 
-`connect` reuses the healthy service already running for this installation and protocol. It prefers port
-18765; if another program owns that port, it uses a free port chosen by the operating system.
-It confirms that a browser responds before reporting success, and opens the connection page to
-resume polling if a previously connected browser no longer responds.
-`mcp` prints the actual MCP URL. `status` and `mcp` never start a service or open a browser.
-`stop` shuts down the shared service and disconnects the extension and MCP clients.
+`connect` reuses the healthy service already running for this installation. It prefers port 18765;
+if that port belongs to another program, the service chooses a free port. `status` shows the actual
+service address, and `mcp` prints its MCP URL. Both commands are read-only. To request a custom port,
+run `qz connect --port 18766`; an existing service on another port remains running and the command
+reports its address. The extension connects only to its configured address.
 
-After first-use consent, an unavailable local service gets up to three connection attempts.
-Once a connection succeeds, later interruptions switch to one recovery attempt per minute after
-three consecutive failed polls, using that same endpoint. Recovery continues across worker restarts;
-disabling the bridge stops it. Run `qz connect` to retry immediately. Connected browsers use long polls
-capped at 20 seconds and reload saved settings before each poll. The side panel and connection page
-can be closed.
+The connection page can be closed once `qz browsers` shows the profile online. Connections start
+only through `qz connect` or **qz Settings → Advanced → CLI → Connect CLI**. For ordinary connection
+failures, the extension makes at most three recovery attempts, 30 seconds apart, then pauses.
+After a browser or background restart, it may first wait once for the previous connection to expire.
+The saved retry budget survives worker restarts. Click **Connect CLI** in that browser's settings to retry.
 
-`status` distinguishes an unavailable local service from a running service with no connected
-browser. A failed health check is retried once; an unresponsive live service is reported without
-starting another instance. After updating the extension, reload it at `chrome://extensions` and
-run `qz connect` to reconnect.
+To disconnect one browser, click **Disconnect: NAME** in its qz Settings. `qz stop` stops the local
+service and disconnects every browser and MCP client using it. Browser tasks already running
+remain in the extension; stopping the service does not cancel them. Use `qz cancel TASK_ID` to stop
+a task, adding `--client NAME|UUID` when needed.
+
+### Pair a selected browser from the shell
+
+Get a pairing URL without opening the default browser or waiting for a connection:
+
+```bash
+qz connect --no-open --json
+qz connect --no-open --name work --json
+```
+
+The JSON envelope contains `result.endpoint`, `result.url`, `result.mcpUrl`, and
+`result.opened: false`. The command starts or reuses the service even when other browsers are
+already connected. Open the exact returned URL in the intended browser Profile with qz installed.
+
+Set `QZ_PAIRING_URL` to that URL and `QZ_PROFILE_DIRECTORY` to the selected profile's directory
+name, such as `Default` or `Profile 2`. These are directory names, not Chrome's display labels.
+Use a Profile already chosen by the user. On macOS:
+
+```sh
+open -na "Google Chrome" --args --profile-directory="$QZ_PROFILE_DIRECTORY" "$QZ_PAIRING_URL"
+```
+
+For Chrome on Linux:
+
+```sh
+google-chrome --profile-directory="$QZ_PROFILE_DIRECTORY" "$QZ_PAIRING_URL"
+```
+
+For Chrome installed under Program Files on Windows, set `$QzProfileDirectory` and
+`$QzPairingUrl` to those same values in PowerShell:
+
+```powershell
+& "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" "--profile-directory=$QzProfileDirectory" $QzPairingUrl
+```
+
+Use the installed browser's executable or app name. For an existing custom data directory, also
+pass `--user-data-dir` with its exact path; for example on macOS:
+
+```sh
+open -na "Google Chrome" --args --user-data-dir="$QZ_USER_DATA_DIR" --profile-directory="$QZ_PROFILE_DIRECTORY" "$QZ_PAIRING_URL"
+```
+
+The [Chrome profile documentation](https://chromium.googlesource.com/chromium/src/+/master/docs/user_data_dir.md)
+distinguishes the data directory from the Profile inside it. A new data directory needs its own
+extension installation and first-use setup.
+
+`--name work` adds `?name=work` to the URL. The Profile opening it receives that identifier,
+including when it already has a connection. Without `--name`, a registered Profile keeps its name;
+a new Profile receives the next available name: `default`, `browser-2`, and so on. A name conflict
+requires another name. `qz connect --name work` opens the URL automatically and returns immediately.
+These URL-returning commands do not confirm that a browser connected. Verify it with:
+
+```bash
+qz browsers --json
+qz create "Summarize the current page." --client UUID --stream
+```
+
+Read `result.browsers`, then use the intended online entry's `clientId` UUID. `--client` selects an
+existing connection and cannot be combined with `--no-open` or `--name`. `--port` works with either
+pairing mode and follows the existing-service behavior above.
+
+### Add and select browsers
+
+You can also pair from **qz Settings → Advanced → CLI** in the intended Profile. Enter a distinct
+browser identifier and connect. Use the service address printed by `qz status` in **Local service address** if
+its port differs from 18765. Names use 1–64 letters, digits, underscores, or hyphens, beginning with
+a letter or digit; names are case-sensitive. UUID-shaped names are reserved for profile IDs.
+
+```bash
+qz browsers
+qz create "Summarize the current page." --client work --stream
+qz show TASK_ID --client work
+qz data --client work
+```
+
+`--client NAME|UUID` and `-c NAME|UUID` select a profile. With exactly one online browser, the CLI
+selects it automatically. With several online browsers, a selection is required; `default` is a
+name, not a routing preference. An unknown or offline selection fails without opening or using
+another browser. Each command resolves its name once and carries the UUID through subsequent
+requests. JSON task results and suggested next commands include that UUID.
+
+Names remain registered while their browsers are offline and across service restarts. To release
+an offline name, remove its registration explicitly:
+
+```bash
+qz browsers forget work
+```
+
+An online browser must first disconnect in its settings. Forgetting a registration leaves the
+browser's tasks and data intact. A browser can then explicitly pair using the released name.
+
+### Update the connection
+
+Use the current CLI and extension together. Source edits and a newer npm package leave a healthy
+running service in place; `qz status` reports an available update. An incompatible service returns
+an update instruction instead of being stopped automatically.
+
+1. Use the latest CLI and let current tasks finish.
+2. Run `npx --yes qz-browser-agent@latest stop`. This disconnects all browsers using that service.
+3. Update qz from the [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm).
+   For a manual ZIP installation, replace its extracted files with the
+   [latest release](https://github.com/alibaba/qz-browser-agent/releases/latest) and reload it at `chrome://extensions`.
+4. Run `npx --yes qz-browser-agent@latest connect`, then reconnect additional profiles using their
+   pairing URL or settings.
 
 ## Connect an MCP client
 
@@ -72,7 +180,9 @@ url = "http://127.0.0.1:18765/mcp"
 
 Use the URL printed by your command if its port differs. `qz mcp --json` returns the URL as JSON
 for scripts. The `qingzhou_*` MCP tool names and extension protocol remain available. Responses
-to pending input bind to an explicit `waitId`. MCP initialization and streaming are handled by your
+to pending input bind to an explicit `waitId`. Use `qingzhou_bridge_status` to list browser names
+and UUIDs, then pass `clientId: "work"` or a UUID to browser tools. Selection is required with
+multiple online browsers. Task results include the resolved `clientId`. MCP initialization and streaming are handled by your
 client's MCP implementation.
 
 ### Task and resource operations
@@ -81,6 +191,7 @@ CLI and MCP use the same task observer and browser operations. The task and reso
 
 | CLI | MCP tool |
 | --- | --- |
+| `browsers`, `browsers forget` | `qingzhou_bridge_status`, `qingzhou_forget_browser` |
 | `create`, `send`, `cancel` | `qingzhou_create_session`, `qingzhou_send_message`, `qingzhou_stop_session` |
 | `tasks`, `show`, `watch` | `qingzhou_list_sessions`, `qingzhou_get_session_snapshot`, `qingzhou_watch_task` |
 | `show`, `submit` / `approve` / `reject` | `qingzhou_get_session_snapshot`, `qingzhou_respond_to_user_input` |
@@ -185,7 +296,8 @@ continues in the browser.
 
 ## Browser selection and MCP tools
 
-Use `--client ID` or `-c ID` to select a browser when several are connected. Find IDs in `qz status`.
+Use `--client NAME|UUID` or `-c NAME|UUID` to select a browser. `qz browsers` lists registered names,
+UUIDs, and online status. See [browser selection](#add-and-select-browsers) for pairing and name reuse.
 Use `-t` for `--title`. Run `qz help COMMAND` or `qz COMMAND --help` for command-specific options.
 
 MCP clients can inspect browser tool schemas with `qingzhou_list_tools` and `qingzhou_get_tool`,
@@ -252,8 +364,8 @@ a patch containing the supplied top-level fields. Follow the field descriptions 
 replace an entire object, such as `modelParameters`.
 
 Read credential patches from stdin to keep them out of shell history. JSON is validated before
-connecting. The extension validates field names and values before saving. All commands accept
-`--client ID` to select a browser profile. `automations run` starts an existing automation and
+connecting. The extension validates field names and values before saving. Browser commands accept
+`--client NAME|UUID` to select a profile. `automations run` starts an existing automation and
 returns its task ID.
 
 The CLI uses the same browser operations as MCP. Its commands correspond to tasks, data,
@@ -283,8 +395,10 @@ extension polling only from extension origins or local clients. Ordinary website
 requests through the MCP endpoint. Local programs can control connected qz tasks while the
 service is running. Run `qz stop` to disconnect.
 
-Connection metadata is stored in `~/.qz-browser-agent/run/`; `QZ_STATE_DIR` selects another local
-directory for isolated tests. Atomic startup locks prevent duplicate services. Development copies
+Connection metadata and browser registrations are stored in `~/.qz-browser-agent/run/`;
+`QZ_STATE_DIR` selects another local directory for isolated tests. Registration writes are atomic;
+a failed write leaves the previous registration active. Private pairing proofs stay in local storage
+and are omitted from status output. Atomic startup locks prevent duplicate services. Development copies
 and published installations use separate identities. The client verifies the service identity,
 protocol version, instance, and process before reusing or stopping it. Editing source files or
 running a newer package keeps the healthy service and its connections alive. `status` reports
@@ -320,7 +434,7 @@ using the public npm registry. It checks the installed command, versions, MCP to
 and shutdown on an isolated port. The test owns its npm configuration, cache, connection state,
 and service process. It requires network access to download dependencies.
 
-Use `--output tests/results/npm/qz-browser-agent-0.1.0.tgz` to retain the verified tarball.
+Use `--output tests/results/npm/qz-browser-agent-0.1.1.tgz` to retain the verified tarball.
 Use `--tarball PATH` to check an existing tarball. The check also runs through
 `npm test -- release --match npm-package`.
 
@@ -345,9 +459,9 @@ For the first manual release, log in with npm, verify the saved tarball, and pub
 
 ```bash
 npm login --registry=https://registry.npmjs.org
-node tests/release/npm-package.mjs --output tests/results/npm/qz-browser-agent-0.1.0.tgz
-npm publish tests/results/npm/qz-browser-agent-0.1.0.tgz --access public --registry=https://registry.npmjs.org
+node tests/release/npm-package.mjs --output tests/results/npm/qz-browser-agent-0.1.1.tgz
+npm publish tests/results/npm/qz-browser-agent-0.1.1.tgz --access public --registry=https://registry.npmjs.org
 ```
 
 The root package stays private. Publishing the service does not publish the Chrome extension.
-After publication, check `npx qz-browser-agent@0.1.0 --version` from a directory outside the repository.
+After publication, check `npx qz-browser-agent@0.1.1 --version` from a directory outside the repository.

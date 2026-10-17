@@ -35,11 +35,13 @@ import { buildRunProfile as createRunProfile } from "./agent/run-profile.js";
 import { getCurrentRuntimeConfig, getCurrentRuntimeConfigVersion, setCurrentRuntimeConfig } from "./runtime-config.js";
 import {
   getQingzhouMcpBridgeConfig,
+  getQingzhouMcpConnectionStatus,
   qingzhouMcpBridgeStorageKey,
   saveQingzhouMcpBridgeConfig,
   startQingzhouMcpBridge,
 } from "./mcp/mcp-bridge.js";
-import { createMcpConnectPage } from "./mcp/connect-page.js";
+import { createMcpConnectPage, assertMcpSettingsSender } from "./mcp/connect-page.js";
+import type { CliConnectionInput } from "../shared/mcp-connection.js";
 import { createMcpResourceRuntime } from "./mcp/resource-runtime.js";
 import { createMcpManagementRuntime } from "./mcp/management-runtime.js";
 import { downloadMcpFile } from "./mcp/file-download.js";
@@ -548,7 +550,7 @@ automationRuntime = createAutomationRuntime({
     getRuntime: sessionCommands.getSessionRuntimeState,
     getMetadata: sessionId => sessionRepository.getMetadata(sessionId),
     listRecords: getSessions,
-    create: async ({ automation, run, prompt }) => {
+    create: async ({ automation, run, prompt, signal }) => {
       const { session } = await sessionCommands.createSessionMetadataRuntime({
         title: t("automation.sessionTitle", { title: String(automation.title) }),
         firstMessage: prompt,
@@ -557,10 +559,16 @@ automationRuntime = createAutomationRuntime({
         source: "automation",
         automationId: automation.id,
         automationRunId: run.id,
-      });
+      }, signal);
       return session;
     },
-    launch: sessionCommands.launchSessionPrompt,
+    launch: async (sessionId, prompt, signal) => {
+      const text = String(prompt || "").trim();
+      if (!text) return false;
+      const task = await sessionCommands.startSessionPromptTask({ sessionId, text, swallowErrors: true }, signal);
+      void task.promise?.catch(error => console.warn("[轻舟] launch automation prompt failed:", error));
+      return !task.cancelled;
+    },
     remove: sessionCommands.deleteSessionRuntime,
     getConversation: sessionTranscript.getConversation,
     getTranscript: sessionTranscript.get,
@@ -788,15 +796,25 @@ let mcpBridge: ReturnType<typeof startQingzhouMcpBridge> | undefined;
 const connectMcp = createMcpConnectPage({
   extensionId: chrome.runtime.id,
   assertConsent: dataConsent.assertAccepted,
-  getConfig: getQingzhouMcpBridgeConfig,
-  saveConfig: saveQingzhouMcpBridgeConfig,
+  connect: (input, assertCurrent) => getMcpBridge().connect(input, assertCurrent),
   getTab: tabId => chrome.tabs.get(tabId),
-  wake: () => mcpBridge?.wake(),
 });
 
 const backgroundApi = createBackgroundApi({
   system: {
     connectMcp,
+    mcpConnectionStatus: (sender: chrome.runtime.MessageSender) => {
+      assertMcpSettingsSender(sender, chrome.runtime.id);
+      return mcpBridge?.status() || getQingzhouMcpConnectionStatus();
+    },
+    connectMcpFromSettings: (sender: chrome.runtime.MessageSender, input: CliConnectionInput) => {
+      assertMcpSettingsSender(sender, chrome.runtime.id);
+      return getMcpBridge().connect(input);
+    },
+    disconnectMcp: (sender: chrome.runtime.MessageSender) => {
+      assertMcpSettingsSender(sender, chrome.runtime.id);
+      return getMcpBridge().disconnect();
+    },
     contentLanguage: async () => {
       await languageReady;
       await whenLanguageReady();
@@ -938,7 +956,7 @@ const backgroundApi = createBackgroundApi({
     stream: sidepanelChannel.recordStreamTrace,
   },
 }, path => {
-  if (["system.ready", "system.contentLanguage", "system.ping", "system.acceptDataConsent", "sessions.stop"].includes(path)) return;
+  if (["system.ready", "system.contentLanguage", "system.ping", "system.acceptDataConsent", "system.mcpConnectionStatus", "system.disconnectMcp", "sessions.stop"].includes(path)) return;
   dataConsent.assertAccepted();
 });
 
@@ -960,11 +978,16 @@ const runtimeMessageTransport = createRuntimeMessageTransport(backgroundApi);
 runtimeMessageTransport.register(chrome.runtime);
 
 subscribeSkillToolRegistry(broadcast);
-dataConsent.whenAccepted.then(() => { mcpBridge = startQingzhouMcpBridge({
-  dispatch: mcpTransport.dispatch,
-  describe: mcpRuntime.describe,
-  trace: llmTrace,
-}); }).catch(error => console.debug("[qz] MCP bridge startup failed:", error));
+function getMcpBridge() {
+  return mcpBridge ??= startQingzhouMcpBridge({
+    dispatch: mcpTransport.dispatch,
+    describe: mcpRuntime.describe,
+    assertConsent: dataConsent.assertAccepted,
+    onStatus: status => broadcast({ type: "mcp_connection_status_changed", status }),
+    trace: llmTrace,
+  });
+}
+dataConsent.whenAccepted.then(getMcpBridge).catch(error => console.debug("[qz] MCP bridge startup failed:", error));
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   sessionTabs.handleTabRemoved(tabId).catch((error) => {

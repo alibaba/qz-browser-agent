@@ -23,10 +23,10 @@ try {
     requestTimeoutSeconds: 60,
   });
   const clientId = environment.bridgeStatus.clients[0].clientId;
-  assert.match(clientId, /^qingzhou-/);
+  assert.match(clientId, /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i);
   const pollCountAtDisconnect = environment.pollRequests.length;
   await environment.bridge.close();
-  // Three failures exhaust the bounded retry budget. Further idle time must stay quiet.
+  // The persisted retry deadline keeps a short outage from producing a hot poll loop.
   await new Promise(resolve => setTimeout(resolve, 8000));
   const stoppedPollCount = environment.pollRequests.length;
   await new Promise(resolve => setTimeout(resolve, 2500));

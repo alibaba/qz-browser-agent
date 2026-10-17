@@ -29,6 +29,12 @@ https://github.com/user-attachments/assets/3203bc89-ef26-4f66-86cc-b602a912a1ab
 
 ### 安装
 
+打开[轻舟的 Chrome 应用商店页面](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm)，点击**添加至 Chrome**。
+
+#### 手动安装
+
+如需通过 ZIP 安装：
+
 1. 下载[最新版本](https://github.com/alibaba/qz-browser-agent/releases/latest)中的 ZIP 安装包。
 2. 解压文件。
 3. 打开 `chrome://extensions`，启用**开发者模式**。
@@ -43,7 +49,7 @@ npm ci
 npm run build
 ```
 
-按照上面的 Chrome 安装步骤，选择 `dist/extension/` 作为扩展文件夹。
+按照[手动安装步骤](#手动安装)，选择 `dist/extension/` 作为扩展文件夹。
 
 ### 使用
 
@@ -54,9 +60,9 @@ npm run build
 
 ## CLI 与编程 Agent
 
-给 qz 一个目标和需要的产出，它会自行规划并执行浏览器任务，返回结果或需要用户回答的问题。终端和轻舟侧边栏可以查看同一个任务。
+**Agent 友好。** 通过 CLI、Skill 或 MCP，让你的 Agent 把浏览器任务交给轻舟。
 
-在运行 Chrome 的同一台机器上使用 Node.js 24 或更高版本。从[最新版本](https://github.com/alibaba/qz-browser-agent/releases/latest)安装扩展，在轻舟设置中配置模型，然后安装 CLI：
+在运行 Chrome 的同一台机器上使用 Node.js 24 或更高版本。从 [Chrome 应用商店](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm)安装扩展，在轻舟设置中配置模型，然后安装 CLI：
 
 ```bash
 npm install --global qz-browser-agent
@@ -64,8 +70,24 @@ qz connect
 qz create "比较 SQLite、DuckDB 和 PostgreSQL 在本地数据分析中的取舍，把优缺点和来源链接整理成表格。" --stream
 ```
 
-`connect` 会在需要时打开连接页面。请使用安装了轻舟的 Chrome 用户配置，并完成首次数据告知。`--stream` 实时显示进展、待回答的问题和结果。
-也可以不做全局安装，将命令中的 `qz` 替换为 `npx --yes qz-browser-agent@latest`。
+首次运行 `connect` 会在系统默认浏览器中打开本地连接页面。请在安装了轻舟的 Chrome 用户配置中打开此页面，并完成首次数据告知。第一个浏览器命名为 `default`，再次运行 `connect` 会复用连接。`--stream` 实时显示进展、待回答的问题和结果。
+也可以将 `qz` 替换为 `npx --yes qz-browser-agent@latest`，免去全局安装。
+
+从终端绑定指定的浏览器配置，先获取连接链接：
+
+```bash
+qz connect --no-open --name work --json
+```
+
+在目标配置中打开返回的 `result.url`，再用 `qz browsers` 确认连接。不传 `--name` 时，保留已有标识或自动分配新标识。具体启动方式见[浏览器启动命令](services/mcp-bridge/README.md#pair-a-selected-browser-from-the-shell)。也可以在该配置的 **轻舟设置 → 高级 → CLI** 中连接。
+多个浏览器在线时，通过名称或 UUID 明确选择一个：
+
+```bash
+qz browsers
+qz create "总结当前页面。" --client work --stream
+```
+
+在轻舟设置中可单独断开当前浏览器。`qz stop` 会停止本地服务并断开所有浏览器。详见[连接与升级说明](services/mcp-bridge/README.md#connect-and-stop)。
 
 ### 给 Agent 安装 Skill
 

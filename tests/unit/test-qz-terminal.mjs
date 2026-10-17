@@ -28,7 +28,7 @@ function displayWidth(line) {
 function fits(text, width) {
   for (const line of text.split("\n")) {
     // Copyable commands retain their bytes; terminals wrap these lines visually.
-    if (/^  qz (submit|approve|reject) /.test(stripVTControlCharacters(line))) continue;
+    if (/^  qz /.test(stripVTControlCharacters(line))) continue;
     assert.ok(displayWidth(line) <= width, `Overflow at ${width}: ${JSON.stringify(line)}`);
   }
   assert.ok(text.endsWith("\n"));
@@ -44,14 +44,14 @@ test("help recommends direct creation, optional titles, waiting, and contextual 
   assert.match(renderHelp("create"), /title is optional/);
   assert.match(renderHelp("create"), /read stdin/);
   assert.match(renderHelp("create"), /--title, -t/);
-  assert.match(renderHelp("create"), /--client ID \(-c\)/);
+  assert.match(renderHelp("create"), /--client NAME\|UUID \(-c\)/);
   assert.match(renderHelp("show"), /pending form/i);
   assert.match(general, /send TASK_ID "MESSAGE"/);
   assert.doesNotMatch(general, /send ID "MESSAGE"/);
   assert.match(renderHelp("send"), /--steer/);
   assert.match(renderHelp("send"), /next safe boundary/);
   assert.match(renderHelp("send"), /next run/);
-  for (const name of ["", "create", "tasks", "show", "cancel", "submit", "approve", "reject", "watch", "connect", "install", "status", "stop", "mcp", "send", "data", "images", "skills", "settings", "automations"]) {
+  for (const name of ["", "create", "tasks", "show", "cancel", "submit", "approve", "reject", "watch", "connect", "install", "status", "stop", "mcp", "send", "data", "images", "skills", "settings", "automations", "browsers"]) {
     assert.doesNotMatch(renderHelp(name), /qz run|qz tasks (create|list|get|stop)|Legacy|--prompt|--args|--client-id/);
     for (const width of [40, 80]) fits(renderHelp(name, { width }), width);
   }
@@ -251,7 +251,7 @@ test("connection, install, and service results offer concise next steps", () => 
   assert.match(updateAvailable, /Service update available/);
   assert.match(updateAvailable, /qz stop && qz connect/);
   assert.match(renderResult({ command: "stop" }, { stopped: false }), /already stopped/);
-  assert.match(renderResult({ command: "install" }, { opened: true, url: "https://example.com" }), /Install the extension in Chrome/);
+  assert.match(renderResult({ command: "install" }, { opened: true, url: "https://example.com" }), /Click Add to Chrome/);
 });
 
 test("status displays every full browser client ID for explicit profile selection", () => {
@@ -264,6 +264,24 @@ test("status displays every full browser client ID for explicit profile selectio
     assert.doesNotMatch(text, /capabilities|privatePayload|omit/);
     fits(text, width);
   }
+});
+
+test("connect identifies the selected browser and keeps its UUID in the next command", () => {
+  const clientId = "d57bf258-5888-43a7-90ce-412693f401b1";
+  const clients = [{ clientId: "other-profile", name: "other" }, { clientId, name: "work", paired: true }];
+  for (const width of [40, 80]) {
+    const text = renderResult({ command: "connect" }, {
+      connected: true, clientId, clients, mcpUrl: "http://127.0.0.1:18766/mcp",
+    }, { width });
+    assert.match(text, /Browser\s+work/);
+    assert.match(text, /UUID/);
+    assert.ok(text.replace(/\s/g, "").includes(clientId));
+    assert.match(text, /18766\/mcp/);
+    assert.doesNotMatch(text, /other-profile|Browser\s+other/);
+    assert.ok(text.includes(`--client ${clientId}`));
+    fits(text, width);
+  }
+
 });
 
 test("untrusted ANSI, OSC clipboard, hyperlinks, control bytes, and bidi overrides are removed", () => {
@@ -404,3 +422,30 @@ for (const shell of ["posix", "powershell"]) {
     }
   });
 }
+
+
+test("task and resource next actions retain the resolved browser UUID", () => {
+  const clientId = "550e8400-e29b-41d4-a716-446655440000";
+  for (const [parsed, result] of [
+    [{ command: "tasks", action: "create" }, { session: task }],
+    [{ command: "tasks", action: "list" }, { sessions: [task] }],
+    [{ command: "tasks", action: "list" }, { sessions: [] }],
+    [{ command: "connect" }, { connected: true }],
+    [{ command: "send", id: taskId }, { accepted: true, sessionId: taskId }],
+    [{ command: "data", action: "list" }, { tables: [{ name: "prices" }] }],
+  ]) {
+    const text = renderResult(parsed, { ...result, clientId });
+    for (const line of text.split("\n").filter(line => /^  qz /.test(line))) assert.ok(line.includes(`--client ${clientId}`), line);
+  }
+});
+
+
+test("a prepared binding URL never claims that the target browser is connected", () => {
+  for (const opened of [false, true]) {
+    const text = renderResult({ command: "connect" }, { endpoint: "http://127.0.0.1:23456", url: "http://127.0.0.1:23456/qz-connect?name=work", mcpUrl: "http://127.0.0.1:23456/mcp", opened });
+    assert.match(text, /binding (URL ready|page opened)/);
+    assert.match(text, /qz-connect\?name=work/);
+    assert.match(text, /qz browsers/);
+    assert.doesNotMatch(text, /Connected to qz|Waiting for qz/);
+  }
+});

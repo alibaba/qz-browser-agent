@@ -40,8 +40,28 @@ async function stdinText({ signal } = {}) {
   });
 }
 
-function connected(health, clientId = "") {
-  return clientId ? health.status?.clients?.some(client => client.clientId === clientId) : Boolean(health.status?.connected);
+const UPGRADE_HINT = "Use the latest CLI. After current tasks finish, run npx --yes qz-browser-agent@latest stop (disconnects all browsers), update and reload the qz extension, then run npx --yes qz-browser-agent@latest connect.";
+
+function requirePairingSupport(health) {
+  if (health?.features?.browserPairing !== 1) throw new QzError("upgrade_required",
+    "This qz service is unsupported. Upgrade the CLI and extension, then run qz stop and qz connect.",
+    { hint: UPGRADE_HINT });
+}
+
+function selectClient(health, selector = "", { allowEmpty = false } = {}) {
+  const clients = health.status?.clients || [];
+  if (selector) {
+    const entry = (health.status?.browsers || []).find(client => client.clientId === selector || client.name === selector);
+    const selected = clients.find(client => client.clientId === (entry?.clientId || selector));
+    if (selected) return selected.clientId;
+    throw new QzError(entry ? "client_offline" : "client_not_found", `Browser ${selector} is ${entry ? "offline" : "not registered"}.`,
+      { hint: "Run qz browsers to inspect names and UUIDs. Reconnect that profile from its extension settings." });
+  }
+  if (clients.length > 1) throw new QzError("selection_required", "Multiple browsers are connected. Select one with --client NAME|UUID.",
+    { clients: clients.map(({ clientId, name }) => ({ clientId, name })), hint: clients.map(client => `${client.name || client.clientId}: ${client.clientId}`).join("\n") });
+  if (clients.length === 1) return clients[0].clientId;
+  if (allowEmpty) return "";
+  throw connectionRequired();
 }
 
 function connectionRequired() {
@@ -66,7 +86,12 @@ async function executeCommand(parsed, dependencies) {
   if (parsed.command === "version") return parsed.options.json
     ? { result: { name: PACKAGE_NAME, version: PACKAGE_VERSION } }
     : { text: `qz ${PACKAGE_VERSION}\n` };
-  return withToolClient(callTool => dispatchCommand(parsed, { ...dependencies, callTool: dependencies.callTool || callTool }));
+  return withToolClient(async callTool => {
+    const returned = await dispatchCommand(parsed, { ...dependencies, callTool: dependencies.callTool || callTool });
+    const clientId = parsed.presentation?.clientId;
+    return clientId && returned.result && typeof returned.result === "object" && !Array.isArray(returned.result)
+      ? { ...returned, result: { ...returned.result, clientId } } : returned;
+  });
 }
 
 async function dispatchCommand(parsed, dependencies) {
@@ -79,11 +104,24 @@ async function dispatchCommand(parsed, dependencies) {
   if (command === "install") return { result: await open(INSTALL_URL) };
   if (command === "stop") return { result: await (dependencies.stopDaemon || stopDaemon)() };
   if (command === "connect") {
-    const running = await (dependencies.ensureDaemon || ensureDaemon)();
-    const connectUrl = `${running.endpoint}/qz-connect`;
+    const running = await (dependencies.ensureDaemon || ensureDaemon)(options.port === undefined ? {} : { preferredPort: options.port });
+    requirePairingSupport(running.health);
+    if (options.port !== undefined && Number(new URL(running.endpoint).port) !== options.port) throw new QzError("port_mismatch",
+      `The local service is already running at ${running.endpoint}.`, { endpoint: running.endpoint,
+        hint: "Use its current address, or run qz stop before connecting on a different port." });
+    const bindingUrl = new URL("/qz-connect", running.endpoint);
+    if (options.name !== undefined) bindingUrl.searchParams.set("name", options.name);
+    const connectUrl = bindingUrl.href;
+    if (options["no-open"] || options.name !== undefined) {
+      dependencies.signal?.throwIfAborted();
+      const opened = options["no-open"] ? false : Boolean((await open(connectUrl))?.opened);
+      return { result: { endpoint: running.endpoint, url: connectUrl, mcpUrl: `${running.endpoint}/mcp`, opened } };
+    }
     const deadline = Date.now() + timeoutSeconds * 1000;
+    let selected = selectClient(running.health, options["client-id"], { allowEmpty: true });
     const probe = async health => {
-      const clients = (health?.status?.clients || []).filter(client => !options["client-id"] || client.clientId === options["client-id"]);
+      const chosen = selected || selectClient(health, "", { allowEmpty: true });
+      const clients = (health?.status?.clients || []).filter(client => client.clientId === chosen);
       for (const client of clients) {
         dependencies.signal?.throwIfAborted();
         const timeoutMs = Math.min(2000, deadline - Date.now());
@@ -94,17 +132,19 @@ async function dispatchCommand(parsed, dependencies) {
           await dependencies.callTool(running.endpoint, "qingzhou_call", {
             method: "ping", clientId: client.clientId, timeoutSeconds: timeoutMs / 1000,
           }, { timeoutMs, signal: dependencies.signal ? AbortSignal.any([dependencies.signal, timeout]) : timeout });
+          selected = client.clientId;
           return true;
         } catch (error) {
           dependencies.signal?.throwIfAborted();
           if (error.code === "connection_error" || (!timeout.aborted
-            && !["BRIDGE_NOT_CONNECTED", "BRIDGE_REQUEST_TIMEOUT", -32001].includes(error.code))) throw error;
+            && !["BRIDGE_NOT_CONNECTED", "BRIDGE_CLIENT_OFFLINE", "BRIDGE_CLIENT_DISCONNECTED", "BRIDGE_REQUEST_TIMEOUT", -32001].includes(error.code))) throw error;
         }
       }
       return false;
     };
-    const result = health => ({ result: { connected: true, mcpUrl: `${running.endpoint}/mcp`, clients: health.status.clients } });
+    const result = health => ({ result: { connected: true, mcpUrl: `${running.endpoint}/mcp`, clients: health.status.clients, clientId: selected } });
     if (await probe(running.health)) return result(running.health);
+    if (options["client-id"]) throw new QzError("client_offline", "The selected browser is not responding. Reconnect it from its extension settings.");
     dependencies.signal?.throwIfAborted();
     await open(connectUrl);
     while (Date.now() < deadline) {
@@ -114,7 +154,7 @@ async function dispatchCommand(parsed, dependencies) {
       if (health && await probe(health)) return result(health);
       await delay(200, undefined, { signal: dependencies.signal });
     }
-    throw new QzError("connection_pending", "qz is waiting for Chrome. Open the connection URL in the Chrome profile with qz installed and accept its data notice. Then run qz connect again.", { url: connectUrl });
+    throw new QzError("connection_pending", "qz is waiting for Chrome. Open the connection URL in the Chrome profile with qz installed and confirm the connection in qz. Then run qz connect again.", { url: connectUrl });
   }
   // Validate JSON before connecting; malformed arguments cannot cause browser actions.
   let args = {};
@@ -134,14 +174,21 @@ async function dispatchCommand(parsed, dependencies) {
   dependencies.signal?.throwIfAborted();
   const resource = resourceRequest(parsed, config);
   const running = await find();
-  if (command === "status") return { result: running ? { running: true, endpoint: running.endpoint, updateAvailable: running.updateAvailable === true, ...running.health.status } : { running: false, connected: false } };
+  if (command === "status") return { result: running ? { running: true, endpoint: running.endpoint, updateAvailable: running.updateAvailable === true, ...(running.health.features?.browserPairing === 1 ? {} : { updateRequired: true, hint: UPGRADE_HINT }), ...running.health.status } : { running: false, connected: false } };
   if (!running) throw connectionRequired();
   if (command === "mcp") return options.json ? { result: { url: `${running.endpoint}/mcp` } } : { text: `${running.endpoint}/mcp\n` };
   const call = dependencies.callTool;
-  if (!connected(running.health, options["client-id"])) throw connectionRequired();
-  const clients = running.health.status?.clients || [];
-  // Keep a waited task in its creating browser even if other profiles connect or disconnect.
-  const clientId = options["client-id"] || ((options.wait || ["submit", "approve", "reject"].includes(command)) && clients.length === 1 ? clients[0].clientId : "");
+  requirePairingSupport(running.health);
+  if (command === "browsers") {
+    if (action === "list") return { result: running.health.status };
+    const browser = running.health.status?.browsers?.find(browser => browser.clientId === id || browser.name === id);
+    if (!browser) throw new QzError("client_not_found", `No registered browser named ${id}. Run qz browsers to inspect names and UUIDs.`);
+    return { result: await call(running.endpoint, "qingzhou_forget_browser", { clientId: browser.clientId }, { timeoutMs: timeoutSeconds * 1000, signal: dependencies.signal }) };
+  }
+  // Resolve names once. Every subsequent operation carries this profile UUID.
+  const clientId = selectClient(running.health, options["client-id"]);
+  parsed.presentation = { ...parsed.presentation, clientId };
+  options["client-id"] = clientId;
   const common = { timeoutSeconds, ...(clientId ? { clientId } : {}) };
   const requestOptions = { timeoutMs: timeoutSeconds * 1000, signal: dependencies.signal };
   const startedAt = Date.now();
@@ -291,7 +338,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     });
     live?.finish();
     stdout.write(result.text ?? (mode.json ? `${JSON.stringify({ ok: true, result: result.result })}\n`
-      : renderResult({ ...parsed, presentation: { streamed: live?.streamed } }, result.result, mode)));
+      : renderResult({ ...parsed, presentation: { ...parsed.presentation, streamed: live?.streamed } }, result.result, mode)));
     const status = result.result?.snapshot?.status || result.result?.snapshot?.runtime?.status;
     if (result.result?.accepted === false && !result.result?.requiresUserAction) return 1;
     return ["error", "failed", "aborted", "cancelled", "canceled", "interrupted"].includes(status) ? 1 : 0;

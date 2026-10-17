@@ -18,6 +18,7 @@ import { createSidepanelChannel } from "../../src/background/transports/sidepane
 import { createSidepanelEventRouter } from "../../src/sidepanel/features/app/sidepanel-event-router.js";
 
 await configRuntimeKeepsPersistedAndLiveStateInLockstep();
+await configRuntimePreservesCancellationThroughModelValidationAndGuardrails();
 await chromeNotificationAdaptersHandlePermissionAndCallbackErrors();
 await completionNotifierHandlesRootsSuppressionDeduplicationAndClicks();
 await notificationRevealEventsSelectTheRelatedSession();
@@ -79,6 +80,41 @@ async function configRuntimeKeepsPersistedAndLiveStateInLockstep() {
   assert.equal(refreshed.provider, "deepseek");
   assert.deepEqual(refreshed.customProtocols, customProtocols);
   assert.equal(clears, 5);
+}
+
+async function configRuntimePreservesCancellationThroughModelValidationAndGuardrails() {
+  for (const stage of ["validation", "committed", "preset"]) {
+    const controller = new AbortController(), entered = deferred(), resume = deferred();
+    const reason = new Error(`cancelled during ${stage}`);
+    let persisted = { model: "original" }, live = persisted, guardrailWrites = 0;
+    const guardedSave = async (next, signal) => {
+      assert.equal(signal, controller.signal);
+      if (stage === "committed") persisted = next;
+      entered.resolve(); await resume.promise;
+      if (stage !== "committed") { signal.throwIfAborted(); persisted = next; }
+      return { ...persisted };
+    };
+    const runtime = createConfigRuntime({
+      getConfig: async () => persisted,
+      saveConfig: guardedSave,
+      saveModelPreset: async () => persisted,
+      applyModelPreset: (id, signal) => guardedSave({ model: id }, signal),
+      deleteModelPreset: async () => persisted,
+      clearProviderAuth: async () => {},
+      getSecurityGuardrails: async () => ({ rules: [] }),
+      saveSecurityGuardrails: async () => { guardrailWrites++; return { rules: [] }; },
+      getCurrentRuntimeConfig: async () => live,
+      setCurrentRuntimeConfig: config => { live = config; },
+    });
+    const pending = stage === "preset" ? runtime.applyPreset("new", controller.signal)
+      : runtime.save({ model: "new", securityGuardrails: { rules: [{ id: "late" }] } }, controller.signal);
+    const rejected = assert.rejects(pending, error => error === reason);
+    await entered.promise; controller.abort(reason); resume.resolve(); await rejected;
+    assert.equal(guardrailWrites, 0, "a cancelled second write cannot alter security settings");
+    assert.equal(persisted.model, stage === "committed" ? "new" : "original");
+    assert.equal(live.model, persisted.model, "an admitted model write still updates its live snapshot");
+    if (stage === "committed") assert.deepEqual(live.securityGuardrails, { rules: [] });
+  }
 }
 
 async function chromeNotificationAdaptersHandlePermissionAndCallbackErrors() {

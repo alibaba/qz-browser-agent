@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { QzError } from "./client.mjs";
+import { browserName } from "./browser-registry.mjs";
 import { COMMANDS, commandOptions } from "./commands.mjs";
 
 function invalid(message) {
@@ -22,7 +23,7 @@ export function parseCommand(argv) {
       title: { type: "string", short: "t" }, client: { type: "string", short: "c" },
       "wait-id": { type: "string" }, format: { type: "string" }, query: { type: "string" },
       start: { type: "string" }, limit: { type: "string" }, scope: { type: "string" }, filename: { type: "string" },
-      parent: { type: "string" },
+      parent: { type: "string" }, port: { type: "string" }, name: { type: "string" }, "no-open": { type: "boolean" },
       wait: { type: "boolean" }, stream: { type: "boolean" }, steer: { type: "boolean" },
       json: { type: "boolean" }, plain: { type: "boolean" }, "no-color": { type: "boolean" },
       help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
@@ -56,6 +57,17 @@ export function parseCommand(argv) {
   for (const name of ["session", "client", "wait-id", "parent"]) {
     if (options[name] !== undefined && !options[name].trim()) invalid(`--${name} requires a non-empty ID.`);
   }
+  if (options.name !== undefined) {
+    try { options.name = browserName(options.name); } catch (error) { invalid(error.message); }
+  }
+  if (options.client !== undefined && (options.name !== undefined || options["no-open"])) {
+    invalid("Use --client to select an existing browser, or --name/--no-open to prepare a binding URL.");
+  }
+  if (options.port !== undefined) {
+    const port = Number(options.port);
+    if (!options.port.trim() || !Number.isInteger(port) || port < 1 || port > 65535) invalid("--port must be an integer from 1 to 65535.");
+    options.port = port;
+  }
   if (options.filename !== undefined && !options.filename.trim()) invalid("--filename requires a non-empty name.");
   if (options.scope !== undefined && !["all", "global", "site", "resident"].includes(options.scope)) invalid("--scope must be all, global, site, or resident.");
   if (options.client !== undefined) {
@@ -78,7 +90,11 @@ export function parseCommand(argv) {
   }
 
   let command = originalCommand, action, id;
-  if (command === "send") {
+  if (command === "browsers") {
+    action = words[0] || "list";
+    if (action === "list" ? words.length > 1 : action !== "forget" || words.length !== 2 || !words[1].trim()) invalid("Use qz browsers [list], or qz browsers forget NAME|UUID.");
+    id = words[1];
+  } else if (command === "send") {
     id = words[0]; options.prompt = words.slice(1).join(" ");
     if (!id?.trim() || !options.prompt.trim()) invalid('Use qz send TASK_ID "MESSAGE".');
   } else if (command === "data" || command === "images" || command === "skills") {

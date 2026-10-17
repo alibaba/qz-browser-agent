@@ -55,8 +55,8 @@ function createHarness({
         return sessions.find(session => session.id === sessionId) || null;
       },
       async listRecords() { return sessionRecords; },
-      async create({ automation, run, prompt }) {
-        if (createSession) return createSession({ automation, run, prompt, runtimes, sessions });
+      async create({ automation, run, prompt, signal }) {
+        if (createSession) return createSession({ automation, run, prompt, signal, runtimes, sessions });
         const session = {
           id: `auto-session-${++sessionSequence}`,
           automationId: automation.id,
@@ -67,8 +67,8 @@ function createHarness({
         runtimes.set(session.id, { status: "pending", running: true });
         return session;
       },
-      launch(sessionId) {
-        if (launchSession) return launchSession(sessionId, { runtimes, sessions });
+      launch(sessionId, prompt, signal) {
+        if (launchSession) return launchSession(sessionId, { runtimes, sessions, prompt, signal });
         runtimes.set(sessionId, { status: "running", running: true });
         return true;
       },
@@ -399,6 +399,102 @@ for (const testCase of [
   assert.equal((await harness.repository.listDefinitions()).length, 0);
   assert.equal((await harness.repository.listRuns(automation.id, { limit: 20 })).length, 0);
   assert.equal(warnings.length, 1, "Session cleanup failure should be observable without rolling back deletion");
+}
+
+
+// Cancellation belongs to admission, including the Automation queue and repository read.
+{
+  const entered = Promise.withResolvers(), resume = Promise.withResolvers();
+  let reads = 0;
+  const harness = createHarness({ ready: async () => {
+    if (++reads === 1) { entered.resolve(); await resume.promise; }
+  } });
+  const first = await saveDefinition(harness, { enabled: false });
+  const second = await saveDefinition(harness, { enabled: false });
+  const admitted = harness.runtime.run(first.id);
+  await entered.promise;
+  const controller = new AbortController(), reason = new Error("queue owner disconnected");
+  const stale = harness.runtime.run(second.id, controller.signal);
+  const rejected = assert.rejects(stale, error => error === reason);
+  controller.abort(reason); resume.resolve(); await admitted; await rejected;
+  assert.equal(harness.sessions.length, 1);
+  assert.equal((await harness.repository.listRuns(second.id)).length, 0);
+  assert.equal(reads, 2, "a revoked queued command does not start another readiness/read sequence");
+}
+
+{
+  const storage = createStorage(), entered = Promise.withResolvers(), resume = Promise.withResolvers();
+  const get = storage.get; let blocked = true;
+  storage.get = async key => {
+    const value = await get(key);
+    if (blocked) { entered.resolve(); await resume.promise; }
+    return value;
+  };
+  const repository = createAutomationRepository({ storage });
+  const controller = new AbortController(), reason = new Error("registry read revoked");
+  const pending = repository.createRun({ automationId: "cancelled-read" }, controller.signal);
+  const rejected = assert.rejects(pending, error => error === reason);
+  await entered.promise; controller.abort(reason); blocked = false; resume.resolve(); await rejected;
+  assert.deepEqual(await repository.listRuns(), []);
+  assert.ok((await repository.createRun({ automationId: "fresh-read" })).id, "cancelled read leaves the repository queue usable");
+}
+
+for (const createsMetadata of [false, true]) {
+  const entered = Promise.withResolvers(), resume = Promise.withResolvers();
+  const controller = new AbortController(), reason = new Error("session admission revoked");
+  let launches = 0;
+  const harness = createHarness({
+    createSession: async ({ signal, sessions, runtimes }) => {
+      assert.equal(signal, controller.signal);
+      const session = { id: "pending-session" };
+      if (createsMetadata) { sessions.push(session); runtimes.set(session.id, { running: false }); }
+      entered.resolve(); await resume.promise;
+      if (!createsMetadata) signal.throwIfAborted();
+      return session;
+    },
+    launchSession: () => { launches++; return true; },
+  });
+  const automation = await saveDefinition(harness, { enabled: false, notifyPolicy: "silent" });
+  const pending = harness.runtime.run(automation.id, controller.signal);
+  const rejected = assert.rejects(pending, error => error === reason);
+  await entered.promise; controller.abort(reason); resume.resolve(); await rejected;
+  await harness.runtime.flush();
+  assert.equal(launches, 0, "a stale connection cannot launch an Agent after metadata work");
+  assert.equal((await harness.repository.listRuns(automation.id))[0].status, "aborted");
+  assert.equal((await harness.repository.listDefinitions())[0].runningRunId, "");
+  assert.deepEqual(harness.removed, createsMetadata ? ["pending-session"] : []);
+}
+
+{
+  const controller = new AbortController(); let launchSignal;
+  const harness = createHarness({ launchSession: (id, { signal, runtimes }) => {
+    launchSignal = signal; runtimes.set(id, { status: "running", running: true }); return true;
+  } });
+  const automation = await saveDefinition(harness, { enabled: false });
+  const { run } = await harness.runtime.run(automation.id, controller.signal);
+  assert.equal(launchSignal, controller.signal, "the Session owner also fences its asynchronous launch admission");
+  controller.abort();
+  assert.equal((await harness.repository.getRun(run.id)).status, "running");
+  assert.equal(harness.runtimes.get(run.sessionId).running, true, "accepted tasks keep running when the observer disconnects");
+}
+
+
+{
+  const entered = Promise.withResolvers(), resume = Promise.withResolvers();
+  const controller = new AbortController(), reason = new Error("launch queue revoked");
+  let started = false;
+  const harness = createHarness({ launchSession: async (_id, { signal }) => {
+    entered.resolve(); await resume.promise; signal.throwIfAborted(); started = true; return true;
+  } });
+  const automation = await saveDefinition(harness, { enabled: false, notifyPolicy: "silent" });
+  const pending = harness.runtime.run(automation.id, controller.signal);
+  const rejected = assert.rejects(pending, error => error === reason);
+  await entered.promise; controller.abort(reason); resume.resolve(); await rejected;
+  await harness.runtime.flush();
+  assert.equal(started, false);
+  assert.equal((await harness.repository.listRuns(automation.id))[0].status, "aborted");
+  assert.equal((await harness.repository.listDefinitions())[0].runningRunId, "");
+  assert.deepEqual(harness.removed, ["auto-session-1"]);
 }
 
 console.log("automation runtime concurrency tests passed");

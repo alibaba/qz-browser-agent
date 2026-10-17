@@ -13,11 +13,6 @@ const schemaValidator = new AjvJsonSchemaValidator();
 const definitions = new Map(TOOL_CATALOG.map(tool => [tool.name, {
   tool, validate: schemaValidator.getValidator(tool.inputSchema),
 }]));
-const skillFallbacks = {
-  qingzhou_list_skills: { name: "qingzhou_skill_author__list_skills", fields: ["scope"] },
-  qingzhou_get_skill: { name: "load_skill", fields: ["name", "includeContent", "includeResources"] },
-  qingzhou_get_skill_resource: { name: "load_skill_resource", fields: ["name", "path", "start", "maxChars"] },
-};
 const taskInputResults = new Set([
   "qingzhou_get_session_snapshot", "qingzhou_get_session_state", "qingzhou_send_message",
   "qingzhou_respond_to_user_input", "qingzhou_continue_task", "qingzhou_submit_wait_form", "qingzhou_cancel_wait",
@@ -58,15 +53,23 @@ function argumentsWithDefaults(definition, input) {
 export async function executeMcpTool(state, name, input = {}, { signal, onTaskUpdate } = {}) {
   const args = validateMcpToolInput(name, input);
   if (name === "qingzhou_bridge_status") return state.status();
-  if (name === "qingzhou_bridge_enable_snippet") return {
-    snippet: state.enableSnippet(args.clientId), storageKey: "_qingzhou_mcp_bridge",
-  };
+  if (name === "qingzhou_forget_browser") return state.forgetBrowser(args.clientId);
   if (name === "qingzhou_get_tool_job") return state.getJob(args.jobId, args.includeResult);
+  // One MCP operation, including observation, belongs to one connection.
+  const connection = await state.resolveClient(String(args.clientId || "").trim(),
+    (args.timeoutSeconds || state.requestTimeoutSeconds || 180) * 1000, state.signal(signal), true);
+  args.clientId = connection.id;
+  const connectionSignal = state.signal(connection.controller.signal);
+  const operationSignal = signal ? AbortSignal.any([connectionSignal, signal]) : connectionSignal;
+  operationSignal.throwIfAborted();
+  const result = await executeBrowserTool(state, name, args, { signal: operationSignal, connectionSignal, onTaskUpdate });
+  return args.clientId && (observableTools.has(name) || taskInputResults.has(name) || ["qingzhou_list_sessions", "qingzhou_get_user_input", "qingzhou_stop_session", "qingzhou_abort_session"].includes(name)) && result && typeof result === "object" && !Array.isArray(result)
+    ? { ...result, clientId: args.clientId } : result;
+}
+
+async function executeBrowserTool(state, name, args, { signal, connectionSignal, onTaskUpdate }) {
   const observe = observableTools.has(name) && (name === "qingzhou_watch_task" || args.wait || args.stream);
   const asyncTool = name === "qingzhou_execute_tool" && args.wait === false;
-  // Resolve once before a mutation or watch so subsequent reads stay in the same browser.
-  if (observe || asyncTool) args.clientId = await state.resolveClient(args.clientId,
-    (args.timeoutSeconds || state.requestTimeoutSeconds || 180) * 1000, state.signal(signal));
   const options = { timeoutSeconds: args.timeoutSeconds, clientId: args.clientId, signal };
   const startedAt = Date.now();
   const watch = async (sessionId, tracking = {}) => {
@@ -114,25 +117,11 @@ export async function executeMcpTool(state, name, input = {}, { signal, onTaskUp
   if (name === "qingzhou_execute_tool") {
     delete params.wait;
     params.args ||= {};
-    return asyncTool ? { ...state.startExtensionJob("execute_tool", params, options), sessionId: args.sessionId, clientId }
+    return asyncTool ? { ...state.startExtensionJob("execute_tool", params, { ...options, connectionSignal }), sessionId: args.sessionId, clientId }
       : state.callExtension("execute_tool", params, options);
   }
   const method = name === "qingzhou_abort_session" ? "stop_session" : name.slice("qingzhou_".length);
-  let result;
-  try {
-    result = await state.callExtension(method, params, options);
-  } catch (error) {
-    const fallback = skillFallbacks[name];
-    if (!fallback || !String(error.message).includes("Unknown Qingzhou MCP bridge method")) throw error;
-    result = await state.callExtension("execute_tool", {
-      sessionId: "default", name: fallback.name,
-      args: Object.fromEntries(fallback.fields.map(key => [key, args[key]])), timeoutSeconds: args.timeoutSeconds,
-    }, options);
-  }
-  if (name === "qingzhou_list_skills" && args.query && result && typeof result === "object") {
-    const names = (result.names || []).filter(item => typeof item === "string" && item.toLowerCase().includes(args.query.toLowerCase()));
-    if (names.length) result = { ...result, query: args.query, count: names.length, names, items: names.map(item => ({ name: item })) };
-  }
+  let result = await state.callExtension(method, params, options);
   if (resourceResults.has(name) && result && typeof result.code === "string" && typeof result.error === "string") {
     throw new BridgeError(result.code, result.error, {
       ...result.details,

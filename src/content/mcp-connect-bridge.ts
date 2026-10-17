@@ -5,10 +5,15 @@ if (window === window.top && location.protocol === "http:"
   && ["127.0.0.1", "localhost"].includes(location.hostname) && location.pathname === "/qz-connect") {
   const status = document.querySelector<HTMLElement>("[data-qz-connection-status]");
   if (status) {
-    void requestRuntimeMessage({ type: "mcp_bridge_connect" }, { timeoutMs: 10000 }).then(response => {
+    void requestRuntimeMessage({ type: "mcp_bridge_connect" }, { timeoutMs: 30000 }).then(response => {
       status.dataset.qzConnectionState = response.ok ? "connected" : "error";
       status.dataset.qzConnectionCode = String(response.code || "");
-      status.textContent = response.ok ? "Connected. You can close this tab."
+      const connection = response.status && typeof response.status === "object" ? response.status as Record<string, unknown> : {};
+      if (response.ok) {
+        status.dataset.qzClientId = String(connection.clientId || "");
+        status.dataset.qzBrowserName = String(connection.name || "");
+      }
+      status.textContent = response.ok ? `Connected${connection.name ? ` as ${connection.name}` : ""}. You can close this tab.`
         : response.code === "DATA_CONSENT_REQUIRED"
           ? "Open the qz side panel and complete first-time setup, then reload this page."
           : String(response.error || "Connection failed. Run qz connect to try again.");

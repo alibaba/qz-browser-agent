@@ -3,9 +3,9 @@ import type { CustomProviderProtocol } from "../../shared/contracts/settings.js"
 interface ConfigRuntimeOptions {
   listCustomProtocols?(): readonly CustomProviderProtocol[];
   getConfig(): Promise<RuntimeConfig>;
-  saveConfig(config: Record<string, unknown>): Promise<RuntimeConfig>;
+  saveConfig(config: Record<string, unknown>, signal?: AbortSignal): Promise<RuntimeConfig>;
   saveModelPreset(preset: Record<string, unknown>): Promise<RuntimeConfig>;
-  applyModelPreset(presetId: string): Promise<RuntimeConfig>;
+  applyModelPreset(presetId: string, signal?: AbortSignal): Promise<RuntimeConfig>;
   deleteModelPreset(presetId: string): Promise<RuntimeConfig>;
   clearProviderAuth(provider: string): Promise<unknown>;
   getSecurityGuardrails: typeof import("../../shared/security-guardrails.js").getSecurityGuardrails;
@@ -37,12 +37,21 @@ export function createConfigRuntime({
     return updateRuntimeConfig({ ...config, securityGuardrails });
   }
 
-  async function save(inputConfig: Record<string, unknown> = {}) {
+  async function save(inputConfig: Record<string, unknown> = {}, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const writesGuardrails = Object.prototype.hasOwnProperty.call(inputConfig, "securityGuardrails");
-    const config = await saveConfig(inputConfig);
-    config.securityGuardrails = writesGuardrails
-      ? await saveSecurityGuardrails(inputConfig.securityGuardrails)
-      : await getSecurityGuardrails();
+    const config = await saveConfig(inputConfig, signal);
+    try {
+      signal?.throwIfAborted();
+      config.securityGuardrails = writesGuardrails
+        ? await saveSecurityGuardrails(inputConfig.securityGuardrails)
+        : await getSecurityGuardrails();
+    } catch (error) {
+      // The model write may already be committed; keep its live snapshot consistent.
+      config.securityGuardrails = await getSecurityGuardrails();
+      await updateRuntimeConfig(config, { clearUsage: true });
+      throw error;
+    }
     return updateRuntimeConfig(config, { clearUsage: true });
   }
 
@@ -55,8 +64,9 @@ export function createConfigRuntime({
     return updateRuntimeConfig(await saveModelPreset(preset), { clearUsage: true });
   }
 
-  async function applyPreset(presetId: string) {
-    return updateRuntimeConfig(await applyModelPreset(presetId), { clearUsage: true });
+  async function applyPreset(presetId: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    return updateRuntimeConfig(await applyModelPreset(presetId, signal), { clearUsage: true });
   }
 
   async function deletePreset(presetId: string) {

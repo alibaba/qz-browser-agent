@@ -1,3 +1,4 @@
+import { pairBrowser, completeBrowser } from "../support/paired-bridge.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "node:http";
@@ -18,8 +19,7 @@ async function fixture(t) {
     request.on("data", chunk => body.push(chunk));
     request.on("end", () => { if (body.length) entry.rpc = JSON.parse(Buffer.concat(body).toString()); });
   });
-  const browser = { id: "scope-browser", pollTimeoutMs: 1000 };
-  bridge.state.registerClient(browser);
+  const browser = await pairBrowser(bridge.state, { id: "scope-browser", pollTimeoutMs: 1000 });
   const running = { endpoint: bridge.endpoint, health: await readHealth(bridge.endpoint) };
   const deps = { findDaemon: async () => running };
   const requests = [];
@@ -29,7 +29,7 @@ async function fixture(t) {
     const [request] = batch;
     requests.push(request);
     assert.equal(request.method, method);
-    assert.equal(bridge.state.complete(request.id, { clientId: browser.id, ok, ...(ok ? { result } : { error: result }) }), true);
+    assert.equal(completeBrowser(bridge.state, request.id, { clientId: browser.id, ok, ...(ok ? { result } : { error: result }) }), true);
     return request;
   }
   return { bridge, browser, running, traffic, deps, requests, respond };
@@ -117,7 +117,7 @@ test("cancelling an in-flight watch closes its session and preserves the browser
   assert.equal(await pending, 130);
   assert.equal(JSON.parse(output).error.code, "interrupted");
   assert.equal(bridge.state.inflight.size, 0);
-  assert.equal(bridge.state.complete(request.id, { ok: true, result: snapshot("completed") }), false);
+  assert.equal(completeBrowser(bridge.state, request.id, { ok: true, result: snapshot("completed") }), false);
   assert.deepEqual(await bridge.state.poll(browser, { timeoutMs: 10 }), []);
   assertOneSession(traffic, 1);
 });
@@ -220,7 +220,7 @@ test("connect reports an initialization failure immediately without opening Chro
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   const started = Date.now();
   await assert.rejects(runCli(["connect"], {
-    ensureDaemon: async () => ({ endpoint: `http://127.0.0.1:${server.address().port}`, health: { status: { clients: [{ clientId: "browser" }] } } }),
+    ensureDaemon: async () => ({ endpoint: `http://127.0.0.1:${server.address().port}`, health: { features: { browserPairing: 1 }, status: { clients: [{ clientId: "browser" }] } } }),
     openBrowser: () => assert.fail("a protocol failure must not open Chrome"),
   }), error => error.code === "connection_error");
   assert.equal(initializations, 1);
@@ -235,10 +235,10 @@ test("connect recovers a timed-out browser ping on the same MCP session", async 
   });
   const [first] = await bridge.state.poll(browser, { timeoutMs: 2000 });
   assert.equal(first.method, "ping");
-  bridge.state.complete(first.id, { clientId: browser.id, ok: false, code: "BRIDGE_REQUEST_TIMEOUT", error: "The old browser poll timed out." });
+  completeBrowser(bridge.state, first.id, { clientId: browser.id, ok: false, code: "BRIDGE_REQUEST_TIMEOUT", error: "The old browser poll timed out." });
   const [second] = await bridge.state.poll(browser, { timeoutMs: 2000 });
   assert.equal(second.method, "ping");
-  bridge.state.complete(second.id, { clientId: browser.id, ok: true, result: { pong: true } });
+  completeBrowser(bridge.state, second.id, { clientId: browser.id, ok: true, result: { pong: true } });
   assert.equal((await pending).result.connected, true);
   assert.equal(opens, 1);
   assertOneSession(traffic, 2);

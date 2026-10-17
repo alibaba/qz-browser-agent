@@ -1,469 +1,415 @@
-interface BridgeConfig {
-  enabled: boolean; endpoint: string; clientId: string;
-  pollIntervalMs: number; pollTimeoutMs: number; requestTimeoutMs: number;
-  maxBatch: number; includeCapabilities: boolean;
-}
+import type { CliConnectionInput, CliConnectionStatus } from "../../shared/mcp-connection.js";
+import {
+  BRIDGE_STORAGE_KEY, RETRY_LIMIT, LEASE_WAIT_LIMIT, RETRY_DELAY_MS, connectionEndpoint, connectionName, connectionStatus,
+  getConnectionConfig, updateConnectionConfig,
+} from "./connection-store.js";
+import type { BridgeConfig } from "./connection-store.js";
+
 interface BridgeDependencies {
-  dispatch?: (request: { id: string; method: string; params: Record<string, unknown>; raw: Record<string, unknown> }) => unknown | Promise<unknown>;
+  dispatch?: (request: { id: string; method: string; params: Record<string, unknown>; raw: Record<string, unknown>; signal: AbortSignal }) => unknown | Promise<unknown>;
   describe?: () => unknown | Promise<unknown>;
+  assertConsent?: () => void;
+  onStatus?: (status: CliConnectionStatus) => void;
   trace?: (message: string) => void;
+  fetch?: typeof fetch;
 }
-const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
-// Only recovery metadata with known owners crosses the bridge; provider/request details may contain credentials.
+const RECONNECT_ALARM = "qingzhou-mcp-bridge-reconnect";
+const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
+const failure = (code: string, message: string) => Object.assign(new Error(message), { code });
+const cancelled = () => failure("MCP_CONNECTION_CANCELLED", "The connection was cancelled.");
+const permanent = new Set(["MCP_CONNECTION_INCOMPATIBLE", "MCP_CONNECTION_PAGE_CHANGED", "DATA_CONSENT_REQUIRED", "BRIDGE_NAME_INVALID", "BRIDGE_NAME_IN_USE", "BRIDGE_PAIRING_REQUIRED", "BRIDGE_PAIRING_INVALID"]);
+const upgradeGuidance = "Wait for running tasks to finish, then run npx --yes qz-browser-agent@latest stop (disconnects ALL browsers). Update/reload the extension in each browser and run npx --yes qz-browser-agent@latest connect. Reconnect other browsers from Settings.";
+const newPairingToken = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+export function qingzhouMcpBridgeStorageKey() { return BRIDGE_STORAGE_KEY; }
+/** Management callers receive public configuration, never pairing credentials. */
+export async function getQingzhouMcpBridgeConfig() {
+  const config = await getConnectionConfig();
+  const { pairingToken: _token, instanceId: _instance, authorizationId: _authorization, ...visible } = config;
+  return visible;
+}
+export async function getQingzhouMcpConnectionStatus() { return connectionStatus(await getConnectionConfig()); }
+
+/** Configuration updates cannot authorize a connection; Connect owns that operation. */
+export async function saveQingzhouMcpBridgeConfig(value: unknown = {}) {
+  const patch = record(value);
+  await updateConnectionConfig(current => ({
+    ...current,
+    ...(typeof patch.name === "string" ? { name: connectionName(patch.name) } : {}),
+    ...(patch.endpoint !== undefined ? { endpoint: connectionEndpoint(patch.endpoint) } : {}),
+    ...(patch.enabled === false ? { enabled: false, state: "disconnected", authorizationId: "" } : {}),
+  }));
+  return getQingzhouMcpBridgeConfig();
+}
+
+export function startQingzhouMcpBridge(dependencies: BridgeDependencies = {}) {
+  return new QingzhouMcpBridgeRuntime(dependencies).start();
+}
+
+class QingzhouMcpBridgeRuntime {
+  private config: BridgeConfig | undefined;
+  private started = false;
+  private generation = 0;
+  private authorizationId = "";
+  private connectionId = crypto.randomUUID();
+  private paired = false;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private controller = new AbortController();
+  private flight: Promise<void> | undefined;
+  private nameChanges: Promise<void> = Promise.resolve();
+  private nameRevision = 0;
+  private initial: Promise<void> = Promise.resolve();
+  private alarmUpdate: Promise<unknown> = Promise.resolve();
+  private requests = new Map<string, Promise<void>>();
+  private storageListener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+    if (area !== "local" || !changes[BRIDGE_STORAGE_KEY] || !this.started) return;
+    const next = record(changes[BRIDGE_STORAGE_KEY].newValue);
+    if (this.config && (next.enabled !== this.config.enabled || next.authorizationId !== this.authorizationId
+      || next.endpoint !== this.config.endpoint || next.name !== this.config.name)) {
+      this.revoke();
+      const generation = this.generation;
+      void this.restore(generation);
+    }
+  };
+  private alarmListener = (alarm: chrome.alarms.Alarm) => {
+    if (alarm.name === RECONNECT_ALARM && this.started) void this.attempt();
+  };
+
+  constructor(private readonly deps: BridgeDependencies) {}
+  start() {
+    if (this.started) return this;
+    this.started = true;
+    chrome.storage.onChanged.addListener(this.storageListener);
+    chrome.alarms?.onAlarm?.addListener(this.alarmListener);
+    this.initial = this.restore(this.generation).catch(() => {
+      this.deps.trace?.("[mcp-bridge] local connection settings could not be loaded");
+    });
+    return this;
+  }
+  /** Disposes this worker instance without deleting durable authorization or resetting retries. */
+  stop() {
+    if (!this.started) return;
+    this.started = false;
+    this.revoke();
+    chrome.storage.onChanged.removeListener(this.storageListener);
+    chrome.alarms?.onAlarm?.removeListener(this.alarmListener);
+  }
+  private revoke() {
+    this.generation++;
+    this.nameRevision = 0;
+    this.controller.abort(cancelled());
+    this.controller = new AbortController();
+    this.paired = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+  private current(generation: number) { return this.started && generation === this.generation && !this.controller.signal.aborted; }
+  private check(generation: number) {
+    if (!this.current(generation)) throw cancelled();
+    this.deps.assertConsent?.();
+  }
+  private async restore(generation: number) {
+    let config = await getConnectionConfig();
+    if (!this.current(generation)) return;
+    this.config = config;
+    this.authorizationId = config.authorizationId;
+    if (config.enabled && config.attemptsRemaining <= 0 && config.state !== "paused") {
+      config = await this.persist(generation, { state: "paused", lastError: config.lastError || {
+        code: "MCP_CONNECTION_UNAVAILABLE", message: "Connection attempts are paused. Run qz connect or click Connect to retry.",
+      } });
+    }
+    this.emit();
+    if (config.enabled && config.state !== "paused" && config.attemptsRemaining > 0) {
+      this.schedule(Math.max(0, config.nextRetryAt - Date.now()));
+    } else {
+      await this.setAlarm(false);
+    }
+  }
+  async status(): Promise<CliConnectionStatus> {
+    await this.initial;
+    const config = await getConnectionConfig();
+    // Persisted connected is not proof that a newly restarted worker has a live lease yet.
+    return connectionStatus(!this.paired && config.state === "connected" ? { ...config, state: "reconnecting" } : config);
+  }
+  async connect(input: CliConnectionInput = {}, assertCurrent: () => void | Promise<void> = () => {}) {
+    this.deps.assertConsent?.();
+    const requestedEndpoint = input.endpoint === undefined ? undefined : connectionEndpoint(input.endpoint);
+    const name = input.name === undefined ? undefined : connectionName(input.name);
+    if (this.paired && this.config?.enabled && this.config.state === "connected"
+      && (requestedEndpoint === undefined || requestedEndpoint === this.config.endpoint)) {
+      return this.renameCurrent(name, assertCurrent);
+    }
+    let prior: BridgeConfig | undefined;
+    const oldConnectionId = this.connectionId;
+    this.revoke();
+    const generation = this.generation;
+    const previous = this.flight;
+    this.authorizationId = crypto.randomUUID();
+    this.connectionId = crypto.randomUUID();
+    const authorizationId = this.authorizationId;
+    await this.initial;
+    await assertCurrent();
+    this.check(generation);
+    const saved = await updateConnectionConfig(current => {
+      if (!this.current(generation)) return null;
+      prior = current;
+      const next: BridgeConfig = {
+        ...current, enabled: true, authorizationId, endpoint: requestedEndpoint ?? current.endpoint,
+        name: connectionName(name === undefined ? current.name : name),
+        // Persist credentials before pairing so a lost response remains safely retryable.
+        pairingToken: current.pairingToken || newPairingToken(), instanceId: "",
+        state: "connecting", attemptsRemaining: RETRY_LIMIT, leaseWaitRemaining: LEASE_WAIT_LIMIT, nextRetryAt: 0,
+        lastError: undefined, connectedAt: undefined,
+      };
+      // Our storage listener must see this operation's authority before Chrome emits the change.
+      this.config = next;
+      return next;
+    });
+    this.check(generation);
+    this.config = saved;
+    this.emit();
+    if (previous) await previous;
+    this.check(generation);
+    if (prior?.pairingToken && prior.instanceId) await this.release(prior, oldConnectionId);
+    this.check(generation);
+    await this.attempt(assertCurrent);
+    return this.status();
+  }
+  private renameCurrent(name: string | undefined, assertCurrent: () => void | Promise<void>): Promise<CliConnectionStatus> {
+    const generation = this.generation;
+    const operation = this.nameChanges.then(async () => {
+      this.check(generation);
+      await assertCurrent(); this.check(generation);
+      const config = this.config!;
+      if (name && name !== config.name) {
+        const paired = await this.json(config.endpoint, "/v1/qingzhou/rename", {
+          clientId: config.clientId, name, pairingToken: config.pairingToken,
+          instanceId: config.instanceId, connectionId: this.connectionId,
+        }, this.controller.signal, 5000);
+        this.check(generation);
+        if (paired.instanceId !== config.instanceId || paired.clientId !== config.clientId
+          || paired.connectionId !== this.connectionId || paired.name !== name) {
+          throw failure("MCP_CONNECTION_INCOMPATIBLE", upgradeGuidance);
+        }
+        await assertCurrent(); this.check(generation);
+        this.nameRevision++;
+        await this.persist(generation, { name });
+      }
+      return this.status();
+    });
+    this.nameChanges = operation.then(() => {}, () => {});
+    return operation;
+  }
+  async disconnect() {
+    const prior = this.config;
+    const connectionId = this.connectionId;
+    this.revoke();
+    this.authorizationId = "";
+    const generation = this.generation;
+    this.config = await updateConnectionConfig(current => {
+      if (!this.current(generation)) return null;
+      const next: BridgeConfig = { ...current, enabled: false, authorizationId: "", state: "disconnected", nextRetryAt: 0, lastError: undefined };
+      this.config = next;
+      return next;
+    });
+    await this.setAlarm(false);
+    this.emit();
+    // Revoke locally first. Service cleanup is bounded and cannot resume this connection.
+    if (prior?.pairingToken && prior.instanceId) await this.release(prior, connectionId);
+    return this.status();
+  }
+  private async release(config: BridgeConfig, connectionId: string) {
+    try { await this.json(config.endpoint, "/v1/qingzhou/disconnect", {
+      clientId: config.clientId, pairingToken: config.pairingToken, instanceId: config.instanceId, connectionId,
+    }, new AbortController().signal, 3000); } catch { /* An offline service will expire its old lease. */ }
+  }
+  private emit() {
+    if (this.config) this.deps.onStatus?.(connectionStatus(!this.paired && this.config.state === "connected"
+      ? { ...this.config, state: "reconnecting" } : this.config));
+  }
+  private async persist(generation: number, change: Partial<BridgeConfig> | (() => Partial<BridgeConfig>)) {
+    const authorizationId = this.authorizationId;
+    const config = await updateConnectionConfig(current => {
+      if (!this.current(generation) || current.authorizationId !== authorizationId || !current.enabled) return null;
+      const next = { ...current, ...(typeof change === "function" ? change() : change) };
+      this.config = next;
+      return next;
+    });
+    if (!this.current(generation) || config.authorizationId !== authorizationId || !config.enabled) throw cancelled();
+    this.config = config;
+    this.emit();
+    return config;
+  }
+  private schedule(delay: number) {
+    if (!this.started || !this.config?.enabled || this.config.state === "paused" || this.config.attemptsRemaining <= 0) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => { this.timer = undefined; void this.attempt(); }, delay);
+    void this.setAlarm(true, Date.now() + Math.max(RETRY_DELAY_MS, delay));
+  }
+  private setAlarm(enabled: boolean, when?: number) {
+    this.alarmUpdate = this.alarmUpdate.catch(() => {}).then(async () => {
+      if (enabled && this.started && this.config?.enabled && this.config.state !== "paused") {
+        await chrome.alarms?.create(RECONNECT_ALARM, { when: when ?? Date.now() + RETRY_DELAY_MS, periodInMinutes: 0.5 });
+      } else await chrome.alarms?.clear(RECONNECT_ALARM);
+    }).catch(() => {});
+    return this.alarmUpdate;
+  }
+  private attempt(assertCurrent: () => void | Promise<void> = () => {}): Promise<void> {
+    if (this.flight) return this.flight;
+    const work = this.poll(assertCurrent).catch(error => {
+      this.deps.trace?.(`[mcp-bridge] local connection: ${record(error).code || "unavailable"}`);
+    }).finally(() => { if (this.flight === work) this.flight = undefined; });
+    this.flight = work;
+    return work;
+  }
+  private async poll(assertCurrent: () => void | Promise<void>) {
+    const generation = this.generation;
+    if (!this.current(generation)) return;
+    const latest = await getConnectionConfig();
+    if (!this.current(generation) || !latest.enabled || latest.authorizationId !== this.authorizationId || latest.state === "paused") return;
+    this.config = latest;
+    if (latest.attemptsRemaining <= 0) {
+      await this.persist(generation, { state: "paused" }); await this.setAlarm(false); return;
+    }
+    if (latest.state !== "connected" && latest.nextRetryAt > Date.now()) { this.schedule(latest.nextRetryAt - Date.now()); return; }
+    const signal = this.controller.signal;
+    try {
+      this.check(generation);
+      // Reserve the attempt before any network operation. A worker termination cannot refund it.
+      let config = await this.persist(generation, {
+        attemptsRemaining: latest.attemptsRemaining - 1, nextRetryAt: Date.now() + RETRY_DELAY_MS,
+        state: this.paired ? "connected" : latest.connectedAt ? "reconnecting" : "connecting",
+      });
+      await this.setAlarm(true, config.nextRetryAt);
+      if (!this.paired) {
+        await assertCurrent(); this.check(generation);
+        const health = await this.json(config.endpoint, "/health", undefined, signal, 5000);
+        if (health.service !== "qz-browser-agent" || health.protocolVersion !== 1 || record(health.features).browserPairing !== 1 || typeof health.instanceId !== "string" || !health.instanceId) {
+          throw failure("MCP_CONNECTION_INCOMPATIBLE", upgradeGuidance);
+        }
+        await assertCurrent(); this.check(generation);
+        const paired = await this.json(config.endpoint, "/v1/qingzhou/pair", {
+          clientId: config.clientId, name: config.name || undefined, pairingToken: config.pairingToken || undefined,
+          connectionId: this.connectionId, instanceId: health.instanceId,
+        }, signal, 5000);
+        if (paired.instanceId !== health.instanceId || paired.clientId !== config.clientId || paired.connectionId !== this.connectionId
+          || typeof paired.pairingToken !== "string" || !paired.pairingToken || typeof paired.name !== "string") {
+          throw failure("MCP_CONNECTION_INCOMPATIBLE", upgradeGuidance);
+        }
+        await assertCurrent(); this.check(generation);
+        config = await this.persist(generation, {
+          name: paired.name, pairingToken: paired.pairingToken, instanceId: paired.instanceId,
+          serviceVersion: typeof health.version === "string" ? health.version : undefined,
+        });
+        this.paired = true;
+      }
+      const client: Record<string, unknown> = {
+        id: config.clientId, name: config.name, extensionId: chrome.runtime.id, protocolVersion: 1,
+        pairingVersion: 1, pairingToken: config.pairingToken, instanceId: config.instanceId, connectionId: this.connectionId,
+        pollTimeoutMs: config.connectedAt ? config.pollTimeoutMs : 1000, pollIntervalMs: config.pollIntervalMs, maxBatch: config.maxBatch,
+      };
+      if (this.deps.describe && config.includeCapabilities) client.capabilities = await this.deps.describe();
+      this.check(generation);
+      const nameRevision = this.nameRevision;
+      const response = await this.json(config.endpoint, "/v1/qingzhou/poll", { client }, signal, Number(client.pollTimeoutMs) + 5000);
+      this.check(generation);
+      if (!Array.isArray(response.requests)) throw failure("MCP_CONNECTION_INCOMPATIBLE", upgradeGuidance);
+      if (response.instanceId !== config.instanceId) throw failure("BRIDGE_INSTANCE_CHANGED", "The local service restarted. Reconnecting.");
+      if (response.clientId !== config.clientId || response.connectionId !== this.connectionId
+        || typeof response.name !== "string" || !response.name || connectionName(response.name) !== response.name) {
+        throw failure("MCP_CONNECTION_INCOMPATIBLE", upgradeGuidance);
+      }
+      const serviceName = response.name;
+      await this.persist(generation, () => ({ state: "connected", attemptsRemaining: RETRY_LIMIT, leaseWaitRemaining: LEASE_WAIT_LIMIT,
+        nextRetryAt: 0, lastError: undefined, connectedAt: config.connectedAt || Date.now(),
+        ...(nameRevision === this.nameRevision ? { name: serviceName } : {}),
+      }));
+      await this.setAlarm(true);
+      for (const request of response.requests.slice(0, config.maxBatch)) this.startRequest(record(request), config, generation, signal);
+      this.schedule(response.requests.length ? 0 : config.pollIntervalMs);
+    } catch (error) {
+      if (!this.current(generation) || signal.aborted) return;
+      const code = typeof record(error).code === "string" ? String(record(error).code) : "MCP_CONNECTION_UNAVAILABLE";
+      // A lost lease revokes queued work and result authority before recovery begins.
+      // Retain the wire connection ID on transport failures for idempotent pair retries.
+      this.revoke();
+      const recoveryGeneration = this.generation;
+      if (code === "BRIDGE_INSTANCE_CHANGED") this.connectionId = crypto.randomUUID();
+      const retryAfterMs = Number(record(error).retryAfterMs);
+      const leaseWait = code === "BRIDGE_CLIENT_IN_USE" && (this.config?.leaseWaitRemaining || 0) > 0
+        && Number.isFinite(retryAfterMs) && retryAfterMs >= 0 && retryAfterMs <= 120_000;
+      const attemptsRemaining = (this.config?.attemptsRemaining || 0) + (leaseWait ? 1 : 0);
+      const paused = permanent.has(code) || attemptsRemaining <= 0;
+      await this.persist(recoveryGeneration, {
+        state: paused ? "paused" : "reconnecting",
+        ...(leaseWait ? { attemptsRemaining, leaseWaitRemaining: 0, nextRetryAt: Date.now() + Math.ceil(retryAfterMs) + 100 } : {}),
+        lastError: { code, message: error instanceof Error ? error.message : "The local service is unavailable. Run qz connect to retry." },
+      });
+      if (paused) await this.setAlarm(false);
+      else this.schedule(Math.max(0, (this.config?.nextRetryAt || 0) - Date.now()));
+    }
+  }
+  private startRequest(request: Record<string, unknown>, config: BridgeConfig, generation: number, signal: AbortSignal) {
+    const id = String(request.id || "");
+    const connectionId = this.connectionId;
+    const key = `${connectionId}:${id}`;
+    if (!id || this.requests.has(key) || !this.current(generation)) return;
+    const work = (async () => {
+      let payload: Record<string, unknown>;
+      const started = Date.now();
+      try {
+        this.check(generation);
+        if (!this.deps.dispatch) throw new Error("qz dispatcher is unavailable");
+        const result = await bounded(Promise.resolve(this.deps.dispatch({ id, method: String(request.method || ""), params: record(request.params), raw: request, signal })), signal,
+          Math.max(1000, Math.min(600_000, Number(request.timeoutMs) || config.requestTimeoutMs)));
+        payload = { ok: true, result };
+      } catch (error) {
+        payload = { ok: false, error: error instanceof Error ? error.message : String(error), code: record(error).code || "", details: errorDetails(error) };
+      }
+      this.check(generation);
+      // Results are bound to the exact service/worker lease that dequeued the request.
+      await this.json(config.endpoint, "/v1/qingzhou/result", {
+        clientId: config.clientId, pairingToken: config.pairingToken, instanceId: config.instanceId, connectionId,
+        requestId: id, ...payload, durationMs: Date.now() - started,
+      }, signal, 15_000);
+    })().catch(() => {}).finally(() => this.requests.delete(key));
+    this.requests.set(key, work);
+  }
+  private async json(endpoint: string, path: string, body: unknown, signal: AbortSignal, timeoutMs: number): Promise<Record<string, unknown>> {
+    return bounded((async () => {
+      const response = await (this.deps.fetch || fetch)(`${endpoint}${path}`, {
+        method: body === undefined ? "GET" : "POST", redirect: "error", credentials: "omit",
+        ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
+      });
+      const value = record(await response.json());
+      if (!response.ok) {
+        const detail = record(value.error);
+        throw Object.assign(failure(String(detail.code || value.code || "MCP_CONNECTION_UNAVAILABLE"), String(detail.message || value.error || "The local service is unavailable. Run qz connect to retry.")), {
+          retryAfterMs: value.retryAfterMs ?? detail.retryAfterMs,
+        });
+      }
+      return value;
+    })(), signal, timeoutMs);
+  }
+}
+
+function bounded<T>(promise: Promise<T>, signal: AbortSignal, ms: number): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason || cancelled());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => finish(signal.reason || cancelled());
+    const timer = setTimeout(() => finish(failure("MCP_CONNECTION_UNAVAILABLE", "The local service timed out. Run qz connect to retry.")), ms);
+    const finish = (error: unknown, value?: T) => {
+      clearTimeout(timer); signal.removeEventListener("abort", onAbort);
+      if (error) reject(error); else resolve(value as T);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(value => finish(null, value), finish);
+  });
+}
 function errorDetails(error: unknown) {
   const value = record(error), details = record(value.details);
   const keys = value.code === "DOWNLOAD_INTERRUPTED" ? ["downloadId", "filename", "reason"]
     : value.code === "SKILL_NOT_FOUND" ? ["name"] : value.code === "SKILL_RESOURCE_NOT_FOUND" ? ["name", "path"] : [];
-  return Object.fromEntries(keys.filter(key => typeof details[key] === "string" || typeof details[key] === "number")
-    .map(key => [key, details[key]]));
-}
-
-const BRIDGE_STORAGE_KEY = "_qingzhou_mcp_bridge";
-const BRIDGE_CLIENT_ID_KEY = "_qingzhou_mcp_bridge_client_id";
-const BRIDGE_PROTOCOL_VERSION = 1;
-const DEFAULT_ENDPOINT = "http://127.0.0.1:18765";
-const DEFAULT_POLL_INTERVAL_MS = 750;
-// Leave headroom below Chrome's 30-second service-worker fetch deadline.
-const DEFAULT_POLL_TIMEOUT_MS = 20000;
-const DEFAULT_REQUEST_TIMEOUT_MS = 120000;
-const DEFAULT_MAX_BATCH = 4;
-const STATUS_TRACE_MIN_INTERVAL_MS = 60000;
-const MAX_POLL_FAILURES = 3;
-const RECONNECT_ALARM = "qingzhou-mcp-bridge-reconnect";
-let clientIdentity: Promise<string> | undefined;
-
-export function qingzhouMcpBridgeStorageKey() {
-  return BRIDGE_STORAGE_KEY;
-}
-
-export async function getQingzhouMcpBridgeConfig() {
-  const [data, clientId] = await Promise.all([
-    chrome.storage.local.get(BRIDGE_STORAGE_KEY),
-    getDefaultClientId(),
-  ]);
-  const raw = record(data?.[BRIDGE_STORAGE_KEY]);
-  return normalizeBridgeConfig({ ...raw, clientId: String(raw.clientId || "").trim() || clientId });
-}
-
-function getDefaultClientId(): Promise<string> {
-  return clientIdentity ??= (async () => {
-    const data = await chrome.storage.local.get(BRIDGE_CLIENT_ID_KEY);
-    const saved = data?.[BRIDGE_CLIENT_ID_KEY];
-    if (typeof saved === "string" && saved.trim()) return saved.trim();
-    const clientId = `qingzhou-${crypto.randomUUID()}`;
-    await chrome.storage.local.set({ [BRIDGE_CLIENT_ID_KEY]: clientId });
-    return clientId;
-  })().catch(error => { clientIdentity = undefined; throw error; });
-}
-
-export async function saveQingzhouMcpBridgeConfig(patch: Partial<BridgeConfig> = {}) {
-  const current = await getQingzhouMcpBridgeConfig();
-  const clientId = String(patch?.clientId ?? current.clientId).trim() || await getDefaultClientId();
-  const next = normalizeBridgeConfig({ ...current, ...(patch || {}), clientId });
-  await chrome.storage.local.set({ [BRIDGE_STORAGE_KEY]: next });
-  return next;
-}
-
-export function startQingzhouMcpBridge(dependencies: BridgeDependencies = {}) {
-  const runtime = new QingzhouMcpBridgeRuntime(dependencies);
-  runtime.start();
-  return runtime;
-}
-
-class QingzhouMcpBridgeRuntime {
-  config = normalizeBridgeConfig();
-  timer: ReturnType<typeof setTimeout> | null = null;
-  started = false;
-  generation = 0;
-  inFlight = false;
-  pollController: AbortController | null = null;
-  activeRequests = new Map<string, Promise<void>>();
-  failureCount = 0;
-  storageListener: ((changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void) | null = null;
-  private alarmListener: ((alarm: chrome.alarms.Alarm) => void) | null = null;
-  private reconnectAlarmEnabled = false;
-  private alarmRevision = 0;
-  private alarmUpdate: Promise<void> = Promise.resolve();
-  connected = false;
-  lastStatusTraceAt = 0;
-  lastStatusTraceKey = "";
-  private configReadRevision = 0;
-  private trace: (message: string) => void;
-  constructor(private readonly dependencies: BridgeDependencies = {}) {
-    this.trace = dependencies.trace || defaultTrace;
-  }
-
-  start() {
-    if (this.started) return this;
-    this.started = true;
-    this.failureCount = 0;
-    this.storageListener = (changes, areaName) => {
-      if (areaName !== "local") return;
-      if (!changes?.[BRIDGE_STORAGE_KEY]) return;
-      this.refreshConfig()
-        .catch((err) => this.trace(`[mcp-bridge] config refresh failed: ${err?.message || err}`));
-    };
-    chrome.storage?.onChanged?.addListener?.(this.storageListener);
-    this.alarmListener = alarm => {
-      if (alarm.name !== RECONNECT_ALARM || !this.started || !this.config.enabled
-        || this.connected || this.failureCount < MAX_POLL_FAILURES) return;
-      // The alarm survives a worker restart; only a previously connected profile has one.
-      this.reconnectAlarmEnabled = true;
-      this.resumePolling(MAX_POLL_FAILURES - 1);
-    };
-    chrome.alarms?.onAlarm?.addListener?.(this.alarmListener);
-    this.refreshConfig()
-      .catch((err) => this.trace(`[mcp-bridge] config load failed: ${err?.message || err}`));
-    return this;
-  }
-
-  stop() {
-    this.generation += 1;
-    this.configReadRevision += 1;
-    this.started = false;
-    this.connected = false;
-    this.pollController?.abort();
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    if (this.storageListener) chrome.storage?.onChanged?.removeListener?.(this.storageListener);
-    this.storageListener = null;
-    if (this.alarmListener) chrome.alarms?.onAlarm?.removeListener?.(this.alarmListener);
-    this.alarmListener = null;
-    this.updateReconnectAlarm(false);
-  }
-
-  private async refreshConfig() {
-    const revision = ++this.configReadRevision;
-    const isCurrent = () => this.started && revision === this.configReadRevision;
-    try {
-      const config = await getQingzhouMcpBridgeConfig();
-      if (!isCurrent()) return false;
-      this.applyConfig(config);
-      return true;
-    } catch (error) {
-      if (!isCurrent()) return false;
-      throw error;
-    }
-  }
-
-  applyConfig(config: unknown) {
-    const next = normalizeBridgeConfig(config);
-    if (Object.entries(next).every(([key, value]) => this.config[key as keyof BridgeConfig] === value)) {
-      // Unrelated model writes must not discard commands already dequeued by a poll.
-      if (!this.inFlight && !this.timer) this.schedulePoll(0);
-      return;
-    }
-    this.generation += 1;
-    this.pollController?.abort();
-    const previousKey = this.configKey();
-    const wasEnabled = this.config.enabled === true;
-    this.config = next;
-    this.failureCount = 0;
-    const nextKey = this.configKey();
-    if (!this.config.enabled) {
-      if (this.timer) clearTimeout(this.timer);
-      this.timer = null;
-      this.connected = false;
-      this.updateReconnectAlarm(false);
-      if (wasEnabled) {
-        this.traceStatus("disabled", "[mcp-bridge] disabled", { force: true });
-      }
-      return;
-    }
-    this.connected = false;
-    this.traceStatus(
-      `enabled:${nextKey}`,
-      `[mcp-bridge] enabled; polling ${this.config.endpoint} client=${this.config.clientId}`,
-      { force: previousKey !== nextKey },
-    );
-    this.schedulePoll(0);
-  }
-
-  /** A verified local connection page explicitly resumes an idle connection. */
-  wake() {
-    this.resumePolling(0);
-  }
-
-  private resumePolling(failureCount: number) {
-    if (!this.started) return;
-    this.failureCount = failureCount;
-    void this.refreshConfig().then(current => {
-      if (current && !this.inFlight) this.schedulePoll(0);
-    }).catch(error => this.trace(`[mcp-bridge] config wake failed: ${errorMessage(error)}`));
-  }
-
-  schedulePoll(delayMs: number) {
-    if (!this.started || !this.config.enabled || this.failureCount >= MAX_POLL_FAILURES) return;
-    if (this.timer) clearTimeout(this.timer);
-    const delay = Math.max(0, Math.floor(Number(delayMs) || 0));
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      void this.pollOnce();
-    }, delay);
-  }
-
-  async pollOnce() {
-    if (!this.config.enabled || this.inFlight) return;
-    this.inFlight = true;
-    const generation = this.generation;
-    const config = this.config;
-    const controller = new AbortController();
-    this.pollController = controller;
-    let supersededConfig = false;
-    try {
-      // Reconcile permission/config changes at each network boundary, including after a worker wake.
-      if (!(await this.refreshConfig())) {
-        supersededConfig = true;
-        return;
-      }
-      if (generation !== this.generation || !this.started) return;
-      const payload = await this.buildPollPayload();
-      if (generation !== this.generation || !this.started) return;
-      const response = await postJson(config.endpoint, "/v1/qingzhou/poll", payload, config.pollTimeoutMs + 5000, controller);
-      if (generation !== this.generation || !this.started) return;
-      if (!Array.isArray(response.requests)) throw new Error("Invalid bridge poll response: requests must be an array");
-      this.failureCount = 0;
-      this.updateReconnectAlarm(true);
-      if (!this.connected) {
-        this.connected = true;
-        this.traceStatus(
-          `connected:${this.configKey()}`,
-          `[mcp-bridge] connected ${this.config.endpoint} client=${this.config.clientId}`,
-          { force: true },
-        );
-      }
-      const requests = Array.isArray(response?.requests) ? response.requests.slice(0, this.config.maxBatch) : [];
-      for (const request of requests) this.startRequest(request, config);
-      this.schedulePoll(requests.length ? 0 : this.config.pollIntervalMs);
-    } catch (error) {
-      if (generation === this.generation && this.started) {
-        this.handlePollFailure(error);
-        this.schedulePoll(this.nextDelayMs());
-      }
-    } finally {
-      this.inFlight = false;
-      this.pollController = null;
-      if ((supersededConfig || generation !== this.generation) && this.started) this.schedulePoll(0);
-    }
-  }
-
-  async buildPollPayload() {
-    const client: Record<string, unknown> = {
-      id: this.config.clientId || defaultClientId(),
-      extensionId: chrome.runtime?.id || "",
-      name: "qingzhou",
-      protocolVersion: BRIDGE_PROTOCOL_VERSION,
-      pollTimeoutMs: this.config.pollTimeoutMs,
-      pollIntervalMs: this.config.pollIntervalMs,
-      maxBatch: this.config.maxBatch,
-      connectedAt: Date.now(),
-    };
-    if (this.dependencies.describe && this.config.includeCapabilities) {
-      try {
-        client.capabilities = await Promise.resolve(this.dependencies.describe());
-      } catch (err) {
-        client.capabilityError = errorMessage(err);
-      }
-    }
-    return { client };
-  }
-
-  startRequest(value: unknown, config = this.config) {
-    const request = record(value);
-    const requestId = String(request.id || "");
-    if (!requestId || this.activeRequests.has(requestId)) return;
-    const task = this.handleRequest(request, config)
-      .catch((err) => {
-        this.trace(`[mcp-bridge] request ${requestId} failed to report result: ${normalizeTraceError(err)}`);
-      })
-      .finally(() => {
-        this.activeRequests.delete(requestId);
-      });
-    this.activeRequests.set(requestId, task);
-  }
-
-  async handleRequest(request: Record<string, unknown>, config = this.config) {
-    const requestId = String(request.id || "");
-    if (!requestId) return;
-    const startedAt = Date.now();
-    try {
-      if (!this.dependencies.dispatch) throw new Error("Qingzhou MCP bridge dispatcher is unavailable");
-      const result = await withTimeout(
-        Promise.resolve(this.dependencies.dispatch({
-          id: requestId,
-          method: String(request.method || ""),
-          params: record(request.params),
-          raw: request,
-        })),
-        normalizePositiveInteger(request.timeoutMs, config.requestTimeoutMs, 1000, 10 * 60 * 1000),
-      );
-      await this.postResult({
-        requestId,
-        ok: true,
-        result: toJsonValue(result),
-        durationMs: Date.now() - startedAt,
-      }, config);
-    } catch (err) {
-      await this.postResult({
-        requestId,
-        ok: false,
-        error: errorMessage(err),
-        code: record(err).code || "",
-        details: errorDetails(err),
-        durationMs: Date.now() - startedAt,
-      }, config);
-    }
-  }
-
-  async postResult(payload: Record<string, unknown>, config: BridgeConfig) {
-    await postJson(
-      config.endpoint,
-      "/v1/qingzhou/result",
-      {
-        clientId: config.clientId || defaultClientId(),
-        ...payload,
-      },
-      15000,
-    );
-  }
-
-  nextDelayMs() {
-    const base = Math.max(this.config.pollIntervalMs, 1000);
-    const delay = base * Math.max(1, 2 ** Math.min(this.failureCount, 4));
-    return Math.min(15000, delay);
-  }
-
-  private updateReconnectAlarm(enabled: boolean) {
-    if (enabled && this.reconnectAlarmEnabled) return;
-    this.reconnectAlarmEnabled = enabled;
-    if (!chrome.alarms?.create || !chrome.alarms?.clear) return;
-    const revision = ++this.alarmRevision;
-    // Serialize alarm writes so disabling/stopping also revokes an unfinished create.
-    this.alarmUpdate = this.alarmUpdate.then(async () => {
-      if (this.started && this.config.enabled && this.reconnectAlarmEnabled) {
-        await chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 1 });
-      } else {
-        await chrome.alarms.clear(RECONNECT_ALARM);
-      }
-    }).catch(error => {
-      if (revision === this.alarmRevision) this.reconnectAlarmEnabled = false;
-      this.traceStatus("reconnect-alarm-failed", `[mcp-bridge] reconnect alarm failed: ${normalizeTraceError(error)}`);
-    });
-  }
-
-  handlePollFailure(err: unknown) {
-    this.failureCount += 1;
-    this.connected = false;
-    const message = normalizeTraceError(err);
-    this.traceStatus(
-      `failed:${this.configKey()}:${message}`,
-      `[mcp-bridge] local bridge unavailable (${message}); ${this.failureCount >= MAX_POLL_FAILURES ? "polls paused; qz connect resumes immediately" : "reconnecting"}`,
-      { force: this.failureCount === MAX_POLL_FAILURES },
-    );
-  }
-
-  configKey() {
-    return `${this.config.enabled ? 1 : 0}|${this.config.endpoint}|${this.config.clientId}`;
-  }
-
-  traceStatus(key: string, message: string, { force = false } = {}) {
-    const now = Date.now();
-    const changed = key !== this.lastStatusTraceKey;
-    if (!force && !changed && now - this.lastStatusTraceAt < STATUS_TRACE_MIN_INTERVAL_MS) return;
-    this.lastStatusTraceKey = key;
-    this.lastStatusTraceAt = now;
-    this.trace(message);
-  }
-}
-
-function normalizeBridgeConfig(value: unknown = {}): BridgeConfig {
-  const raw = record(value);
-  return {
-    enabled: raw.enabled !== false,
-    endpoint: normalizeEndpoint(raw.endpoint || DEFAULT_ENDPOINT),
-    clientId: String(raw.clientId || defaultClientId()).trim().slice(0, 120),
-    pollIntervalMs: normalizePositiveInteger(raw.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS, 100, 60000),
-    pollTimeoutMs: normalizePositiveInteger(raw.pollTimeoutMs, DEFAULT_POLL_TIMEOUT_MS, 1000, DEFAULT_POLL_TIMEOUT_MS),
-    requestTimeoutMs: normalizePositiveInteger(raw.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS, 1000, 10 * 60 * 1000),
-    maxBatch: normalizePositiveInteger(raw.maxBatch, DEFAULT_MAX_BATCH, 1, 16),
-    includeCapabilities: raw.includeCapabilities !== false,
-  };
-}
-
-function normalizeEndpoint(value: unknown) {
-  const text = String(value || DEFAULT_ENDPOINT).trim().replace(/\/+$/, "");
-  if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(text)) return DEFAULT_ENDPOINT;
-  return text;
-}
-
-function normalizePositiveInteger(value: unknown, fallback: number, min: number, max: number) {
-  const number = Number(value);
-  const normalized = Number.isFinite(number) ? Math.floor(number) : fallback;
-  return Math.max(min, Math.min(max, normalized));
-}
-
-function normalizeTraceError(err: unknown) {
-  const text = errorMessage(err || "unknown error").replace(/\s+/g, " ").trim();
-  if (!text) return "unknown error";
-  if (/failed to fetch|networkerror|load failed/i.test(text)) return "fetch failed";
-  if (/aborted|aborterror/i.test(text)) return "request aborted";
-  if (/timed out|timeout/i.test(text)) return "timeout";
-  return text.slice(0, 180);
-}
-
-function defaultClientId() {
-  const id = String(chrome.runtime?.id || "extension").replace(/[^a-zA-Z0-9_-]+/g, "_");
-  return `qingzhou-${id || "extension"}`;
-}
-
-async function postJson(endpoint: string, path: string, body: unknown, timeoutMs: number, controller = new AbortController()): Promise<Record<string, unknown>> {
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${endpoint}${path}`, {
-      method: "POST",
-      redirect: "error",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(body || {}),
-      signal: controller.signal,
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${text.slice(0, 240)}`);
-    }
-    try {
-      const result = JSON.parse(text) as unknown;
-      if (result === null || typeof result !== "object" || Array.isArray(result)) throw new Error("Expected a JSON object");
-      return result as Record<string, unknown>;
-    } catch (_err) {
-      throw new Error(`Invalid bridge JSON: ${text.slice(0, 240)}`);
-    }
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`Qingzhou MCP bridge request timed out after ${timeoutMs}ms`)), timeoutMs);
-    }),
-  ]).finally(() => clearTimeout(timer));
-}
-
-function toJsonValue(value: unknown): unknown {
-  if (value == null) return value;
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch (_err) {
-    return String(value);
-  }
-}
-
-function defaultTrace(message: string) {
-  console.debug("[轻舟]", message);
+  return Object.fromEntries(keys.filter(key => typeof details[key] === "string" || typeof details[key] === "number").map(key => [key, details[key]]));
 }

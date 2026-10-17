@@ -93,6 +93,7 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
   const btnProviderOpen = $<HTMLButtonElement>("#btn-provider-open");
   const settingsPanel = $("#settings-panel")!;
   const guardrailRuleAction = $<HTMLSelectElement>("#guardrail-rule-action");
+  const guardrailAllowHint = $("#guardrail-allow-hint");
   const guardrailRuleType = $<HTMLSelectElement>("#guardrail-rule-type");
   const guardrailDomainInput = $<HTMLInputElement>("#guardrail-domain-input");
   const btnAddGuardrailDomain = $<HTMLButtonElement>("#btn-add-guardrail-domain");
@@ -1019,6 +1020,7 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
   }
 
   function syncGuardrailInputPlaceholder() {
+    guardrailAllowHint?.classList.toggle("hidden", guardrailRuleAction?.value !== "allow");
     if (!guardrailDomainInput) return;
     const isPattern = guardrailRuleType?.value === "pattern";
     const isRateLimit = guardrailRuleAction?.value === "rate_limit";

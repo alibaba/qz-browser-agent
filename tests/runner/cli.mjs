@@ -76,7 +76,7 @@ export function printHelp(defaultTestJobs) {
   npm test -- live [target] [arguments]  # explicit real-model tests
 
 Suites: ${AUTOMATED_SUITES.join(", ")}
-Live targets: agent, realworld, deepseek, rate, cli-mcp, cli-mcp-supplement
+Live targets: agent, realworld, deepseek, rate, cli-mcp, cli-mcp-supplement, multi-browser, pi-multi-browser, pi-concurrent-browsers
   (no target: deepseek + realworld)
 
 Options:

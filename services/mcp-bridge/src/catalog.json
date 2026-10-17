@@ -4,20 +4,18 @@
     "description": "查看本地 bridge 和当前在线的轻舟扩展客户端。",
     "inputSchema": {
       "properties": {
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_bridge_statusArguments",
       "type": "object"
     }
   },
   {
-    "name": "qingzhou_bridge_enable_snippet",
-    "description": "生成在轻舟扩展 DevTools Console 中启用 bridge 的 chrome.storage snippet。",
+    "name": "qingzhou_forget_browser",
+    "description": "Forget an offline browser registration, freeing its name for explicit pairing. Read qingzhou_bridge_status first and disconnect online browsers in their extension settings.",
     "inputSchema": {
-      "properties": {
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
-      },
-      "title": "qingzhou_bridge_enable_snippetArguments",
+      "properties": {"clientId": {"type": "string", "minLength": 1, "description": "Registered browser name or UUID."}},
+      "required": ["clientId"],
       "type": "object"
     }
   },
@@ -29,7 +27,7 @@
         "method": {"title": "Method", "type": "string"},
         "params": {"anyOf": [{"additionalProperties": true, "type": "object"}, {"type": "null"}], "default": null, "title": "Params"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["method"],
       "title": "qingzhou_callArguments",
@@ -42,7 +40,7 @@
     "inputSchema": {
       "properties": {
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_list_capabilitiesArguments",
       "type": "object"
@@ -56,7 +54,7 @@
         "limit": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Limit"},
         "excludeSessionId": {"default": "", "title": "Excludesessionid", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_list_sessionsArguments",
       "type": "object"
@@ -74,7 +72,7 @@
         "firstMessage": {"default": "", "title": "Firstmessage", "type": "string"},
         "parentSessionId": {"default": "", "title": "Parentsessionid", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number", "exclusiveMinimum": 0, "maximum": 86400}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_create_sessionArguments",
       "type": "object"
@@ -95,7 +93,7 @@
         "waitForStart": {"default": true, "title": "Waitforstart", "type": "boolean"},
         "waitForStartMs": {"default": 2000, "title": "Waitforstartms", "type": "number"},
         "timeoutSeconds": {"anyOf": [{"type": "number", "exclusiveMinimum": 0, "maximum": 86400}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["text"],
       "title": "qingzhou_send_messageArguments",
@@ -112,7 +110,7 @@
         "images": {"anyOf": [{"items": {}, "type": "array"}, {"type": "null"}], "default": null, "title": "Images"},
         "clientMessageId": {"default": "", "title": "Clientmessageid", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["text"],
       "title": "qingzhou_follow_upArguments",
@@ -127,7 +125,7 @@
         "sessionId": {"title": "Sessionid", "type": "string"},
         "cascade": {"default": true, "title": "Cascade", "type": "boolean"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["sessionId"],
       "title": "qingzhou_abort_sessionArguments",
@@ -176,7 +174,7 @@
         "waitId": {"title": "Waitid", "type": "string", "minLength": 1},
         "payload": {"anyOf": [{"additionalProperties": true, "type": "object"}, {"type": "null"}], "default": null, "title": "Payload"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["sessionId", "waitId"],
       "title": "qingzhou_continue_taskArguments",
@@ -193,7 +191,7 @@
         "waitId": {"title": "Waitid", "type": "string", "minLength": 1},
         "reason": {"default": "submitted", "title": "Reason", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["sessionId", "answers", "waitId"],
       "title": "qingzhou_submit_wait_formArguments",
@@ -208,7 +206,7 @@
         "sessionId": {"title": "Sessionid", "type": "string"},
         "waitId": {"title": "Waitid", "type": "string", "minLength": 1},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["sessionId", "waitId"],
       "title": "qingzhou_cancel_waitArguments",
@@ -222,7 +220,7 @@
       "properties": {
         "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_get_session_stateArguments",
       "type": "object"
@@ -242,7 +240,7 @@
         "traceLimit": {"default": 40, "title": "Tracelimit", "type": "number"},
         "includeTools": {"default": false, "title": "Includetools", "type": "boolean"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_get_session_snapshotArguments",
       "type": "object"
@@ -258,7 +256,7 @@
         "tail": {"default": true, "title": "Tail", "type": "boolean"},
         "num": {"default": 50, "title": "Num", "type": "number"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_get_messagesArguments",
       "type": "object"
@@ -272,7 +270,7 @@
         "sessionId": {"title": "Sessionid", "type": "string"},
         "cascade": {"default": true, "title": "Cascade", "type": "boolean"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["sessionId"],
       "title": "qingzhou_stop_sessionArguments",
@@ -286,7 +284,7 @@
       "properties": {
         "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_list_toolsArguments",
       "type": "object"
@@ -300,7 +298,7 @@
         "scope": {"default": "all", "title": "Scope", "type": "string"},
         "query": {"default": "", "title": "Query", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_list_skillsArguments",
       "type": "object"
@@ -315,7 +313,7 @@
         "includeContent": {"default": true, "title": "Includecontent", "type": "boolean"},
         "includeResources": {"default": false, "title": "Includeresources", "type": "boolean"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["name"],
       "title": "qingzhou_get_skillArguments",
@@ -332,7 +330,7 @@
         "start": {"default": 0, "title": "Start", "type": "number"},
         "maxChars": {"default": 300000, "title": "Maxchars", "type": "number"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["name", "path"],
       "title": "qingzhou_get_skill_resourceArguments",
@@ -350,7 +348,7 @@
         "runId": {"default": "", "title": "Runid", "type": "string"},
         "wait": {"default": true, "title": "Wait", "type": "boolean"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["name"],
       "title": "qingzhou_execute_toolArguments",
@@ -405,7 +403,7 @@
     "inputSchema": {
       "properties": {
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_get_configArguments",
       "type": "object"
@@ -418,7 +416,7 @@
       "properties": {
         "config": {"additionalProperties": true, "title": "Config", "type": "object"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "required": ["config"],
       "title": "qingzhou_save_configArguments",
@@ -432,7 +430,7 @@
       "properties": {
         "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_list_pluginsArguments",
       "type": "object"
@@ -446,7 +444,7 @@
         "limit": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Limit"},
         "runLimit": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Runlimit"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_list_automationsArguments",
       "type": "object"
@@ -458,7 +456,7 @@
     "inputSchema": {
       "properties": {
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
-        "clientId": {"default": "", "title": "Clientid", "type": "string"}
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
       "title": "qingzhou_get_traceArguments",
       "type": "object"

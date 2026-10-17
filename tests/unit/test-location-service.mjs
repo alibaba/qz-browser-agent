@@ -149,3 +149,23 @@ test("rolling back a cancelled approval preserves the next concurrent task's app
   await secondTask;
   assert.equal(f.located, 1);
 });
+
+test("a disconnected external approval cannot commit queued or in-flight consent", async () => {
+  for (const phase of ["read", "write"]) {
+    const f = fixture(), controller = new AbortController();
+    const task = f.service.request(context); await tick(); const { waitId } = f.events[0];
+    let release, entered;
+    const gate = new Promise(resolve => { release = resolve; });
+    const waiting = new Promise(resolve => { entered = resolve; });
+    if (phase === "read") f.host.storage.get = async () => { entered(); await gate; return f.data; };
+    else f.beforeSave(value => { if (value[LOCATION_CONSENT_KEY]?.grantId) { entered(); return gate; } });
+    const approving = f.service.acceptExternal(waitId, context.sessionId, DATA_CONSENT_VERSION, controller.signal);
+    const rejected = assert.rejects(approving, /disconnected/);
+    await waiting; controller.abort(new Error("disconnected")); release(); await rejected;
+    assert.equal(hasDataConsent(f.data[LOCATION_CONSENT_KEY]), false);
+    assert.equal(f.located, 0);
+    f.host.storage.get = async () => f.data; f.beforeSave(async () => {});
+    await f.service.acceptExternal(waitId, context.sessionId, DATA_CONSENT_VERSION);
+    f.settle(); await task; assert.equal(f.located, 1, "the browser task remains usable after the old caller disconnects");
+  }
+});

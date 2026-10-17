@@ -5,6 +5,8 @@ import { normalizeModernSkill } from "../../src/shared/skills/skill-utils.js";
 import { skillToSkillMarkdown } from "../../src/shared/skills/skill-package.js";
 import { openZip } from "../../src/shared/zip-bytes.js";
 
+const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+
 const configFixture = () => ({
   provider: "alpha", providerLabel: "Alpha", model: "small", modelLabel: "Small", apiKey: "alpha-key-private",
   endpoint: "https://alpha.example/v1/chat/completions", customEndpoint: "https://custom.example/v1", customProtocol: "openai",
@@ -26,20 +28,21 @@ function harness(options = {}) {
   const saves = [], presets = [], downloads = [], languages = [];
   const runtime = createMcpManagementRuntime({
     config: {
-      get: async () => current,
-      save: async patch => {
+      get: async () => { if (options.get) await options.get(); return current; },
+      save: async (patch, signal) => {
         saves.push(structuredClone(patch));
-        if (options.save) await options.save(patch);
+        if (options.save) await options.save(patch, signal);
         current = { ...current, ...patch };
         return current;
       },
-      applyPreset: async id => {
+      applyPreset: async (id, signal) => {
         presets.push(id);
+        if (options.applyPreset) await options.applyPreset(id, signal);
         current = { ...current, ...current.presets.find(item => item.id === id), activePresetId: id };
         return current;
       },
     },
-    skills: { load: async name => options.skill?.name === name ? options.skill : null },
+    skills: { load: async name => { if (options.loadSkill) await options.loadSkill(); return options.skill?.name === name ? options.skill : null; } },
     download: async input => {
       downloads.push(input);
       if (options.download) return options.download(input);
@@ -95,6 +98,22 @@ test("model changes pass only the patch to its owner and preserve unrelated sett
   assert.deepEqual(result.updated, ["model", "modelParameters"]);
   assert.deepEqual(result.config.modelParameters, { temperature: 0.7 });
   assert.equal(JSON.stringify(result).includes("-key-private"), false);
+});
+
+test("settings owners receive the connection signal through model validation and preset lookup", async () => {
+  for (const preset of [false, true]) {
+    const controller = new AbortController(), entered = deferred(), resume = deferred();
+    const reason = new Error("connection ended during owner validation");
+    const check = async (_value, signal) => {
+      assert.equal(signal, controller.signal);
+      entered.resolve(); await resume.promise; signal.throwIfAborted();
+    };
+    const { runtime, config } = harness(preset ? { applyPreset: check } : { save: check });
+    const pending = runtime.updateSettings({ config: preset ? { activePresetId: "saved" } : { model: "large" } }, controller.signal);
+    const rejected = assert.rejects(pending, error => error.message.includes(reason.message));
+    await entered.promise; controller.abort(reason); resume.resolve(); await rejected;
+    assert.equal(config().model, "small");
+  }
 });
 
 test("provider discovery reports sign-in state without account identity or credentials", async () => {
@@ -199,6 +218,41 @@ test("settings writes serialize, copy caller patches and recover after an owner 
   assert.equal(saves[1].model, "second");
 });
 
+test("a disconnected queued settings update never saves and does not block a later update", async () => {
+  const entered = deferred(), saving = deferred(), controller = new AbortController();
+  const { runtime, saves } = harness({ save: async patch => {
+    if (patch.model === "first") { entered.resolve(); await saving.promise; }
+  } });
+  const first = runtime.updateSettings({ config: { model: "first" } });
+  await entered.promise;
+  const second = runtime.updateSettings({ config: { model: "obsolete" } }, controller.signal);
+  const reason = new Error("disconnected"); controller.abort(reason);
+  const rejected = assert.rejects(second, error => error === reason);
+  saving.resolve(); await first; await rejected;
+  assert.deepEqual(saves, [{ model: "first" }]);
+  await runtime.updateSettings({ config: { model: "fresh" } }, new AbortController().signal);
+  assert.deepEqual(saves, [{ model: "first" }, { model: "fresh" }]);
+});
+
+test("disconnect during settings read prevents model, preset and language mutations", async () => {
+  for (const patch of [{ model: "obsolete" }, { activePresetId: "saved" }, { language: "zh-CN" }]) {
+    const entered = deferred(), reading = deferred(), controller = new AbortController();
+    const { runtime, saves, presets, languages } = harness({ get: async () => { entered.resolve(); await reading.promise; } });
+    const pending = runtime.updateSettings({ config: patch }, controller.signal);
+    await entered.promise;
+    const reason = new Error("disconnected"); controller.abort(reason); reading.resolve();
+    await assert.rejects(pending, error => error === reason);
+    assert.deepEqual({ saves, presets, languages }, { saves: [], presets: [], languages: [] });
+  }
+});
+
+test("disconnect after an admitted model save prevents the later language write and reports partial success", async () => {
+  const controller = new AbortController();
+  const { runtime, saves, languages } = harness({ save: async () => { controller.abort(new Error("disconnected")); } });
+  await assert.rejects(runtime.updateSettings({ config: { model: "saved", language: "zh-CN" } }, controller.signal), { code: "SETTINGS_PARTIALLY_UPDATED" });
+  assert.deepEqual(saves, [{ model: "saved" }]); assert.deepEqual(languages, []);
+});
+
 test("a second owner failure reports the applied model mutation explicitly", async () => {
   const { runtime, saves, config } = harness({ saveLanguage: async () => { throw new Error("Language failed alpha-key-private"); } });
   await assert.rejects(runtime.updateSettings({ config: { model: "large", language: "zh-CN" } }), error => {
@@ -251,4 +305,16 @@ test("Skill export errors never download missing, built-in or unsafe packages an
   }
   const interrupted = harness({ skill, download: async () => { throw Object.assign(new Error("Interrupted"), { code: "DOWNLOAD_INTERRUPTED" }); } });
   await assert.rejects(interrupted.runtime.exportSkill({ name: skill.name, filename: "copy.zip" }), { code: "DOWNLOAD_INTERRUPTED" });
+});
+
+test("disconnect during Skill lookup prevents export and a new connection can export the same Skill", async () => {
+  const entered = deferred(), loading = deferred(), controller = new AbortController();
+  const skill = normalizeModernSkill({ name: "export-test", description: "Test", content: "Test" });
+  const { runtime, downloads } = harness({ skill, loadSkill: async () => { entered.resolve(); await loading.promise; } });
+  const pending = runtime.exportSkill({ name: skill.name }, controller.signal);
+  await entered.promise;
+  const reason = new Error("disconnected"); controller.abort(reason); loading.resolve();
+  await assert.rejects(pending, error => error === reason); assert.deepEqual(downloads, []);
+  await runtime.exportSkill({ name: skill.name }, new AbortController().signal);
+  assert.equal(downloads.length, 1);
 });

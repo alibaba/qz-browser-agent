@@ -23,6 +23,7 @@ test("help and plans do not build, launch children or read live credentials", as
     ["live", "--help"], ["live", "--list"], ["live", "agent", "--help"],
     ["live", "agent", "--cases", "example", "--list"], ["live", "deepseek", "--help"],
     ["live", "rate", "--list"], ["live", "cli-mcp", "--help"], ["live", "cli-mcp", "--list"],
+    ["live", "pi-concurrent-browsers", "--help"], ["live", "pi-concurrent-browsers", "--list"],
     ["grid", "--help"], ["grid", "--list"],
     ["playwright", "--help"], ["behavior", "--help"], ["report", "--help"],
   ]) {
@@ -38,6 +39,10 @@ test("help and plans do not build, launch children or read live credentials", as
   const soakPlan = fixture.run(["live", "cli-mcp", "--list"]);
   assert.equal(soakPlan.status, 0, soakPlan.stderr);
   assert.match(soakPlan.stdout, /tests\/live\/deepseek-cli-mcp-soak\.mjs/);
+  assert.match(fixture.run(["live", "pi-concurrent-browsers", "--help"]).stdout, /Three independent Pi processes/);
+  const concurrentPlan = fixture.run(["live", "pi-concurrent-browsers", "--list"]);
+  assert.equal(concurrentPlan.status, 0, concurrentPlan.stderr);
+  assert.match(concurrentPlan.stdout, /tests\/live\/pi-concurrent-browsers\.mjs/);
   assert.deepEqual(await fixture.events(), []);
 });
 
@@ -50,6 +55,7 @@ test("invalid selections fail before launching or building anything", async t =>
     ["unit", "--coverage", "--match", "example"], ["live", "--coverage"],
     ["live", "agent", "--coverage"], ["live", "unknown"], ["live", "rate", "--model", "example"],
     ["live", "deepseek", "--unknown"], ["grid", "--unknown"], ["live", "realworld", "--suite", "base"],
+    ["live", "pi-concurrent-browsers", "--unknown"],
     ["playwright", "--all"], ["unit,", "--list"],
   ]) assert.throws(() => select(args), undefined, args.join(" "));
   for (const args of [["--jobs", "0"], ["browser", "--coverage"], ["live", "unknown"]]) {
@@ -72,6 +78,7 @@ test("native runners receive their exact arguments, including spaces and equals"
     [["grid"], "tests/data-grid/extension-page.mjs", []],
     [["live", "deepseek"], "tests/live/deepseek-extension.mjs", []],
     [["live", "rate"], "tests/live/deepseek-rate-governor.mjs", []],
+    [["live", "pi-concurrent-browsers"], "tests/live/pi-concurrent-browsers.mjs", []],
     [["live", "cli-mcp", "--duration-seconds", "1800", "--cases", "research,forms"], "tests/live/deepseek-cli-mcp-soak.mjs", ["--duration-seconds", "1800", "--cases", "research,forms"]],
   ];
   for (const [args, path, expectedArgs] of cases) {
@@ -161,6 +168,7 @@ async function createFixture(t) {
     "tests/unit/example.mjs", "tests/coverage/check-critical.mjs", "tests/behavior/run.mjs",
     "tests/background/agent-behavior-e2e.mjs", "tests/data-grid/extension-page.mjs",
     "tests/live/deepseek-extension.mjs", "tests/live/deepseek-rate-governor.mjs", "tests/live/deepseek-cli-mcp-soak.mjs",
+    "tests/live/pi-concurrent-browsers.mjs",
   ]) await put(path, recorder);
   await put("node_modules/@playwright/test/package.json", '{"type":"module"}');
   await put("node_modules/@playwright/test/cli.js", recorder);

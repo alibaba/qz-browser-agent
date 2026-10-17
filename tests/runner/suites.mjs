@@ -17,7 +17,7 @@ export function createSuiteCatalog({ root: ROOT, match, unitConcurrency }) {
   const pathFromRoot = (...parts) => relative(ROOT, join(ROOT, ...parts));
   const browserUnitConcurrency = Math.min(2, unitConcurrency);
   const serviceNodeTests = [
-    "test-node-mcp-bridge.mjs", "test-node-mcp-cli.mjs", "test-qz-cli-args.mjs",
+    "test-node-mcp-bridge.mjs", "test-node-mcp-cli.mjs", "test-node-mcp-pairing.mjs", "test-qz-cli-args.mjs",
     "test-qz-terminal.mjs", "test-qz-task-stream.mjs", "test-qz-cli-output.mjs", "test-qz-cli-resources.mjs",
     "test-qz-cli-version-compat.mjs", "test-qz-task-stream-recovery.mjs", "test-mcp-tool-arguments.mjs",
     "test-qz-client-scope.mjs", "test-mcp-task-observation.mjs", "test-qz-cli-launcher.mjs", "test-qz-daemon-liveness.mjs",

@@ -645,3 +645,24 @@ console.log("background API transport parity tests passed");
   assert.equal(replies[1].accepted, true);
   assert.equal(replies[1].requestId, "reply-2");
 }
+
+// The in-process MCP adapter carries cancellation through the legacy Side Panel protocol.
+{
+  const controller = new AbortController(), captured = [];
+  const capture = (...args) => { captured.push(args); return {}; };
+  const adapter = createSidepanelTransport({ system: { ready() {} }, sessions: {
+    stop: capture, remove: capture, create: capture, followUp: capture, continueWait: capture, cancelWait: capture, clearGoal: capture,
+  }, config: { save: capture }, automations: { run: capture } });
+  const port = { signal: controller.signal, postMessage() {} };
+  for (const type of ["stop_session", "delete_session", "create_session", "follow_up", "continue_task", "cancel_wait", "clear_goal", "save_config", "run_automation"]) {
+    await adapter.dispatch({ type, sessionId: "s1", waitId: "w1" }, port);
+  }
+  assert.equal(captured.length, 9);
+  for (const args of captured) assert.equal(args.at(-1), controller.signal);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const pending = createSidepanelTransport({ system: { ready: () => gate }, sessions: { remove: capture } })
+    .dispatch({ type: "delete_session", sessionId: "s1" }, port);
+  controller.abort(new Error("connection replaced")); release();
+  await assert.rejects(pending, /connection replaced/); assert.equal(captured.length, 9);
+}

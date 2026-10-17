@@ -32,6 +32,7 @@ interface TaskContext { agent: Agent; task: SessionTask; sessionId: string; sess
 interface TaskInput {
   sessionId?: unknown; operation?: (context: TaskContext) => Promise<{ status?: string; reason?: unknown } | null | void>;
   operationName?: string; swallowErrors?: boolean;
+  admissionSignal?: AbortSignal;
 }
 interface SessionCommandsDependencies {
   assertDataConsent?(): void;
@@ -212,8 +213,9 @@ async function listSessionsRuntime({ limit = 100, excludeSessionId = "" } = {}) 
 }
 
 
-async function createSessionRuntime({ title = "", firstMessage = "", parentSessionId = ROOT_SESSION_ID }: Fields = {}) {
+async function createSessionRuntime({ title = "", firstMessage = "", parentSessionId = ROOT_SESSION_ID }: Fields = {}, signal?: AbortSignal) {
   await sessionRuntimeReady;
+  signal?.throwIfAborted();
   const message = String(firstMessage || "").trim();
   const normalizedParentId = normalizeParentSessionId(parentSessionId);
   const session = await createStoredSession({
@@ -223,9 +225,10 @@ async function createSessionRuntime({ title = "", firstMessage = "", parentSessi
     titleSource: normalizedParentId === ROOT_SESSION_ID
       ? (String(title || "").trim() ? "manual" : "first_message") : "fixed",
   });
+  signal?.throwIfAborted();
   broadcast({ type: "session_created", session, firstMessage: message });
   broadcast({ type: "sessions_changed", action: "create", sessionId: session.id, session });
-  const started = launchSessionPrompt(session.id, message);
+  const started = launchSessionPrompt(session.id, message, signal);
   return { session, started };
 }
 
@@ -240,13 +243,14 @@ async function createSessionMetadataRuntime({
   automationRunId = "",
   composerDraft = null,
   windowId = null,
-}: Fields = {}) {
+}: Fields = {}, signal?: AbortSignal) {
   const text = String(firstMessage || "").trim();
   const normalizedParentId = normalizeParentSessionId(parentSessionId);
   const initialDraft = normalizeComposerDraft(composerDraft, "");
   const draftWindowKey = composerDraftHasContent(initialDraft) ? composerWindowKey(windowId) : "";
   const create = async () => {
     await sessionRuntimeReady;
+    signal?.throwIfAborted();
     const session = await createStoredSession({
       id,
       title: title || text,
@@ -257,6 +261,7 @@ async function createSessionMetadataRuntime({
       automationId,
       automationRunId,
     });
+    signal?.throwIfAborted();
     if (draftWindowKey) {
       runtimeState.set(session.id, {
         composerDrafts: {
@@ -569,8 +574,9 @@ async function startSessionAgentTask({
   operation,
   operationName = "prompt",
   swallowErrors = false,
+  admissionSignal,
 }: TaskInput = {}) {
-  const spec = createSessionAgentTaskSpec({ sessionId, operation, operationName, swallowErrors });
+  const spec = createSessionAgentTaskSpec({ sessionId, operation, operationName, swallowErrors, admissionSignal });
   return sessionSupervisor.startTask(spec.sessionId, spec.executor, spec.options);
 }
 
@@ -579,7 +585,9 @@ function createSessionAgentTaskSpec({
   operation,
   operationName = "prompt",
   swallowErrors = false,
+  admissionSignal,
 }: TaskInput = {}) {
+  admissionSignal?.throwIfAborted();
   assertDataConsent();
   const id = requireExplicitSessionId(sessionId, operationName);
   if (typeof operation !== "function") throw new TypeError(`${operationName} requires an operation`);
@@ -626,7 +634,9 @@ function createSessionAgentTaskSpec({
     }
   };
   const onStart = async () => {
+    admissionSignal?.throwIfAborted();
     session = await sessionRepository.getMetadata(id);
+    admissionSignal?.throwIfAborted();
     if (!session) {
       const error = new Error(`session not found: ${id}`);
       Object.assign(error, { code: "SESSION_NOT_FOUND" });
@@ -656,11 +666,13 @@ function createSessionAgentTaskSpec({
   };
 }
 
-async function startSessionPromptTask(params: PromptInput = {}) {
+async function startSessionPromptTask(params: PromptInput = {}, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   const prompt = prepareSessionPrompt(params);
   const existing = await sessionSupervisor.withAgent(prompt.sessionId, agent => (
     agent.findAcceptedUserMessage?.(prompt.clientMessageId) || null
   ));
+  signal?.throwIfAborted();
   if (existing) {
     traceMessageDelivery("session.duplicate_accepted", prompt.sessionId, prompt.clientMessageId);
     void notifyMessageAccepted(prompt.onMessageAccepted, existing, {
@@ -679,10 +691,12 @@ async function startSessionPromptTask(params: PromptInput = {}) {
     operationName: "prompt",
     swallowErrors: prompt.swallowErrors,
     operation: prompt.operation,
+    admissionSignal: signal,
   });
 }
 
-async function submitSessionMessageRuntime(params: PromptInput = {}) {
+async function submitSessionMessageRuntime(params: PromptInput = {}, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   const deliveryMode = params.deliveryMode || "follow_up";
   if (!["follow_up", "steer"].includes(deliveryMode)) throw new Error("Invalid message deliveryMode");
   let resolveAcceptance: (message: unknown) => void = () => {};
@@ -699,6 +713,7 @@ async function submitSessionMessageRuntime(params: PromptInput = {}) {
     operationName: "submit_message",
     swallowErrors: prompt.swallowErrors,
     operation: prompt.operation,
+    admissionSignal: signal,
   });
   const admission = await sessionSupervisor.submitMessage(prompt.sessionId, {
     executor: spec.executor,
@@ -706,6 +721,7 @@ async function submitSessionMessageRuntime(params: PromptInput = {}) {
     messageId: prompt.clientMessageId,
     acceptance,
     findExisting: ({ agent }) => {
+      signal?.throwIfAborted();
       const accepted = agent.findAcceptedUserMessage?.(prompt.clientMessageId) || null;
       if (accepted) return {
         disposition: "started",
@@ -719,6 +735,7 @@ async function submitSessionMessageRuntime(params: PromptInput = {}) {
       };
     },
     enqueue: async ({ agent }) => {
+      signal?.throwIfAborted();
       await agent.followUp(
         prompt.text,
         prompt.images,
@@ -849,21 +866,21 @@ async function scheduleTitleForFirstAcceptedPrompt(sessionId: string, session: S
   return true;
 }
 
-function launchSessionPrompt(sessionId: string, firstMessage: unknown) {
+function launchSessionPrompt(sessionId: string, firstMessage: unknown, signal?: AbortSignal) {
   const text = String(firstMessage || "").trim();
   if (!text) return false;
-  startSessionPromptTask({ sessionId, text, swallowErrors: true })
+  startSessionPromptTask({ sessionId, text, swallowErrors: true }, signal)
     .then(task => task.promise)
     .catch((err) => console.warn("[轻舟] launch session prompt failed:", err));
   return true;
 }
 
-function createSessionFromApi(params: Fields = {}) {
+function createSessionFromApi(params: Fields = {}, signal?: AbortSignal) {
   return createSessionRuntime({
     title: params.title || "",
     firstMessage: params.firstMessage || params.text || "",
     parentSessionId: params.parentSessionId || ROOT_SESSION_ID,
-  });
+  }, signal);
 }
 
 function createUiSessionFromApi(params: Fields = {}) {
@@ -877,7 +894,8 @@ function createUiSessionFromApi(params: Fields = {}) {
   });
 }
 
-async function followUpSessionRuntime(params: PromptInput = {}) {
+async function followUpSessionRuntime(params: PromptInput = {}, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   const sessionId = requireExplicitSessionId(params.sessionId, "follow_up");
   const documents = assertMessageDocumentOwnership(params.documents, {
     sessionId,
@@ -886,10 +904,13 @@ async function followUpSessionRuntime(params: PromptInput = {}) {
   if (!String(params.text || "").trim() && !(params.images || []).length && !documents.length) {
     throw new Error("follow_up requires text or attachments");
   }
-  await sessionSupervisor.withAgent(sessionId, agent => agent.followUp(
-    params.text || "", params.images || [], params.clientMessageId || "", documents,
-    () => runtimeState.persist(sessionId),
-  ));
+  await sessionSupervisor.withAgent(sessionId, agent => {
+    signal?.throwIfAborted();
+    return agent.followUp(
+      params.text || "", params.images || [], params.clientMessageId || "", documents,
+      () => runtimeState.persist(sessionId),
+    );
+  });
   return { accepted: true, sessionId };
 }
 
@@ -1123,8 +1144,8 @@ async function getSessionHistoryRuntime(sessionId: string) {
   };
 }
 
-function clearSessionGoalFromApi(sessionId: string, source = "api") {
-  return clearSessionGoalRuntime({ sessionId, source });
+function clearSessionGoalFromApi(sessionId: string, source = "api", signal?: AbortSignal) {
+  return clearSessionGoalRuntime({ sessionId, source, signal });
 }
 
 async function restoreSessionFromApi(sessionId: string, conversation: unknown) {
@@ -1494,15 +1515,25 @@ function getSessionRuntimeState(sessionId: string) {
   };
 }
 
-async function getSessionRuntimeStateForOutput(sessionId: string) {
+type RuntimeOutput = ReturnType<typeof getSessionRuntimeState>;
+function getSessionRuntimeStateForOutput(sessionId: string): Promise<RuntimeOutput>;
+function getSessionRuntimeStateForOutput<T>(sessionId: string, project: (runtime: RuntimeOutput) => T extends PromiseLike<unknown> ? never : T): Promise<T>;
+async function getSessionRuntimeStateForOutput<T>(sessionId: string, project?: (runtime: RuntimeOutput) => T): Promise<RuntimeOutput | T> {
   const id = normalizeSessionId(sessionId);
-  const runtime = getSessionRuntimeState(id);
+  let exposeGoal = true;
   try {
     const sessions = await getSessions();
-    return canExposeSessionGoal(sessions[id]) ? runtime : { ...runtime, goal: null };
-  } catch (_err) {
-    return runtime;
+    exposeGoal = canExposeSessionGoal(sessions[id]);
+  } catch (_err) { /* Preserve the current runtime if metadata is temporarily unavailable. */ }
+  // Sample related live state in the same synchronous turn, after metadata I/O.
+  const current = getSessionRuntimeState(id);
+  const runtime = exposeGoal ? current : { ...current, goal: null };
+  if (!project) return runtime;
+  const result = project(runtime);
+  if (result && typeof (result as { then?: unknown }).then === "function") {
+    throw new TypeError("Runtime output projection must be synchronous");
   }
+  return result;
 }
 
 async function buildSkillUiContext(sessionId: string) {
@@ -1713,13 +1744,15 @@ function clipText(value: unknown, maxChars: number) {
   return `${text.slice(0, maxChars)}\n[truncated: ${text.length - maxChars} chars omitted]`;
 }
 
-async function deleteSessionRuntime(sessionId: string, meta: Fields = {}) {
+async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
   await sessionRuntimeReady;
+  signal?.throwIfAborted();
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("deleteSession requires sessionId");
 
   let stored: Awaited<ReturnType<Repository["deleteSession"]>> | null = null;
   const snapshot = await sessionSupervisor.remove(id, {
+    admissionSignal: signal,
     reason: "delete_session",
     beforeRelease: async (revoked) => {
       await releaseTerminalRunResources(
@@ -1759,12 +1792,13 @@ async function deleteSessionRuntime(sessionId: string, meta: Fields = {}) {
   return result;
 }
 
-async function stopSessionRuntime(sessionId: string, meta: Fields = {}) {
+async function stopSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
   await sessionRuntimeReady;
+  signal?.throwIfAborted();
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
 
-  const result = await stopSingleSessionRuntime(id, meta);
+  const result = await stopSingleSessionRuntime(id, meta, signal);
   const cascade = meta.cascade !== false;
   const childResults = [];
   if (cascade) {
@@ -1788,7 +1822,7 @@ async function stopSessionRuntime(sessionId: string, meta: Fields = {}) {
   };
 }
 
-async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}) {
+async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
 
@@ -1801,6 +1835,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}) {
   let pendingSteeringMessages = runtimeState.normalizePendingFollowUps(before.pendingSteeringMessages);
 
   await sessionSupervisor.revoke(id, {
+    admissionSignal: signal,
     reason: meta.parentStopped ? "stopped_by_parent" : "stopped",
     beforeRelease: async (snapshot) => {
       const liveState = snapshot.liveState || {};

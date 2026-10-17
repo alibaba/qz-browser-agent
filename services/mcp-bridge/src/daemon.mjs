@@ -236,11 +236,12 @@ export async function stopDaemon(options = {}) {
 
 export async function startManagedBridge({ stateFile, scopeId, buildId = "", instanceId = randomUUID(), port = 18765, startBridge } = {}) {
   const start = startBridge || (await import("./server.mjs")).startBridge;
+  const registryPath = stateFile.replace(/\.json$/, "") + ".browsers.json";
   let running;
-  try { running = await start({ port, scopeId, instanceId, buildId }); }
+  try { running = await start({ port, scopeId, instanceId, buildId, registryPath }); }
   catch (error) {
     if (error.code !== "EADDRINUSE" || !port) throw error;
-    running = await start({ port: 0, scopeId, instanceId, buildId });
+    running = await start({ port: 0, scopeId, instanceId, buildId, registryPath });
   }
   const record = { service: SERVICE_NAME, protocolVersion: PROTOCOL_VERSION, endpoint: running.endpoint,
     processId: process.pid, scopeId, instanceId, buildId };

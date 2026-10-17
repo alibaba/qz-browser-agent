@@ -10,7 +10,7 @@ interface Options {
   hasBrowserPermission(permission: string): Promise<boolean>;
   locationConsent: {
     isAccepted(): Promise<boolean>;
-    acceptExternal(waitId: string, sessionId: string, consentVersion: unknown): Promise<unknown>;
+    acceptExternal(waitId: string, sessionId: string, consentVersion: unknown, signal?: AbortSignal): Promise<unknown>;
   };
 }
 interface Input extends WaitIdentity {
@@ -58,7 +58,8 @@ export function createSessionUserInput(options: Options) {
     return current(sessionId) || { sessionId, waiting: false };
   }
 
-  async function respond(params: Fields = {}, { allowExistingConsent = false } = {}) {
+  async function respond(params: Fields = {}, signal?: AbortSignal, { allowExistingConsent = false } = {}) {
+    signal?.throwIfAborted();
     const sessionId = id(params.sessionId);
     const waitId = id(params.waitId);
     const input = current(sessionId);
@@ -89,39 +90,45 @@ export function createSessionUserInput(options: Options) {
       if (input.kind === "browser_permission") {
         let granted = false;
         try { granted = await options.hasBrowserPermission(String(input.form.browserPermission)); } catch { /* Keep the wait pending on a failed permission check. */ }
+        signal?.throwIfAborted();
         if (!stillCurrent()) return stale();
         if (!granted) return fail("BROWSER_PERMISSION_REQUIRED", `The task is paused. ${browserPermissionInstructions}`, { requiresUserAction: true });
       }
       if (input.kind === "location_consent") {
         try {
           if (allowExistingConsent) {
-            if (!await options.locationConsent.isAccepted()) {
+            const accepted = await options.locationConsent.isAccepted();
+            signal?.throwIfAborted();
+            if (!accepted) {
               if (!stillCurrent()) return stale();
               return fail("LOCATION_CONSENT_REQUIRED", "Read the location disclosure, then explicitly approve it to continue.", { requiresUserAction: true });
             }
           } else {
-            await options.locationConsent.acceptExternal(waitId, sessionId, params.consentVersion);
+            await options.locationConsent.acceptExternal(waitId, sessionId, params.consentVersion, signal);
           }
         } catch (error) {
+          signal?.throwIfAborted();
           if (!stillCurrent()) return stale();
           return fail(String((error as { code?: string })?.code || "LOCATION_CONSENT_FAILED"),
             error instanceof Error ? error.message : "Could not save location consent. Try again.");
         }
+        signal?.throwIfAborted();
         if (!stillCurrent()) return stale();
       }
     }
+    signal?.throwIfAborted();
     if (!stillCurrent() || !options.resolve({ ...result, payload })) return stale();
     return { accepted: true, ...result, submitted: payload.submitted === true, reason: payload.reason,
       ...(payload.submitted ? { answerKeys: Object.keys(payload.answers as Fields) } : {}) };
   }
 
   // Side-panel replies and older MCP commands retain the same validation and permission guards.
-  function continueWait(params: Fields = {}) {
+  function continueWait(params: Fields = {}, signal?: AbortSignal) {
     const payload = object(params.payload);
-    return respond({ ...params, action: payload?.submitted === true ? "submit" : "approve", answers: payload?.answers }, { allowExistingConsent: true });
+    return respond({ ...params, action: payload?.submitted === true ? "submit" : "approve", answers: payload?.answers }, signal, { allowExistingConsent: true });
   }
-  function submitWaitForm(params: Fields = {}) { return respond({ ...params, action: "submit" }); }
-  function cancelWait(params: Fields = {}) { return respond({ ...params, action: "reject" }); }
+  function submitWaitForm(params: Fields = {}, signal?: AbortSignal) { return respond({ ...params, action: "submit" }, signal); }
+  function cancelWait(params: Fields = {}, signal?: AbortSignal) { return respond({ ...params, action: "reject" }, signal); }
   return { get, respond, continueWait, submitWaitForm, cancelWait };
 }
 

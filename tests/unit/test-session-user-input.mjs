@@ -14,7 +14,7 @@ function fixture(form = { fields }) {
   let wait = { sessionId: 's1', waitId: 'w1', runId: 'r1' };
   const runtime = { ...wait, waitForm: form, waitTitle: 'Review', waitMessage: 'Full disclosure' };
   const resolved = []; const rejected = []; const consents = [];
-  const permissions = { granted: false, accepted: false, check: null, save: null };
+  const permissions = { granted: false, accepted: false, check: null, save: null, read: null };
   const api = createSessionUserInput({
     getWait: id => id === 's1' ? wait : null,
     getRuntime: () => runtime,
@@ -22,8 +22,8 @@ function fixture(form = { fields }) {
     reject: input => { if (!wait || input.waitId !== wait.waitId) return false; rejected.push(input); wait = null; return true; },
     hasBrowserPermission: async permission => { assert.equal(permission, 'history'); return permissions.check ? permissions.check() : permissions.granted; },
     locationConsent: {
-      isAccepted: async () => permissions.accepted,
-      acceptExternal: async (...args) => { if (permissions.save) return permissions.save(...args); if (args[2] !== 1) throw Object.assign(new Error('Read current notice.'), { code: 'VERSION_MISMATCH' }); consents.push(args); permissions.accepted = true; },
+      isAccepted: async () => permissions.read ? permissions.read() : permissions.accepted,
+      acceptExternal: async (...args) => { if (permissions.save) return permissions.save(...args); if (args[2] !== 1) throw Object.assign(new Error('Read current notice.'), { code: 'VERSION_MISMATCH' }); consents.push(args.slice(0, 3)); permissions.accepted = true; },
     },
   });
   return { api, runtime, resolved, rejected, permissions, consents,
@@ -215,4 +215,30 @@ test('concurrent approvals settle a native wait at most once', async () => {
   const f = fixture({ browserPermission: 'history' }); f.permissions.granted = true;
   const results = await Promise.all([f.reply({ action: 'approve' }), f.reply({ action: 'approve' })]);
   assert.equal(results.filter(result => result.accepted).length, 1); assert.equal(f.resolved.length, 1);
+});
+
+test('cancelled connection cannot submit, approve or reject a pending wait', async () => {
+  for (const method of ['respond', 'continueWait', 'submitWaitForm', 'cancelWait']) {
+    const f = fixture(), controller = new AbortController(); controller.abort(new Error('disconnected'));
+    await assert.rejects(f.api[method]({ sessionId: 's1', waitId: 'w1', action: 'submit', answers: valid }, controller.signal), /disconnected/);
+    assert.equal(f.api.get({ sessionId: 's1' }).waiting, true);
+    assert.equal(f.resolved.length + f.rejected.length, 0);
+  }
+});
+
+test('connection cancellation during permission or consent checks leaves the wait pending', async () => {
+  for (const kind of ['permission', 'savedConsent', 'newConsent']) {
+    const f = fixture(kind === 'permission' ? { browserPermission: 'history' } : { locationConsent: true });
+    const controller = new AbortController(); let release, receivedSignal;
+    const gate = new Promise(resolve => { release = resolve; });
+    if (kind === 'permission') f.permissions.check = () => gate;
+    else if (kind === 'savedConsent') f.permissions.read = () => gate;
+    else f.permissions.save = (_wait, _session, _version, signal) => { receivedSignal = signal; return gate; };
+    const method = kind === 'savedConsent' ? 'continueWait' : 'respond';
+    const pending = f.api[method]({ sessionId: 's1', waitId: 'w1', action: 'approve', consentVersion: 1 }, controller.signal);
+    controller.abort(new Error('connection replaced')); release(true);
+    await assert.rejects(pending, /connection replaced/);
+    if (kind === 'newConsent') assert.equal(receivedSignal, controller.signal);
+    assert.equal(f.resolved.length, 0); assert.equal(f.api.get({ sessionId: 's1' }).waiting, true);
+  }
 });

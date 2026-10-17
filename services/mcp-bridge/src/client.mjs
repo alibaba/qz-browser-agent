@@ -5,7 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { PACKAGE_VERSION } from "./package-info.mjs";
 
 export const GUIDE_URL = "https://github.com/alibaba/qz-browser-agent/blob/main/services/mcp-bridge/README.md";
-export const INSTALL_URL = "https://github.com/alibaba/qz-browser-agent/releases/latest";
+export { INSTALL_URL } from "./package-info.mjs";
 export const SERVICE_NAME = "qz-browser-agent";
 export const PROTOCOL_VERSION = 1;
 

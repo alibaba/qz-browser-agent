@@ -57,9 +57,10 @@ export async function launchIsolatedExtensionMcp({
     });
     await page.goto(`chrome-extension://${extensionId}/sidepanel/sidepanel.html`);
     await page.locator("[data-consent-accept]").waitFor({ state: "visible" });
-    assert.equal(await page.evaluate(async () =>
-      (await chrome.storage.local.get("_qingzhou_mcp_bridge"))._qingzhou_mcp_bridge), undefined,
-    "a fresh browser must have no endpoint injected by the fixture");
+    const fresh = await page.evaluate(async () =>
+      (await chrome.storage.local.get("_qingzhou_mcp_bridge"))._qingzhou_mcp_bridge);
+    assert.ok(!fresh || (fresh.schemaVersion === 2 && !fresh.enabled && !fresh.authorizationId),
+      "a fresh browser must have no CLI authorization injected by the fixture");
     const connectionPage = await context.newPage();
     connectionPage.on("pageerror", error => diagnostics.push(String(error)));
     await connectionPage.goto(bridge.connectUrl);

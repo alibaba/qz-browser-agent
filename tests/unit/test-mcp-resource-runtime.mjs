@@ -4,9 +4,11 @@ import { createMcpResourceRuntime } from "../../src/background/mcp/resource-runt
 import { downloadMcpFile, listMcpDownloads, safeMcpFilename } from "../../src/background/mcp/file-download.js";
 import { parseDocumentBytes } from "../../src/shared/documents/document-codecs.js";
 import { openZip } from "../../src/shared/zip-bytes.js";
+import { createMcpTransport } from "../../src/background/transports/mcp.js";
 
 const table = (name, columns = [], extra = {}) => ({ name, columns, count: 0, createdAt: "", updatedAt: "", ...extra });
 const row = (table, id, data) => ({ id: String(id), table, data, createdAt: "", updatedAt: "" });
+const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 function harness(tables, rows = [], options = {}) {
   const downloads = [];
   const cleared = [];
@@ -46,6 +48,51 @@ test("deletion resolves an exact existing name and never clears unrelated tables
   assert.deepEqual(await runtime.deleteDataTable({ table: "data" }), { table: "data", deleted: 0 });
   assert.deepEqual(await runtime.deleteImageCollection({ collection: "gallery" }), { table: "gallery", collection: "gallery", deleted: 0, retainedAssets: true });
   assert.deepEqual(cleared, ["data", "gallery"]);
+});
+
+test("disconnect during resource lookup prevents deletion and a fresh connection can retry", async () => {
+  for (const [method, owner, params] of [
+    ["delete_data_table", "deleteDataTable", { table: "research" }],
+    ["delete_image_collection", "deleteImageCollection", { collection: "research" }],
+  ]) {
+    const entered = deferred(), lookup = deferred(), controller = new AbortController();
+    const { runtime, cleared } = harness([], [], { deps: { listTables: async () => { entered.resolve(); return lookup.promise; } } });
+    const transport = createMcpTransport({ system: { ready() {} }, data: {
+      [method === "delete_data_table" ? "deleteTable" : "deleteImageCollection"]: runtime[owner],
+    } });
+    const pending = transport.dispatch({ method, params, signal: controller.signal });
+    await entered.promise;
+    const reason = Object.assign(new Error("disconnected"), { code: "MCP_CONNECTION_CANCELLED" });
+    controller.abort(reason);
+    lookup.resolve([table("research", [], { kind: "image_collection" })]);
+    await assert.rejects(pending, error => error === reason);
+    assert.deepEqual(cleared, []);
+    await transport.dispatch({ method, params, signal: new AbortController().signal });
+    assert.deepEqual(cleared, ["research"]);
+  }
+});
+
+test("disconnect during spreadsheet encoding prevents both table and gallery downloads", async () => {
+  for (const [method, owner, params] of [
+    ["export_data_table", "exportDataTable", { table: "research", format: "xlsx" }],
+    ["export_image_collection", "exportImageCollection", { collection: "research" }],
+  ]) {
+    const entered = deferred(), encoded = deferred(), controller = new AbortController();
+    const { runtime, downloads } = harness([table("research", [], { kind: "image_collection" })], [], {
+      deps: { encodeDocument: async () => { entered.resolve(); return encoded.promise; } },
+    });
+    const transport = createMcpTransport({ system: { ready() {} }, data: {
+      [method === "export_data_table" ? "exportTable" : "exportImageCollection"]: runtime[owner],
+    } });
+    const pending = transport.dispatch({ method, params, signal: controller.signal });
+    await entered.promise;
+    const reason = new Error("disconnected"); controller.abort(reason);
+    encoded.resolve(new Uint8Array([1, 2, 3]));
+    await assert.rejects(pending, error => error === reason);
+    assert.deepEqual(downloads, []);
+    await transport.dispatch({ method, params, signal: new AbortController().signal });
+    assert.equal(downloads.length, 1);
+  }
 });
 
 test("CSV and XLSX export every page, explicit empty columns, nested values and column order", async () => {

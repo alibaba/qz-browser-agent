@@ -10,8 +10,7 @@ export const translations = {
       "heroBadge": "<span class=\"square\" aria-hidden=\"true\"></span>OPEN SOURCE · LOCAL FIRST",
       "heroTitle": "An agent that<br><span>actually uses<br>the browser.</span>",
       "heroIntro": "Read websites, automate actions, and save results as tables, files, or image collections. Connect your own model.",
-      "heroAction": "Download qz<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
-      "heroNote": "Chrome extension · Compatible with cloud and local model APIs",
+      "heroAction": "Add to Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "filmCaption": "Wikipedia · Page reading and JavaScript execution",
       "filmAction": "Watch demo",
       "overviewTitle": "Web research, saved as data.",
@@ -22,9 +21,9 @@ export const translations = {
       "ownershipPrivacy": "Task context is sent to your configured model service. Skills and MCP connections may exchange data with services you configure.",
       "ownershipLink": "Permissions &amp; data flow<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "startTitle": "Install qz",
-      "startDescription": "Download the ZIP for desktop Chrome. A model API key or local model endpoint is required.",
-      "startDownload": "Download latest release<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
-      "startGuide": "Installation guide<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
+      "startDescription": "Install from the Chrome Web Store, then connect your model API or local endpoint.",
+      "startDownload": "Add to Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
+      "startGuide": "Manual install · GitHub Release<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "promptLabel": "TRY A TASK",
       "promptCopy": "Copy prompt",
       "prompt": "Open Wikipedia’s Hangzhou page. Make a table of its main sights, with a short description and a source link for each.",
@@ -40,8 +39,8 @@ export const translations = {
       "extension1Title": "Skills",
       "extension1Description": "Install from a Git repository, edit in the panel, and activate on matching websites.",
       "extension1Link": "Skill guide<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
-      "step1Title": "Download &amp; load",
-      "step1Description": "Extract the release ZIP. Open <code>chrome://extensions</code>, enable Developer mode, then load the extracted extension folder.",
+      "step1Title": "Add to Chrome",
+      "step1Description": "In the Chrome Web Store, click “Add to Chrome” and confirm the installation.",
       "extension2Title": "TypeScript capabilities",
       "extension2Description": "Add agent tools, panel views, settings pages, or providers as compiled TypeScript modules.",
       "extension2Link": "Capability API<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
@@ -83,8 +82,7 @@ export const translations = {
       "agentTerminalResult": "Saved 6 comparison rows with source links.",
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
-      "agentRequirements": "Requires Node.js 24+ and Chrome on the same machine, with the qz extension and a model configured.",
-      "agentDownload": "Download the extension"
+      "agentRequirements": "Requires Node.js 24+ and Chrome on the same machine, with the qz extension and a model configured."
     },
     "attributes": {
       "description": {
@@ -117,7 +115,7 @@ export const translations = {
         "href": "https://github.com/alibaba/qz-browser-agent/blob/main/README.md#skills"
       },
       "installGuide": {
-        "href": "https://github.com/alibaba/qz-browser-agent/blob/main/README.md#install"
+        "href": "https://github.com/alibaba/qz-browser-agent/releases/latest"
       },
       "copy": {
         "data-copied": "Copied",
@@ -202,8 +200,7 @@ export const translations = {
       "heroBadge": "<span class=\"square\" aria-hidden=\"true\"></span>开源 · 本地优先",
       "heroTitle": "一个真正<br><span>会用浏览器的<br>智能体。</span>",
       "heroIntro": "阅读网页、执行操作，把结果保存为表格、文件或图集。连接你自己的模型，通过 Skill 扩展功能。",
-      "heroAction": "下载轻舟<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
-      "heroNote": "Chrome 扩展 · 支持兼容的云端与本地模型接口",
+      "heroAction": "添加至 Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "filmCaption": "Wikipedia · 阅读页面与执行 JavaScript",
       "filmAction": "观看演示",
       "overviewTitle": "把网页资料整理成数据。",
@@ -214,9 +211,9 @@ export const translations = {
       "ownershipPrivacy": "任务上下文会发送至你配置的模型服务。Skill 和 MCP 连接也可能与你配置的服务交换数据。",
       "ownershipLink": "权限与数据流说明<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "startTitle": "安装轻舟",
-      "startDescription": "下载适用于桌面版 Chrome 的 ZIP 安装包。使用前需准备模型 API Key 或本地模型接口。",
-      "startDownload": "下载最新版本<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
-      "startGuide": "安装指南<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
+      "startDescription": "从 Chrome 应用商店安装，再连接模型 API 或本地模型接口。",
+      "startDownload": "添加至 Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
+      "startGuide": "手动安装 · GitHub Release<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "promptLabel": "试一个任务",
       "promptCopy": "复制指令",
       "prompt": "打开 Wikipedia 的杭州页面，把主要景点整理成一张表格，每个景点附上简短介绍和来源链接。",
@@ -232,8 +229,8 @@ export const translations = {
       "extension1Title": "Skill",
       "extension1Description": "从 Git 仓库安装，在界面中编辑，并在匹配的网站上启用。",
       "extension1Link": "Skill 指南<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
-      "step1Title": "下载并加载",
-      "step1Description": "解压 Release 中的 ZIP。在 <code>chrome://extensions</code> 开启开发者模式，加载解压后的扩展文件夹。",
+      "step1Title": "添加至 Chrome",
+      "step1Description": "在 Chrome 应用商店点击“添加至 Chrome”，确认安装。",
       "extension2Title": "TypeScript 能力包",
       "extension2Description": "通过编译进扩展的 TypeScript 模块，添加工具、面板视图、设置页或模型服务商。",
       "extension2Link": "能力包 API<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
@@ -275,8 +272,7 @@ export const translations = {
       "agentTerminalResult": "已保存 6 行对比数据，附有来源链接。",
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
-      "agentRequirements": "需要 Node.js 24+，以及同一台电脑上的 Chrome、轻舟扩展和已配置的模型。",
-      "agentDownload": "下载轻舟扩展"
+      "agentRequirements": "需要 Node.js 24+，以及同一台电脑上的 Chrome、轻舟扩展和已配置的模型。"
     },
     "attributes": {
       "description": {
@@ -309,7 +305,7 @@ export const translations = {
         "href": "https://github.com/alibaba/qz-browser-agent/blob/main/README.zh-CN.md#skill"
       },
       "installGuide": {
-        "href": "https://github.com/alibaba/qz-browser-agent/blob/main/README.zh-CN.md#安装"
+        "href": "https://github.com/alibaba/qz-browser-agent/releases/latest"
       },
       "copy": {
         "data-copied": "已复制",

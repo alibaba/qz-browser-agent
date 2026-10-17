@@ -132,9 +132,11 @@ export function createAutomationRepository({ storage }: { storage?: StorageAdapt
     )) || null;
   }
 
-  function createRun(input: Fields = {}) {
+  function createRun(input: Fields = {}, signal?: AbortSignal) {
     return runsQueue.run(async () => {
+      signal?.throwIfAborted();
       const runs = await getRuns();
+      signal?.throwIfAborted();
       const now = nowBeijingDateTime();
       const run = normalizeAutomationRun({
         ...input,

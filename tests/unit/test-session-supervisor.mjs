@@ -285,6 +285,23 @@ async function initializationFailureDoesNotPoisonTheSession() {
   assert.equal(fixture.created.length, 2);
 }
 
+async function cancelledRevocationsCannotPassTheCommandQueue() {
+  for (const method of ["revoke", "remove"]) {
+    const f = createFixture(), controller = new AbortController(), gate = deferred(), entered = deferred();
+    const agent = await f.supervisor.getAgent("pending-terminal");
+    const blocked = f.supervisor.withAgent("pending-terminal", async () => { entered.resolve(); await gate.promise; });
+    await entered.promise;
+    let cleaned = false;
+    const pending = f.supervisor[method]("pending-terminal", { admissionSignal: controller.signal, beforeRelease() { cleaned = true; } });
+    controller.abort(new Error("connection revoked")); gate.resolve();
+    await blocked; await assert.rejects(pending, /connection revoked/);
+    assert.equal(cleaned, false); assert.equal(agent.aborted, false);
+    assert.equal(await f.supervisor.getAgent("pending-terminal"), agent);
+    await f.supervisor[method]("pending-terminal", { admissionSignal: new AbortController().signal, beforeRelease() { cleaned = true; } });
+    assert.equal(cleaned, true); assert.equal(agent.aborted, true);
+  }
+}
+
 async function taskFailuresReleaseTheCommandSlot() {
   const fixture = createFixture();
   await assert.rejects(
@@ -423,6 +440,7 @@ await removeCannotRaceWithRecreation();
 await ownsParallelUserWaitsPerSession();
 await newerUserWaitSupersedesOnlyTheSameSession();
 await initializationFailureDoesNotPoisonTheSession();
+await cancelledRevocationsCannotPassTheCommandQueue();
 await taskFailuresReleaseTheCommandSlot();
 await abortFailureStillRevokesTheLease();
 await alreadyAbortedWaitSettlesOnce();

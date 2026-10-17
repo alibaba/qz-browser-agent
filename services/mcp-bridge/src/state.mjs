@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { BrowserRegistry, browserName, isBrowserId, sameToken, pairingError } from "./browser-registry.mjs";
+import { INSTALL_URL } from "./package-info.mjs";
 
 export const PROTOCOL_VERSION = 1;
-export const PROJECT_URL = "https://github.com/alibaba/qz-browser-agent";
 const now = () => Date.now() / 1000;
 const rounded = value => Math.round(value * 1000) / 1000;
 const bounded = (value, fallback, min, max) => Number.isFinite(Number(value))
@@ -23,8 +24,11 @@ export class BridgeError extends Error {
 }
 
 export class BridgeState {
-  constructor({ endpoint = "http://127.0.0.1:18765", requestTimeoutSeconds = 180, connectWaitMs = 2000 } = {}) {
+  constructor({ endpoint = "http://127.0.0.1:18765", requestTimeoutSeconds = 180, connectWaitMs = 2000, instanceId = randomUUID(), registry = new BrowserRegistry() } = {}) {
     this.endpoint = endpoint;
+    this.instanceId = instanceId;
+    this.registry = registry;
+    this.registration = Promise.resolve();
     this.requestTimeoutSeconds = Math.max(1, requestTimeoutSeconds);
     this.connectWaitMs = connectWaitMs;
     this.clients = new Map();
@@ -49,33 +53,118 @@ export class BridgeState {
       extensionId: client.extensionId || "",
       name: client.name || "",
       capabilities: client.capabilities || {},
+      paired: Boolean(client.connectionId),
     })).sort((a, b) => a.clientId.localeCompare(b.clientId));
     return {
       endpoint: this.endpoint, protocolVersion: PROTOCOL_VERSION, connected: clients.length > 0,
-      clientCount: clients.length, clients, pending: this.pending.size, inflight: this.inflight.size,
+      clientCount: clients.length, clients, browsers: this.registry.list().map(entry => ({ ...entry, online: clients.some(client => client.clientId === entry.clientId) })), pending: this.pending.size, inflight: this.inflight.size,
       uptimeSeconds: rounded(now() - this.startedAt),
     };
   }
 
-  enableSnippet(clientId = "") {
-    const config = {
-      enabled: true, endpoint: this.endpoint, pollIntervalMs: 500, pollTimeoutMs: 30000,
-      requestTimeoutMs: this.requestTimeoutSeconds * 1000, maxBatch: 4, includeCapabilities: true,
-      ...(clientId ? { clientId } : {}),
-    };
-    return `await chrome.storage.local.set({\n  "_qingzhou_mcp_bridge": ${JSON.stringify(config, null, 2)}\n});\nawait chrome.storage.local.get("_qingzhou_mcp_bridge");`;
+  serializeRegistration(operation) {
+    const result = this.registration.then(() => {
+      this.closed.signal.throwIfAborted();
+      return operation();
+    });
+    this.registration = result.catch(() => {});
+    return result;
   }
 
-  registerClient(client, timeoutMs = client.pollTimeoutMs || 30000) {
-    const id = String(client.id || client.clientId || "qingzhou-extension").trim() || "qingzhou-extension";
-    const info = {
-      ...client, id, lastSeenAt: now(),
-      pollLeaseSeconds: (bounded(timeoutMs, 30000, 100, 60000)
-        + bounded(client.pollIntervalMs ?? 750, 750, 100, 60000)) / 1000 + 15,
-    };
-    this.clients.set(id, info);
+  requireInstance(instanceId) {
+    if (instanceId !== this.instanceId) throw pairingError("BRIDGE_INSTANCE_CHANGED", "The local service changed. Check its health and pair again.");
+  }
+
+  revokeClient(id, message = "The browser connection ended. Reconnect that browser before retrying.") {
+    const client = this.clients.get(id);
+    if (!client) return;
+    const error = pairingError("BRIDGE_CLIENT_DISCONNECTED", message);
+    this.clients.delete(id);
+    client.controller.abort(error);
+    for (const request of [...this.pending.values(), ...this.inflight.values()]) {
+      if (request.client === client) request.finish(error);
+    }
     this.events.emit("change");
-    return info;
+  }
+
+  pair(input) {
+    return this.serializeRegistration(async () => {
+      this.requireInstance(input.instanceId);
+      if (!isBrowserId(input.clientId) || !isBrowserId(input.connectionId)) {
+        throw pairingError("INVALID_ARGUMENTS", "clientId and connectionId must be UUIDs.");
+      }
+      const previous = this.clients.get(input.clientId);
+      if (previous && this.liveClients().includes(previous) && previous.connectionId !== input.connectionId) {
+        throw Object.assign(pairingError("BRIDGE_CLIENT_IN_USE", "This browser identity has an active connection. Wait for it to disconnect, or connect from a distinct browser profile."), {
+          retryAfterMs: Math.max(1, Math.ceil((previous.lastSeenAt + previous.pollLeaseSeconds - now()) * 1000) + 1),
+        });
+      }
+      const entry = await this.registry.pair(input);
+      this.closed.signal.throwIfAborted();
+      if (previous?.connectionId !== input.connectionId) this.revokeClient(input.clientId);
+      const client = this.clients.get(input.clientId) || { id: input.clientId, connectionId: input.connectionId, controller: new AbortController() };
+      Object.assign(client, { name: entry.name, lastSeenAt: now(), pollLeaseSeconds: 46 });
+      this.clients.set(client.id, client);
+      this.events.emit("change");
+      return { ok: true, ...entry, connectionId: input.connectionId, instanceId: this.instanceId };
+    });
+  }
+
+  authenticatedClient(input) {
+    this.requireInstance(input.instanceId);
+    const id = input.clientId || input.id;
+    const entry = this.registry.entries.get(id), client = this.clients.get(id);
+    if (!entry || !sameToken(input.pairingToken, entry.pairingToken) || !client?.connectionId
+      || client.connectionId !== input.connectionId) {
+      throw pairingError("BRIDGE_PAIRING_REQUIRED", "This browser connection is no longer paired. Connect again from the extension settings.");
+    }
+    return client;
+  }
+
+  connectionInfo(input) {
+    const client = this.authenticatedClient(input);
+    return { clientId: client.id, name: client.name, connectionId: client.connectionId, instanceId: this.instanceId };
+  }
+
+  rename(input) {
+    return this.serializeRegistration(async () => {
+      const client = this.authenticatedClient(input);
+      if (!this.liveClients().includes(client)) throw pairingError("BRIDGE_CLIENT_OFFLINE", "Reconnect this browser before renaming it.");
+      const entry = await this.registry.pair({ ...input, name: browserName(input.name) });
+      this.closed.signal.throwIfAborted();
+      client.name = entry.name;
+      return { ok: true, ...this.connectionInfo(input) };
+    });
+  }
+
+  disconnect(input) {
+    return this.serializeRegistration(() => {
+      const client = this.authenticatedClient(input);
+      this.revokeClient(client.id);
+      return { ok: true, clientId: client.id };
+    });
+  }
+
+  forgetBrowser(selector) {
+    return this.serializeRegistration(async () => {
+      const entry = this.registry.get(selector);
+      if (!entry) throw pairingError("BRIDGE_CLIENT_NOT_FOUND", `No registered browser named ${selector}. Use qz browsers to list names and UUIDs.`);
+      if (this.liveClients().some(client => client.id === entry.clientId)) {
+        throw pairingError("BRIDGE_CLIENT_IN_USE", "Disconnect this browser in its extension settings before forgetting its registration.");
+      }
+      await this.registry.forget(entry.clientId);
+      this.revokeClient(entry.clientId);
+      return { forgotten: true, clientId: entry.clientId, name: entry.name };
+    });
+  }
+
+  touchClient(info, client, timeoutMs) {
+    Object.assign(info, { lastSeenAt: now(), extensionId: client.extensionId || info.extensionId,
+      capabilities: client.capabilities || info.capabilities,
+      pollLeaseSeconds: (bounded(timeoutMs, 30000, 100, 60000)
+        + bounded(client.pollIntervalMs ?? 750, 750, 100, 60000)) / 1000 + 15 });
+    this.clients.set(info.id, info);
+    this.events.emit("change");
   }
 
   signal(signal) {
@@ -99,25 +188,36 @@ export class BridgeState {
     });
   }
 
-  async resolveClient(clientId, timeoutMs, signal) {
+  async resolveClient(clientId, timeoutMs, signal, returnConnection = false) {
+    const registered = clientId && this.registry.get(clientId);
+    const target = registered?.clientId || clientId;
     const deadline = Date.now() + Math.min(timeoutMs, this.connectWaitMs);
     while (true) {
       signal.throwIfAborted();
       const clients = this.liveClients();
-      if (clientId && clients.some(client => client.id === clientId)) return clientId;
-      if (!clientId && clients.length === 1) return clients[0].id;
+      const selected = target && clients.find(client => client.id === target);
+      if (selected) return returnConnection ? selected : selected.id;
+      if (clientId && (registered || this.clients.has(target) || Date.now() >= deadline)) throw new BridgeError(registered || this.clients.has(target) ? "BRIDGE_CLIENT_OFFLINE" : "BRIDGE_CLIENT_NOT_FOUND",
+        `Browser ${clientId} is ${registered || this.clients.has(target) ? "offline" : "not registered"}. Use qz browsers to inspect browser names and UUIDs.`);
+      if (!clientId && clients.length === 1) return returnConnection ? clients[0] : clients[0].id;
       if (!clientId && clients.length > 1) throw new BridgeError("BRIDGE_CLIENT_REQUIRED",
-        `Multiple qz browsers are connected. Pass clientId from qingzhou_bridge_status: ${clients.map(client => client.id).sort().join(", ")}`);
+        `Multiple qz browsers are connected. Pass clientId from qingzhou_bridge_status: ${clients.map(client => `${client.name || client.id} (${client.id})`).sort().join(", ")}`);
       if (Date.now() >= deadline) throw new BridgeError("BRIDGE_NOT_CONNECTED",
-        `No active qz extension${clientId ? ` (${clientId})` : ""}. Open qz in Chrome and accept its data notice, then retry. Install qz: ${PROJECT_URL}`);
+        `No active qz extension${clientId ? ` (${clientId})` : ""}. Run qz connect, then confirm the connection in the extension. Install qz: ${INSTALL_URL}`);
       await this.waitForChange(deadline - Date.now(), signal);
     }
   }
 
   async poll(client, { timeoutMs = 30000, maxBatch = 4, signal } = {}) {
-    const activeSignal = this.signal(signal);
+    const info = await this.serializeRegistration(() => {
+      this.signal(signal).throwIfAborted();
+      if (client.pairingVersion !== 1) throw pairingError("BRIDGE_PAIRING_REQUIRED", "Update qz to use the supported pairing protocol.");
+      const info = this.authenticatedClient(client);
+      this.touchClient(info, client, timeoutMs);
+      return info;
+    });
+    const activeSignal = AbortSignal.any([this.signal(signal), info.controller.signal]);
     activeSignal.throwIfAborted();
-    const info = this.registerClient(client, timeoutMs);
     const deadline = Date.now() + bounded(timeoutMs, 30000, 100, 60000);
     const limit = Math.floor(bounded(maxBatch, 4, 1, 16));
     while (true) {
@@ -125,7 +225,7 @@ export class BridgeState {
       const requests = [];
       for (const [id, request] of this.pending) {
         if (requests.length >= limit) break;
-        if (request.clientId !== info.id) continue;
+        if (request.client !== info) continue;
         this.pending.delete(id);
         this.inflight.set(id, request);
         requests.push({ id, method: request.method, params: request.params, timeoutMs: request.timeoutMs });
@@ -139,8 +239,11 @@ export class BridgeState {
     if (typeof method !== "string" || !method.trim()) throw new BridgeError("INVALID_ARGUMENTS", "method is required");
     const activeSignal = this.signal(signal);
     const seconds = bounded(timeoutSeconds || this.requestTimeoutSeconds, this.requestTimeoutSeconds, 1, 86400);
-    const target = await this.resolveClient(String(clientId || "").trim(), seconds * 1000, activeSignal);
+    const client = await this.resolveClient(String(clientId || "").trim(), seconds * 1000, activeSignal, true);
     activeSignal.throwIfAborted();
+    const target = client.id;
+    if (this.clients.get(target) !== client || !this.liveClients().includes(client)) throw pairingError("BRIDGE_CLIENT_OFFLINE", "The selected browser disconnected before the request could start.");
+    client.controller.signal.throwIfAborted();
     return new Promise((resolve, reject) => {
       const id = `qz_${Date.now()}_${randomUUID()}`;
       const finish = (error, result) => {
@@ -154,7 +257,7 @@ export class BridgeState {
       const timer = setTimeout(() => finish(new BridgeError("BRIDGE_REQUEST_TIMEOUT",
         `Request timed out after ${seconds}s: ${method}. A started operation may still be running; check its state before retrying.`)), seconds * 1000);
       activeSignal.addEventListener("abort", aborted, { once: true });
-      this.pending.set(id, { id, method, params, clientId: target, timeoutMs: seconds * 1000, finish });
+      this.pending.set(id, { id, method, params, clientId: target, client, timeoutMs: seconds * 1000, finish });
       this.events.emit("change");
     });
   }
@@ -162,8 +265,9 @@ export class BridgeState {
   complete(requestId, payload) {
     const request = this.inflight.get(requestId);
     if (!request) return false;
-    // Legacy v1 clients may omit clientId; an explicit identity must match the dispatched request.
-    if (payload.clientId && payload.clientId !== request.clientId) return false;
+    let client;
+    try { client = this.authenticatedClient(payload); } catch { return false; }
+    if (client !== request.client) return false;
     if (payload.ok === false) request.finish(new BridgeError(payload.code || "BRIDGE_TOOL_ERROR", String(payload.error || "qz bridge request failed"), payload.details));
     else request.finish(null, payload.result);
     return true;
@@ -181,8 +285,8 @@ export class BridgeState {
       job.status = "running";
       job.startedAt = now();
       try {
-        // Async jobs outlive their initial MCP call and can be polled with get_tool_job.
-        job.result = await this.callExtension(method, params, { ...options, signal: undefined });
+        // Jobs outlive the initial MCP response, but retain that browser connection's authority.
+        job.result = await this.callExtension(method, params, { ...options, signal: options.connectionSignal });
         job.status = "completed";
       } catch (error) {
         job.error = error.message || String(error);

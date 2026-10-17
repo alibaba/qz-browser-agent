@@ -1,3 +1,4 @@
+import { pairBrowser, pollBrowser, completeBrowser } from "../support/paired-bridge.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -8,7 +9,7 @@ import { callTool } from "../../services/mcp-bridge/src/client.mjs";
 async function bridgeFixture(t) {
   const bridge = await startBridge({ port: 0, connectWaitMs: 0 });
   t.after(() => bridge.close());
-  bridge.state.registerClient({ id: "browser" });
+  await pairBrowser(bridge.state, { id: "browser" });
   return bridge;
 }
 
@@ -22,9 +23,9 @@ test("typed extension errors keep recovery metadata through a real MCP client wi
     assert.equal(JSON.stringify(error).includes("secret-api-key"), false);
     return true;
   });
-  const [request] = await bridge.state.poll({ id: "browser" }, { timeoutMs: 1000 });
+  const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
   assert.equal(request.method, "export_data_table");
-  bridge.state.complete(request.id, {
+  completeBrowser(bridge.state, request.id, {
     ok: false, code: "DOWNLOAD_INTERRUPTED", error: "Download interrupted.",
     details: { downloadId: 42, filename: "results.xlsx", reason: "USER_CANCELED", apiKey: "secret-api-key", request: { authorization: "secret-api-key" } },
   });
@@ -39,8 +40,8 @@ test("MCP typed errors have an explicit JSON envelope and omit arbitrary provide
   await client.connect(new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`)));
   t.after(() => client.close());
   const pending = client.callTool({ name: "qingzhou_update_settings", arguments: { config: { language: "en" } } });
-  const [request] = await bridge.state.poll({ id: "browser" }, { timeoutMs: 1000 });
-  bridge.state.complete(request.id, {
+  const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+  completeBrowser(bridge.state, request.id, {
     ok: false, code: "SETTINGS_PARTIALLY_UPDATED", error: "Model settings were saved; language failed.",
     details: { request: { apiKey: "private" } },
   });
@@ -63,24 +64,24 @@ test("Skill missing-resource results become actionable MCP errors while generic 
       assert.deepEqual(error.details, details);
       return true;
     });
-    const [request] = await bridge.state.poll({ id: "browser" }, { timeoutMs: 1000 });
-    bridge.state.complete(request.id, { ok: true, result });
+    const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+    completeBrowser(bridge.state, request.id, { ok: true, result });
     await rejected;
   }
   const result = { error: "Data column named error", code: "DATA" };
   const pending = callTool(bridge.endpoint, "qingzhou_execute_tool", { name: "inspect_page", sessionId: "task" });
-  const [request] = await bridge.state.poll({ id: "browser" }, { timeoutMs: 1000 });
-  bridge.state.complete(request.id, { ok: true, result });
+  const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+  completeBrowser(bridge.state, request.id, { ok: true, result });
   assert.deepEqual(await pending, result);
 });
 
-test("legacy untyped MCP errors retain the string fallback", async t => {
+test("untyped tool errors preserve their message", async t => {
   const bridge = await bridgeFixture(t);
-  bridge.state.callExtension = async () => { throw new Error("Legacy service failure"); };
+  bridge.state.callExtension = async () => { throw new Error("Tool execution failed"); };
   await assert.rejects(callTool(bridge.endpoint, "qingzhou_get_settings", {}), error => {
     assert.equal(error.code, "tool_error");
-    assert.equal(error.message, "Legacy service failure");
-    assert.deepEqual(error.details, { result: "Legacy service failure" });
+    assert.equal(error.message, "Tool execution failed");
+    assert.deepEqual(error.details, { result: "Tool execution failed" });
     return true;
   });
 });

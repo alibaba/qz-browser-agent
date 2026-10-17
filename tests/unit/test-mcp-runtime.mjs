@@ -6,6 +6,7 @@ const toolReadinessReasons = [];
 const loadedNames = [];
 const loadedDocumentResources = [];
 const promptTasks = [];
+const admissionSignals = [];
 let messageDisposition = "started";
 let activeRunId = "run-1";
 const waits = new Map([["wait-1", true], ["wait-2", true]]);
@@ -56,12 +57,13 @@ const sessions = {
       return true;
     },
   },
-  async submitMessage(input) {
+  async submitMessage(input, signal) {
     promptTasks.push(input);
+    admissionSignals.push(signal);
     return { promise: Promise.resolve(), runId: "run-2", disposition: messageDisposition };
   },
   waitForRunObserved: async () => true,
-  getRuntimeOutput: async () => ({ ...runtimeState }),
+  getRuntimeOutput: async (_id, project = value => value) => project({ ...runtimeState }),
   getLiveAgentEntry: async () => null,
   setRuntime() {},
   getLastMessages: async ({ sessionId, num }) => ({ sessionId, num, messages: transcript.slice(-num) }),
@@ -108,6 +110,7 @@ const skills = {
     };
   },
 };
+let runtimeMessageSignal;
 const runtime = createMcpRuntime({
   sessions,
   userInputPermissions: { hasBrowserPermission: async () => false, locationConsent: { isAccepted: async () => false, acceptExternal: async () => { throw new Error("not configured"); } } },
@@ -119,6 +122,7 @@ const runtime = createMcpRuntime({
   },
   trace: { get: async () => ["s1 trace", "other trace"] },
   async dispatchSidepanel(message, port) {
+    runtimeMessageSignal = port.signal;
     port.postMessage({ type: "first", requestId: message.requestId });
     port.postMessage({ type: "second", requestId: message.requestId });
   },
@@ -131,6 +135,9 @@ assert.ok(runtime.describe().methods.includes("execute_tool"));
 const dispatched = await runtime.dispatchRuntimeMessage({ type: "test", requestId: "req-1" }, { expectedType: "first" });
 assert.equal(dispatched.response.type, "first");
 assert.equal(dispatched.responses.length, 2);
+const runtimeMessageController = new AbortController();
+await runtime.dispatchRuntimeMessage({ type: "test" }, {}, runtimeMessageController.signal);
+assert.equal(runtimeMessageSignal, runtimeMessageController.signal);
 
 assert.deepEqual(await runtime.continueUserWait({ sessionId: "s1", waitId: "wait-1" }), {
   accepted: true,
@@ -249,5 +256,85 @@ assert.equal(snapshot.artifacts.total, 0);
 assert.equal(snapshot.toolCount, 1);
 assert.deepEqual(snapshot.trace, ["s1 trace"]);
 assert.equal(snapshot.tail[0].compact, true);
+
+for (const stage of ["ready", "canManageSessions", "buildRunProfile"]) {
+  const original = tools[stage], controller = new AbortController();
+  let release, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  tools[stage] = async () => { entered(); return gate; };
+  const count = executed.length;
+  const pending = runtime.executeTool({ sessionId: "s1", name: "read_dom" }, controller.signal);
+  await started; controller.abort(new Error("connection revoked")); release(true);
+  await assert.rejects(pending, /connection revoked/);
+  assert.equal(executed.length, count, `revoked ${stage} work must not execute a tool`);
+  tools[stage] = original;
+}
+const toolController = new AbortController();
+await runtime.executeTool({ sessionId: "s1", name: "read_dom" }, toolController.signal);
+assert.equal(executed.at(-1).signal, toolController.signal, "tools receive the connection authority signal");
+const oldExecute = toolRuntime.execute, loadedCount = loadedNames.length;
+toolRuntime.execute = async (_name, _args, signal) => { toolController.abort(new Error("late disconnect")); assert.equal(signal.aborted, true); return { name: "research" }; };
+await assert.rejects(runtime.executeTool({ sessionId: "s1", name: "load_skill" }, toolController.signal), /late disconnect/);
+assert.equal(loadedNames.length, loadedCount, "revoked tool results cannot update loaded Skill state");
+toolRuntime.execute = oldExecute;
+
+const admissionController = new AbortController();
+await runtime.sendMessage({ sessionId: "s1", text: "retain admission authority", waitForStart: false }, admissionController.signal);
+assert.equal(admissionSignals.at(-1), admissionController.signal);
+
+for (const stage of ["context", "metadata"]) {
+  for (const transition of ["same-run", "same-agent-new-run", "replaced-agent", "revoked-agent"]) {
+    const entered = Promise.withResolvers(), gate = Promise.withResolvers();
+    let current = { runId: "run-first", status: "running", running: true, inputTokensEstimate: 11, contextWindow: 128000, goal: null };
+    let agentRunId = "run-first";
+    const agent = {
+      getRunState: () => ({ runId: agentRunId, isStreaming: true, hasHistory: true }),
+      getContextUsageState: async () => {
+        if (stage === "context") { entered.resolve(); await gate.promise; }
+        return { inputTokensEstimate: 7, contextWindow: 64000 };
+      },
+    };
+    const handle = { agent }, writes = [];
+    const observer = createMcpRuntime({
+      sessions: {
+        normalizeId: value => String(value),
+        getRuntime: () => ({ ...current }),
+        getLiveAgentEntry: async () => handle.agent ? handle : null,
+        getRuntimeOutput: async (_id, project) => {
+          if (stage === "metadata") { entered.resolve(); await gate.promise; }
+          return project({ ...current });
+        },
+        setRuntime(_id, patch) { writes.push(patch); current = { ...current, ...patch }; },
+        supervisor: { getUserWait: () => null },
+      },
+      tools: {}, skills: {}, artifacts: {}, trace: {}, dispatchSidepanel() {},
+      userInputPermissions: { hasBrowserPermission: async () => false, locationConsent: {} },
+    });
+    const pending = observer.getState("context-race");
+    await entered.promise;
+    if (transition !== "same-run") {
+      current = { ...current, inputTokensEstimate: 99, contextWindow: 200000 };
+      if (transition === "revoked-agent") {
+        handle.agent = null;
+        current = { ...current, status: "aborted", running: false };
+      } else {
+        current = { ...current, runId: "run-second" };
+        if (transition === "same-agent-new-run") agentRunId = "run-second";
+        else handle.agent = { getRunState: () => ({ runId: "run-second", isStreaming: true, hasHistory: true }) };
+      }
+    }
+    gate.resolve();
+    const result = await pending;
+    const unchanged = transition === "same-run";
+    assert.equal(writes.length, unchanged ? 1 : 0, `${stage}/${transition}: stale context cannot write Session runtime`);
+    assert.equal(current.inputTokensEstimate, unchanged ? 7 : 99);
+    assert.equal(result.runtime.inputTokensEstimate, unchanged ? 7 : 99);
+    assert.equal(result.runtime.contextWindow, unchanged ? 64000 : 200000);
+    assert.equal(result.runtime.runId, current.runId);
+    assert.equal(result.runtime.goal, null, "context projection must preserve the filtered goal");
+    assert.equal(result.isStreaming, transition !== "revoked-agent");
+  }
+}
 
 console.log("MCP runtime tests passed");

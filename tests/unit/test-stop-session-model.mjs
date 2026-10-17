@@ -313,8 +313,8 @@ assert.doesNotMatch(
 
 assert.match(
   sidepanelTransport,
-  /case\s+"stop_session":\s*\{[\s\S]*call\("sessions\.stop", message\.sessionId,\s*\{\s*source:\s*message\.source\s*\|\|\s*"ui"\s*\}\)/s,
-  "sidepanel stop_session messages should use the full stop runtime path and source",
+  /case\s+"stop_session":\s*\{[\s\S]*call\("sessions\.stop", message\.sessionId,\s*\{\s*source:\s*message\.source\s*\|\|\s*"ui"\s*\},\s*signal\)/s,
+  "sidepanel stop_session messages should use the full stop runtime path, source and admission signal",
 );
 
 const stopSingleBody = extractFunction(sessionCommands, "stopSingleSessionRuntime");
@@ -330,7 +330,7 @@ assert.match(
 
 assert.match(
   mcpRuntime,
-  /const liveState = entry\.agent\.getRunState\(\)[\s\S]*runId:\s*runtime\.runId\s*\|\|\s*liveState\.runId\s*\|\|\s*null/s,
+  /getRuntimeOutput\(id,\s*\(?current\)?\s*=>\s*\{[\s\S]*const observed = entry\.agent\?\.getRunState\(\);[\s\S]*const sameRun = entry\.agent === agent && observed && observed\.runId === current\.runId;[\s\S]*const liveState = sameRun \? observed[\s\S]*runId:\s*runtime\.runId\s*\|\|\s*liveState\.runId\s*\|\|\s*null/s,
   "get_state should expose the canonical runtime runId after restoring a stopped session",
 );
 

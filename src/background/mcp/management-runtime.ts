@@ -10,8 +10,8 @@ interface Field { key: string; type: string; description: string; values?: strin
 interface Options {
   config: {
     get(): Promise<RuntimeConfig>;
-    save(patch: Fields): Promise<RuntimeConfig>;
-    applyPreset?(id: string): Promise<RuntimeConfig>;
+    save(patch: Fields, signal?: AbortSignal): Promise<RuntimeConfig>;
+    applyPreset?(id: string, signal?: AbortSignal): Promise<RuntimeConfig>;
   };
   skills: { load(name: string): Promise<SkillRecord | null> };
   download(input: { bytes: Uint8Array; filename: string; mimeType: string }): Promise<Fields>;
@@ -111,12 +111,14 @@ export function createMcpManagementRuntime(options: Options) {
     return { key, value: result.config[key], ...(definition ? { field: definition } : {}) };
   }
 
-  function updateSettings(params: Fields = {}) {
+  function updateSettings(params: Fields = {}, signal?: AbortSignal) {
     const supplied = record(params.config);
     if (!supplied || !Object.keys(supplied).length) return Promise.reject(failure("INVALID_SETTINGS", "Provide a non-empty config object containing editable settings."));
     const patch = structuredClone(supplied);
     const operation = updates.then(async () => {
+      signal?.throwIfAborted();
       const current = await options.config.get();
+      signal?.throwIfAborted();
       const secrets = collectSecrets({ current, patch });
       let modelSaved = false;
       try {
@@ -125,7 +127,7 @@ export function createMcpManagementRuntime(options: Options) {
         let saved = current;
         if (activePresetId !== undefined) {
           if (Object.keys(modelPatch).length) throw failure("INVALID_SETTINGS", "Apply activePresetId separately from other model settings.");
-          saved = await options.config.applyPreset!(String(activePresetId));
+          saved = await options.config.applyPreset!(String(activePresetId), signal);
           modelSaved = true;
         } else if (Object.keys(modelPatch).length) {
           // The owner merges this patch with persisted settings and preserves unrelated credentials.
@@ -138,10 +140,13 @@ export function createMcpManagementRuntime(options: Options) {
             && completeCustomProviderEndpoint(next.customEndpoint, next.customProtocol) !== completeCustomProviderEndpoint(current.customEndpoint, current.customProtocol)) {
             throw failure("API_KEY_REQUIRED", "Include apiKey explicitly when changing a custom endpoint so credentials are sent only to the intended service.");
           }
-          saved = await options.config.save(modelPatch);
+          saved = await options.config.save(modelPatch, signal);
           modelSaved = true;
         }
-        if (language !== undefined) await options.language!.save(String(language));
+        if (language !== undefined) {
+          signal?.throwIfAborted();
+          await options.language!.save(String(language));
+        }
         return { updated: Object.keys(patch), ...await snapshot(saved) };
       } catch (error) {
         const code = modelSaved ? "SETTINGS_PARTIALLY_UPDATED" : text(record(error)?.code) || String((error as { code?: unknown })?.code || "SETTINGS_UPDATE_FAILED");
@@ -153,10 +158,12 @@ export function createMcpManagementRuntime(options: Options) {
     return operation;
   }
 
-  async function exportSkill(params: Fields = {}) {
+  async function exportSkill(params: Fields = {}, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const name = text(params.name);
     if (!name) throw failure("INVALID_ARGUMENTS", "Provide the Skill name from list_skills.");
     const skill = await options.skills.load(name);
+    signal?.throwIfAborted();
     if (!skill) throw failure("SKILL_NOT_FOUND", "The Skill was not found. Read list_skills for available names.");
     if (isBuiltinSkill(skill)) throw failure("SKILL_EXPORT_UNSUPPORTED", "Built-in Skills depend on the installed extension and cannot be exported as standalone packages.");
     const filename = params.filename === undefined ? `${skill.name}.zip` : text(params.filename);
@@ -164,7 +171,9 @@ export function createMcpManagementRuntime(options: Options) {
       throw failure("INVALID_FILENAME", "Use a ZIP filename without directories, for example my-skill.zip.");
     }
     const blob = await exportSkillsZip([skill]);
-    const result = await options.download({ bytes: new Uint8Array(await blob.arrayBuffer()), filename, mimeType: "application/zip" });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    signal?.throwIfAborted();
+    const result = await options.download({ bytes, filename, mimeType: "application/zip" });
     return { ...result, name: skill.name, resourceCount: skill.resources.length };
   }
 

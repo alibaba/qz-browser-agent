@@ -37,6 +37,7 @@ interface Revocation<A extends SupervisorAgent> {
 }
 interface RevokeOptions<A extends SupervisorAgent> {
   abort?: boolean; reason?: string; beforeRelease?: ((snapshot: Revocation<A>) => unknown | Promise<unknown>) | null;
+  admissionSignal?: AbortSignal;
 }
 interface TaskContext<A extends SupervisorAgent> { agent: A; task: SessionTask; entry: ActiveHandle<A> }
 interface TaskOptions<A extends SupervisorAgent> { startedAt?: string; onStart?: ((context: TaskContext<A>) => unknown) | null }
@@ -159,22 +160,25 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     abort = true,
     reason = "revoked",
     beforeRelease = null,
+    admissionSignal,
   }: RevokeOptions<A> = {}) {
     const id = requireSessionId(sessionId);
     return commandQueues.run(id, async () => {
+      admissionSignal?.throwIfAborted();
       const entry = handles.get(id);
       if (!entry) {
         const snapshot = emptyRevocation(id);
         if (typeof beforeRelease === "function") await beforeRelease(snapshot);
         return snapshot;
       }
-      return revokeEntry(entry, { abort, reason, beforeRelease });
+      return revokeEntry(entry, { abort, reason, beforeRelease, admissionSignal });
     });
   }
 
   async function remove(sessionId: string, options: RevokeOptions<A> = {}) {
     const id = requireSessionId(sessionId);
     return commandQueues.run(id, async () => {
+      options.admissionSignal?.throwIfAborted();
       const entry = handles.get(id);
       if (!entry) {
         const snapshot = emptyRevocation(id);
@@ -399,8 +403,10 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     abort = true,
     reason = "revoked",
     beforeRelease = null,
+    admissionSignal,
   }: RevokeOptions<A> = {}) {
     await settleReady(entry);
+    admissionSignal?.throwIfAborted();
     const agent = entry.agent;
     const task = entry.task;
     const liveState = agent?.getRunState?.() || {};

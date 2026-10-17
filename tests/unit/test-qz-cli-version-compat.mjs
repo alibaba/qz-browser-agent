@@ -55,12 +55,12 @@ test("MCP client initialization reports the package version", async t => {
 const running = {
   endpoint: "http://127.0.0.1:23456", instanceId: "existing-service",
   compatible: true, updateAvailable: true,
-  health: { instanceId: "existing-service", buildId: "previous-build", status: {
+  health: { features: { browserPairing: 1 }, instanceId: "existing-service", buildId: "previous-build", status: {
     connected: true, clients: [{ clientId: "browser-1" }],
   } },
 };
 
-test("a compatible older daemon remains usable and status reports an optional update", async () => {
+test("a running current-protocol daemon survives source edits and reports an available update", async () => {
   const calls = [];
   const dependencies = {
     findDaemon: async () => running,
@@ -77,7 +77,7 @@ test("a compatible older daemon remains usable and status reports an optional up
   assert.deepEqual(await runCli(["mcp"], dependencies), { text: `${running.endpoint}/mcp\n` });
 });
 
-test("connect probes and reuses a responsive older daemon without reopening Chrome", async () => {
+test("connect probes and reuses a responsive current-protocol daemon without reopening Chrome", async () => {
   const result = await runCli(["connect"], {
     ensureDaemon: async () => running,
     callTool: async (endpoint, name, args) => {

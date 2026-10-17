@@ -1,3 +1,4 @@
+import { pairBrowser, browserId, pollBrowser, completeBrowser } from "../support/paired-bridge.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -10,9 +11,9 @@ const snapshot = (status, transcript = [], input = { waiting: false }) => ({
   sessionId: "task", session: { id: "task" }, status, runId: "run", runtime: { status, runId: "run" }, transcript, input,
 });
 const assistant = text => ({ type: "assistant", runId: "run", id: "answer", content: text });
-function connectedState(t, call) {
+async function connectedState(t, call) {
   const state = new BridgeState({ connectWaitMs: 0 });
-  state.registerClient({ id: "browser-a" });
+  await pairBrowser(state, { id: "browser-a" });
   state.callExtension = call;
   t.after(() => state.close());
   return state;
@@ -23,13 +24,13 @@ test("create streams task text and actionable input, remains waiting, and binds 
   let answered = false, reads = 0;
   const input = { waiting: true, waitId: "wait-1", kind: "form", fields: [{ id: "city", type: "text" }],
     responseTemplate: { sessionId: "task", waitId: "wait-1", action: "submit", answers: { city: "" } } };
-  const state = connectedState(t, async (method, params, options) => {
+  const state = await connectedState(t, async (method, params, options) => {
     calls.push({ method, params, options });
-    assert.equal(options.clientId, "browser-a");
+    assert.equal(options.clientId, browserId(state, "browser-a"));
     if (method === "create_session") {
       assert.equal(Object.hasOwn(params, "stream"), false);
       assert.equal(Object.hasOwn(params, "wait"), false);
-      state.registerClient({ id: "browser-b" });
+      await pairBrowser(state, { id: "browser-b" });
       return { session: { id: "task" } };
     }
     assert.equal(method, "get_session_snapshot");
@@ -46,8 +47,8 @@ test("create streams task text and actionable input, remains waiting, and binds 
   assert.equal(reads, 2);
   assert.equal(calls.filter(call => call.method === "create_session").length, 1);
   const waiting = events.find(event => event.type === "input");
-  assert.equal(waiting.clientId, "browser-a");
-  assert.equal(waiting.responseTemplate.clientId, "browser-a");
+  assert.equal(waiting.clientId, browserId(state, "browser-a"));
+  assert.equal(waiting.responseTemplate.clientId, browserId(state, "browser-a"));
   assert.deepEqual(waiting.fields, input.fields);
   assert.equal(events.filter(event => event.type === "created").length, 1);
   assert.ok(events.some(event => event.type === "text" && event.text === "Choose a city"));
@@ -55,7 +56,7 @@ test("create streams task text and actionable input, remains waiting, and binds 
 
 test("send waits for its tracked steer response and never streams earlier same-run text", async t => {
   const calls = [], events = [];
-  const state = connectedState(t, async (method, params) => {
+  const state = await connectedState(t, async (method, params) => {
     calls.push({ method, params });
     if (method === "send_message") return { accepted: true, clientMessageId: "message-2", deliveryMode: "steer" };
     return snapshot("completed", [assistant("Old answer"),
@@ -75,7 +76,7 @@ test("send waits for its tracked steer response and never streams earlier same-r
 test("native permission input remains actionable while responding waits for the human", async t => {
   const events = [];
   let humanApproved = false;
-  const state = connectedState(t, async (method, params) => {
+  const state = await connectedState(t, async (method, params) => {
     if (method === "respond_to_user_input") {
       assert.equal(params.waitId, "chrome-wait");
       assert.equal(params.consentVersion, 2);
@@ -99,39 +100,39 @@ test("native permission input remains actionable while responding waits for the 
 });
 
 test("invalid observation arguments and ambiguous browser selection cannot submit a task", async t => {
-  const state = connectedState(t, () => assert.fail("invalid requests must not reach the extension"));
+  const state = await connectedState(t, () => assert.fail("invalid requests must not reach the extension"));
   for (const input of [{ stream: "yes" }, ...["timeoutSeconds", "waitTimeoutSeconds"].flatMap(key =>
     [0, -1, Infinity, 1e100, 86400.1].map(value => ({ [key]: value })))]) {
     await assert.rejects(executeMcpTool(state, "qingzhou_create_session", { firstMessage: "Task", ...input }), { code: "invalid_arguments" });
   }
-  state.registerClient({ id: "browser-b" });
+  await pairBrowser(state, { id: "browser-b" });
   await assert.rejects(executeMcpTool(state, "qingzhou_create_session", { firstMessage: "Task", wait: true }), { code: "BRIDGE_CLIENT_REQUIRED" });
 });
 
 test("watch cancellation revokes its pending read without stopping or resubmitting the task", async t => {
   const state = new BridgeState({ connectWaitMs: 0 });
-  state.registerClient({ id: "browser-a" });
+  await pairBrowser(state, { id: "browser-a" });
   t.after(() => state.close());
   const controller = new AbortController();
   const waiting = executeMcpTool(state, "qingzhou_watch_task", { sessionId: "task" }, { signal: controller.signal });
   const rejected = assert.rejects(waiting, error => {
     assert.equal(error.code, "interrupted");
     assert.equal(error.details.recovery.tool, "qingzhou_watch_task");
-    assert.deepEqual(error.details.recovery.arguments, { sessionId: "task", clientId: "browser-a" });
+    assert.deepEqual(error.details.recovery.arguments, { sessionId: "task", clientId: browserId(state, "browser-a") });
     return true;
   });
-  const [read] = await state.poll({ id: "browser-a" }, { timeoutMs: 1000 });
+  const [read] = await pollBrowser(state, { id: "browser-a" }, { timeoutMs: 1000 });
   assert.equal(read.method, "get_session_snapshot");
   controller.abort();
   await rejected;
   assert.equal(state.inflight.size, 0);
   assert.equal(state.pending.size, 0);
-  assert.equal(state.complete(read.id, { ok: true, result: snapshot("completed") }), false);
+  assert.equal(completeBrowser(state, read.id, { ok: true, result: snapshot("completed") }), false);
 });
 
 test("observation timeout preserves the task ID and stale runs fail without replaying a message", async t => {
   let sends = 0;
-  const state = connectedState(t, async method => {
+  const state = await connectedState(t, async method => {
     if (method === "send_message") { sends += 1; return { accepted: true, clientMessageId: "target" }; }
     return { ...snapshot("running", [
       { type: "user", runId: "old", clientMessageId: "target" },
@@ -163,7 +164,7 @@ for (const scenario of [
   const reason = new DOMException("User stopped watching.", "AbortError");
   const readReady = Promise.withResolvers();
   const calls = [];
-  const state = connectedState(t, async (method, params, options) => {
+  const state = await connectedState(t, async (method, params, options) => {
     calls.push(method);
     if (method === "send_message") return { accepted: true, clientMessageId: "message-1" };
     readReady.resolve({ params, options });
@@ -186,7 +187,7 @@ for (const scenario of [
   else if (scenario.code === "timeout") assert.equal(error.cause.name, "TimeoutError");
   else assert.equal(error.cause.code, "request_timeout");
   assert.deepEqual(error.details.recovery, {
-    tool: "qingzhou_watch_task", arguments: { sessionId: "task", clientId: "browser-a" },
+    tool: "qingzhou_watch_task", arguments: { sessionId: "task", clientId: browserId(state, "browser-a") },
   });
   assert.deepEqual(calls, ["send_message", "get_session_snapshot"],
     "ending observation must neither stop the browser task nor replay its accepted message");
@@ -194,10 +195,10 @@ for (const scenario of [
 
 test("tool lookup uses task context and returns the exact schema or a useful missing-tool error", async t => {
   const tool = { name: "read_article", inputSchema: { type: "object", properties: { tabId: { type: "number" } } } };
-  const state = connectedState(t, async (method, params, options) => {
+  const state = await connectedState(t, async (method, params, options) => {
     assert.equal(method, "list_tools");
     assert.equal(params.sessionId, "task");
-    assert.equal(options.clientId, "browser-a");
+    assert.equal(options.clientId, browserId(state, "browser-a"));
     return { tools: [tool] };
   });
   assert.deepEqual(await executeMcpTool(state, "qingzhou_get_tool", { sessionId: "task", name: "read_article", clientId: "browser-a" }), tool);
@@ -205,20 +206,22 @@ test("tool lookup uses task context and returns the exact schema or a useful mis
 });
 
 test("async browser-tool admission pins its profile and returns task and job identities", async t => {
-  const state = connectedState(t, async (method, params, options) => {
+  const state = await connectedState(t, async (method, params, options) => {
     assert.equal(method, "execute_tool");
-    assert.equal(options.clientId, "browser-a");
+    assert.equal(options.clientId, browserId(state, "browser-a"));
     assert.equal(params.sessionId, "task");
     return { value: "Done" };
   });
   const start = state.startExtensionJob.bind(state);
+  let additionalBrowser;
   state.startExtensionJob = (...args) => {
-    state.registerClient({ id: "browser-b" });
+    additionalBrowser = pairBrowser(state, { id: "browser-b" });
     return start(...args);
   };
   const accepted = await executeMcpTool(state, "qingzhou_execute_tool", { sessionId: "task", name: "read_article", wait: false });
+  await additionalBrowser;
   assert.equal(accepted.sessionId, "task");
-  assert.equal(accepted.clientId, "browser-a");
+  assert.equal(accepted.clientId, browserId(state, "browser-a"));
   assert.ok(accepted.jobId);
   assert.equal(accepted.done, false);
   await new Promise(resolve => setImmediate(resolve));
@@ -230,7 +233,7 @@ test("async browser-tool admission pins its profile and returns task and job ide
 test("MCP progress transports canonical task events and streaming without a token still completes", async t => {
   const bridge = await startBridge({ port: 0 });
   t.after(() => bridge.close());
-  bridge.state.registerClient({ id: "browser-a" });
+  await pairBrowser(bridge.state, { id: "browser-a" });
   bridge.state.callExtension = async () => snapshot("completed", [assistant("Result")]);
   const client = new Client({ name: "task-observation-test", version: "1" });
   await client.connect(new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`)));

@@ -1,11 +1,11 @@
+import type { CliConnectionInput, CliConnectionStatus } from "../../shared/mcp-connection.js";
+import { connectionName } from "./connection-store.js";
+
 interface ConnectDependencies {
   extensionId: string;
   assertConsent(): void;
-  getConfig(): Promise<{ enabled: boolean }>;
-  saveConfig(patch: { endpoint: string }): Promise<unknown>;
+  connect(input: CliConnectionInput, assertCurrent: () => Promise<void>): Promise<CliConnectionStatus>;
   getTab(tabId: number): Promise<{ url?: string }>;
-  wake(): void;
-  fetch?: typeof fetch;
 }
 
 /** The endpoint comes from Chrome's sender identity, never from page-supplied parameters. */
@@ -19,25 +19,18 @@ export function createMcpConnectPage(deps: ConnectDependencies) {
     const tabId = sender.tab!.id!;
     const assertCurrent = async () => {
       deps.assertConsent();
-      if (!(await deps.getConfig()).enabled) {
-        throw failure("MCP_CONNECTION_DISABLED", "Local connections are disabled in this browser profile.");
-      }
-      const tab = await deps.getTab(tabId);
-      if (tab.url !== sender.url) throw failure("MCP_CONNECTION_PAGE_CHANGED", "Reload the connection page to continue.");
+      const tab = await deps.getTab(tabId).catch(() => null);
+      if (tab?.url !== sender.url) throw failure("MCP_CONNECTION_PAGE_CHANGED", "Reload the connection page to continue.");
     };
     await assertCurrent();
-    const response = await (deps.fetch || fetch)(`${url.origin}/health`, {
-      redirect: "error", credentials: "omit", signal: AbortSignal.timeout(5000),
-    });
-    const health = await response.json() as Record<string, unknown>;
-    if (!response.ok || health.service !== "qz-browser-agent" || health.protocolVersion !== 1
-      || typeof health.instanceId !== "string" || !health.instanceId) {
-      throw failure("MCP_CONNECTION_INCOMPATIBLE", "Start a compatible qz connection with qz connect.");
+    const name = url.searchParams.get("name");
+    if (url.searchParams.getAll("name").length > 1 || (name !== null && (!name || connectionName(name) !== name))) {
+      throw failure("BRIDGE_NAME_INVALID", "Use one browser name containing letters, digits, underscores, or hyphens.");
     }
-    await assertCurrent();
-    await deps.saveConfig({ endpoint: url.origin });
-    deps.wake();
-    return { connected: true };
+    const status = await deps.connect({ endpoint: url.origin, name: name ?? "" }, assertCurrent);
+    if (status.state !== "connected") throw failure(status.lastError?.code || "MCP_CONNECTION_UNAVAILABLE",
+      status.lastError?.message || "The connection is pending. Run qz status to check it.");
+    return { connected: true, status };
   };
 }
 
@@ -50,3 +43,9 @@ function connectionUrl(value: string | undefined) {
 }
 
 function failure(code: string, message: string) { return Object.assign(new Error(message), { code }); }
+
+export function assertMcpSettingsSender(sender: chrome.runtime.MessageSender, extensionId: string) {
+  if (sender.id !== extensionId || !sender.url?.startsWith(`chrome-extension://${extensionId}/`)) {
+    throw failure("MCP_CONNECTION_PAGE_REQUIRED", "Manage the connection from qz Settings.");
+  }
+}

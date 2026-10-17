@@ -21,8 +21,11 @@ const report = { ok: false, idleDurationMs, idleWorkerConsoleCaptured: false, id
 let environment, fallback, connectionPage;
 try {
   environment = await launchEnvironment();
-  report.bridgeConfig = await environment.page.evaluate(async () =>
-    (await chrome.storage.local.get("_qingzhou_mcp_bridge"))._qingzhou_mcp_bridge);
+  report.bridgeConfig = await environment.page.evaluate(async () => {
+    const { endpoint, enabled, name, retryCount, status, pollTimeoutMs } =
+      (await chrome.storage.local.get("_qingzhou_mcp_bridge"))._qingzhou_mcp_bridge;
+    return { endpoint, enabled, name, retryCount, status, pollTimeoutMs };
+  });
   const browserPage = await environment.context.newPage();
   await browserPage.goto(fixture.url);
   await environment.page.close();
@@ -102,28 +105,31 @@ try {
   // Count real HTTP failures before restarting, so recovery cannot pass on an unused fast retry.
   // The browser remains detached throughout; only the server receives health checks.
   environment.bridge.rejectPolls = true;
+  // Retry attempts are persisted and spaced 30 seconds apart, including across Worker restarts.
   await until(() => environment.failedPollRequests.length >= 3,
-    "the extension did not exhaust three failed polls", 45000);
+    "the extension did not exhaust three failed polls", 110000);
   const exhaustedAt = Date.now();
   progress("retries-exhausted", { failedPolls: environment.failedPollRequests.length });
   await environment.bridge.close();
   await delay(1500);
   await environment.bridge.restart();
-  const resumedAt = Date.now();
-  await until(async () => (await readHealth(environment.bridge.endpoint)).status.connected,
-    "the recovery alarm did not reconnect the saved endpoint without a connection page", 75000);
+  const pollsAtPause = environment.pollRequests.length;
+  await delay(35000);
+  assert.equal(environment.pollRequests.length, pollsAtPause, "exhausted retries must stop localhost traffic");
+  assert.equal((await readHealth(environment.bridge.endpoint)).status.connected, false);
+  await environment.attach();
+  connectionPage = await environment.context.newPage();
+  await connect(environment.bridge.endpoint);
   const recoveredAt = Date.now();
-  const afterAlarm = await execute("read_article", { tabId, limit: 1000 }, sessionId);
-  assert.match(afterAlarm.result.text, /MCP resilience fixture/);
-  assert.equal(fixture.mutations, 1, "automatic recovery must not replay an interrupted navigation");
-  report.automaticRecovery = { failedPolls: environment.failedPollRequests.length,
-    exhaustedAt, resumedAt, recoveredAt, recoveryMs: recoveredAt - resumedAt,
-    noBrowserAttachment: true, noConnectPage: true, toolSucceeded: true };
-  progress("automatic-recovery", report.automaticRecovery);
+  const afterExplicitConnect = await execute("read_article", { tabId, limit: 1000 }, sessionId);
+  assert.match(afterExplicitConnect.result.text, /MCP resilience fixture/);
+  assert.equal(fixture.mutations, 1, "explicit reconnection must not replay an interrupted navigation");
+  report.boundedRecovery = { failedPolls: environment.failedPollRequests.length,
+    exhaustedAt, recoveredAt, pausedWithoutTraffic: true, explicitConnectSucceeded: true };
+  progress("bounded-recovery", report.boundedRecovery);
 
   // Occupy the preferred port with the original service and exercise the real fallback bind.
   await environment.attach();
-  connectionPage = await environment.context.newPage();
   const previousEndpoint = environment.bridge.endpoint;
   fallback = await startManagedBridge({ stateFile: join(directory, "fallback.json"), scopeId: "isolated-resilience",
     port: Number(new URL(previousEndpoint).port), buildId: "fixture" });
@@ -195,7 +201,8 @@ async function launchEnvironment() {
   const profile = join(directory, "profile");
   await mkdir(profile);
   const logs = [], pollRequests = [], failedPollRequests = [];
-  let node = await startBridge({ port: 0, requestTimeoutSeconds: 30 });
+  const registryPath = join(directory, "browsers.json");
+  let node = await startBridge({ port: 0, registryPath, requestTimeoutSeconds: 30 });
   let rejectPolls = false;
   const capturePoll = request => { if (request.url === "/v1/qingzhou/poll") pollRequests.push({ at: Date.now(), url: `${node.endpoint}${request.url}` }); };
   const installFailureInjection = () => {
@@ -219,11 +226,12 @@ async function launchEnvironment() {
       const port = Number(new URL(node.endpoint).port);
       await node.close();
       rejectPolls = false;
-      node = await startBridge({ port, requestTimeoutSeconds: 30 });
+      node = await startBridge({ port, registryPath, requestTimeoutSeconds: 30 });
       installFailureInjection();
     } };
   const chrome = spawn(process.env.CHROME_EXECUTABLE || chromium.executablePath(), [
     `--user-data-dir=${profile}`, "--headless=new", "--no-first-run", "--no-default-browser-check",
+    ...(process.platform === "linux" && (process.getuid?.() === 0 || process.env.QZ_TEST_NO_SANDBOX === "1") ? ["--no-sandbox"] : []),
     "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
     `--disable-extensions-except=${EXTENSION_PATH}`, `--load-extension=${EXTENSION_PATH}`, "about:blank",
   ], { stdio: ["ignore", "pipe", "pipe"] });
