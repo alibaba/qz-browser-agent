@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID, randomBytes } from "node:crypto";
-import { mkdtemp, readFile, writeFile, rm, stat } from "node:fs/promises";
+import fs, { mkdir, mkdtemp, readFile, writeFile, rm, stat, symlink } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { BrowserRegistry } from "../../services/mcp-bridge/src/browser-registry.mjs";
 import { BridgeState } from "../../services/mcp-bridge/src/state.mjs";
 import { startBridge } from "../../services/mcp-bridge/src/server.mjs";
@@ -216,6 +217,68 @@ test("invalid or unreadable registries fail closed, leaving original bytes untou
     assert.equal(await readFile(path, "utf8"), contents);
   }
   await assert.rejects(BrowserRegistry.open(join(path, "child")), code("BRIDGE_REGISTRY_READ_FAILED"));
+});
+
+test("a Windows ENOENT below a file cannot initialize an empty browser registry", async t => {
+  const path = await storage(t);
+  const contents = '{"version":1,"browsers":[]}';
+  await writeFile(path, contents);
+  // Windows reports ENOENT for paths below a regular file; Unix reports ENOTDIR.
+  for (const method of ["readFile", "lstat"]) {
+    const original = fs[method];
+    t.mock.method(fs, method, async (target, ...args) => {
+      if (String(target).startsWith(`${path}${sep}`)) throw Object.assign(new Error("Fixture Windows path not found"), { code: "ENOENT" });
+      return original(target, ...args);
+    });
+  }
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  for (const target of [join(path, "child"), join(path, "missing", "scope.browsers.json")]) {
+    await assert.rejects(BrowserRegistry.open(target), code("BRIDGE_REGISTRY_READ_FAILED"));
+    assert.equal(await readFile(path, "utf8"), contents);
+  }
+});
+
+test("a missing registry can create missing directories and persist its first browser", async t => {
+  const path = join(dirname(await storage(t)), "missing", "nested", "scope.browsers.json");
+  const registry = await BrowserRegistry.open(path);
+  assert.deepEqual(registry.list(), []);
+  await assert.rejects(stat(dirname(path)), code("ENOENT"));
+  const browser = await registry.pair({ clientId: randomUUID() });
+  assert.equal(browser.name, "default");
+  assert.deepEqual((await BrowserRegistry.open(path)).list(), registry.list());
+});
+
+test("a registry can be initialized through a directory symlink or Windows junction", async t => {
+  const directory = dirname(await storage(t));
+  const target = join(directory, "target"), link = join(directory, "link");
+  await mkdir(target);
+  await symlink(target, link, "junction");
+  const registry = await BrowserRegistry.open(join(link, "scope.browsers.json"));
+  assert.deepEqual(registry.list(), []);
+  await registry.pair({ clientId: randomUUID() });
+  assert.deepEqual((await BrowserRegistry.open(join(target, "scope.browsers.json"))).list(), registry.list());
+});
+
+test("registry read failures and inaccessible parents stay closed without changing stored bytes", async t => {
+  const path = await storage(t);
+  const contents = '{"version":1,"browsers":[]}';
+  await writeFile(path, contents);
+  const originalReadFile = fs.readFile, originalLstat = fs.lstat;
+  const missing = join(dirname(path), "missing.json");
+  t.mock.method(fs, "readFile", async (target, ...args) => {
+    if (target === path) throw Object.assign(new Error("Fixture access denied"), { code: "EACCES" });
+    return originalReadFile(target, ...args);
+  });
+  t.mock.method(fs, "lstat", async (target, ...args) => {
+    if (target === dirname(path)) throw Object.assign(new Error("Fixture access denied"), { code: "EACCES" });
+    return originalLstat(target, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  for (const target of [path, missing]) await assert.rejects(BrowserRegistry.open(target), code("BRIDGE_REGISTRY_READ_FAILED"));
+  assert.equal(await originalReadFile(path, "utf8"), contents);
+  await assert.rejects(stat(missing), code("ENOENT"));
 });
 
 test("unpaired polls and results cannot register or act as a browser", async t => {

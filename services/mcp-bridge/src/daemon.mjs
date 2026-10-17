@@ -83,6 +83,7 @@ async function withLock(paths, operation, { timeoutMs = 15000 } = {}) {
   await mkdir(candidate, { mode: 0o700 });
   const deadline = Date.now() + timeoutMs;
   let acquired = false;
+  let missingTargetPermissionError;
   try {
     await writeFile(join(candidate, ownerFile), JSON.stringify(owner), { mode: 0o600 });
     while (true) {
@@ -92,12 +93,25 @@ async function withLock(paths, operation, { timeoutMs = 15000 } = {}) {
         acquired = true;
         break;
       } catch (error) {
-        const existing = await stat(paths.lock).catch(() => null);
+        const existing = await stat(paths.lock).catch(error => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
         if (!existing) {
+          if (process.platform === "win32" && error.code === "EPERM") {
+            // Windows reports directory collisions as EPERM. The owner may have
+            // released the lock before stat; try the same atomic publication once.
+            // A persistent denial remains EPERM rather than becoming a busy lock.
+            if (missingTargetPermissionError || Date.now() >= deadline) throw missingTargetPermissionError || error;
+            missingTargetPermissionError = error;
+            await delay(50);
+            continue;
+          }
           if (!["EEXIST", "ENOTEMPTY", "ENOTDIR"].includes(error.code)) throw error;
           if (Date.now() >= deadline) throw new QzError("connection_busy", "Another qz command is starting the local service. Try qz status shortly.");
           continue;
         }
+        missingTargetPermissionError = undefined;
         if (existing.isDirectory()) {
           for (const name of await readdir(paths.lock).catch(() => [])) {
             if (!/^\d+-[\da-f-]+\.json$/.test(name)) continue;

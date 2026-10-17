@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -18,6 +18,18 @@ export function sameToken(actual, expected) {
   if (typeof actual !== "string" || typeof expected !== "string") return false;
   const a = Buffer.from(actual), b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+async function missingRegistry(path) {
+  // On Windows, ENOENT can also mean that a parent component is a file.
+  for (let candidate = path; ; candidate = dirname(candidate)) {
+    try { await lstat(candidate); }
+    catch (error) {
+      if (error.code !== "ENOENT" || dirname(candidate) === candidate) return false;
+      continue;
+    }
+    return candidate !== path && await stat(candidate).then(entry => entry.isDirectory(), () => false);
+  }
 }
 
 /** The daemon owns this file; its scope lock prevents competing writers. */
@@ -41,7 +53,7 @@ export class BrowserRegistry {
     let document;
     try { document = JSON.parse(await readFile(path, "utf8")); }
     catch (error) {
-      if (error.code === "ENOENT") return new BrowserRegistry({ path });
+      if (error.code === "ENOENT" && await missingRegistry(path)) return new BrowserRegistry({ path });
       throw pairingError("BRIDGE_REGISTRY_READ_FAILED", "Cannot read the browser registry. Restore its valid contents before restarting qz.");
     }
     try {

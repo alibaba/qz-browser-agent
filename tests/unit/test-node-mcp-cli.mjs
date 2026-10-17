@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import fs, { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -462,6 +463,117 @@ test("failed startup releases its lock and active lock owners are never displace
   await rm(paths.lock, { recursive: true });
   const started = await ensureDaemon(options);
   assert.equal((await findDaemon(options)).instanceId, started.instanceId);
+});
+
+function mockLockFilesystem(t, methods, platform = "win32") {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { ...descriptor, value: platform });
+  for (const [name, method] of Object.entries(methods)) t.mock.method(fs, name, method);
+  syncBuiltinESMExports();
+  t.after(() => {
+    Object.defineProperty(process, "platform", descriptor);
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+}
+
+test("Windows lock publication recovers EPERM when the competing directory disappears", async t => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qz-lock-windows-race-"));
+  t.after(() => rm(stateDir, { recursive: true, force: true }));
+  const options = { stateDir, scopeId: randomUUID(), buildId: "windows-lock-test" };
+  const paths = daemonPaths(options), rename = fs.rename;
+  let publications = 0;
+  mockLockFilesystem(t, { async rename(source, target) {
+    assert.equal(target, paths.lock);
+    assert.match(source, /\.pending$/);
+    const [ownerFile] = await fs.readdir(source);
+    assert.equal(JSON.parse(await readFile(join(source, ownerFile), "utf8")).processId, process.pid,
+      "the owner is fully written before its lock is published");
+    if (++publications === 1) {
+      // Windows rejects a directory collision with EPERM. Its owner releases
+      // the directory before the contender can inspect the failed rename.
+      await mkdir(target);
+      await writeFile(join(target, "released-owner.json"), "{}");
+      await rm(target, { recursive: true });
+      throw Object.assign(new Error("Windows destination collision"), { code: "EPERM" });
+    }
+    return rename(source, target);
+  } });
+  assert.deepEqual(await stopDaemon(options), { stopped: false, connected: false });
+  assert.equal(publications, 2);
+  assert.deepEqual(await fs.readdir(stateDir), [], "both published and pending lock directories are cleaned up");
+});
+
+for (const { platform, code, attempts } of [
+  { platform: "win32", code: "EPERM", attempts: 2 },
+  { platform: "win32", code: "EACCES", attempts: 1 },
+  { platform: "darwin", code: "EPERM", attempts: 1 },
+  { platform: "linux", code: "EPERM", attempts: 1 },
+]) {
+  test(`${platform} lock publication preserves a persistent ${code} failure`, async t => {
+    const stateDir = await mkdtemp(join(tmpdir(), "qz-lock-permission-"));
+    t.after(() => rm(stateDir, { recursive: true, force: true }));
+    const options = { stateDir, scopeId: randomUUID(), buildId: "permission-test" };
+    const failure = Object.assign(new Error("fixture filesystem permission denial"), { code });
+    let publications = 0;
+    mockLockFilesystem(t, { async rename() { publications++; throw failure; } }, platform);
+    await assert.rejects(stopDaemon(options), error => error === failure,
+      "permission denial must not be converted to connection_busy");
+    assert.equal(publications, attempts);
+    assert.deepEqual(await fs.readdir(stateDir), []);
+  });
+}
+
+test("Windows EPERM contention preserves a live lock owner", async t => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qz-lock-windows-owner-"));
+  t.after(() => rm(stateDir, { recursive: true, force: true }));
+  const options = { stateDir, scopeId: randomUUID(), buildId: "owner-test", timeoutMs: 1 };
+  const paths = daemonPaths(options), owner = { processId: process.pid, id: randomUUID() };
+  const ownerFile = join(paths.lock, `${owner.processId}-${owner.id}.json`);
+  await mkdir(paths.lock); await writeFile(ownerFile, JSON.stringify(owner));
+  mockLockFilesystem(t, { async rename() {
+    throw Object.assign(new Error("Windows destination collision"), { code: "EPERM" });
+  } });
+  await assert.rejects(stopDaemon(options), error => error.code === "connection_busy");
+  assert.deepEqual(JSON.parse(await readFile(ownerFile, "utf8")), owner);
+  assert.deepEqual(await fs.readdir(stateDir), [basename(paths.lock)]);
+});
+
+test("a lock stat permission failure is surfaced without touching its owner", async t => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qz-lock-stat-denied-"));
+  t.after(() => rm(stateDir, { recursive: true, force: true }));
+  const options = { stateDir, scopeId: randomUUID(), buildId: "stat-test" };
+  const paths = daemonPaths(options), stat = fs.stat;
+  const failure = Object.assign(new Error("fixture lock stat denied"), { code: "EACCES" });
+  const renameFailure = Object.assign(new Error("Windows destination collision"), { code: "EPERM" });
+  await mkdir(paths.lock);
+  const ownerFile = join(paths.lock, `${process.pid}-${randomUUID()}.json`);
+  await writeFile(ownerFile, JSON.stringify({ processId: process.pid }));
+  let publications = 0;
+  mockLockFilesystem(t, {
+    async rename() { publications++; throw renameFailure; },
+    async stat(target, ...args) { if (target === paths.lock) throw failure; return stat(target, ...args); },
+  });
+  await assert.rejects(stopDaemon(options), error => error === failure);
+  assert.equal(publications, 1);
+  assert.equal(JSON.parse(await readFile(ownerFile, "utf8")).processId, process.pid);
+});
+
+test("an unreadable lock owner is never treated as an empty or stale lock", async t => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qz-lock-owner-denied-"));
+  t.after(() => rm(stateDir, { recursive: true, force: true }));
+  const options = { stateDir, scopeId: randomUUID(), buildId: "unreadable-owner-test" };
+  const paths = daemonPaths(options), read = fs.readFile;
+  const owner = { processId: process.pid, id: randomUUID() };
+  const ownerFile = join(paths.lock, `${owner.processId}-${owner.id}.json`);
+  const failure = Object.assign(new Error("fixture owner read denied"), { code: "EACCES" });
+  await mkdir(paths.lock); await writeFile(ownerFile, JSON.stringify(owner));
+  mockLockFilesystem(t, {
+    async rename() { throw Object.assign(new Error("Windows destination collision"), { code: "EPERM" }); },
+    async readFile(target, ...args) { if (target === ownerFile) throw failure; return read(target, ...args); },
+  });
+  await assert.rejects(stopDaemon(options), error => error === failure);
+  assert.deepEqual(JSON.parse(await read(ownerFile, "utf8")), owner);
 });
 
 test("timed-out startup stops its delayed child before a retry can create another service", { timeout: 15000 }, async t => {
