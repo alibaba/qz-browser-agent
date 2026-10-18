@@ -8,6 +8,7 @@ on:
       - tests/unit/test-qz-*.mjs
       - tests/release/npm-package.mjs
       - tests/runner/**
+      - tests/support/observation-timers.mjs
       - package.json
       - package-lock.json
       - .github/workflows/npm-package.yml
@@ -19,6 +20,7 @@ on:
       - tests/unit/test-qz-*.mjs
       - tests/release/npm-package.mjs
       - tests/runner/**
+      - tests/support/observation-timers.mjs
       - package.json
       - package-lock.json
       - .github/workflows/npm-package.yml
@@ -46,6 +48,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['22', '24']
+        include:
+          - os: ubuntu-latest
+            node: '22.0.0'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     defaults:
@@ -73,12 +79,32 @@ jobs:
           console.log(`Checking qz-browser-agent ${version}`);
           NODE
       - run: npm ci
+      - name: Select package runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
       - name: CLI and MCP regressions
-        run: npm test -- services --match node
+        # Install the repository toolchain on Node 24, then run the package's
+        # JavaScript tests directly without the extension's build/TS loaders.
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { spawnSync } from 'node:child_process';
+          import { createSuiteCatalog } from './tests/runner/suites.mjs';
+          const catalog = createSuiteCatalog({ root: process.cwd(), match: 'node', unitConcurrency: 1 });
+          const commands = catalog.filteredCommands('services');
+          assert.equal(commands.length, 1);
+          for (const command of commands) {
+            assert.equal(command.bin, 'node');
+            const result = spawnSync(process.execPath, command.args, { stdio: 'inherit' });
+            if (result.error) throw result.error;
+            assert.equal(result.status, 0, `CLI and MCP regressions failed on ${process.version}`);
+          }
+          NODE
       - name: Install and exercise the npm tarball
         run: node tests/release/npm-package.mjs --output tests/results/npm/package.tgz
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.node == '24'
         with:
           name: qz-npm-${{ github.run_id }}-${{ github.run_attempt }}
           path: tests/results/npm/package.tgz

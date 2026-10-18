@@ -17,7 +17,7 @@ description: Delegate complete browser tasks to qz, an autonomous agent in the u
 
 Run the CLI on the machine where Chrome and the qz extension are installed.
 It connects to a local service; a cloud shell alone cannot reach the user's
-desktop browser. On first use, check Node.js 24 or later and the browser connection:
+desktop browser. On first use, check Node.js 22 or later and the browser connection:
 
 ```sh
 node --version
@@ -151,6 +151,10 @@ responses, and `result.artifacts` for outputs. Waited commands return the task
 snapshot in `result.snapshot`; read its `input` and `transcript` fields.
 On failure, read `error.code`, `error.message`, and any supplied recovery fields:
 `error.sessionId`, `error.command`, or `error.url`.
+
+For `task_not_found` or `task_deleted`, check the task ID and selected browser with
+`tasks --client CLIENT_UUID --json` and `browsers --json`. Locate the task before
+watching it again. These errors mean the task is absent from the selected browser.
 
 `show` returns a compact recent history. For an unabridged final response, use
 `watch` and read `result.snapshot.transcript`. Snapshots can contain large tool

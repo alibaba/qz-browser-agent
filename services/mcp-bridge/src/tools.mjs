@@ -91,8 +91,10 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
         : cause.name === "TimeoutError" ? "timeout" : cause.name === "AbortError" ? "interrupted" : "task_wait_failed";
       const error = Object.assign(new Error(cause.message, { cause }), { code });
       error.details = { ...cause.details, sessionId, clientId: args.clientId,
-        recovery: { tool: code === "task_changed" ? "qingzhou_get_session_snapshot" : "qingzhou_watch_task",
-          arguments: { sessionId, clientId: args.clientId } } };
+        recovery: code === "task_deleted"
+          ? { tool: "qingzhou_list_sessions", arguments: { clientId: args.clientId } }
+          : { tool: code === "task_changed" ? "qingzhou_get_session_snapshot" : "qingzhou_watch_task",
+            arguments: { sessionId, clientId: args.clientId } } };
       throw error;
     }
   };

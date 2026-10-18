@@ -39,7 +39,11 @@ install the packed artifact in two clean temporary directories. It exercises the
 MCP handshake, tools, daemon reuse across install paths, and shutdown on a temporary port.
 It uses isolated npm configuration, cache, and qz state, and cleans up its own service and files.
 Use `node tests/release/npm-package.mjs --help` to retain or test a specific tarball.
-The **npm package** workflow runs these checks on Linux, macOS, and Windows.
+The **npm package** workflow runs these checks with Node.js 22 and 24 on Linux, macOS, and Windows,
+plus Node.js 22.0.0 on Linux to cover the minimum supported runtime.
+The service suite checks repeated SIGINT/SIGTERM handling and listener cleanup on every platform.
+On Linux and macOS it also signals real CLI, `npm run`, and `npm exec` processes during stdin
+input and streaming, verifying cleanup without stopping the browser task or shared service.
 
 The runner selects one to three concurrent jobs based on available CPUs. Timing-sensitive suites run
 after other work. Each lane runs ready commands while dependent commands wait; build-only release

@@ -5,6 +5,8 @@ const ACTIVE_STATUSES = new Set(["pending", "running", "waiting_user", "paused"]
 const INPUT_STATUSES = new Set(["waiting_user", "paused"]);
 const record = value => value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
+export const TASK_NOT_FOUND_MESSAGE = "The task was not found in the selected browser. It may have been deleted, the task ID may be incorrect, or a different browser may be selected.";
+
 function taskStatus(snapshot) {
   const status = String(snapshot.status || snapshot.runtime?.status || snapshot.state?.status || "").trim();
   if (status === "waitingUser") return "waiting_user";
@@ -122,7 +124,7 @@ export async function waitForTask({ sessionId, clientId, timeoutSeconds = null, 
         throw Object.assign(new Error("The task snapshot belongs to a different session."), { code: "task_changed" });
       }
       if (Object.hasOwn(snapshot, "session") && snapshot.session === null) {
-        throw Object.assign(new Error("The task was deleted while waiting for its result."), { code: "task_deleted" });
+        throw Object.assign(new Error(TASK_NOT_FOUND_MESSAGE), { code: "task_deleted" });
       }
       const runtime = record(snapshot.runtime);
       const canonicalInput = Object.hasOwn(snapshot, "input") ? record(snapshot.input) : null;

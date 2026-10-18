@@ -1,5 +1,4 @@
 import { request } from "node:http";
-import { Readable } from "node:stream";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { PACKAGE_VERSION } from "./package-info.mjs";
@@ -27,6 +26,19 @@ export function localUrl(value) {
   return url;
 }
 
+function responseBody(response) {
+  const iterator = response[Symbol.asyncIterator]();
+  return {
+    [Symbol.asyncIterator]() { return this; },
+    next: () => iterator.next(),
+    return() {
+      // An iterator return waits behind a pending read. Destroy the HTTP stream first.
+      response.destroy();
+      return iterator.return();
+    },
+  };
+}
+
 // node:http does not inherit proxy environment settings. Every MCP request stays on loopback.
 export async function localFetch(input, init) {
   const prepared = new Request(input, init);
@@ -42,7 +54,7 @@ export async function localFetch(input, init) {
         return;
       }
       try {
-        resolve(new Response([204, 304].includes(res.statusCode) ? null : Readable.toWeb(res), {
+        resolve(new Response([204, 304].includes(res.statusCode) ? null : responseBody(res), {
           status: res.statusCode, headers: new Headers(Object.entries(res.headers)
             .flatMap(([key, value]) => Array.isArray(value) ? value.map(item => [key, item]) : value === undefined ? [] : [[key, value]])),
         }));

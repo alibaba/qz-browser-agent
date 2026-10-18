@@ -267,6 +267,10 @@ including user-input pauses. Each individual connection request remains bounded 
 default). Timeout or Ctrl-C ends watching; `watch TASK_ID --stream` resumes observation and
 `cancel TASK_ID` stops the task.
 
+If the selected browser has no matching task, `show` fails with `task_not_found` and exit code 1.
+`watch` reports `task_deleted` and suggests listing tasks for the same browser UUID. Check the ID
+and browser selection with `tasks --client CLIENT_UUID` and `browsers` before watching again.
+
 `send TASK_ID MESSAGE` follows up on a specific task and supports the same waiting options. A busy
 task queues the follow-up for its next run. Add `--steer` to deliver the message to the current run
 at its next safe boundary. Both start a new run when idle; pending questions and permissions still
@@ -288,7 +292,7 @@ diagnostic logs; see the [operation mapping](../services/mcp-bridge/README.md#ta
 
 Interactive terminals show text; pipes receive JSON. `--json` and `--plain` select the output
 format explicitly. `--no-color` or `NO_COLOR` disables color. JSON waiting and streaming produce one
-final result on stdout, with pending-input notices on stderr. Node.js 24 is the only runtime needed.
+final result on stdout, with pending-input notices on stderr. The installed CLI requires Node.js 22 or later.
 See the [connection guide](../services/mcp-bridge/README.md) for short options, stdin input, and
 MCP browser tools.
 

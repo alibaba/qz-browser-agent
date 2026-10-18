@@ -70,7 +70,7 @@ Follow the [manual installation steps](#manual-installation), selecting `dist/ex
 
 **Agent-friendly.** Let your agent delegate browser tasks to qz via CLI, Skill, or MCP.
 
-Use Node.js 24 or later on the same machine as Chrome. Install the extension from the
+Use Node.js 22 or later on the same machine as Chrome. Install the extension from the
 [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm) and configure its
 model in qz Settings, then install the CLI:
 

@@ -1,7 +1,7 @@
 # qz command line and MCP
 
 Run browser tasks, manage results, and connect external agents to qz through CLI or MCP.
-Requires Node.js 24 or later and Chrome. CLI and MCP share the same browser connection.
+Requires Node.js 22 or later and Chrome. CLI and MCP share the same browser connection.
 
 ## Quick start
 
@@ -223,6 +223,11 @@ continues; error details include the task ID and a recovery tool call. `send_mes
 `steer: true` and follows its returned `clientMessageId`, including when steering stays in the same
 run. A long observation stays bound to the browser selected when it started.
 
+When a watched task is absent from the selected browser, `task_deleted` returns a
+`qingzhou_list_sessions` recovery call for that same `clientId`. Check the task ID and browser
+selection before watching again. The raw snapshot tool continues to return `session: null`
+for a missing task.
+
 ## Run a task
 
 ```bash
@@ -243,8 +248,14 @@ Add `--timeout SECONDS` to set a total deadline, including time spent waiting fo
 individual connection request remains bounded (180 seconds by default). A timeout or Ctrl-C ends
 watching; `qz watch TASK_ID --stream` resumes observation and `qz cancel TASK_ID` stops the task.
 Each CLI command initializes one MCP connection on its first tool call and reuses it for subsequent
-reads and responses. Completion, errors, and Ctrl-C close that connection. Transport failures are
-reported without automatically repeating browser actions.
+reads and responses. Completion and errors close that connection. SIGINT (Ctrl-C) and SIGTERM
+close it and exit with codes 130 and 143, including through npm. The browser task and shared
+service keep running. Transport failures are reported without automatically repeating browser actions.
+
+`show` returns `task_not_found` with exit code 1 when the selected browser has no matching task.
+`watch` retains the `task_deleted` error code and directs you to `qz tasks --client CLIENT_UUID`.
+Check the task ID and `qz browsers` before retrying; the task may have been deleted or belong to
+another browser. Recovery commands keep the originally selected browser UUID.
 
 Provide the task text directly after `create`, or read it from stdin with `qz create -`.
 Use `--parent TASK_ID` to create a child task, and `qz tasks --limit N` to limit the task list.
@@ -411,7 +422,8 @@ The npm package name is `qz-browser-agent`; the executable name is `qz`. Local d
 this same package name. The repository root stays private, and this service directory is the
 publishable package. Publishing requires separate authorization and ownership of the npm name.
 
-From the repository root, install the locked dependencies and run the local source:
+Use Node.js 24 LTS for repository development. From the repository root, install the locked
+dependencies and run the local source:
 
 ```bash
 npm ci
@@ -444,10 +456,11 @@ Choose the package version in `services/mcp-bridge/package.json`, complete the r
 and commit the intended source before publishing. CLI and MCP report that same package version.
 Each published version identifies immutable package contents; use a new version for updates.
 
-The **npm package** GitHub Actions workflow tests the CLI and the installed package on Linux,
-macOS, and Windows. On a manual run, provide the expected version. With **publish** left unchecked,
-it only validates the package and retains the tested tarball. Publishing requires a manual run
-from `main` with **publish** checked; all three platforms must pass first.
+The **npm package** GitHub Actions workflow tests the CLI and the installed package with Node.js 22
+and 24 on Linux, macOS, and Windows, plus Node.js 22.0.0 on Linux. On a manual run, provide the
+expected version. With **publish** left unchecked, it only validates the package and retains the
+tested tarball. Publishing requires a manual run from `main` with **publish** checked; all runtime
+and platform checks must pass first.
 
 Configure the npm package's trusted publisher for the `alibaba/qz-browser-agent` repository,
 workflow `npm-package.yml`, and GitHub environment `npm`. Enable direct publishing in that

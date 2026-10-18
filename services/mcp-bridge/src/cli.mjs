@@ -7,7 +7,7 @@ import { ensureDaemon, findDaemon, stopDaemon } from "./daemon.mjs";
 import { openBrowser } from "./open-browser.mjs";
 import { parseCommand } from "./args.mjs";
 import { renderError, renderHelp, renderResult, renderInputNotice, sanitizeTerminalText } from "./terminal.mjs";
-import { waitForTask } from "./task-stream.mjs";
+import { TASK_NOT_FOUND_MESSAGE, waitForTask } from "./task-stream.mjs";
 import { createLiveOutput, outputMode } from "./output.mjs";
 import { resourceRequest, settingsPatch } from "./cli-resources.mjs";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "./package-info.mjs";
@@ -73,9 +73,16 @@ function recoveryCommand(command, sessionId, clientId, stream = false) {
   if (clientId && sanitizeTerminalText(clientId) !== String(clientId)) clientId = "CLIENT_ID";
   const client = clientId ? ` --client${String(clientId).startsWith("-") ? "=" : " "}${shellArgument(clientId)}` : "";
   const options = `${client}${stream ? " --stream" : ""}`;
+  if (!sessionId) return `qz ${command}${options}`;
   return String(sessionId).startsWith("-")
     ? `qz ${command}${options} ${optionTerminator()} ${shellArgument(sessionId)}`
     : `qz ${command} ${shellArgument(sessionId)}${options}`;
+}
+
+function missingTaskDetails(sessionId, clientId) {
+  return { sessionId, ...(clientId ? { clientId } : {}),
+    hint: "Check the task ID and selected browser. Run qz browsers to inspect browser names and UUIDs. List tasks in the selected browser:",
+    command: recoveryCommand("tasks", "", clientId) };
 }
 
 export async function runCli(argv, dependencies = {}) {
@@ -219,6 +226,7 @@ async function dispatchCommand(parsed, dependencies) {
       });
     } catch (error) {
       const code = error.name === "TimeoutError" ? "timeout" : error.name === "AbortError" ? "interrupted" : error.code || "task_wait_failed";
+      if (code === "task_deleted") throw new QzError(code, error.message, { ...error.details, ...missingTaskDetails(sessionId, clientId) });
       const changed = code === "task_changed";
       throw new QzError(code, code === "timeout"
         ? "Stopped watching after the configured --timeout. The browser task may still be running." : error.message,
@@ -283,6 +291,9 @@ async function dispatchCommand(parsed, dependencies) {
       ...(action === "list" && options.limit !== undefined ? { limit: Number(options.limit) } : {}) };
   }
   let result = await call(running.endpoint, name, parameters, requestOptions);
+  if (command === "tasks" && action === "get" && result?.session === null) {
+    throw new QzError("task_not_found", TASK_NOT_FOUND_MESSAGE, missingTaskDetails(id, clientId));
+  }
   if (command === "tasks" && action === "create" && options.wait) {
     const sessionId = result?.session?.id || result?.sessionId;
     if (!sessionId) throw new QzError("invalid_response", "The task was created without an ID. Run qz tasks to find it before retrying.");
@@ -351,10 +362,30 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   }
 }
 
+/** Keep handlers installed while npm forwards duplicate signals and MCP closes. */
+export async function runMain(argv = process.argv.slice(2), dependencies = {}) {
+  const controller = new AbortController();
+  let interruptedExitCode;
+  const interrupt = code => {
+    if (controller.signal.aborted) return;
+    interruptedExitCode = code;
+    controller.abort();
+  };
+  const onSigint = () => interrupt(130);
+  const onSigterm = () => interrupt(143);
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
+  try {
+    const code = await main(argv, { ...dependencies, signal: controller.signal });
+    return interruptedExitCode ?? code;
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigterm);
+  }
+}
+
 let isEntry = false;
 try { isEntry = realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch {}
 if (isEntry) {
-  const controller = new AbortController();
-  process.once("SIGINT", () => controller.abort());
-  process.exitCode = await main(process.argv.slice(2), { signal: controller.signal });
+  process.exitCode = await runMain();
 }

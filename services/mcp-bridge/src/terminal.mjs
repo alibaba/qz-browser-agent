@@ -7,7 +7,9 @@ const palette = { accent: 36, muted: 90, error: 31, waiting: 33 };
 
 // Remote pages and model responses are text, never terminal instructions.
 export function sanitizeTerminalText(value) {
-  return stripVTControlCharacters(String(value ?? ""))
+  // Early Node 22 versions do not strip OSC strings terminated by ESC + backslash.
+  const text = String(value ?? "").replace(/(?:\u001b\]|\u009d)[\s\S]*?(?:\u0007|\u001b\\|\u009c|$)/g, "");
+  return stripVTControlCharacters(text)
     .replace(/\r\n?/g, "\n")
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
     .replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "")

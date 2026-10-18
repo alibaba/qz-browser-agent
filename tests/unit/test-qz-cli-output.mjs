@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
-import { syncBuiltinESMExports } from "node:module";
+import { mockObservationTimers } from "../support/observation-timers.mjs";
 import { main, runCli } from "../../services/mcp-bridge/src/cli.mjs";
 import { createLiveOutput } from "../../services/mcp-bridge/src/output.mjs";
 
@@ -206,9 +206,7 @@ test("JSON waits report actionable pauses only on stderr and emit the final docu
 
 // Advance polling timers without sleeping, while each test controls elapsed wall-clock time.
 async function withMockPollingTimers(t, operation) {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  syncBuiltinESMExports();
-  t.after(() => { t.mock.timers.reset(); syncBuiltinESMExports(); });
+  mockObservationTimers(t, { apis: ["setTimeout"] });
   let settled = false, value, failure;
   const pending = operation().then(result => { value = result; settled = true; }, error => { failure = error; settled = true; });
   for (let turns = 0; !settled && turns < 100; turns++) {
@@ -292,7 +290,7 @@ for (const scenario of [
   { name: "request timeout without a total deadline", elapsedMs: 0, expiresMs: 180000, code: "request_timeout" },
   { name: "caller cancellation", timeout: 5, elapsedMs: 2000, code: "interrupted" },
 ]) test(`CLI observation preserves request budgets and causes: ${scenario.name}`, async t => {
-  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  mockObservationTimers(t, { apis: ["setTimeout", "Date"], now: 1_000_000 });
   const controller = new AbortController();
   const reason = new DOMException("User stopped watching.", "AbortError");
   const readReady = Promise.withResolvers();

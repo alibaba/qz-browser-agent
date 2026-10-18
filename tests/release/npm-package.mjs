@@ -27,7 +27,7 @@ for (const key of ["tarball", "output"]) if (options[key] !== undefined) {
   assert.ok(options[key], `--${key} requires a nonempty path.`);
   options[key] = resolve(options[key]);
 }
-assert.ok(Number(process.versions.node.split(".")[0]) >= 24, "The npm package smoke test requires Node.js 24 or newer.");
+assert.ok(Number(process.versions.node.split(".")[0]) >= 22, "The npm package smoke test requires Node.js 22 or newer.");
 
 // Invoke npm's JavaScript entry with this Node version on Windows, macOS and Linux.
 // No shell-specific executable lookup is needed.
@@ -184,7 +184,7 @@ try {
     await mkdir(dirname(options.output), { recursive: true });
     await copyFile(tarball, options.output, constants.COPYFILE_EXCL);
   }
-  console.log(JSON.stringify({ ok: true, name: metadata.name, version: metadata.version, sha256,
+  console.log(JSON.stringify({ ok: true, name: metadata.name, version: metadata.version, node: process.versions.node, sha256,
     ...(options.output || options.tarball ? { tarball: options.output || options.tarball } : {}),
     checks: ["npm-install", "installed-bin", "version", "cache-path-identity", "daemon-reuse", "mcp", "stop"],
   }));

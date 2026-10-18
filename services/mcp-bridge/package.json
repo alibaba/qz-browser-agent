@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "description": "Local browser tools and MCP access for the qz extension",
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": { "node": ">=22" },
   "bin": { "qz": "src/bin.mjs" },
   "files": ["src/*.mjs", "src/catalog.json", "README.md", "LICENSE"],
   "license": "Apache-2.0",

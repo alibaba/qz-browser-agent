@@ -299,6 +299,19 @@ test("untrusted ANSI, OSC clipboard, hyperlinks, control bytes, and bidi overrid
   assert.equal(stripVTControlCharacters(colored), renderResult(parsed("list"), { sessions: [{ ...task, title: attack }] }));
 });
 
+test("OSC strings use BEL and both string terminators, including C1 and unfinished input", () => {
+  for (const start of ["\x1b]", "\u009d"]) {
+    for (const end of ["\x07", "\x1b\\", "\u009c"]) {
+      assert.equal(sanitizeTerminalText(`Before${start}52;c;payload${end}After`), "BeforeAfter");
+      assert.equal(sanitizeTerminalText(`${start}8;;https://evil.invalid${end}Label${start}8;;${end}`), "Label");
+    }
+    assert.equal(sanitizeTerminalText(`Before${start}52;c;payload`), "Before");
+    assert.equal(sanitizeTerminalText(`Before${start}0;unfinished\nmore payload`), "Before");
+  }
+  const plain = "中文 👋\nC:\\Users\\name\\file.txt [8;;plain]";
+  assert.equal(sanitizeTerminalText(plain), plain);
+});
+
 test("errors retain actionable details and respect plain and color output", () => {
   const payload = { ok: false, error: { code: "connection_pending", message: "Open the connection page in Chrome.",
     url: "http://127.0.0.1:18765/qz-connect", hint: "Then run qz connect again.", guide: "https://example.com/guide" } };

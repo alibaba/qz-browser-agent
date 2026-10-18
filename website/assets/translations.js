@@ -82,7 +82,7 @@ export const translations = {
       "agentTerminalResult": "Saved 6 comparison rows with source links.",
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
-      "agentRequirements": "Requires Node.js 24+ and Chrome on the same machine, with the qz extension and a model configured."
+      "agentRequirements": "Requires Node.js 22+ and Chrome on the same machine, with the qz extension and a model configured."
     },
     "attributes": {
       "description": {
@@ -272,7 +272,7 @@ export const translations = {
       "agentTerminalResult": "已保存 6 行对比数据，附有来源链接。",
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
-      "agentRequirements": "需要 Node.js 24+，以及同一台电脑上的 Chrome、轻舟扩展和已配置的模型。"
+      "agentRequirements": "需要 Node.js 22+，以及同一台电脑上的 Chrome、轻舟扩展和已配置的模型。"
     },
     "attributes": {
       "description": {

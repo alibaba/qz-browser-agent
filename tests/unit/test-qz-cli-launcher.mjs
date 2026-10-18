@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdtemp, readdir, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +17,7 @@ test("launcher rejects unsupported Node before resolving runtime modules", async
   const isolatedLauncher = join(directory, "bin.mjs");
   await copyFile(launcher, isolatedLauncher);
   // Deliberately omit cli.mjs and all dependencies: only the guard can run here.
-  for (const version of ["18.20.8", "20.20.1", "22.15.0", "23.11.0"]) {
+  for (const version of ["18.20.8", "20.20.1", "21.7.3"]) {
     const preload = `data:text/javascript,${encodeURIComponent(`Object.defineProperty(process.versions, "node", { value: ${JSON.stringify(version)} });`)}`;
     for (const json of [false, true]) {
       const result = spawnSync(process.execPath, ["--import", preload, isolatedLauncher, "--version", ...(json ? ["--json"] : [])], { encoding: "utf8" });
@@ -27,16 +27,34 @@ test("launcher rejects unsupported Node before resolving runtime modules", async
         const payload = JSON.parse(result.stdout);
         assert.equal(payload.ok, false);
         assert.equal(payload.error.code, "unsupported_node_version");
-        assert.match(payload.error.message, /requires Node\.js 24 or later/);
+        assert.match(payload.error.message, /requires Node\.js 22 or later/);
         assert.ok(payload.error.message.includes(version));
-        assert.match(payload.error.hint, /Install Node\.js 24/);
+        assert.match(payload.error.hint, /Install Node\.js 22/);
       } else {
         assert.equal(result.stdout, "");
-        assert.match(result.stderr, /requires Node\.js 24 or later/);
+        assert.match(result.stderr, /requires Node\.js 22 or later/);
         assert.ok(result.stderr.includes(version));
       }
       assert.doesNotMatch(result.stdout + result.stderr, /ERR_MODULE_NOT_FOUND|Cannot find|SyntaxError/);
     }
+  }
+});
+
+test("launcher accepts Node 22 from its first release and resolves the CLI", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "qz-node-supported-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const isolatedLauncher = join(directory, "bin.mjs");
+  await copyFile(launcher, isolatedLauncher);
+  await writeFile(join(directory, "cli.mjs"), `export async function runMain(argv) {
+    process.stdout.write(JSON.stringify({ argv }) + "\\n");
+    return 0;
+  }`);
+  for (const version of ["22.0.0", "22.15.0", "23.11.0", "24.0.0"]) {
+    const preload = `data:text/javascript,${encodeURIComponent(`Object.defineProperty(process.versions, "node", { value: ${JSON.stringify(version)} });`)}`;
+    const result = spawnSync(process.execPath, ["--import", preload, isolatedLauncher, "--version", "--json"], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    assert.deepEqual(JSON.parse(result.stdout), { argv: ["--version", "--json"] });
   }
 });
 

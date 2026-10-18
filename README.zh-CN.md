@@ -62,7 +62,7 @@ npm run build
 
 **Agent 友好。** 通过 CLI、Skill 或 MCP，让你的 Agent 把浏览器任务交给轻舟。
 
-在运行 Chrome 的同一台机器上使用 Node.js 24 或更高版本。从 [Chrome 应用商店](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm)安装扩展，在轻舟设置中配置模型，然后安装 CLI：
+在运行 Chrome 的同一台机器上使用 Node.js 22 或更高版本。从 [Chrome 应用商店](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm)安装扩展，在轻舟设置中配置模型，然后安装 CLI：
 
 ```bash
 npm install --global qz-browser-agent

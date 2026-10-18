@@ -184,6 +184,45 @@ test("local transport rejects remote endpoints and redirects", async t => {
   await assert.rejects(localFetch(`http://127.0.0.1:${server.address().port}/mcp`), error => error.code === "redirect_blocked");
 });
 
+for (const action of ["cancel", "abort"]) for (const phase of ["between chunks", "pending first read", "pending second read"]) {
+  test(`local HTTP streaming releases the response after ${action} with ${phase}`, async t => {
+    let response;
+    const server = createServer((_req, res) => {
+      response = res;
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.flushHeaders();
+      if (phase !== "pending first read") res.write("data: first\n\n");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
+    const controller = new AbortController();
+    const stream = await localFetch(`http://127.0.0.1:${server.address().port}/events`, { signal: controller.signal });
+    const reader = stream.body.getReader();
+    if (phase !== "pending first read") {
+      const first = await reader.read();
+      assert.equal(first.done, false, "the response streams before its producer finishes");
+      assert.equal(new TextDecoder().decode(first.value), "data: first\n\n");
+    }
+    let pending;
+    if (phase !== "between chunks") {
+      pending = reader.read().then(value => ({ value }), error => ({ error }));
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    const closed = once(response, "close", { signal: AbortSignal.timeout(2000) });
+    if (action === "abort") {
+      controller.abort();
+      const failedRead = pending
+        ? pending.then(result => assert.ok(result.error, "the pending read rejects on abort"))
+        : assert.rejects(reader.read());
+      await Promise.all([failedRead, closed]);
+    } else {
+      await Promise.all([reader.cancel(), closed]);
+      if (pending) assert.deepEqual((await pending).value, { value: undefined, done: true });
+    }
+    assert.equal(response.destroyed, true, "stopping the reader releases the HTTP connection");
+  });
+}
+
 test("real SDK CLI submits a task once and preserves failure without retry", async t => {
   const server = await startBridge({ port: 0, scopeId: "cli-test" });
   t.after(() => server.close());

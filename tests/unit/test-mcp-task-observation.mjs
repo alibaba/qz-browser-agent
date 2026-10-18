@@ -1,3 +1,4 @@
+import { mockObservationTimers } from "../support/observation-timers.mjs";
 import { pairBrowser, browserId, pollBrowser, completeBrowser } from "../support/paired-bridge.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -148,9 +149,64 @@ test("observation timeout preserves the task ID and stale runs fail without repl
   assert.equal(sends, 1);
   await assert.rejects(executeMcpTool(state, "qingzhou_watch_task", { sessionId: "task", waitTimeoutSeconds: 0.01 }), error => {
     assert.equal(error.code, "timeout");
+    assert.equal(error.details.recovery.tool, "qingzhou_watch_task");
     assert.equal(error.details.recovery.arguments.sessionId, "task");
     return true;
   });
+});
+
+test("MCP missing-task recovery lists the selected browser's tasks while snapshots keep their null protocol", async t => {
+  const calls = [];
+  const missing = { sessionId: "task", session: null, status: "idle", runtime: { status: "idle" }, transcript: [] };
+  const state = await connectedState(t, async (method, params, options) => {
+    calls.push({ method, params, clientId: options.clientId });
+    if (method === "list_sessions") return { sessions: [] };
+    assert.equal(method, "get_session_snapshot");
+    return missing;
+  });
+  await assert.rejects(executeMcpTool(state, "qingzhou_watch_task", { sessionId: "task" }), error => {
+    assert.equal(error.code, "task_deleted");
+    assert.match(error.message, /not found in the selected browser/);
+    assert.doesNotMatch(error.message, /was deleted/);
+    assert.equal(error.details.sessionId, "task");
+    assert.deepEqual(error.details.recovery, {
+      tool: "qingzhou_list_sessions", arguments: { clientId: browserId(state, "browser-a") },
+    });
+    return true;
+  });
+  assert.deepEqual(await executeMcpTool(state, "qingzhou_get_session_snapshot", { sessionId: "task" }),
+    { ...missing, clientId: browserId(state, "browser-a") });
+  assert.deepEqual(calls.map(call => call.method), ["get_session_snapshot", "get_session_snapshot"]);
+});
+
+test("MCP wrong-browser recovery keeps the resolved UUID and never searches another browser", async t => {
+  let recovery;
+  const calls = [];
+  const state = await connectedState(t, async (method, params, options) => {
+    calls.push({ method, params, clientId: options.clientId });
+    if (method === "list_sessions") return { sessions: [] };
+    assert.equal(method, "get_session_snapshot");
+    return options.clientId === browserId(state, "browser-b")
+      ? { sessionId: "task", session: null, status: "idle", runtime: { status: "idle" } }
+      : snapshot("completed", [assistant("Owner's answer")]);
+  });
+  await pairBrowser(state, { id: "browser-b" });
+  await assert.rejects(executeMcpTool(state, "qingzhou_watch_task", { sessionId: "task", clientId: "browser-b" }), error => {
+    assert.equal(error.code, "task_deleted");
+    assert.equal(error.details.clientId, browserId(state, "browser-b"));
+    recovery = error.details.recovery;
+    assert.deepEqual(recovery, {
+      tool: "qingzhou_list_sessions", arguments: { clientId: browserId(state, "browser-b") },
+    });
+    return true;
+  });
+  const listed = await executeMcpTool(state, recovery.tool, recovery.arguments);
+  assert.deepEqual(listed, { sessions: [], clientId: browserId(state, "browser-b") });
+  assert.deepEqual(calls.map(call => call.clientId), [browserId(state, "browser-b"), browserId(state, "browser-b")]);
+  const owning = await executeMcpTool(state, "qingzhou_watch_task", { sessionId: "task", clientId: "browser-a" });
+  assert.equal(owning.snapshot.status, "completed");
+  assert.equal(owning.snapshot.transcript[0].content, "Owner's answer");
+  assert.equal(owning.clientId, browserId(state, "browser-a"));
 });
 
 for (const scenario of [
@@ -159,7 +215,7 @@ for (const scenario of [
   { name: "earlier request deadline", total: 5, request: 2, expiresMs: 2000, code: "request_timeout" },
   { name: "caller cancellation", total: 5, request: 2, code: "interrupted" },
 ]) test(`MCP observation preserves request budgets and causes: ${scenario.name}`, async t => {
-  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  mockObservationTimers(t, { apis: ["setTimeout", "Date"], now: 1_000_000 });
   const controller = new AbortController();
   const reason = new DOMException("User stopped watching.", "AbortError");
   const readReady = Promise.withResolvers();
