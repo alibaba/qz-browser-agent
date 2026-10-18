@@ -395,7 +395,10 @@ test("public provider composition keeps standard providers and their browser rul
   const build = await buildExtension({ product: "public", outputDir: join(work, "public") });
   const catalog = await import(pathToFileURL(join(build.outputDir, "background/llm/provider-catalog.js")));
   const contribution = await import(pathToFileURL(join(build.outputDir, "background/product/providers.js")));
-  assert.equal(catalog.DEFAULT_PROVIDER, "custom");
+  const { withLanguage } = await import(pathToFileURL(join(build.outputDir, "shared/i18n/index.js")));
+  for (const [language, provider] of [["zh-CN", "deepseek"], ["zh-TW", "deepseek"], ["en", "openrouter"], ["ja", "openrouter"]]) {
+    assert.equal(withLanguage(language, () => catalog.normalizeProvider()), provider);
+  }
   assert.deepEqual(Object.keys(contribution.PRODUCT_PROVIDERS), []);
   assert.deepEqual(await contribution.getProductProviderAuthStatus(), {});
   const ids = catalog.listProviderSummaries().map(provider => provider.id);

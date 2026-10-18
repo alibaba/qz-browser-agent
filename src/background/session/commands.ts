@@ -384,7 +384,7 @@ function cleanGeneratedSessionTitle(text: unknown) {
     .replace(/[。！？!?]+$/u, "")
     .replace(/\s+/gu, " ")
     .trim();
-  return createSessionTitle(cleaned).slice(0, 24);
+  return createSessionTitle(cleaned);
 }
 
 async function saveSessionRecordRuntime({ sessionId, conversation, transcript }: Fields = {}) {

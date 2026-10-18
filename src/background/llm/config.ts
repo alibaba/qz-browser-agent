@@ -7,7 +7,7 @@ import { nowBeijingDateTime } from "../../shared/time-utils.js";
 import { getProviderAuthState } from "./provider-auth.js";
 import { normalizeProviderModelOptions } from "../../shared/models/provider-options.js";
 import { listProviderSummaries } from "./provider-catalog.js";
-import { PRODUCT_PROVIDERS, PRODUCT_DEFAULT_PROVIDER, getProductProviderAuthStatus, isRetiredProductCredential } from '../product/providers.js';
+import { PRODUCT_PROVIDERS, getProductProviderAuthStatus, isRetiredProductCredential } from '../product/providers.js';
 
 import type { ModelPreset, PresetUsage, SettingsConfig } from "../../shared/contracts/settings.js";
 import type { RuntimeConfig } from "../../sdk/background/providers.js";
@@ -21,7 +21,6 @@ type ConnectionSnapshot = ReturnType<typeof getModelConnectionSnapshot>;
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CONFIG = {
-  provider: PRODUCT_DEFAULT_PROVIDER,
   apiKey: "",
   model: "",
   modelLabel: "",

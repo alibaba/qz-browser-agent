@@ -1,157 +1,231 @@
-# qz-browser-agent (轻舟)
+<p align="center">
+  <img src="src/icons/icon128.png" alt="qz logo" width="80" height="80">
+</p>
+<h1 align="center">qz</h1>
+<p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="https://alibaba.github.io/qz-browser-agent/">Website</a></p>
+<p align="center">Open-source, local-first browser agent</p>
+<p align="center">Bring your own model · Research · Automate · Extract</p>
 
-English · [简体中文](README.zh-CN.md)
+<div align="center">
 
-> 两岸猿声啼不住，轻舟已过万重山。  
-> — Li Bai, *Leaving Baidi City in the Morning*
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/dknbdgkgoinlgjpfebapkklbmjjgdblm?label=Chrome%20Web%20Store&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm) [![npm](https://img.shields.io/npm/v/qz-browser-agent?logo=npm)](https://www.npmjs.com/package/qz-browser-agent) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE) [![Developer checks](https://github.com/alibaba/qz-browser-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/alibaba/qz-browser-agent/actions/workflows/ci.yml)
 
-**qz** (轻舟, *qingzhou*, “light boat”) is a local-first Chrome extension for web research, browser
-automation, and structured data extraction. Bring your own model, and extend it with Skills and
-TypeScript capabilities.
+</div>
+
+qz is an open-source browser agent that runs in your own browser as a Chrome extension. Describe a task in one sentence, and it works across the sites you're already signed in to, extracts the data, and delivers tables, files, or reports with sources. Connect any model, including DeepSeek, OpenAI, and Claude, with your own API key; your data stays local and goes only to the model you choose. Agents like Grok Bot, Claude Code, and Codex can also hand web tasks to qz through its CLI and MCP.
+
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm"><img src="docs/images/chrome-web-store-badge.png" alt="Available in the Chrome Web Store" height="58"></a>
+</p>
+
+<p align="center">
+  <a href="#make-your-agents-actually-good-at-browsing"><img src="docs/images/connect-command.svg" alt="npx skills add alibaba/qz-browser-agent -g" height="52"></a>
+</p>
 
 ![qz collecting Hangzhou photos from Wikipedia](docs/images/workspace.png)
 
 https://github.com/user-attachments/assets/26ee85fd-540f-4427-af59-c196fadfa221
 
-## Features
+## Why qz?
 
-- **Browser automation.** Interact through DOM elements or screenshots, fill forms, and work across tabs in desktop or mobile viewports.
-- **Parallel subtasks.** Run tasks and delegate subtasks concurrently. Interrupt, redirect, or add context while a task is running.
-- **Structured data.** Extract tables, media, and page content into local collections. Preview, edit, and export them from the side panel.
-- **Skills.** Run JavaScript in target web pages. Package instructions, scripts, tools, and custom UI as reusable Skills, with optional site-based activation.
-- **Model choice.** Use any provider with a supported API protocol and tool calling, including local model servers.
-- **TypeScript capabilities.** Add agent tools, panel views, settings pages, or model providers.
-- **CLI and MCP.** Delegate browser tasks from your terminal, coding agent, or MCP client. Manage tasks, data, images, and settings through the same browser connection.
+### Reliable browser execution for AI agents
 
-## Privacy and data flow
+Most AI agents struggle with real-world web navigation, failing at authentication or dynamic DOM interactions. qz acts as a reliable execution layer—running tasks in your local Chrome environment and returning structured outputs to your primary agent.
 
-Sessions, Skills, and collected data are stored in your browser. Model requests include your input
-and task context, including page or file content, screenshots, tab information, and results from
-authorized bookmark or history tools. When a task needs local information, the
-`get_location` tool can send coordinates, accuracy, and the location timestamp to the model. It asks for consent on first use.
-Skills and MCP connections may also exchange data with services you configure.
-See the [privacy policy and browser permissions](docs/permissions.md).
+### Transparent, side-by-side execution
+
+Typical browser agents take over the browser entirely, leaving you with a black box. qz lives in the Chrome side panel, so every step and result stays visible, and you can step in or stop it at any time. Coding agents like Claude Code and Codex can also dispatch tasks to qz directly via CLI and MCP.
+
+### Parallel multi-source research, from web data to reusable Skills
+
+Ditch the 20-tab shuffle and manual data wrangling. qz runs many tasks at once, and each task can spawn subtasks, so large research jobs that stall a single-threaded browser agent get split up and worked in parallel. qz pulls the exact metrics you need across fragmented, inconsistently formatted websites, keeping every source link intact. It turns disparate web content straight into standardized comparison views or local files—ready for your analysis pipeline. Once a workflow is dialed in, save it as a Skill and trigger it next time with a single prompt.
+
+### Native environment, local-first privacy
+
+Forget clunky cloud sandboxes. qz leverages your existing Chrome profile—cookies, logins, and extensions work out of the box. Your data is stored locally, and you have full control over which LLM powers the workflow.
+
+## What you can ask
+
+### Start with a simple task
+
+```text
+Plan a 3-day cultural walk through Luxembourg City linking the Old Town, museums, and historic quarters. Check tourism-office and venue websites for opening hours, tickets, and booking rules, build a daily route table with sources, and flag anything unverified.
+```
+
+<p align="center">
+  <img src="docs/images/examples/en/travel-en.png" width="800" alt="">
+</p>
+
+<p align="center"><sub>Gathers from multiple sources and switches on Goal mode automatically.</sub></p>
+
+### Pull together multiple sources
+
+```text
+Compare the major open-weight LLMs released in the last 6 months, one per row: release date, parameters, context length, license, and key benchmarks, with official sources.
+```
+
+<p align="center">
+  <img src="docs/images/examples/en/llm-compare-browser-en.png" width="800" alt="">
+</p>
+
+<p align="center">
+  <img src="docs/images/examples/en/llm-compare-data-en.png" width="800" alt="">
+</p>
+
+<p align="center"><sub>Organizes the findings into a data table.</sub></p>
+
+### Get it right once, save it as a Skill in one sentence
+
+```text
+Find 10 arXiv papers on browser agents from the past month, with titles, one-line takeaways, and links.
+```
+
+Once it works, say "Save this as a Skill". Next time, just say "This week's browser agent papers" to reuse it.
+
+<p align="center">
+  <img src="docs/images/examples/en/arxiv-skill-browser-en.png" width="800" alt="">
+</p>
+
+<p align="center">
+  <img src="docs/images/examples/en/arxiv-skill-saved-en.png" width="320" alt="">
+  <img src="docs/images/examples/en/arxiv-skill-reuse-en.png" width="409" alt="">
+</p>
+
+### Run research tasks in parallel
+
+```text
+Find the 10 fastest-growing AI agent repos on GitHub this week, read their READMEs, and write a weekly report with links.
+```
+
+<p align="center">
+  <img src="docs/images/examples/en/github-weekly-en.gif" width="320" alt="">
+  <img src="docs/images/examples/en/github-weekly-en.png" width="320" alt="">
+</p>
+
+### Let your agent hand tasks to qz
+
+In a coding agent such as pi, say:
+
+```text
+Use qz to find this week's hottest AI agent projects on GitHub and send me a weekly report.
+```
+
+<p align="center">
+  <img src="docs/images/examples/en/pi-delegate-en.gif" width="800" alt="">
+</p>
 
 ## Quick start
 
-### Install
+1. **Install**: Click **Add to Chrome** on the [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm), then click the qz icon in your toolbar to open the side panel.
+2. **Connect a model**: Open **Settings**, select a provider (e.g., DeepSeek, Claude), paste your API key, and save. Have a ChatGPT account? Select **OpenAI Codex** and sign in—no API key required.
 
-Open [qz in the Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm)
-and click **Add to Chrome**.
+   <img src="docs/images/settings-model-en.png" alt="qz settings: choose a provider and enter an API key" width="320">
 
-#### Manual installation
+3. **Run a task**: Enter a prompt in the side panel, for example:
+   ```text
+   Find this year's Nobel Prize winners in every category and put them in a table with source links.
+   ```
+4. **(Optional) Connect external agents**: Run `npx --yes qz-browser-agent@latest connect` in your terminal to let other agents trigger qz. See [Make your agents actually good at browsing](#make-your-agents-actually-good-at-browsing) for details.
 
-To install from a ZIP:
+<details id="manual-installation">
+<summary>Can't access the Chrome Web Store? Install manually</summary>
 
-1. Download the ZIP from the [latest release](https://github.com/alibaba/qz-browser-agent/releases/latest).
-2. Extract the ZIP.
-3. Open `chrome://extensions` and enable **Developer mode**.
-4. Click **Load unpacked** and select the extracted `qz-browser-agent-extension` folder.
+1. Download the ZIP from the [latest release](https://github.com/alibaba/qz-browser-agent/releases/latest) and extract it.
+2. Open `chrome://extensions` and enable **Developer mode**.
+3. Click **Load unpacked** and select the extracted `qz-browser-agent-extension` folder.
+4. Open the side panel and configure a model as described above.
+
+</details>
+
+## Make your agents actually good at browsing
+
+Agents like Grok Bot, Claude Code, Codex, and pi can hand web tasks to qz. qz runs them in your browser's side panel, where you can watch every step, then returns the results so your agent can keep going.
+
+1. **Install the Skill** so your agent knows how to use qz.
+   ```bash
+   npx skills add alibaba/qz-browser-agent -g
+   ```
+2. **Pair once.** Requires Node.js 22 or later. The command pairs automatically with your default browser.
+   ```bash
+   npx qz-browser-agent@latest connect
+   ```
+3. **Just ask.** Tell your agent: "Use qz to compare open-weight LLMs released in the last 6 months and put them in a table with sources."
+
+<details>
+<summary>Use the CLI or MCP directly</summary>
+
+```bash
+npx qz-browser-agent@latest create "your task" --stream
+```
+
+- `--stream` shows progress, any questions qz needs you to answer, and the final result.
+- For MCP clients, run `npx qz-browser-agent@latest mcp` after pairing and use the HTTP URL it returns.
+- For regular use, install globally with `npm install --global qz-browser-agent`, then use `qz` in place of `npx qz-browser-agent@latest`.
+- See the [CLI and MCP reference](docs/cli.md) for multi-browser pairing, follow-ups, and exports.
+
+</details>
+
+## Comparison
+
+| | **qz** | Nanobrowser | Browser Use | agent-browser | Playwright MCP |
+| --- | :-: | :-: | :-: | :-: | :-: |
+| **Delegate the whole task, not every click** | ✅ | ◐ | ◐ | ◐ | ❌ |
+| **Runs in your own logged-in Chrome** | ✅ | ✅ | ◐ | ◐ | ◐ |
+| **Real-time control of every step, for humans and agents** | ✅ | ◐ | ◐ | ◐ | ◐ |
+| **Many tasks in parallel, each with subtasks** | ✅ | ◐ | ◐ | ◐ | ◐ |
+| **Save a run as a reusable Skill** | ✅ | ❌ | ◐ | ❌ | ❌ |
+
+<sub>✅ built in · ◐ partial or needs setup/code · ❌ not supported. As of October 2026, based on each project's public docs.</sub>
+
+## Local first
+
+qz runs entirely in your browser. Sessions, Skills, and collected data stay on your machine, and the CLI/MCP bridge runs locally too. There's no qz server: your data only goes to the model you configure and the websites you work on.
+
+See [privacy policy](docs/permissions.md) and [browser permissions](docs/permissions.md#browser-access).
+
+## FAQ
+
+### Is qz free?
+
+The extension and CLI are free under [Apache-2.0](LICENSE). Model costs depend on your provider;
+compatible local models are supported. ChatGPT access and limits depend on your account and
+[plan](https://learn.chatgpt.com/docs/pricing).
+
+### How do I sign in with ChatGPT?
+
+In **Settings**, select **OpenAI Codex** and follow the device-code instructions at `auth.openai.com`.
+Return to qz, select a model, and save. If device-code login is disabled, follow OpenAI's
+[authentication guidance](https://learn.chatgpt.com/docs/auth#preferred-device-code-authentication-beta).
+
+### Which models can I use?
+
+Use a provider with a supported protocol and tool calling, including a compatible local server.
+Presets include **OpenAI Codex**, **OpenRouter**, **DeepSeek**, **Kimi For Coding**, **OpenCode Go**,
+**OpenCode Zen**, **Fireworks AI**, and more. See [providers](docs/providers.md).
+
+### Does qz support Edge or Firefox?
+
+qz works in Chrome and Edge. Firefox is not supported.
+
+## Development
+
+To change qz's behavior or inspect how it runs, build and load the extension locally.
 
 ### Build from source
 
-To build locally, install Node.js 24 LTS and npm, then run from a local checkout:
+Install Node.js 24 LTS and npm, then run from a local checkout:
 
 ```bash
 npm ci
 npm run build
 ```
 
-Follow the [manual installation steps](#manual-installation), selecting `dist/extension/` as the extension folder.
+Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select
+`dist/extension/`.
 
-### Run
+### Develop and test
 
-1. Open the qz side panel from the extension toolbar.
-2. In **Settings**, choose a provider and enter its credentials. A custom endpoint also requires a URL and protocol.
-3. Select a model and save.
-4. Try a prompt: `Open example.com and extract its main heading into a table.`
-
-## CLI and coding agents
-
-**Agent-friendly.** Let your agent delegate browser tasks to qz via CLI, Skill, or MCP.
-
-Use Node.js 22 or later on the same machine as Chrome. Install the extension from the
-[Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm) and configure its
-model in qz Settings, then install the CLI:
-
-```bash
-npm install --global qz-browser-agent
-qz connect
-qz create "Compare SQLite, DuckDB, and PostgreSQL for local analytics. Save trade-offs and source links in a table." --stream
-```
-
-`connect` opens the local connection page in the system’s default browser for first pairing.
-Open it in the Chrome profile where qz is installed and complete its first-use data notice. The first browser is named `default`; repeating
-`connect` reuses the connection. `--stream` displays progress, pending questions, and the result.
-You can replace `qz` with `npx --yes qz-browser-agent@latest` to run without a global install.
-
-To pair a specific Profile from the shell, get its connection URL:
-
-```bash
-qz connect --no-open --name work --json
-```
-
-Open `result.url` in the intended Profile, then check `qz browsers`. Omit `--name` to keep its
-existing identifier or assign one automatically. See the [browser launch commands](services/mcp-bridge/README.md#pair-a-selected-browser-from-the-shell).
-You can also connect in that Profile's **qz Settings → Advanced → CLI**.
-When several browsers are online, select one by name or UUID:
-
-```bash
-qz browsers
-qz create "Summarize the current page." --client work --stream
-```
-
-Disconnect one browser in its qz Settings. `qz stop` stops the local service and disconnects all
-browsers. See [connection and upgrade instructions](services/mcp-bridge/README.md#connect-and-stop).
-
-### Install the agent Skill
-
-Install the [qz-browser-agent Skill](skills/qz-browser-agent/SKILL.md) to let your coding agent
-check the connection, delegate a task, handle user input, and retrieve results:
-
-```bash
-npx --yes skills add alibaba/qz-browser-agent --skill qz-browser-agent --agent codex --global
-```
-
-Use `--agent claude-code` or `--agent pi` to install for Claude Code or Pi. `--skill` selects the
-Skill; `--agent` selects the coding agent. See the [supported agents](https://github.com/vercel-labs/skills#supported-agents).
-
-Then ask your agent: **Use qz to compare these three product pages and save a table with prices and source links.**
-
-For MCP clients, run `qz mcp` after connecting and use the returned
-HTTP URL. See the [CLI and MCP guide](services/mcp-bridge/README.md) for task follow-ups, pending
-input, exports, and configuration.
-
-## Extending qz
-
-### Skills
-
-Skills package repeatable workflows: automation scripts, interactive widgets in the side panel, and
-optional activation on matching websites (Site Skills). Manage them in the UI or install them from
-Git repositories.
-
-### TypeScript capabilities
-
-Capabilities are TypeScript modules compiled into the extension. Copy the
-[example](tests/fixtures/capabilities/example/README.md) to `src/capabilities/<your-feature>/`,
-rename its registrations, and keep the contributions you need:
-
-```ts
-// src/capabilities/<your-feature>/index.ts
-export { default as tools } from "./tools.js";         // Agent tools
-export { default as renderers } from "./renderers.js"; // Tool result views
-```
-
-The build discovers these declarations automatically.
-Tool handlers run in the background service worker and can delegate actions or script execution to active tabs.
-Renderers mount interactive result cards in the side panel.
-
-See the [capability guide](src/capabilities/README.md) for SDK details. These APIs are experimental;
-see [extension contracts](CONTRIBUTING.md#extension-contracts).
-
-## Development
-
-Set up the [test environment](docs/commands.md#run-tests) before running tests.
+Set up the [test environment](docs/commands.md#run-tests), then use:
 
 ```bash
 npm run dev       # Rebuild on source changes
@@ -161,6 +235,12 @@ npm run verify    # Type-check and run all automated suites with coverage
 
 After a rebuild, reload the extension at `chrome://extensions` and reopen the side panel.
 
+### Add a capability
+
+To add a tool, view, setting, or provider that qz doesn't include yet, see the [capability guide](src/capabilities/README.md).
+
+### More docs
+
 - [Architecture](docs/architecture.md)
 - [Commands and build options](docs/commands.md)
 - [Benchmarks](docs/benchmarks.md)
@@ -168,5 +248,5 @@ After a rebuild, reload the extension at `chrome://extensions` and reopen the si
 
 ## License
 
-[Apache-2.0](LICENSE). Third-party dependencies retain their own licenses; see
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+For reuse or redistribution, follow [Apache-2.0](LICENSE) and the dependencies' own licenses listed
+in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

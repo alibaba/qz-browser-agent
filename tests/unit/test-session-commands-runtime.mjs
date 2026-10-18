@@ -19,6 +19,7 @@ await queuedFollowUpWaitsForDurableRuntime();
 await stopDoesNotWaitForBestEffortObservers();
 await explicitTaskTitleSkipsGeneration();
 await titleGenerationWaitsForAcceptedPrompt();
+await generatedTitlesKeepCompleteWords();
 await manualTitleWinsGenerationRace();
 await queuedFollowUpAttachmentDeletionFlow();
 await steeringQueueFlow();
@@ -590,6 +591,33 @@ function assertTitleRequestTreatsSourceAsData(request, sourceText) {
   assert.deepEqual(JSON.parse(request.messages[1].content), { source_text: sourceText });
 }
 
+async function generatedTitlesKeepCompleteWords() {
+  const fullTitle = "Luxembourg City three-day cultural itinerary with museums and historic landmarks";
+  const completeWords = `${fullTitle} plus recommended restaurants and`;
+  for (const { generated, expected } of [
+    { generated: fullTitle, expected: fullTitle },
+    {
+      generated: `${completeWords} neighborhoods for a memorable weekend`,
+      expected: completeWords,
+    },
+  ]) {
+    const fixture = createFixture({
+      llmChat: async () => ({ message: { content: generated } }),
+    });
+    const created = await fixture.commands.createSessionRuntime({
+      firstMessage: "Plan a cultural trip to Luxembourg City",
+    });
+    const sessionId = created.session.id;
+    await waitUntil(async () => (
+      (await fixture.repository.getMetadata(sessionId))?.titleSource === "generated"
+    ), "the complete generated title should be persisted");
+
+    const persisted = await fixture.repository.getMetadata(sessionId);
+    assert.equal(persisted.title, expected);
+    assert.ok(persisted.title.length <= 120, "generated titles must respect the shared storage limit");
+  }
+}
+
 async function manualTitleWinsGenerationRace() {
   let resolveGeneratedTitle;
   const generatedTitle = new Promise(resolve => { resolveGeneratedTitle = resolve; });
@@ -612,12 +640,13 @@ async function manualTitleWinsGenerationRace() {
     "the title request should be in flight before the manual rename",
   );
 
+  const manualTitle = "Luxembourg City three-day cultural itinerary with museums and historic landmarks";
   const renamed = await fixture.commands.renameSessionRuntime({
     sessionId,
-    title: "  用户   指定标题  ",
+    title: `  ${manualTitle.replace("Luxembourg City", "Luxembourg   City")}  `,
   });
   assert.equal(renamed.renamed, true);
-  assert.equal(renamed.session.title, "用户 指定标题");
+  assert.equal(renamed.session.title, manualTitle);
   assert.equal(renamed.session.titleSource, "manual");
   assert.equal(renamed.session.updatedAt, created.session.updatedAt, "renaming should not reorder the task by activity time");
   assert.deepEqual(fixture.broadcasts.at(-1), {
@@ -631,7 +660,7 @@ async function manualTitleWinsGenerationRace() {
   await nextTurn();
   await nextTurn();
   const persisted = await fixture.repository.getMetadata(sessionId);
-  assert.equal(persisted.title, "用户 指定标题");
+  assert.equal(persisted.title, manualTitle);
   assert.equal(persisted.titleSource, "manual", "late title generation must not overwrite a manual title");
 
   await assert.rejects(

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="470" height="52" viewBox="0 0 470 52">
+  <rect width="470" height="52" rx="10" fill="#0d1117"/>
+  <rect x="0.5" y="0.5" width="469" height="51" rx="9.5" fill="none" stroke="#30363d"/>
+  <text x="22" y="32" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="16" fill="#e6edf3" textLength="425" lengthAdjust="spacingAndGlyphs"><tspan fill="#7d8590">$ </tspan>npx skills add alibaba/qz-browser-agent -g</text>
+</svg>

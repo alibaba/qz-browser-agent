@@ -92,7 +92,7 @@ function assertSessionTitleEditingContracts() {
   const titleTriggerMarkup = sidepanelHtml.match(/<button id="btn-edit-session-title"[\s\S]*?<\/button>/u)?.[0] || "";
   assert.ok(titleTriggerMarkup, "the title row should expose a rename trigger");
   assert.doesNotMatch(titleTriggerMarkup, /<svg\b/u, "the title itself should be the rename affordance without a redundant edit icon");
-  assert.match(sidepanelHtml, /id="btn-edit-session-title"[\s\S]*aria-label="重命名对话"[\s\S]*id="session-title-input"[\s\S]*maxlength="48"/, "the title row should expose one inline rename control");
+  assert.match(sidepanelHtml, /id="btn-edit-session-title"[\s\S]*aria-label="重命名对话"[\s\S]*id="session-title-input"/, "the title row should expose one inline rename control");
   assert.match(sessionNavigation, /request\("rename_session",\s*\{[\s\S]*sessionId,[\s\S]*title:/, "title edits should use the explicit-session Background command");
   assert.match(sessionNavigation, /event\.isComposing \|\| event\.keyCode === 229/, "IME confirmation must not accidentally submit a title");
   assert.match(sessionNavigation, /event\.key === "Enter"[\s\S]*commitSessionTitleEdit[\s\S]*event\.key === "Escape"[\s\S]*closeSessionTitleEditor/, "the inline editor should support conventional save and cancel keys");

@@ -43,7 +43,7 @@ open -na "Google Chrome" --args --profile-directory="$QZ_PROFILE_DIRECTORY" "$QZ
 For an existing custom Chrome data directory, also pass
 `--user-data-dir="$QZ_USER_DATA_DIR"` with that directory's path. Use the browser
 and Profile the user selected; ask if the target is unclear. Other platform examples
-are in the [shell pairing guide](https://github.com/alibaba/qz-browser-agent/blob/main/services/mcp-bridge/README.md#pair-a-selected-browser-from-the-shell).
+are in the [shell pairing guide](https://github.com/alibaba/qz-browser-agent/blob/main/docs/cli.md#pair-a-selected-browser-from-the-shell).
 
 Add `--name work` to the URL command to assign that identifier to the Profile that
 opens it, including renaming an existing connection. Without a name, qz preserves
@@ -259,4 +259,4 @@ only as requested, using `settings set KEY VALUE` or a JSON patch via stdin.
 Keep credentials out of command arguments and logs. `automations list` and
 `automations run ID` inspect or run an existing scheduled task.
 
-Command reference: https://github.com/alibaba/qz-browser-agent/blob/main/services/mcp-bridge/README.md
+Command reference: https://github.com/alibaba/qz-browser-agent/blob/main/docs/cli.md

@@ -49,6 +49,7 @@ interface NavigationOptions {
 import { isSessionFormatError } from "../../../shared/session/session-format.js";
 import {
   createSessionTitle,
+  SESSION_TITLE_MAX_LENGTH,
   readSessionRecord,
   transcriptFromConversation,
 } from "../../../shared/session/session-codec.js";
@@ -132,6 +133,7 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
   }
 
   function installSessionTitleEditor() {
+    if (options.sessionTitleInput) options.sessionTitleInput.maxLength = SESSION_TITLE_MAX_LENGTH;
     options.sessionTitleEditButton?.addEventListener("click", beginSessionTitleEdit);
     options.sessionTitleInput?.addEventListener("keydown", handleSessionTitleKeydown);
     options.sessionTitleInput?.addEventListener("blur", () => {

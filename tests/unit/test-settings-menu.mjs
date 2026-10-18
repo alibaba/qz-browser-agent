@@ -12,7 +12,7 @@ import {
 } from "../../src/shared/settings-menu-utils.js";
 import { matchConfiguredModelCapabilities } from "../../src/shared/models/model-capabilities.js";
 import test from "node:test";
-import { PRODUCT_DEFAULT_PROVIDER } from '../../src/background/product/providers.js';
+import { getProductDefaultProvider } from '../../src/background/product/providers.js';
 import { sampleModels, createResponse, createStreamResponse, storageData, fetchCalls, llm, resetStorage, presetByProviderModel, readProjectFile, readSettingsFeature, extractPresetChangeHandler, extractFunction, setExtraResponse } from '../support/settings-menu-fixture.mjs';
 
 await loadModelsDevFixture();
@@ -300,13 +300,143 @@ test("rate-limit interval editor uses seconds for bare numbers", () => {
   assert.match(parse("0.1").error, /至少 0\.5 秒/);
 });
 
-test("empty config uses the selected product default", async () => {
-  resetStorage();
-  const config = await llm.getConfig();
-  assert.equal(config.provider, PRODUCT_DEFAULT_PROVIDER);
-  assert.equal(config.apiKey, "");
-  assert.equal(config.model, "");
-  assert.equal(config.requestRateLimit, false);
+test("empty config chooses its provider from the current language without persisting it", async () => {
+  const originalI18n = chrome.i18n;
+  try {
+    resetStorage();
+    for (const [language, provider] of [["zh-CN", "deepseek"], ["zh-TW", "deepseek"], ["en-US", "openrouter"], ["ja-JP", "openrouter"], ["fr-FR", "openrouter"], ["zh-CN", "deepseek"]]) {
+      chrome.i18n = { getUILanguage: () => language };
+      const config = await llm.getConfig();
+      assert.equal(config.provider, provider, language);
+      assert.equal(config.apiKey, "");
+      assert.equal(config.model, "");
+      assert.equal(config.requestRateLimit, false);
+      assert.equal(storageData.llmConfig, undefined, "opening first setup must not persist a provider");
+    }
+  } finally {
+    if (originalI18n === undefined) delete chrome.i18n;
+    else chrome.i18n = originalI18n;
+    resetStorage();
+  }
+});
+
+test("language defaults preserve saved providers and incomplete configurations", async () => {
+  const originalI18n = chrome.i18n;
+  try {
+    for (const saved of [
+      { provider: "fireworks", model: "saved-model", apiKey: "saved-key" },
+      { provider: "deepseek", model: "", apiKey: "" },
+      { provider: "openrouter", model: "", apiKey: "" },
+      { provider: "custom", model: "", apiKey: "", customEndpoint: "https://saved.example/v1/chat/completions" },
+    ]) {
+      resetStorage();
+      storageData.llmConfig = structuredClone(saved);
+      for (const language of ["zh-CN", "en-US"]) {
+        chrome.i18n = { getUILanguage: () => language };
+        const config = await llm.getConfig();
+        assert.equal(config.provider, saved.provider, `${language}: ${saved.provider}`);
+        assert.equal(config.model, saved.model);
+        assert.equal(config.apiKey, saved.apiKey);
+        if (saved.customEndpoint) assert.equal(config.customEndpoint, saved.customEndpoint);
+        assert.deepEqual(storageData.llmConfig, saved, "loading configuration must preserve stored settings");
+      }
+    }
+  } finally {
+    if (originalI18n === undefined) delete chrome.i18n;
+    else chrome.i18n = originalI18n;
+    resetStorage();
+  }
+});
+
+test("unknown saved providers keep their endpoint and credentials instead of using the language default", async () => {
+  const originalI18n = chrome.i18n;
+  try {
+    for (const language of ["zh-CN", "en-US"]) {
+      chrome.i18n = { getUILanguage: () => language };
+      for (const endpointField of ["customEndpoint", "endpoint"]) {
+        resetStorage();
+        const saved = {
+          provider: "retired-provider",
+          apiKey: "synthetic-retired-provider-key",
+          model: "saved-model",
+          customProtocol: "openai",
+          [endpointField]: "https://retired-provider.example/v1/chat/completions",
+        };
+        storageData.llmConfig = structuredClone(saved);
+        const config = await llm.getConfig();
+        assert.equal(config.provider, "custom");
+        assert.equal(config.apiKey, saved.apiKey);
+        assert.equal(config.model, saved.model);
+        assert.equal(config.endpoint, saved[endpointField]);
+        assert.equal(config.customEndpoint, saved[endpointField]);
+        assert.deepEqual(storageData.llmConfig, saved, "reading an unknown provider must not rewrite its stored configuration");
+        assert.equal(fetchCalls.length, 0);
+
+        await llm.chat([{ role: "user", content: "hello" }], []);
+        assert.equal(fetchCalls.length, 1);
+        assert.equal(fetchCalls[0].url, saved[endpointField]);
+        assert.equal(fetchCalls[0].auth, `Bearer ${saved.apiKey}`);
+      }
+
+      resetStorage();
+      storageData.llmConfig = { provider: "retired-provider", apiKey: "synthetic-retired-provider-key", model: "saved-model" };
+      const config = await llm.getConfig();
+      assert.equal(config.provider, "custom");
+      assert.equal(config.endpoint, "");
+      await assert.rejects(() => llm.saveConfig(config));
+      assert.equal(fetchCalls.length, 0, "a missing saved endpoint must not validate credentials against a default service");
+    }
+  } finally {
+    if (originalI18n === undefined) delete chrome.i18n;
+    else chrome.i18n = originalI18n;
+    resetStorage();
+  }
+});
+
+test("unknown saved preset providers preserve their credential destination when applied", async () => {
+  const originalI18n = chrome.i18n;
+  try {
+    for (const language of ["zh-CN", "en-US"]) {
+      resetStorage();
+      chrome.i18n = { getUILanguage: () => language };
+      const preset = {
+        id: "retired-provider-preset",
+        name: "Saved provider",
+        provider: "retired-provider",
+        apiKey: "synthetic-preset-provider-key",
+        model: "preset-model",
+        customProtocol: "openai",
+        customEndpoint: "https://preset-provider.example/v1/chat/completions",
+      };
+      const saved = {
+        provider: "openrouter", apiKey: "synthetic-openrouter-key", model: "other-model",
+        providerApiKeys: { openrouter: "synthetic-openrouter-key", deepseek: "synthetic-deepseek-key" },
+        presets: [preset],
+      };
+      storageData.llmConfig = structuredClone(saved);
+      const config = await llm.getConfig();
+      assert.equal(config.provider, "openrouter");
+      assert.equal(config.presets[0].provider, "custom");
+      assert.equal(config.presets[0].apiKey, preset.apiKey);
+      assert.equal(config.presets[0].customEndpoint, preset.customEndpoint);
+      assert.deepEqual(storageData.llmConfig, saved, "reading an unknown preset must not rewrite it");
+
+      const applied = await llm.applyModelPreset(preset.id);
+      assert.equal(applied.provider, "custom");
+      assert.equal(applied.apiKey, preset.apiKey);
+      assert.equal(applied.model, preset.model);
+      assert.equal(applied.endpoint, preset.customEndpoint);
+      assert.equal(fetchCalls.length, 0);
+      await llm.chat([{ role: "user", content: "hello" }], []);
+      assert.equal(fetchCalls.length, 1);
+      assert.equal(fetchCalls[0].url, preset.customEndpoint);
+      assert.equal(fetchCalls[0].auth, `Bearer ${preset.apiKey}`);
+    }
+  } finally {
+    if (originalI18n === undefined) delete chrome.i18n;
+    else chrome.i18n = originalI18n;
+    resetStorage();
+  }
 });
 
 test("SDK providers load their model menus offline, including services with runtime policies", async () => {
@@ -1186,7 +1316,7 @@ test("model change observer fires exactly when the persisted provider or model c
       model: "accounts/fireworks/models/model-a",
     });
     assert.equal(seen.length, 1, "the first effective model save fires once");
-    assert.deepEqual(seen[0][0], { provider: PRODUCT_DEFAULT_PROVIDER, model: "" });
+    assert.deepEqual(seen[0][0], { provider: getProductDefaultProvider(), model: "" });
     assert.deepEqual(seen[0][1], {
       provider: "fireworks",
       model: "accounts/fireworks/models/model-a",

@@ -75,18 +75,6 @@ if (dialog instanceof HTMLDialogElement && video instanceof HTMLVideoElement) {
   });
 }
 
-const agentTarget = document.querySelector('#agent-target');
-const skillCommand = document.querySelector('#skill-command');
-if (agentTarget instanceof HTMLSelectElement && skillCommand) {
-  agentTarget.hidden = false;
-  document.querySelector('.agent-target-fallback').hidden = true;
-  agentTarget.addEventListener('change', () => {
-    if (!['codex', 'claude-code', 'pi'].includes(agentTarget.value)) return;
-    skillCommand.textContent = `npx --yes skills add alibaba/qz-browser-agent --skill qz-browser-agent --agent ${agentTarget.value} --global`;
-    agentTarget.closest('[data-copy-block]').querySelector('.copy-status').textContent = '';
-  });
-}
-
 for (const copyButton of document.querySelectorAll('[data-copy-prompt], [data-copy-target]')) {
   const content = document.getElementById(copyButton.dataset.copyTarget || 'first-prompt');
   const status = copyButton.closest('[data-copy-block], .first-prompt')?.querySelector('.copy-status');

@@ -23,6 +23,7 @@ export type { Conversation, ConversationEntry, SessionMessage, TranscriptEntry }
 type EntryFields = Partial<TranscriptEntry>;
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
 const MAX_TOOL_RESULT_CHARS = 20000;
+export const SESSION_TITLE_MAX_LENGTH = 120;
 
 export function createSessionRecord(conversation: unknown, transcript: unknown) {
   return {
@@ -953,7 +954,7 @@ export function createSessionTitle(text: unknown) {
 }
 
 function cleanTitleText(text: unknown) {
-  return String(text ?? "")
+  const title = String(text ?? "")
     .replace(/\n\n\[当前浏览器标签页\][\s\S]*$/u, "")
     .replace(/\n\n\[当前页面\][\s\S]*$/u, "")
     .replace(/\s*\[当前浏览器标签页\][\s\S]*$/u, "")
@@ -961,8 +962,22 @@ function cleanTitleText(text: unknown) {
     .replace(/\s*\[[0-9]{5,}\]\s*$/u, "")
     .replace(/https?:\/\/\S+/gu, "")
     .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, 48);
+    .trim();
+  if (title.length <= SESSION_TITLE_MAX_LENGTH) return title;
+
+  let end = 0;
+  for (const { index, segment } of new Intl.Segmenter("en", { granularity: "word" }).segment(title)) {
+    if (index + segment.length > SESSION_TITLE_MAX_LENGTH) break;
+    end = index + segment.length;
+  }
+  // An oversized single word still needs a bound, without splitting a Unicode character.
+  if (end === 0) {
+    for (const { index, segment } of new Intl.Segmenter("en", { granularity: "grapheme" }).segment(title)) {
+      if (index + segment.length > SESSION_TITLE_MAX_LENGTH) break;
+      end = index + segment.length;
+    }
+  }
+  return title.slice(0, end).trimEnd();
 }
 
 function normalizeConversationSnapshot(input: unknown): Conversation {

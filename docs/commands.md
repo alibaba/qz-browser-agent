@@ -16,8 +16,8 @@ versions in the lockfile. Build, test, and benchmark commands accept `--help`.
 | `npm run release` | Build a versioned ZIP locally |
 | `npm run qz -- --help` | Show the local CLI commands for tasks, resources, and MCP |
 
-For npm installation and CLI package publishing, see the
-[CLI and MCP guide](../services/mcp-bridge/README.md#quick-start).
+For npm installation and installed CLI usage, see the
+[CLI and MCP guide](cli.md#quick-start).
 
 ## Build the extension
 
@@ -237,7 +237,7 @@ Open `result.url` in that Profile and verify its online UUID with `browsers --js
 `--no-open` returns the URL immediately. `--name` sets or updates the identifier of the Profile
 opening it; omit it to preserve an existing name or allocate `default`, `browser-2`, and so on.
 `connect --name work` opens the URL and also returns without waiting for pairing. Neither mode
-accepts `--client`. See [platform launch commands](../services/mcp-bridge/README.md#pair-a-selected-browser-from-the-shell).
+accepts `--client`. See [platform launch commands](cli.md#pair-a-selected-browser-from-the-shell).
 Pairing is also available in **qz Settings → Advanced → CLI**.
 
 `--client NAME|UUID` selects a browser for task and resource commands. With one online browser,
@@ -250,7 +250,7 @@ the resolved profile UUID.
 Connections require opening a pairing URL or the settings action. Ordinary connection failures
 pause after three attempts; reopen the URL in that Profile or use its settings to retry. Use the current CLI and extension together. Source edits do not
 restart a working service. To update, finish current tasks, run `stop`, update and reload the extension, then run `connect`. See
-[connection and upgrade details](../services/mcp-bridge/README.md#connect-and-stop).
+[connection and upgrade details](cli.md#connect-and-stop).
 
 `create` accepts the task text directly, with an optional title.
 `--wait` waits for the result; `--stream` also displays progress. Both stay connected through
@@ -288,12 +288,12 @@ the download status and path when available; check pending downloads in `chrome:
 Exports accept `--filename NAME`; `skills --scope site` filters Skills by scope. CLI commands reuse
 one MCP connection for all their requests. Use `--client NAME|UUID` to select a profile from `browsers`.
 MCP supports the same task waiting, streaming, and input flows, plus direct browser tool calls and
-diagnostic logs; see the [operation mapping](../services/mcp-bridge/README.md#task-and-resource-operations).
+diagnostic logs; see the [operation mapping](cli.md#task-and-resource-operations).
 
 Interactive terminals show text; pipes receive JSON. `--json` and `--plain` select the output
 format explicitly. `--no-color` or `NO_COLOR` disables color. JSON waiting and streaming produce one
 final result on stdout, with pending-input notices on stderr. The installed CLI requires Node.js 22 or later.
-See the [connection guide](../services/mcp-bridge/README.md) for short options, stdin input, and
+See the [CLI and MCP reference](cli.md) for short options, stdin input, and
 MCP browser tools.
 
 ```bash

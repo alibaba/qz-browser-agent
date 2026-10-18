@@ -1,4 +1,5 @@
 // Static, authored translations for the shared homepage DOM.
+// ogImage supplies both Open Graph and Twitter images.
 export const translations = {
   "en": {
     "title": "qz — Open-source browser agent",
@@ -9,7 +10,7 @@ export const translations = {
       "navStart": "Install<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "heroBadge": "<span class=\"square\" aria-hidden=\"true\"></span>OPEN SOURCE · LOCAL FIRST",
       "heroTitle": "An agent that<br><span>actually uses<br>the browser.</span>",
-      "heroIntro": "Read websites, automate actions, and save results as tables, files, or image collections. Connect your own model.",
+      "heroIntro": "An AI agent in the Chrome browser you already use and are signed in to. Bring your own model or sign in with ChatGPT. Delegate tasks through CLI, Skill, or MCP.",
       "heroAction": "Add to Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "filmCaption": "Wikipedia · Page reading and JavaScript execution",
       "filmAction": "Watch demo",
@@ -17,16 +18,16 @@ export const translations = {
       "extendTitle": "Scripts, tools,<br>and custom UI.",
       "extendDescription": "This Wikipedia Skill finds city photos and displays the results in an image grid. Its instructions, scripts, and UI can be reused on another city’s page.",
       "ownershipTitle": "Local storage. Your model.",
-      "ownershipDescription": "Sessions, Skills, and collected data are stored in your browser. Connect a service with a compatible API and tool calling, including a local model server.",
+      "ownershipDescription": "Sessions, Skills, and collected data are stored in your browser. Use a compatible model service with tool calling, a local model server, or OpenAI Codex with ChatGPT sign-in.",
       "ownershipPrivacy": "Task context is sent to your configured model service. Skills and MCP connections may exchange data with services you configure.",
       "ownershipLink": "Permissions &amp; data flow<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "startTitle": "Install qz",
-      "startDescription": "Install from the Chrome Web Store, then connect your model API or local endpoint.",
+      "startDescription": "Install from the Chrome Web Store, then connect your model service or sign in with ChatGPT.",
       "startDownload": "Add to Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "startGuide": "Manual install · GitHub Release<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "promptLabel": "TRY A TASK",
       "promptCopy": "Copy prompt",
-      "prompt": "Open Wikipedia’s Hangzhou page. Make a table of its main sights, with a short description and a source link for each.",
+      "prompt": "Find this year’s Nobel Prize winners in every category and put them in a table with source links.",
       "footerDocs": "Documentation",
       "footerIssues": "Feedback",
       "footerPrivacy": "Privacy",
@@ -37,15 +38,15 @@ export const translations = {
       "videoFallback": "Your browser does not support this video. ",
       "videoDownload": "Download the video",
       "extension1Title": "Skills",
-      "extension1Description": "Install from a Git repository, edit in the panel, and activate on matching websites.",
-      "extension1Link": "Skill guide<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
+      "extension1Description": "Once a task works, just say “Save this as a Skill” to reuse it anytime. You can also install Skills from a Git repository.",
+      "extension1Link": "See the example<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step1Title": "Add to Chrome",
       "step1Description": "In the Chrome Web Store, click “Add to Chrome” and confirm the installation.",
       "extension2Title": "TypeScript capabilities",
       "extension2Description": "Add agent tools, panel views, settings pages, or providers as compiled TypeScript modules.",
       "extension2Link": "Capability API<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step2Title": "Connect your model",
-      "step2Description": "Open qz Settings. Choose a provider, enter your credentials, select a model, and save.",
+      "step2Description": "Open qz Settings. Choose a provider and enter its credentials, or choose OpenAI Codex and sign in with ChatGPT. Select a model and save.",
       "step3Title": "Give it a task",
       "step3Description": "Open the side panel and describe what you want to do. You can adjust the task while it runs.",
       "tableTitle": "Compare tools using their official documentation",
@@ -86,16 +87,16 @@ export const translations = {
     },
     "attributes": {
       "description": {
-        "content": "An open-source Chrome agent for web research, browser automation, data extraction, and reusable Skills. Bring your own model."
+        "content": "An open-source AI agent in your signed-in Chrome browser. Bring your own model or sign in with ChatGPT. Connect coding agents through CLI, Skill, or MCP."
       },
       "ogTitle": {
         "content": "qz — Open-source browser agent"
       },
       "ogDescription": {
-        "content": "An open-source Chrome agent for web research, browser automation, data extraction, and reusable Skills. Bring your own model."
+        "content": "An open-source AI agent in your signed-in Chrome browser. Bring your own model or sign in with ChatGPT. Connect coding agents through CLI, Skill, or MCP."
       },
       "ogImage": {
-        "content": "https://alibaba.github.io/qz-browser-agent/assets/workspace.png"
+        "content": "https://alibaba.github.io/qz-browser-agent/assets/og-card.png"
       },
       "home": {
         "aria-label": "qz — Home"
@@ -112,7 +113,7 @@ export const translations = {
         "aria-label": "Open full-size screenshot"
       },
       "skillGuide": {
-        "href": "https://github.com/alibaba/qz-browser-agent/blob/main/README.md#skills"
+        "href": "https://github.com/alibaba/qz-browser-agent/blob/main/README.md#get-it-right-once-save-it-as-a-skill-in-one-sentence"
       },
       "installGuide": {
         "href": "https://github.com/alibaba/qz-browser-agent/releases/latest"
@@ -184,9 +185,6 @@ export const translations = {
       "agentPanelLink": {
         "href": "./assets/screens/agent-en.png",
         "aria-label": "Enlarge the qz side panel"
-      },
-      "agentTarget": {
-        "aria-label": "Install Skill for"
       }
     }
   },
@@ -199,7 +197,7 @@ export const translations = {
       "navStart": "安装<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "heroBadge": "<span class=\"square\" aria-hidden=\"true\"></span>开源 · 本地优先",
       "heroTitle": "一个真正<br><span>会用浏览器的<br>智能体。</span>",
-      "heroIntro": "阅读网页、执行操作，把结果保存为表格、文件或图集。连接你自己的模型，通过 Skill 扩展功能。",
+      "heroIntro": "在你日常使用、已登录的 Chrome 里运行 AI Agent。自选模型或用 ChatGPT 账号登录，通过 CLI、Skill 或 MCP 委派任务。",
       "heroAction": "添加至 Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "filmCaption": "Wikipedia · 阅读页面与执行 JavaScript",
       "filmAction": "观看演示",
@@ -207,16 +205,16 @@ export const translations = {
       "extendTitle": "脚本、工具，<br>还有自定义界面。",
       "extendDescription": "这个 Wikipedia Skill 提取城市照片，并用图片网格展示结果。指令、脚本与界面保存在一起，换一个城市页面也能复用。",
       "ownershipTitle": "本地存储，自选模型。",
-      "ownershipDescription": "会话、Skill 和采集的数据保存在浏览器中。连接支持兼容 API 和工具调用的服务，也可以使用本地模型。",
+      "ownershipDescription": "会话、Skill 和采集的数据保存在浏览器中。选择支持工具调用的兼容模型服务、本地模型，或通过 OpenAI Codex 用 ChatGPT 账号登录。",
       "ownershipPrivacy": "任务上下文会发送至你配置的模型服务。Skill 和 MCP 连接也可能与你配置的服务交换数据。",
       "ownershipLink": "权限与数据流说明<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "startTitle": "安装轻舟",
-      "startDescription": "从 Chrome 应用商店安装，再连接模型 API 或本地模型接口。",
+      "startDescription": "从 Chrome 应用商店安装，再连接模型服务或用 ChatGPT 账号登录。",
       "startDownload": "添加至 Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "startGuide": "手动安装 · GitHub Release<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "promptLabel": "试一个任务",
       "promptCopy": "复制指令",
-      "prompt": "打开 Wikipedia 的杭州页面，把主要景点整理成一张表格，每个景点附上简短介绍和来源链接。",
+      "prompt": "查今年诺贝尔奖各奖项得主，整理成带来源链接的表格。",
       "footerDocs": "使用文档",
       "footerIssues": "问题反馈",
       "footerPrivacy": "隐私",
@@ -227,15 +225,15 @@ export const translations = {
       "videoFallback": "浏览器不支持播放此视频。 ",
       "videoDownload": "下载视频",
       "extension1Title": "Skill",
-      "extension1Description": "从 Git 仓库安装，在界面中编辑，并在匹配的网站上启用。",
-      "extension1Link": "Skill 指南<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
+      "extension1Description": "任务跑通后，一句话就能存成可复用的 Skill，也可以从 Git 仓库安装。",
+      "extension1Link": "查看用例<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step1Title": "添加至 Chrome",
       "step1Description": "在 Chrome 应用商店点击“添加至 Chrome”，确认安装。",
       "extension2Title": "TypeScript 能力包",
       "extension2Description": "通过编译进扩展的 TypeScript 模块，添加工具、面板视图、设置页或模型服务商。",
       "extension2Link": "能力包 API<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "step2Title": "连接模型",
-      "step2Description": "打开轻舟设置，选择服务商、填写凭证、选择模型并保存。",
+      "step2Description": "打开轻舟设置，选择服务商并填写凭证，或选择 OpenAI Codex 用 ChatGPT 账号登录。选择模型并保存。",
       "step3Title": "开始第一个任务",
       "step3Description": "打开侧边栏，描述你想做的事。执行过程中也可以继续调整任务。",
       "tableTitle": "查阅官方文档，生成工具对比表",
@@ -276,16 +274,16 @@ export const translations = {
     },
     "attributes": {
       "description": {
-        "content": "轻舟是开源 Chrome 智能体，支持网页研究、浏览器自动化、数据提取和可复用 Skill，连接你自己的模型。"
+        "content": "轻舟是在已登录的 Chrome 中运行的开源 AI Agent。自选模型或用 ChatGPT 账号登录，通过 CLI、Skill 或 MCP 接入编程 Agent。"
       },
       "ogTitle": {
         "content": "轻舟 qz — 开源浏览器智能体"
       },
       "ogDescription": {
-        "content": "轻舟是开源 Chrome 智能体，支持网页研究、浏览器自动化、数据提取和可复用 Skill，连接你自己的模型。"
+        "content": "轻舟是在已登录的 Chrome 中运行的开源 AI Agent。自选模型或用 ChatGPT 账号登录，通过 CLI、Skill 或 MCP 接入编程 Agent。"
       },
       "ogImage": {
-        "content": "https://alibaba.github.io/qz-browser-agent/assets/workspace-zh-CN.png"
+        "content": "https://alibaba.github.io/qz-browser-agent/assets/og-card.png"
       },
       "home": {
         "aria-label": "qz — 轻舟首页"
@@ -302,7 +300,7 @@ export const translations = {
         "aria-label": "查看原尺寸截图"
       },
       "skillGuide": {
-        "href": "https://github.com/alibaba/qz-browser-agent/blob/main/README.zh-CN.md#skill"
+        "href": "https://github.com/alibaba/qz-browser-agent/blob/main/README.zh-CN.md#跑通一次一句话存成-skill"
       },
       "installGuide": {
         "href": "https://github.com/alibaba/qz-browser-agent/releases/latest"
@@ -374,9 +372,6 @@ export const translations = {
       "agentPanelLink": {
         "href": "./assets/screens/agent-zh.png",
         "aria-label": "放大查看轻舟侧边栏"
-      },
-      "agentTarget": {
-        "aria-label": "Skill 安装目标"
       }
     }
   }

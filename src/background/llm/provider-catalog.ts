@@ -4,12 +4,11 @@ import contributions from "#capabilities/presets";
 import { resolveProviderPresets } from "./provider-presets.js";
 import { completeCustomProviderEndpoint, normalizeCustomProtocol } from "../../shared/models/custom-provider-endpoint.js";
 export { normalizeCustomProtocol } from "../../shared/models/custom-provider-endpoint.js";
-import { PRODUCT_PROVIDERS, PRODUCT_DEFAULT_PROVIDER } from "../product/providers.js";
+import { PRODUCT_PROVIDERS, getProductDefaultProvider } from "../product/providers.js";
 
 import type { ProviderDefinition } from './provider-types.js';
 export type { ProviderDefinition } from './provider-types.js';
 type ProviderInput = { provider?: unknown; customProtocol?: unknown; customEndpoint?: unknown; endpoint?: unknown };
-export const DEFAULT_PROVIDER = PRODUCT_DEFAULT_PROVIDER;
 const PROVIDER_BASE_HEADERS = { "x-app": "cli" };
 const CUSTOM_PROVIDER_ID = "custom";
 // Explicit policy patches preserve live labels and executable handler identity.
@@ -66,8 +65,10 @@ export function formatProviderModelName(provider: unknown, model: unknown) {
 }
 
 export function normalizeProvider(value: unknown) {
-  const provider = String(value || DEFAULT_PROVIDER).trim().toLowerCase();
-  return Object.prototype.hasOwnProperty.call(PROVIDERS, provider) ? provider : DEFAULT_PROVIDER;
+  const provider = String(value ?? "").trim().toLowerCase();
+  if (!provider) return getProductDefaultProvider();
+  // Unknown saved providers must retain their endpoint instead of sending credentials to a default service.
+  return Object.prototype.hasOwnProperty.call(PROVIDERS, provider) ? provider : CUSTOM_PROVIDER_ID;
 }
 
 export function getProviderDef(configOrProvider: ProviderInput | string = {}): ProviderDefinition {

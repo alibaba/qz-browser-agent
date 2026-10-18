@@ -157,7 +157,7 @@ model responses, writes a redacted report under `tests/results/multi-browser/pai
 and removes its Chrome processes, Profiles, registry, and network captures. It is a manual entry.
 
 For a shell-pairing check, obtain a URL with `connect --no-open --json` and open it in the selected
-test Profile using the [platform launch command](../services/mcp-bridge/README.md#pair-a-selected-browser-from-the-shell).
+test Profile using the [platform launch command](../docs/cli.md#pair-a-selected-browser-from-the-shell).
 Confirm that `browsers --json` lists that Profile online, and use its UUID for the next browser
 operation. URL creation alone does not establish a connection. `--name` should update only the
 Profile opening that URL; verify other Profiles keep their names and remain usable.

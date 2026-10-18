@@ -98,7 +98,7 @@ result. Templates contain defaults or placeholders; callers fill them from the u
 
 Native Chrome permission requests remain paused until the user grants access in the Side Panel.
 External approval checks the actual permission and returns `requiresUserAction` while it is absent.
-The [CLI guide](../services/mcp-bridge/README.md#respond-to-a-task) covers input and response commands.
+The [CLI guide](cli.md#respond-to-a-task) covers input and response commands.
 
 ## Message transport
 

@@ -27,11 +27,13 @@ path `/qz-browser-agent/`.
   `assets/screens/agent-en.png` and `agent-zh.png` show the same original English conversation in
   each interface language; see [screenshot sources](assets/screens/SOURCES.md) for capture details.
 - The CLI and Skill installation commands use the published `qz-browser-agent` npm package and
-  `skills/qz-browser-agent/SKILL.md`. The Skill selector updates the copyable command for `codex`,
-  `claude-code`, or `pi`. Keep these commands aligned with the [CLI guide](../services/mcp-bridge/README.md).
-  Without JavaScript, the English content and Codex installation command remain visible.
+  `skills/qz-browser-agent/SKILL.md`. Both languages use `npx skills add alibaba/qz-browser-agent -g`
+  to install the Skill. See the [CLI guide](../services/mcp-bridge/README.md) for CLI usage.
+  Without JavaScript, the English content and installation commands remain visible.
 - The English and Chinese workspace screenshots are unchanged copies of `docs/images/workspace.png`
   and `docs/images/workspace-zh-CN.png`. Update both copies when those source images change.
+- Open Graph and Twitter cards use the 1200×630 `assets/og-card.png` in both languages. Keep the
+  image tags in `index.html` and both `ogImage` values in `assets/translations.js` aligned.
 - `assets/demo-en.mp4` is the existing 45-second English demo. It loads only when the
   visitor opens the player. Chinese mode labels the video as English and uses the Chinese workspace
   screenshot. Language switches keep the existing video player and its playback position.
