@@ -57,8 +57,8 @@ export async function waitForTask({ sessionId, clientId, timeoutSeconds = null, 
     if (deadline !== null && Date.now() >= deadline) controller.abort(timeout);
     activeSignal.throwIfAborted();
   };
-  const pollingDelay = () => delay(deadline === null ? pollIntervalMs : Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
-    undefined, { signal: activeSignal });
+  // The total deadline cancels this sleep; shortening it can wake before that deadline.
+  const pollingDelay = () => delay(pollIntervalMs, undefined, { signal: activeSignal });
   const readSnapshot = async () => {
     checkActive();
     const milliseconds = Math.max(1, Math.ceil(requestTimeoutSeconds * 1000));

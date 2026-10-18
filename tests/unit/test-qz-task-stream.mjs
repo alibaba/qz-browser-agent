@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
+import { syncBuiltinESMExports } from "node:module";
 import { test } from "node:test";
+import timers from "node:timers/promises";
 import { waitForTask } from "../../services/mcp-bridge/src/task-stream.mjs";
 
 const assistant = (content, extra = {}) => ({ type: "assistant", runId: "run-1", spanId: "answer-1", content, streaming: true, ...extra });
@@ -423,6 +426,48 @@ test("deadline during a polling sleep remains a TimeoutError and sends no extra 
   }), error => error.name === "TimeoutError");
   assert.equal(calls, 1);
 });
+
+for (const [name, pollIntervalMs, cancel] of [
+  ["total deadline before polling interval", 1000, false],
+  ["caller cancellation before polling interval", 1000, true],
+  ["equal total and polling deadlines", 30, false],
+]) {
+  test(`polling sleep preserves ${name}`, async t => {
+    const clock = controlledClock(t);
+    const controller = new AbortController();
+    const reason = new DOMException("Stopped watching", "AbortError");
+    const sleeps = [];
+    const sleep = t.mock.method(timers, "setTimeout", (milliseconds, value, { signal }) => new Promise((resolve, reject) => {
+      const aborted = () => reject(signal.reason);
+      signal.addEventListener("abort", aborted, { once: true });
+      sleeps.push({ milliseconds, wake() { signal.removeEventListener("abort", aborted); resolve(value); } });
+    }));
+    syncBuiltinESMExports();
+    t.after(() => { sleep.mock.restore(); syncBuiltinESMExports(); });
+    let calls = 0, read;
+    const outcome = waitForTask({ sessionId: "session-1", timeoutSeconds: 0.03, pollIntervalMs,
+      signal: controller.signal, getSnapshot(request) { calls++; read = request; return snapshot("running"); },
+    }).catch(error => error);
+    await timers.setImmediate();
+    assert.equal(calls, 1);
+    assert.equal(sleeps.length, 1);
+    // Model a timer waking 1ms before the integer Date.now deadline. Only a
+    // shortened sleep is due here; a full polling interval is still pending.
+    clock.advance(29);
+    if (pollIntervalMs > 30 && sleeps[0].milliseconds <= 30) sleeps[0].wake();
+    await timers.setImmediate();
+    const callsBeforeCancellation = calls;
+    if (cancel) controller.abort(reason);
+    else clock.fireNext(); // Equal deadlines use the total timer, registered before the sleep.
+    const error = await outcome;
+    assert.equal(callsBeforeCancellation, 1, "a truncated sleep must not trigger another read");
+    assert.equal(calls, 1);
+    assert.equal(error, cancel ? reason : read.signal.reason);
+    assert.equal(error.name, cancel ? "AbortError" : "TimeoutError");
+    assert.equal(clock.timers.size, 0, "the total timer is cleared");
+    assert.equal(getEventListeners(read.signal, "abort").length, 0, "sleep and read abort listeners are removed");
+  });
+}
 
 test("snapshot failures propagate once and never repeat task mutations", async () => {
   let calls = 0;

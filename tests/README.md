@@ -41,9 +41,12 @@ It uses isolated npm configuration, cache, and qz state, and cleans up its own s
 Use `node tests/release/npm-package.mjs --help` to retain or test a specific tarball.
 The **npm package** workflow runs these checks with Node.js 22 and 24 on Linux, macOS, and Windows,
 plus Node.js 22.0.0 on Linux to cover the minimum supported runtime.
+
 The service suite checks repeated SIGINT/SIGTERM handling and listener cleanup on every platform.
-On Linux and macOS it also signals real CLI, `npm run`, and `npm exec` processes during stdin
-input and streaming, verifying cleanup without stopping the browser task or shared service.
+On Linux and macOS it exercises the real CLI and npm's default shell during stdin input and
+streaming, signaling the process group or the CLI PID and verifying that tasks and the service
+remain running. Supervisors should signal their owned npm process group; delivery to the npm PID
+alone depends on the shell forwarding it to the CLI.
 
 The runner selects one to three concurrent jobs based on available CPUs. Timing-sensitive suites run
 after other work. Each lane runs ready commands while dependent commands wait; build-only release

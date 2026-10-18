@@ -138,8 +138,8 @@ test("real process signals stop CLI observation without stopping its service or 
   const launches = [
     { name: "bin", args: [bin], cwd: root, deliveries: ["group"] },
     { name: "source", args: [source], cwd: root, deliveries: ["group"] },
-    { name: "npm run", args: [npm, "run", "qz", "--"], cwd: root, deliveries: ["group", "parent"] },
-    { name: "npm exec", args: [npm, "exec", "--offline", "--", "qz"], cwd: work, deliveries: ["group", "parent"] },
+    { name: "npm run", args: [npm, "run", "qz", "--"], cwd: root, deliveries: ["group", "cli"] },
+    { name: "npm exec", args: [npm, "exec", "--offline", "--", "qz"], cwd: work, deliveries: ["group", "cli"] },
   ];
   for (const launch of launches) for (const signal of ["SIGINT", "SIGTERM"]) {
     for (const delivery of launch.deliveries) for (const phase of ["stdin", "stream"]) {
@@ -159,7 +159,11 @@ test("real process signals stop CLI observation without stopping its service or 
           [request] = snapshots;
           assert.equal(request.params.sessionId, taskId);
         }
-        process.kill(delivery === "group" ? -command.child.pid : command.child.pid, signal);
+        const cliPid = Number(command.stderr.match(/QZ_CLI_PID:(\d+)/)?.[1]);
+        assert.ok(cliPid);
+        // npm signals its shell, which may keep qz as a separate child. A single-PID
+        // signal must target qz itself; terminal Ctrl-C targets the entire group.
+        process.kill(delivery === "group" ? -command.child.pid : cliPid, signal);
         const exited = await waitForExit(command);
         // npm may re-emit the signal after its child exits. Its child's JSON must survive either way.
         assert.ok(exited.code === (signal === "SIGINT" ? 130 : 143) || exited.signal === signal, JSON.stringify(exited));
@@ -175,8 +179,6 @@ test("real process signals stop CLI observation without stopping its service or 
         const health = await readHealth(running.endpoint);
         assert.equal(health.instanceId, running.instanceId, "the existing daemon remains running");
         assert.equal(health.processId, running.processId);
-        const cliPid = Number(command.stderr.match(/QZ_CLI_PID:(\d+)/)?.[1]);
-        assert.ok(cliPid);
         assert.equal(await alive(cliPid), false, "the npm wrapper must not leave a CLI child behind");
       });
     }

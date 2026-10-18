@@ -251,6 +251,8 @@ Each CLI command initializes one MCP connection on its first tool call and reuse
 reads and responses. Completion and errors close that connection. SIGINT (Ctrl-C) and SIGTERM
 close it and exit with codes 130 and 143, including through npm. The browser task and shared
 service keep running. Transport failures are reported without automatically repeating browser actions.
+On POSIX, a process supervisor should signal the whole npm process group or the CLI PID directly.
+A signal sent only to npm may stop at its intermediate shell.
 
 `show` returns `task_not_found` with exit code 1 when the selected browser has no matching task.
 `watch` retains the `task_deleted` error code and directs you to `qz tasks --client CLIENT_UUID`.
