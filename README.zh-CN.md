@@ -34,7 +34,7 @@ https://github.com/user-attachments/assets/3203bc89-ef26-4f66-86cc-b602a912a1ab
 
 ### 透明可见，人与 Agent 协同
 
-多数 browser agent 往往完全接管浏览器，执行过程如同黑盒。轻舟常驻在浏览器侧边栏，每一步操作和结果都清晰可见，你可以随时介入或停止。同时，Claude Code、Codex 等 coding agent 也能通过 CLI 和 MCP 直接向轻舟下发任务。
+其他 browser agent 大多能看到执行过程，但中途很难介入，而且要么只给人用，要么只给 Agent 用。轻舟常驻在浏览器侧边栏，每一步操作和结果都清晰可见，你可以随时介入或停止。同时，Claude Code、Codex 等 coding agent 也能通过 CLI 和 MCP 直接向轻舟下发任务。
 
 ### 并行多任务调研，从网页数据到可复用 Skill
 

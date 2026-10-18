@@ -30,19 +30,19 @@ https://github.com/user-attachments/assets/26ee85fd-540f-4427-af59-c196fadfa221
 
 ### Reliable browser execution for AI agents
 
-Most AI agents struggle with real-world web navigation, failing at authentication or dynamic DOM interactions. qz acts as a reliable execution layer—running tasks in your local Chrome environment and returning structured outputs to your primary agent.
+General-purpose AI agents often break on real-world browsing: login walls, long click sequences, and pages that load as you scroll. qz runs these flows in your real local Chrome and hands clean results back to your agent.
 
-### Transparent, side-by-side execution
+### Visible to you, callable by your agent
 
-Typical browser agents take over the browser entirely, leaving you with a black box. qz lives in the Chrome side panel, so every step and result stays visible, and you can step in or stop it at any time. Coding agents like Claude Code and Codex can also dispatch tasks to qz directly via CLI and MCP.
+Other browser agents usually let you watch them work, but stepping in mid-task is hard, and each is built for either people or agents, not both. qz lives in the side panel, so you see every step and result, and you can step in or stop it at any time. Coding agents such as Claude Code and Codex can also send tasks to qz through the CLI or MCP.
 
-### Parallel multi-source research, from web data to reusable Skills
+### Parallel research, from web data to reusable Skills
 
-Ditch the 20-tab shuffle and manual data wrangling. qz runs many tasks at once, and each task can spawn subtasks, so large research jobs that stall a single-threaded browser agent get split up and worked in parallel. qz pulls the exact metrics you need across fragmented, inconsistently formatted websites, keeping every source link intact. It turns disparate web content straight into standardized comparison views or local files—ready for your analysis pipeline. Once a workflow is dialed in, save it as a Skill and trigger it next time with a single prompt.
+qz runs many tasks at once, and each task can spawn subtasks, so a large research job is split up and worked in parallel instead of stalling a single agent. It pulls the figures you want to compare from scattered, inconsistent websites and turns them into comparison tables or local files. Once a task works, say "Save this as a Skill" and reuse it next time with one sentence.
 
-### Native environment, local-first privacy
+### Your everyday browser, your data stays local
 
-Forget clunky cloud sandboxes. qz leverages your existing Chrome profile—cookies, logins, and extensions work out of the box. Your data is stored locally, and you have full control over which LLM powers the workflow.
+No virtual environment to set up. qz uses the Chrome you already use, so your logins, cookies, and extensions just work. Task data is stored locally, and you choose the model behind it.
 
 ## What you can ask
 
