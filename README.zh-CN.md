@@ -236,7 +236,6 @@ npm run verify    # 类型检查，并运行全部自动化测试与覆盖率统
 
 - [架构](docs/architecture.md)
 - [命令与构建选项](docs/commands.md)
-- [基准测试](docs/benchmarks.md)
 - [贡献指南](CONTRIBUTING.md)
 
 ## 许可证
