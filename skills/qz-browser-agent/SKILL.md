@@ -125,23 +125,24 @@ npx --yes qz-browser-agent@latest create "Compare SQLite, DuckDB, and PostgreSQL
 ```
 
 Save the returned `result.session.id` as `TASK_ID` immediately.
-Then inspect or wait on that same task:
+Then wait on that same task:
 
 ```sh
-npx --yes qz-browser-agent@latest show TASK_ID --client CLIENT_UUID --json
 npx --yes qz-browser-agent@latest watch TASK_ID --timeout 30 --client CLIENT_UUID --json
 ```
 
 Set the calling shell's timeout longer than the CLI deadline, for example 45 seconds
-for this 30-second watch. Repeat bounded watches while work is running. Use `show`
-after a timeout or whenever user input is pending.
+for this 30-second watch. Repeat bounded watches while work is running. After a timeout,
+run the returned recovery command with the same `TASK_ID` and browser UUID; when using
+bounded shell calls, keep `--timeout 30`. Use `show` when you need to inspect the task or read
+a pending question again.
 
 JSON stdout is one envelope: `{ "ok": true, "result": ... }` or
 `{ "ok": false, "error": { "code": ..., "message": ... } }`.
 
 | Command (`--json`) | Task ID | Task status |
 | --- | --- | --- |
-| `create` | `result.session.id` | Query with `show` after creation |
+| `create` | `result.session.id` | Observe with `watch` after creation |
 | `create --wait` | `result.session.id` | `result.snapshot.status` |
 | `show` | `result.sessionId` | `result.status` |
 | `watch` | `result.sessionId` | `result.snapshot.status` |
@@ -161,8 +162,10 @@ watching it again. These errors mean the task is absent from the selected browse
 results: save JSON to a temporary file and extract status, input, assistant text,
 and artifact metadata before displaying it. Read tool details from that file as needed.
 
-`completed` is terminal. Report `error`, `failed`, `aborted`, `cancelled`, or
-`interrupted` and inspect the reason instead of waiting again. `waiting_user`
+`watch`, `--wait`, and `--stream` follow the same task across successive runs, including
+accepted follow-ups and steering messages. Successful completion requires `completed`
+with empty queues. Report `error`, `failed`, `aborted`, `cancelled`, or `interrupted`
+and inspect the reason instead of waiting again. `waiting_user`
 means the task needs input. Use `show` and check `result.input.waiting` and its current request.
 `ok: true` on `show` means the read succeeded, not that the task finished.
 Review the deliverable against the requested outcome, then return the findings,
@@ -170,9 +173,10 @@ source links, and any file/table identifiers. Request missing evidence or correc
 through a follow-up in the same task.
 
 Timeout or Ctrl-C ends observation; the browser task continues. Keep its ID and
-resume with `show`/`watch`. If creation lost its response, use `tasks --client CLIENT_UUID --json` to
-locate the task before creating another. After an uncertain `send` or `submit`,
-inspect the conversation before repeating that action.
+resume with the returned `watch` command in the same browser. Observation never resends
+messages. If creation lost its response, use `tasks --client CLIENT_UUID --json` to locate
+the task before creating another. After an uncertain `send` or `submit`, inspect the
+conversation before repeating that action.
 
 ## Questions and permission requests
 
@@ -226,8 +230,13 @@ npx --yes qz-browser-agent@latest cancel TASK_ID --client CLIENT_UUID --json
 
 `send` continues the existing task; a busy task queues a follow-up. `--steer`
 updates an active run at its next safe boundary. A nonwaiting send returns a
-`result.clientMessageId`. To wait specifically for the sent message, add `--wait --timeout 30`;
-if that wait expires, inspect the existing conversation using `TASK_ID`.
+`result.clientMessageId` confirming acceptance. Add `--wait --timeout 30` to follow the
+task until its work completes and its queues are empty. Removing an unconsumed follow-up
+or steering message removes that work from the wait; observation can complete once the
+remaining execution ends and the queues are empty.
+`--stream` also shows responses from the submitted message onward, including later runs.
+If that wait expires, execute the returned `watch` command using the same `TASK_ID` and
+browser UUID; keep `--timeout 30` when using a bounded shell call.
 `cancel` stops the task. Use it when the user asks to stop, not as timeout recovery.
 `stop` disconnects the shared local service
 and all its clients; ordinary task completion needs no service shutdown.

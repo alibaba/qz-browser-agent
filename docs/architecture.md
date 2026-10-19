@@ -29,7 +29,11 @@ The local CLI declares command syntax, help, and direct MCP routes in
 [`commands.mjs`](../services/mcp-bridge/src/commands.mjs). A command lazily opens one MCP client and
 closes it when the command finishes. CLI and MCP task observation both use
 [`waitForTask`](../services/mcp-bridge/src/task-stream.mjs); it projects status, text, and actionable
-input from Background snapshots. Task execution and persistence remain in the extension.
+input from Background snapshots. Observation follows one Session across runs. Successful completion
+requires a completed snapshot with empty follow-up and steering queues; accepted message identity
+sets the stream's starting point. Failure, stopping, timeout, and cancellation end observation.
+Observation only reads snapshots and never resubmits work. Task execution and persistence remain
+in the extension.
 
 | Context | Entry and responsibility |
 | --- | --- |
@@ -74,6 +78,22 @@ approval or consent read proceeds. Collection checks the run before and after as
    transcript projections. Side Panel renders those projections.
 6. `agent_end` triggers resource cleanup and terminal persistence. Notifications and observers run
    independently of that commit.
+
+The supervisor's task admission covers initial browser-context collection and prompt preparation;
+automatic follow-ups wait for that admission to release. The Agent's `_activeRun` slot covers each
+run's configuration initialization, execution, and terminal persistence. These handles can overlap
+as one logical run reservation. A queued handoff publishes `session_pending` before removing its
+next message from the queue. Initialization failure or cancellation releases the reservation.
+
+Successful execution with queued work stays pending. Deletion keeps a queued message visible until
+cleanup succeeds; removing the last message permits completion once execution has ended. Queued
+messages retain their existing automatic continuation after a run fails or is stopped. Startup
+failure before handoff releases the reservation without repeatedly retrying the unconsumed message.
+
+Observers follow the Session across runs and return successfully when a snapshot shows completion,
+empty queues, and no pending execution. Messages accepted after that snapshot belong to later work.
+Removing a queued message also allows its waiting sender to finish without streaming an earlier
+answer. Failure, stop, timeout, and cancellation end observation without resubmitting messages.
 
 The [model gateway](../src/background/llm/index.ts) normalizes provider messages, tool calls, usage,
 streaming, errors, and request admission. The Agent owns conversation history, semantic recovery,

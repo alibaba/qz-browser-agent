@@ -201,9 +201,12 @@ CLI and MCP use the same task observer and browser operations. The task and reso
 | `settings get` / `set` | `qingzhou_get_settings`, `qingzhou_update_settings` |
 | `automations list` / `run` | `qingzhou_list_automations`, `qingzhou_run_automation` |
 
-MCP creation, message submission, and input responses accept `wait: true` to wait for completion;
+MCP creation, message submission, and input responses accept `wait: true` to observe the task until
+its current work and accepted follow-ups and steering messages have finished. Observation follows
+successive runs of the same task and succeeds when the task is completed and its queues are empty.
+Messages accepted after that completion snapshot belong to later work.
 `stream: true` also sends assistant text through standard MCP progress notifications. A watch call
-always waits. For example, call `qingzhou_create_session` with:
+uses the same completion condition and always waits. For example, call `qingzhou_create_session` with:
 
 ```json
 {"firstMessage":"Summarize the current page.","stream":true}
@@ -218,10 +221,12 @@ keeps waiting. Native Chrome permissions still require the user's click in the s
 
 MCP `timeoutSeconds` bounds each browser request (180 seconds by default).
 `waitTimeoutSeconds` bounds the whole observation; omit it for no overall deadline. Configure your
-MCP client's own request deadline for long tasks. On timeout or cancellation, the browser task
-continues; error details include the task ID and a recovery tool call. `send_message` supports
-`steer: true` and follows its returned `clientMessageId`, including when steering stays in the same
-run. A long observation stays bound to the browser selected when it started.
+MCP client's own request deadline for long tasks. Task failure or stopping ends observation. On
+timeout or cancellation, the browser task continues; execute the returned `qingzhou_watch_task`
+recovery call with the same task and browser IDs to continue observing. Observation never resends
+a message. `send_message` supports `steer: true`; its returned `clientMessageId` confirms acceptance
+and sets the starting point for streamed responses, including within the same run. A long
+observation stays bound to the browser selected when it started.
 
 When a watched task is absent from the selected browser, `task_deleted` returns a
 `qingzhou_list_sessions` recovery call for that same `clientId`. Check the task ID and browser
@@ -241,12 +246,15 @@ qz show TASK_ID
 qz cancel TASK_ID
 ```
 
-`create` starts a task and returns its ID. The title is optional. `--wait` waits for the result;
-`--stream` also displays progress as it arrives. Both stay connected while the task waits for user
-input and continue automatically after you respond. Task observation has no default time limit.
+`create` starts a task and returns its ID. The title is optional. `--wait` follows the task through
+its current work and accepted follow-ups and steering messages, including successive runs.
+`--stream` also displays progress as it arrives. Both succeed when the task is completed and its
+queues are empty. Both stay connected while the task waits for user input and continue automatically
+after you respond. Task failure or stopping ends observation. Task observation has no default time limit.
 Add `--timeout SECONDS` to set a total deadline, including time spent waiting for input. Each
 individual connection request remains bounded (180 seconds by default). A timeout or Ctrl-C ends
-watching; `qz watch TASK_ID --stream` resumes observation and `qz cancel TASK_ID` stops the task.
+watching. Run the returned `qz watch TASK_ID --stream --client CLIENT_UUID` recovery command to
+resume observation of the same task in the same browser; `qz cancel TASK_ID` stops the task.
 
 `show` returns `task_not_found` with exit code 1 when the selected browser has no matching task.
 `watch` retains the `task_deleted` error code and directs you to `qz tasks --client CLIENT_UUID`.
@@ -260,10 +268,13 @@ from stdin. A busy task queues a follow-up for its next run. Add `--steer` to de
 to the current run at its next safe boundary. Both start a new run when the task is idle. Pending
 questions and permissions still require a response.
 
-`--wait` and `--stream` track the submitted message. Streaming starts after that message, including
-when steering continues the same run. Pending questions from the preceding run remain visible so
-you can answer them and let a queued follow-up proceed. A connection failure never resends a message
-automatically.
+The send response confirms acceptance and includes `clientMessageId`. `--wait` and `--stream`
+follow the same task until its work is completed and its queues are empty. Removing an unconsumed
+follow-up or steering message removes that work from the wait; observation can complete once the
+remaining execution ends and the queues are empty. Streaming starts after the submitted message,
+including when steering continues the same run, and follows later runs without repeating text.
+Pending questions from the preceding run remain visible so you can answer them and let a queued
+follow-up proceed. A connection failure never resends a message automatically.
 
 ## Respond to a task
 
@@ -295,11 +306,12 @@ terminal output shows the notice before submitting the explicit approval; JSON o
 single final result. MCP callers should show the notice to the user before sending approval with
 the returned `consentVersion`.
 
-`submit`, `approve`, and `reject` accept `--wait` and `--stream` to follow the task until it finishes, including
-further questions and permission requests. Each new request is shown once. Respond in the side
+`submit`, `approve`, and `reject` accept `--wait` and `--stream` with the same completion condition:
+the task has completed and its follow-up and steering queues are empty. They follow successive
+runs, questions, and permission requests. Each new request is shown once. Respond in the side
 panel or another terminal; the original command continues automatically. `watch` follows an
-existing task without resubmitting anything. Timeouts and Ctrl-C stop watching, while the task
-continues in the browser.
+existing task with this same condition without resubmitting anything. Timeouts and Ctrl-C stop
+watching, while the task continues in the browser.
 
 ## Browser selection and MCP tools
 

@@ -176,19 +176,11 @@ function assertUiRuntimeContracts() {
   assert.match(transcriptTrackRunBody, /if\s*\(!change\.accepted\)\s*return\s+false/, "the unified transcript entrypoint should honor reducer causality rejection");
   assert.match(agent, /FOLLOW_UP_RUN_HANDOFF_DELAY_MS\s*=\s*160/, "follow-up continuation should leave a small visual handoff after agent_end");
   const agentRunLoopSource = agent.match(/async\s+_runLoop\([\s\S]*?(?=\n\s+async\s+_canManageSessions\()/)?.[0] || "";
-  assert.doesNotMatch(
-    agentRunLoopSource,
-    /followUpQueue\.drain\(/,
-    "follow-up queue items should not be consumed inside the current run loop",
-  );
-  assert.match(agent, /this\._emit\(\{\s*type:\s*"agent_end"[\s\S]*this\.followUpQueue\.hasItems\(\)[\s\S]*this\._scheduleNextFollowUpRun\(\)/, "follow-ups should be scheduled only after the current run ends");
-  assert.match(agent, /async\s+_runNextFollowUpRun\(\)[\s\S]*const\s+pendingMessages\s*=\s*this\.followUpQueue\.drain\(\)[\s\S]*this\._runWithLifecycle\(pendingMessages\)/, "each follow-up should enter a new run lifecycle");
+  assert.match(agentRunLoopSource, /awaitingFollowUp\s*\?\s*this\.followUpQueue\.drain\(\)\s*:\s*\[\][\s\S]*awaitingFollowUp\s*=\s*false/, "a follow-up is consumed only at its new run's initial handoff");
+  assert.match(agent, /this\._emit\(\{\s*type:\s*"agent_end"[\s\S]*this\._scheduleNextFollowUpRun\(scheduleEpoch\)/, "follow-ups should be scheduled only after the current run ends");
   assert.match(agent, /steeringQueue\s*=\s*new MessageQueue\s*\("all"\)/, "steering should drain all pending guidance at one safe boundary");
-  const runNextSteeringSource = agent.match(/async\s+_runNextSteeringRun\(\)[\s\S]*?\n\s+}\n\n\s+async\s+removeFollowUp/)?.[0] || "";
-  assert.match(runNextSteeringSource, /await\s+this\._runWithLifecycle\(\[\],\s*\{\s*requireSteeringHandoff:\s*true\s*}\)/, "idle steering should enter the run before it leaves the visible queue");
-  assert.doesNotMatch(runNextSteeringSource, /steeringQueue\.drain\(\)/, "run startup must not dequeue steering before the loop is ready");
   assert.match(agentRunLoopSource, /while\s*\(hasMoreToolCalls \|\| pendingMessages\.length > 0 \|\| this\.steeringQueue\.hasItems\(\)\)/, "the active loop should inspect steering only at turn boundaries");
-  assert.match(agentRunLoopSource, /awaitingInitialSteering[\s\S]*acceptedUserMessages\.length\s*>\s*0[\s\S]*break outer/, "an idle steering run should stop if its visible input is removed during preparation");
+  assert.match(agentRunLoopSource, /awaitingInitialHandoff[\s\S]*acceptedUserMessages\.length\s*>\s*0[\s\S]*break outer/, "an idle queued run should stop if its visible input is removed during preparation");
   const contextPrepareIndex = agentRunLoopSource.indexOf("_refreshDynamicContextSnapshot");
   const steeringDrainIndex = agentRunLoopSource.indexOf("this.steeringQueue.drain()");
   const acceptedPersistIndex = agentRunLoopSource.indexOf("await this._persistConversation()", steeringDrainIndex);
@@ -373,8 +365,8 @@ function assertUiRuntimeContracts() {
   assert.match(sidepanelTransport, /delete_follow_up:\s*\{\s*method:\s*"sessions.deleteFollowUp"/, "sidepanel transport should route queued follow-up deletion");
   assert.match(sidepanelTransport, /reorder_follow_ups:\s*\{\s*method:\s*"sessions.reorderFollowUps"/, "sidepanel transport should route queued follow-up reordering");
   assert.match(runtimeReducer, /pendingFollowUpMessages:\s*cloneArray\(event\.pendingFollowUpMessages\)/, "runtime reducer should persist queued follow-up messages");
-  assert.match(agent, /_emitQueueUpdate\(\)[\s\S]*pendingFollowUps:[\s\S]*pendingFollowUpMessages:/, "agent should expose both UI summaries and restorable queued messages");
-  assert.match(agent, /followUp\(text\s*,[\s\S]*this\._emitQueueUpdate\(\);[\s\S]*this\._scheduleNextFollowUpRun\(\)/, "idle follow-ups should schedule background consumption");
+  assert.match(agent, /_emitQueueUpdate\([^)]*\)[\s\S]*pendingFollowUps:[\s\S]*pendingFollowUpMessages:/, "agent should expose both UI summaries and restorable queued messages");
+  assert.match(agent, /followUp\(text\s*,[\s\S]*this\._emitQueueUpdate\([^)]*\);[\s\S]*this\._scheduleNextFollowUpRun\(scheduleEpoch\)/, "idle follow-ups should schedule background consumption under their admission epoch");
   assert.match(agent, /restorePendingFollowUps\(messages[\s\S]*this\._emitQueueUpdate\(\);[\s\S]*this\._scheduleNextFollowUpRun\(\)/, "restored follow-ups should resume background consumption");
 
   const cancelBody = extractFunction(sidepanel, "cancelUserMessageEdit");

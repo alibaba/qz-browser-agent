@@ -122,11 +122,13 @@ def run():
             raise RuntimeError("Session exchange E2E requires Chrome or CHROME_EXECUTABLE")
         context = playwright.chromium.launch_persistent_context(
             user_data_dir,
-            headless=os.environ.get("SESSION_EXCHANGE_HEADLESS") == "1",
+            headless=os.environ.get("SESSION_EXCHANGE_HEADLESS", "1") != "0",
+            locale="zh-CN",
             executable_path=executable,
             ignore_default_args=["--disable-extensions"],
             viewport={"width": 980, "height": 860},
             args=[
+                "--lang=zh-CN",
                 f"--disable-extensions-except={extension_dir}",
                 f"--load-extension={extension_dir}",
                 "--disable-extensions-file-access-check",

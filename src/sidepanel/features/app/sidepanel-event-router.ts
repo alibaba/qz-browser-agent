@@ -58,6 +58,7 @@ const SESSION_SCOPED_EVENT_TYPES = new Set([
   "context_compaction_end",
   "context_compaction_failed",
   "turn_start",
+  "session_pending",
   "agent_start",
   "agent_end",
   "aborted",
@@ -218,6 +219,7 @@ export function createSidepanelEventRouter(options: RouterOptions) {
         });
         runController.showStatus(t("thinking"));
         break;
+      case "session_pending":
       case "agent_start":
         if (!runController.isRestoring() && !runController.areEventsSuppressed() && !runController.isBlocked(event.runId)) {
           runController.start(event.runId, {

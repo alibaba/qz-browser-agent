@@ -30,12 +30,13 @@ export type AgentRetryDetails = {
 /** Live core events. Historical/wire projections remain tolerant in session.ts;
  * new producers must provide the fields required by their specific event. */
 export type AgentEvent = EventMeta & (
+  | { type: 'session_pending'; runId: string }
   | { type: 'agent_start' | 'agent_end'; runId: string }
   | { type: 'aborted' }
   | { type: 'error'; message: string; code?: string; kind?: string; status?: number; requestId?: string }
   | { type: 'turn_start' | 'turn_end'; turnIndex: number }
   | { type: 'queue_update'; pendingFollowUps: QueuedMessage[]; pendingFollowUpMessages: ModelMessage[];
-      pendingSteerings: QueuedMessage[]; pendingSteeringMessages: ModelMessage[] }
+      pendingSteerings: QueuedMessage[]; pendingSteeringMessages: ModelMessage[]; isRunning?: boolean; resume?: boolean }
   | { type: 'message_start' | 'message_end'; message: ModelMessage;
       contentIndex?: number; outputIndex?: number | null; itemId?: string }
   | { type: 'message_update'; content: unknown; delta: unknown }

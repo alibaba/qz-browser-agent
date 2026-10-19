@@ -515,7 +515,7 @@ function reduceRuntime(previous: ClientRuntime, event: SessionViewEvent, now: st
     goal,
     tracker,
     ...contextUsage,
-    startedAt: source.startedAt || previous.startedAt || (event.type === "agent_start" ? now : ""),
+    startedAt: source.startedAt || previous.startedAt || (isRunStartEvent(event) ? now : ""),
     endedAt: source.endedAt || (running ? "" : previous.endedAt),
     updatedAt: source.updatedAt || (event.type === "state" ? previous.updatedAt : now),
   }, previous);
@@ -572,7 +572,7 @@ function reduceRuntime(previous: ClientRuntime, event: SessionViewEvent, now: st
     });
     next.currentToolName = next.currentTool?.name || "";
     next.currentToolStartedAt = next.currentTool?.startedAt || "";
-  } else if (event.type === "agent_start" || event.type === "tool_execution_end" || terminal || !next.running) {
+  } else if (isRunStartEvent(event) || event.type === "tool_execution_end" || terminal || !next.running) {
     next.currentTool = null;
     next.currentToolName = "";
     next.currentToolStartedAt = "";
@@ -590,11 +590,15 @@ function reduceRuntime(previous: ClientRuntime, event: SessionViewEvent, now: st
   return next;
 }
 
+function isRunStartEvent(event: SessionViewEvent) {
+  return event.type === "session_pending" || event.type === "agent_start";
+}
+
 function acceptCausalEvent(entry: Entry, event: SessionViewEvent): { accepted: true } | { accepted: false; reason: string } {
   // Reject stale delivery before changing any projection; this is not Background write authority.
   const runId = normalizeOptionalString(event.runId || event.runtime?.runId);
   const currentRunId = normalizeOptionalString(entry.runtime.runId || entry.causality.currentRunId);
-  if (runId && currentRunId && runId !== currentRunId && event.type !== "agent_start") {
+  if (runId && currentRunId && runId !== currentRunId && !isRunStartEvent(event)) {
     if (!(event.type === "state" && !entry.runtime.running) && !NON_CAUSAL_EVENT_TYPES.has(event.type)) {
       return { accepted: false, reason: "stale_run" };
     }
@@ -611,7 +615,7 @@ function acceptCausalEvent(entry: Entry, event: SessionViewEvent): { accepted: t
 
 function commitCausality(entry: Entry, event: SessionViewEvent) {
   const runId = normalizeOptionalString(event.runId || event.runtime?.runId);
-  if (event.type === "agent_start" && runId) {
+  if (isRunStartEvent(event) && runId) {
     entry.causality.currentRunId = runId;
   } else if (runId && !entry.causality.currentRunId) {
     entry.causality.currentRunId = runId;
@@ -673,6 +677,7 @@ function runtimeEventMayChangeState(event: SessionViewEvent) {
   return [
     "state",
     "turn_start",
+    "session_pending",
     "agent_start",
     "agent_end",
     "aborted",
@@ -693,6 +698,7 @@ function runtimeEventMayChangeState(event: SessionViewEvent) {
 }
 
 function derivedStatus(type: string) {
+  if (type === "session_pending") return "pending";
   if (type === "turn_start") return "running";
   if (type === "agent_start") return "running";
   if (type === "waiting_for_user") return "waiting_user";
@@ -862,7 +868,7 @@ export function isSessionRuntimeActive(runtime: Partial<ClientRuntime> | null | 
 function deriveRuntimeTracker(event: SessionViewEvent, source: Fields, previous: ClientRuntime, running: boolean) {
   if (event.type === "tracker_update") return normalizeSessionTracker(event.tracker);
   if (Object.prototype.hasOwnProperty.call(source, "tracker")) return normalizeSessionTracker(source.tracker);
-  if (["agent_start", "agent_end", "aborted", "error", "reset"].includes(event.type)) return null;
+  if (isRunStartEvent(event) || ["agent_end", "aborted", "error", "reset"].includes(event.type)) return null;
   return running ? normalizeSessionTracker(previous.tracker) : null;
 }
 

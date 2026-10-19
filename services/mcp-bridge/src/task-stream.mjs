@@ -1,8 +1,9 @@
 import { setTimeout as delay } from "node:timers/promises";
 
-const STOP_STATUSES = new Set(["completed", "error", "failed", "aborted", "cancelled", "interrupted"]);
+const FAILURE_STATUSES = new Set(["error", "failed", "aborted", "cancelled", "interrupted"]);
 const ACTIVE_STATUSES = new Set(["pending", "running", "waiting_user", "paused"]);
 const INPUT_STATUSES = new Set(["waiting_user", "paused"]);
+const QUEUE_FIELDS = ["pendingFollowUps", "pendingFollowUpMessages", "pendingSteerings", "pendingSteeringMessages"];
 const record = value => value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
 export const TASK_NOT_FOUND_MESSAGE = "The task was not found in the selected browser. It may have been deleted, the task ID may be incorrect, or a different browser may be selected.";
@@ -11,6 +12,11 @@ function taskStatus(snapshot) {
   const status = String(snapshot.status || snapshot.runtime?.status || snapshot.state?.status || "").trim();
   if (status === "waitingUser") return "waiting_user";
   return status.toLowerCase() === "canceled" ? "cancelled" : status.toLowerCase();
+}
+
+function hasPendingWork(runtime) {
+  return runtime.running === true || runtime.pendingStart === true
+    || QUEUE_FIELDS.some(key => Array.isArray(runtime[key]) && runtime[key].length > 0);
 }
 
 function assistantText(content) {
@@ -37,12 +43,13 @@ function abortable(operation, signal) {
 }
 
 /** Observe snapshots only: timeout, interruption, and polling failures never cancel or restart a browser task.
+ * Follow one Session across runs until execution and its accepted queues are finished.
  * User input pauses execution, not observation; input events expose each pending request.
  * Total observation is unlimited by default; each snapshot request has its own finite deadline.
  * getSnapshot must request compact:false and tail:false so transcript identities and streaming text survive.
  */
 export async function waitForTask({ sessionId, clientId, timeoutSeconds = null, requestTimeoutSeconds = 180, signal, getSnapshot, onUpdate,
-  pollIntervalMs = 750, expectedRunId = "", expectedMessageId = "", previousRunId = "", ignoreWaitId = "", allowIdle = false } = {}) {
+  pollIntervalMs = 750, expectedRunId = "", expectedMessageId = "", messageWasQueued = false, ignoreWaitId = "", allowIdle = false } = {}) {
   if (!String(sessionId || "").trim()) throw new TypeError("sessionId is required");
   if (typeof getSnapshot !== "function") throw new TypeError("getSnapshot is required");
   if (timeoutSeconds !== null && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) throw new TypeError("timeoutSeconds must be positive or null");
@@ -86,12 +93,11 @@ export async function waitForTask({ sessionId, clientId, timeoutSeconds = null, 
     }
   };
   const messages = new Map();
-  let selectedRunId = String(expectedRunId || "");
-  let observedRun = false;
+  let firstRunId = String(expectedRunId || "");
+  let trackingReady = false;
   let observedActivity = false;
   let awaitingMessage = Boolean(expectedMessageId);
-  let messageRunId = "";
-  let awaitingResume = Boolean(ignoreWaitId);
+  let observedQueuedMessage = messageWasQueued;
   let lastStatus = "";
   let lastInput = "";
   const emit = async update => {
@@ -137,67 +143,63 @@ export async function waitForTask({ sessionId, clientId, timeoutSeconds = null, 
       const transcript = Array.isArray(snapshot.transcript) ? snapshot.transcript : Array.isArray(snapshot.tail) ? snapshot.tail : [];
       const submittedMessageIndex = expectedMessageId
         ? transcript.findIndex(entry => entry?.type === "user" && entry.clientMessageId === expectedMessageId) : -1;
-      if (awaitingMessage) {
-        const message = transcript[submittedMessageIndex];
-        if (message?.runId) {
-          messageRunId = String(message.runId);
-          selectedRunId = messageRunId;
-          awaitingMessage = false;
-        } else {
-          // A queued message may wait behind an earlier run's question or permission.
-          // Keep that input actionable, but never mistake its answer for this message's result.
-          if (status !== "completed") await emitStatus(status, runId, runtime);
-          await emitInput(status, runId, runtime, canonicalInput);
-          if (STOP_STATUSES.has(status) && status !== "completed") return snapshot;
-          await pollingDelay();
-          continue;
-        }
+      if (awaitingMessage && QUEUE_FIELDS.some(key => Array.isArray(runtime[key])
+        && runtime[key].some(message => message?.clientMessageId === expectedMessageId))) observedQueuedMessage = true;
+      const submittedMessage = transcript[submittedMessageIndex];
+      if (awaitingMessage && submittedMessage?.runId) {
+        firstRunId = String(submittedMessage.runId);
+        awaitingMessage = false;
       }
-      const previous = previousRunId && (!runId || runId === previousRunId);
-      const awaitedRunId = messageRunId || expectedRunId;
-      const awaitingExpected = awaitedRunId && runId !== awaitedRunId;
       const targetIndex = submittedMessageIndex >= 0 ? submittedMessageIndex
-        : awaitedRunId ? transcript.findIndex(entry => entry?.runId === awaitedRunId) : -1;
-      // A fast queued run can finish before the first poll. A later accepted user message
-      // distinguishes that replacement from an older runtime snapshot still catching up.
-      const passedTarget = awaitingExpected && runId && targetIndex >= 0
+        : firstRunId ? transcript.findIndex(entry => entry?.runId === firstRunId) : -1;
+      // The runtime can lag the transcript or skip whole runs between polls. Admit the
+      // target run or a proven successor once, then follow the Session without a run fence.
+      const passedTarget = runId && targetIndex >= 0
         && transcript.slice(targetIndex + 1).some(entry => entry?.type === "user" && entry.runId === runId);
-      if ((observedRun && runId && selectedRunId !== runId) || passedTarget) {
-        throw Object.assign(new Error("A different run replaced the task being watched. Use qz show to inspect its conversation."), {
-          code: "task_changed", details: { expectedRunId: selectedRunId || awaitedRunId, actualRunId: runId },
-        });
+      // Resolving a wait and persisting its updated snapshot are separate operations.
+      // Ignore that exact old wait even while its runtime lags the acknowledged run.
+      const oldWait = !trackingReady && ignoreWaitId && status === "waiting_user" && String(canonicalInput?.waitId || runtime.waitId || "") === ignoreWaitId;
+      if (oldWait) {
+        await pollingDelay();
+        continue;
       }
-      if (!previous && !awaitingExpected) {
-        if (runId) { selectedRunId = runId; observedRun = true; }
-        // Resolving a wait and persisting its updated snapshot are separate operations.
-        // Ignore that exact old wait until the resumed run or its next wait is visible.
-        const oldWait = awaitingResume && status === "waiting_user" && String(canonicalInput?.waitId || runtime.waitId || "") === ignoreWaitId;
-        if (oldWait) {
-          await pollingDelay();
-          continue;
-        }
-        awaitingResume = false;
-        if (ACTIVE_STATUSES.has(status)) observedActivity = true;
-        await emitStatus(status, runId, runtime);
-        for (const [index, entry] of transcript.entries()) {
-          // Steering can continue the same run. Only stream responses after this submitted message.
-          if (expectedMessageId && (submittedMessageIndex < 0 || index <= submittedMessageIndex)) continue;
-          if (entry?.type !== "assistant" || (entry.runId && selectedRunId && entry.runId !== selectedRunId)) continue;
-          const messageId = messageIdentity(entry, index, selectedRunId);
-          const fullText = assistantText(entry.content);
-          const seen = messages.has(messageId);
-          const previousText = messages.get(messageId) || "";
-          if (fullText === previousText) continue;
-          messages.set(messageId, fullText);
-          const append = fullText.startsWith(previousText);
-          await emit({ type: append ? "text" : "replace", sessionId, runId: String(entry.runId || runId), messageId,
-            text: append ? fullText.slice(previousText.length) : fullText, fullText,
-            newMessage: !seen, streaming: entry.streaming === true });
-        }
+      if (!trackingReady && (awaitingMessage || (firstRunId && runId !== firstRunId && !passedTarget))) {
+        // Queue acceptance precedes these reads; pending precedes dequeue. A settled
+        // task with no trace of an accepted queued message means it was removed.
+        const removedMessage = awaitingMessage && observedQueuedMessage && submittedMessageIndex < 0
+          && status === "completed" && !hasPendingWork(runtime);
+        // A queued message can wait behind another run's question. Keep it actionable,
+        // but do not emit its earlier answer or accept its successful completion.
+        if (status !== "completed" || removedMessage) await emitStatus(status, runId, runtime);
         await emitInput(status, runId, runtime, canonicalInput);
-        // A newly created session can report idle before its first run starts.
-        if (STOP_STATUSES.has(status) || (status === "idle" && (observedActivity || allowIdle))) return snapshot;
+        if (FAILURE_STATUSES.has(status) || removedMessage) return snapshot;
+        await pollingDelay();
+        continue;
       }
+      trackingReady = true;
+      if (!firstRunId && runId) firstRunId = runId;
+      if (ACTIVE_STATUSES.has(status)) observedActivity = true;
+      await emitStatus(status, runId, runtime);
+      for (const [index, entry] of transcript.entries()) {
+        // Steering can continue the same run. Only stream responses after this submitted message.
+        if (expectedMessageId && (submittedMessageIndex < 0 || index <= submittedMessageIndex)) continue;
+        if (entry?.type !== "assistant") continue;
+        if (!expectedMessageId && (targetIndex >= 0 ? index < targetIndex : entry.runId && entry.runId !== runId)) continue;
+        const messageId = messageIdentity(entry, index, firstRunId);
+        const fullText = assistantText(entry.content);
+        const seen = messages.has(messageId);
+        const previousText = messages.get(messageId) || "";
+        if (fullText === previousText) continue;
+        messages.set(messageId, fullText);
+        const append = fullText.startsWith(previousText);
+        await emit({ type: append ? "text" : "replace", sessionId, runId: String(entry.runId || runId), messageId,
+          text: append ? fullText.slice(previousText.length) : fullText, fullText,
+          newMessage: !seen, streaming: entry.streaming === true });
+      }
+      await emitInput(status, runId, runtime, canonicalInput);
+      // A newly created session can report idle before its first run starts.
+      if (FAILURE_STATUSES.has(status) || (!hasPendingWork(runtime)
+        && (status === "completed" || (status === "idle" && (observedActivity || allowIdle))))) return snapshot;
       await pollingDelay();
     }
   } catch (error) {

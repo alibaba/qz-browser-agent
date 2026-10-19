@@ -98,6 +98,12 @@ export function createSessionAgentHost({
       tools: getToolRuntime(),
       browserContext,
       ensureSkillToolRegistryReady,
+      // Initial task admission owns context collection before Agent.prompt acquires its run.
+      // Queue timers must not overtake that existing supervisor reservation.
+      canStartQueuedRun: async () => {
+        await getSupervisor().waitForTaskRelease(id);
+        return true;
+      },
       sessionPolicy: {
         canManageSessions: sessionId => getCommands().canManageSessionTools(sessionId),
       },

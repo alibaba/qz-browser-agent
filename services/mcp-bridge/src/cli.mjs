@@ -213,14 +213,14 @@ async function dispatchCommand(parsed, dependencies) {
       throw error;
     }
   };
-  const observe = async (sessionId, { runId = "", expectedMessageId = "", previousRunId = "", ignoreWaitId = "", allowIdle = false } = {}) => {
+  const observe = async (sessionId, { runId = "", expectedMessageId = "", messageWasQueued = false, ignoreWaitId = "", allowIdle = false } = {}) => {
     try {
       const remaining = waitTimeoutSeconds == null ? null : waitTimeoutSeconds - (Date.now() - startedAt) / 1000;
       if (remaining !== null && remaining <= 0) throw new DOMException("Stopped watching after the configured --timeout. The browser task may still be running.", "TimeoutError");
       return await waitForTask({
         sessionId, clientId: common.clientId, timeoutSeconds: remaining, signal: dependencies.signal,
         requestTimeoutSeconds: timeoutSeconds,
-        expectedRunId: runId, expectedMessageId, previousRunId, ignoreWaitId, allowIdle,
+        expectedRunId: runId, expectedMessageId, messageWasQueued, ignoreWaitId, allowIdle,
         onUpdate: dependencies.onTaskUpdate,
         getSnapshot: ({ timeoutSeconds: seconds, signal }) => readSnapshot(sessionId, seconds, signal),
       });
@@ -245,7 +245,9 @@ async function dispatchCommand(parsed, dependencies) {
           sessionId: id, hint: "Continue watching the same task:", command: recoveryCommand("watch", id, clientId, true),
         });
       }
-      result = { ...result, snapshot: await observe(id, { expectedMessageId: result.clientMessageId }) };
+      result = { ...result, snapshot: await observe(id, {
+        expectedMessageId: result.clientMessageId, messageWasQueued: result.disposition === "queued",
+      }) };
     }
     return { result };
   }

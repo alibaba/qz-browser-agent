@@ -94,7 +94,7 @@ CLI and MCP share the same browser connection. The MCP tool list is in the
 | `qz send TASK_ID "MESSAGE"` | Send a follow-up, or `--steer` the current run |
 | `qz tasks` | List tasks |
 | `qz show TASK_ID` | Read a task's status, response, or pending question |
-| `qz watch TASK_ID` | Follow a running task until it finishes |
+| `qz watch TASK_ID` | Follow a task until its work and queued messages finish |
 | `qz submit` / `approve` / `reject` | Answer a question or permission request |
 | `qz cancel TASK_ID` | Stop a task |
 | `qz data` | List, export, or delete data tables |
@@ -106,6 +106,12 @@ CLI and MCP share the same browser connection. The MCP tool list is in the
 
 With several browser profiles connected, choose one with `--client NAME|UUID` (or `-c`).
 Run `qz COMMAND --help` for options. Interactive terminals show readable text; pipes receive JSON.
+
+`watch`, `--wait`, and `--stream` follow the same task across runs until its current work and
+accepted follow-ups and steering messages have completed and its queues are empty. Questions
+and permission requests keep observation open. Task failure or stopping ends observation.
+Timeout or Ctrl-C ends observation while the browser task continues; execute the returned
+`watch` command with the same task ID and browser UUID to resume. Observation never resends messages.
 
 ## Privacy and local access
 

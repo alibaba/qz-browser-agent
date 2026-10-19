@@ -47,7 +47,7 @@ def run():
                 headless=True,
                 channel=os.environ.get("QINGZHOU_PLAYWRIGHT_CHANNEL", "chromium"),
             )
-            page = browser.new_page()
+            page = browser.new_page(locale="zh-CN")
             page_errors = []
             page.on("pageerror", lambda error: page_errors.append(str(error)))
             page.add_init_script(

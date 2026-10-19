@@ -78,7 +78,7 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
       if (remaining !== null && remaining <= 0) throw new DOMException("Stopped watching after waitTimeoutSeconds. The browser task may still be running.", "TimeoutError");
       return await waitForTask({ sessionId, clientId: args.clientId, signal, timeoutSeconds: remaining,
         requestTimeoutSeconds: args.timeoutSeconds || state.requestTimeoutSeconds || 180,
-        expectedRunId: tracking.runId, expectedMessageId: tracking.clientMessageId,
+        expectedRunId: tracking.runId, expectedMessageId: tracking.clientMessageId, messageWasQueued: tracking.disposition === "queued",
         ignoreWaitId: tracking.ignoreWaitId, allowIdle: tracking.allowIdle,
         onUpdate: onTaskUpdate && (event => args.stream || !["text", "replace"].includes(event.type) ? onTaskUpdate(event) : undefined),
         getSnapshot: async ({ signal: requestSignal, timeoutSeconds }) => bindInputClient("qingzhou_get_session_snapshot",
@@ -140,9 +140,11 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
       result = { ...result, snapshot: await watch(sessionId, { allowIdle: !args.firstMessage.trim() }) };
     } else if (name === "qingzhou_send_message" && result?.accepted === true) {
       if (typeof result.clientMessageId !== "string" || !result.clientMessageId.trim()) {
-        throw new BridgeError("invalid_response", "The message was accepted without a tracking ID. Inspect the task before sending it again.");
+        throw Object.assign(new BridgeError("invalid_response", "The message was accepted without a tracking ID. Continue watching the same task before sending it again."), {
+          details: { sessionId, clientId, recovery: { tool: "qingzhou_watch_task", arguments: { sessionId, clientId } } },
+        });
       }
-      result = { ...result, snapshot: await watch(sessionId, { clientMessageId: result.clientMessageId }) };
+      result = { ...result, snapshot: await watch(sessionId, { clientMessageId: result.clientMessageId, disposition: result.disposition }) };
     } else if (name === "qingzhou_respond_to_user_input" && (result?.accepted === true || result?.requiresUserAction)) {
       const snapshot = await watch(sessionId, { runId: result.runId || "", ignoreWaitId: result.requiresUserAction ? "" : args.waitId });
       result = result.requiresUserAction ? { sessionId, waitId: args.waitId, snapshot } : { ...result, snapshot };

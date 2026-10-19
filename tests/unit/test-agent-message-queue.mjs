@@ -78,7 +78,6 @@ test('failed admission rolls back only its message and remains retryable', async
   await assert.rejects(left.followUp('first attempt', [], 'retry', [], async () => { throw new Error('persist failed'); }), /persist failed/);
   assert.equal(left.hasPendingUserInput(), false);
   assert.equal(left._pendingQueueWrites.size, 0);
-  assert.equal(left._followUpQueueMutationDepth, 0);
   await left.followUp('second attempt', [], 'retry', [], async () => {});
   assert.equal(left.getPendingFollowUps()[0].text, 'second attempt');
   assert.equal(right.getPendingFollowUps()[0].text, 'same id, another session');
@@ -97,7 +96,7 @@ test('failed attachment cleanup restores queue order alongside concurrent append
   await assert.rejects(removing, /attachment cleanup failed/);
   assert.deepEqual(agent.getPendingFollowUps().map(item => item.clientMessageId), ['first', 'second', 'third']);
   assert.equal(agent.findPendingUserMessage('second'), original);
-  assert.equal(agent._followUpQueueMutationDepth, 0);
+  assert.equal(agent._pendingQueueWrites.size, 0);
   assert.equal(agent.steerFollowUp('second').message.clientMessageId, 'second');
   assert.deepEqual(agent.getPendingFollowUps().map(item => item.clientMessageId), ['first', 'third']);
   assert.deepEqual(agent.getPendingSteerings().map(item => item.clientMessageId), ['second']);

@@ -1,5 +1,5 @@
 import { testPortClient, testPortDisconnect, testPortPostFailure, testPortQueuedTimeout, testPortStaleResponse, testPortStopBoundary } from "./port-cases.mjs";
-import { testSessionState, testSessionCausality, testSessionReducerGates, testRuntimeProjection, testEventRouterCausality, testSessionNavigationSingleReveal, testStableSessionOrdering } from "./session-cases.mjs";
+import { testSessionState, testSessionCausality, testPendingRunLifecycle, testSessionReducerGates, testRuntimeProjection, testEventRouterCausality, testSessionNavigationSingleReveal, testStableSessionOrdering } from "./session-cases.mjs";
 import { testDataGridLifecycle, testDataSortProfiles, testDataFilterModel, testDelimitedImport, testJsonImportAndHelpers } from "./data-cases.mjs";
 import { testSkillDraft, testSkillSaveIsolation, testModelRequestIsolation, testModelCacheContracts } from "./settings-cases.mjs";
 import { testToolPresentationState, testToolPresentationFallbacks, testToolMetadataRegistry, testStaticDomContract, testSessionExportFeature } from "./rendering-cases.mjs";
@@ -13,6 +13,7 @@ const tests = [
   ["PortClient stop rejects queued and in-flight work exactly once", testPortStopBoundary],
   ["SessionState owns runtime, transcript, record and artifact revisions", testSessionState],
   ["SessionState rejects stale runs and duplicate event sequences", testSessionCausality],
+  ["SessionState tracks initialization failure, cancellation and recovery across runs", testPendingRunLifecycle],
   ["SessionState reducer gates isolate runtime, transcript, record and artifacts", testSessionReducerGates],
   ["SessionState projects live runtime details without parallel state", testRuntimeProjection],
   ["Event router applies accepted events once and isolates background UI", testEventRouterCausality],

@@ -53,8 +53,9 @@ process.once("SIGTERM", interrupt);
 let daemonChild;
 
 // Exclude npm tokens, inherited npm configuration, NODE_OPTIONS and application settings.
+// Keep transport settings so the public registry remains reachable behind a proxy.
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-  /^(PATH|HOME|USERPROFILE|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|TMP|TEMP|TMPDIR|LANG|LC_ALL)$/i.test(key)));
+  /^(PATH|HOME|USERPROFILE|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|TMP|TEMP|TMPDIR|LANG|LC_ALL|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY|NODE_EXTRA_CA_CERTS|SSL_CERT_FILE|SSL_CERT_DIR)$/i.test(key)));
 env.PATH = [dirname(process.execPath), env.PATH || env.Path || ""].join(delimiter);
 delete env.Path;
 Object.assign(env, {

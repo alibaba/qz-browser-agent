@@ -595,21 +595,23 @@ function createSessionAgentTaskSpec({
   let session: SessionMetadata | null = null;
   const executor = async ({ agent, task }: { agent: Agent; task: SessionTask }) => {
     let terminal: { status?: string; reason?: unknown } | null | void = null;
+    const scheduleEpoch = agent.queueScheduleEpoch;
     try {
       if (task.cancelled) return;
       terminal = await operation({ agent, task, sessionId: id, session });
     } catch (err) {
-      if (swallowErrors && !task.cancelled && sessionSupervisor.getTask(id) === task) {
-        agentHost.handleEvent(id, {
-          type: "error",
-          message: errorMessage(err),
-        });
+      if (agent.queueScheduleEpoch === scheduleEpoch) {
+        terminal = { status: "error", reason: errorMessage(err) };
+      }
+      if (terminal && !task.cancelled && sessionSupervisor.getTask(id) === task) {
+        if (swallowErrors) agentHost.handleEvent(id, { type: "error", message: errorMessage(err) });
       }
       if (!swallowErrors) throw err;
     } finally {
       if (sessionSupervisor.getTask(id) === task) {
         const runtime = sessionSupervisor.getRuntime(id);
-        if (runtime?.status === "pending") {
+        if (runtime?.status === "pending"
+          && (terminal?.status === "error" || (!agent.isRunning && !agent.hasPendingUserInput()))) {
           const failed = terminal?.status === "error";
           const settledRuntime = runtimeState.set(id, {
             status: task.cancelled ? "cancelled" : failed ? "error" : "completed",
@@ -758,6 +760,7 @@ async function submitSessionMessageRuntime(params: PromptInput = {}, signal?: Ab
     });
   }
   if (admission.disposition === "queued" || admission.duplicate) {
+    if (admission.disposition === "queued") await runtimeState.persist(prompt.sessionId);
     await notifyMessageAccepted(prompt.onMessageAccepted, admission.message, admission);
   }
   return {
@@ -911,6 +914,7 @@ async function followUpSessionRuntime(params: PromptInput = {}, signal?: AbortSi
       () => runtimeState.persist(sessionId),
     );
   });
+  await runtimeState.persist(sessionId);
   return { accepted: true, sessionId };
 }
 

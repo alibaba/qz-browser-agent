@@ -102,6 +102,7 @@ export interface AgentOptions {
   browserContext?: {readSelectedText?(tabId?: number): Promise<string>; getTab?(tabId: number): Promise<TabReference | null>} | null;
   sessionPolicy?: {canManageSessions(sessionId: string): Promise<boolean>} | null;
   ensureSkillToolRegistryReady?: ((reason: string) => Promise<unknown>) | null;
+  canStartQueuedRun?: (() => boolean | Promise<boolean>) | null;
 }
 type ContextEstimate = ReturnType<Agent['_estimateSendWindowContext']>;
 type CompactionPlan = ReturnType<typeof buildCompactionPlan> & {trigger: string};
@@ -276,7 +277,6 @@ export class Agent {
   isStreaming = false;
   _abortCtrl: AbortController | null = null;
   _activeRun: Promise<void> | null = null;
-  _resolveRun: (() => void) | null = null;
   _runSeq = 0;
   _currentRunId: string | null = null;
   _timelineSeq = 0;
@@ -303,7 +303,7 @@ export class Agent {
   _loadedSkillToolNames = new Set<string>();
   _pendingContextEvents: AgentMessage[] = [];
   _followUpRunTimer: ReturnType<typeof setTimeout> | null = null;
-  _followUpQueueMutationDepth = 0;
+  _queueScheduleEpoch = 0;
   _pendingQueueWrites = new Set<Promise<unknown>>();
   readonly sessionId: string;
   private _services: Partial<AgentServices> | null;
@@ -314,6 +314,7 @@ export class Agent {
   private _browserContext: NonNullable<AgentOptions['browserContext']>;
   private _sessionPolicy: NonNullable<AgentOptions['sessionPolicy']>;
   private _ensureSkillToolRegistryReady: (reason: string) => Promise<unknown>;
+  private _canStartQueuedRun: () => boolean | Promise<boolean>;
 
 
   constructor(sessionId = "default", {
@@ -325,6 +326,7 @@ export class Agent {
     browserContext = null,
     sessionPolicy = null,
     ensureSkillToolRegistryReady = null,
+    canStartQueuedRun = null,
   }: AgentOptions = {}) {
     this.sessionId = sessionId;
     this._services = services;
@@ -340,6 +342,7 @@ export class Agent {
     this._ensureSkillToolRegistryReady = typeof ensureSkillToolRegistryReady === "function"
       ? ensureSkillToolRegistryReady
       : DEFAULT_AGENT_SKILL_TOOL_REGISTRY_READY;
+    this._canStartQueuedRun = canStartQueuedRun || (() => true);
     this.messages = [{ role: "system", content: getAgentPrompts(this._runLanguage).SYSTEM_PROMPT }];
   }
 
@@ -408,9 +411,11 @@ export class Agent {
       .map(msg => this._stripRuntimeMessageFlags(msg));
   }
 
-  _emitQueueUpdate() {
+  _emitQueueUpdate({ resume = false } = {}) {
     this._emit({
       type: "queue_update",
+      isRunning: this.isRunning,
+      ...(resume ? { resume: true } : {}),
       pendingFollowUps: this.getPendingFollowUps(),
       pendingFollowUpMessages: this.getPendingFollowUpMessages(),
       pendingSteerings: this.getPendingSteerings(),
@@ -441,6 +446,15 @@ export class Agent {
 
   abort() {
     this._abortCtrl?.abort();
+  }
+
+  /** Includes initialization and terminal persistence, unlike model streaming. */
+  get isRunning() {
+    return this._activeRun !== null;
+  }
+
+  get queueScheduleEpoch() {
+    return this._queueScheduleEpoch;
   }
 
   async waitForIdle() {
@@ -612,6 +626,7 @@ export class Agent {
 
   getRunState() {
     return {
+      isRunning: this.isRunning,
       isStreaming: this.isStreaming,
       isCompacting: Boolean(this._compactionPromise),
       compaction: this._compactionState || null,
@@ -688,42 +703,38 @@ export class Agent {
 
   /** Process pending work after the agent has fully stopped. */
   followUp(text: string, images: unknown[] = [], clientMessageId = "", documents: unknown[] = [], beforeRun: (() => unknown) | null = null, deliveryMode = "follow_up") {
+    const scheduleEpoch = this._queueScheduleEpoch;
     const userMsg = this._markRuntimeContextRefresh(this._markUserMessage(
       this._buildUserMessage(text, images, clientMessageId, documents),
     ));
     const queue = deliveryMode === "steer" ? this.steeringQueue : this.followUpQueue;
     queue.enqueue(userMsg);
-    this._emitQueueUpdate();
-    if (typeof beforeRun !== "function") return this._scheduleNextFollowUpRun();
-    this._followUpQueueMutationDepth += 1;
+    this._emitQueueUpdate({ resume: typeof beforeRun !== "function" });
+    if (typeof beforeRun !== "function") return this._scheduleNextFollowUpRun(scheduleEpoch);
     this._clearScheduledFollowUpRun();
-    const write = Promise.resolve().then(beforeRun).catch(error => {
+    const write = Promise.resolve().then(beforeRun).then(() => {
+      this._emitQueueUpdate({ resume: scheduleEpoch === this._queueScheduleEpoch });
+    }).catch(error => {
       queue.removeByClientMessageId(clientMessageId, userMsg);
       this._emitQueueUpdate();
       throw error;
     }).finally(() => {
-      this._followUpQueueMutationDepth = Math.max(0, this._followUpQueueMutationDepth - 1);
-      this._scheduleNextFollowUpRun();
       this._pendingQueueWrites.delete(write);
+      this._scheduleNextFollowUpRun(scheduleEpoch);
     });
-    this._pendingQueueWrites ||= new Set();
     this._pendingQueueWrites.add(write);
     return write;
   }
 
   steerFollowUp(clientMessageId = "") {
-    this._followUpQueueMutationDepth += 1;
+    const scheduleEpoch = this._queueScheduleEpoch;
+    const removed = this.followUpQueue.removeByClientMessageId(clientMessageId);
+    if (!removed) return null;
     this._clearScheduledFollowUpRun();
-    try {
-      const removed = this.followUpQueue.removeByClientMessageId(clientMessageId);
-      if (!removed) return null;
-      this.steeringQueue.enqueue(removed.message);
-      this._emitQueueUpdate();
-      return { message: this._stripRuntimeMessageFlags(removed.message) };
-    } finally {
-      this._followUpQueueMutationDepth = Math.max(0, this._followUpQueueMutationDepth - 1);
-      this._scheduleNextFollowUpRun();
-    }
+    this.steeringQueue.enqueue(removed.message);
+    this._emitQueueUpdate();
+    this._scheduleNextFollowUpRun(scheduleEpoch);
+    return { message: this._stripRuntimeMessageFlags(removed.message) };
   }
 
   _clearScheduledFollowUpRun() {
@@ -732,50 +743,45 @@ export class Agent {
     this._followUpRunTimer = null;
   }
 
-  _scheduleNextFollowUpRun() {
+  _scheduleNextFollowUpRun(scheduleEpoch = this._queueScheduleEpoch) {
     if (
       !this._hasActiveLease()
+      || scheduleEpoch !== this._queueScheduleEpoch
       || this._followUpRunTimer
-      || this._activeRun
       || this._compactionPromise
-      || this._followUpQueueMutationDepth > 0
       || (!this.steeringQueue.hasItems() && !this.followUpQueue.hasItems())
     ) return;
+    if (this._pendingQueueWrites.size) {
+      void Promise.allSettled([...this._pendingQueueWrites]).then(() => this._scheduleNextFollowUpRun(scheduleEpoch));
+      return;
+    }
+    // Wait through terminal persistence; the epoch rejects callbacks from a failed handoff.
+    if (this._activeRun) {
+      void this._activeRun.then(() => this._scheduleNextFollowUpRun(scheduleEpoch));
+      return;
+    }
     this._followUpRunTimer = setTimeout(() => {
       this._followUpRunTimer = null;
-      this._runNextFollowUpRun().catch((err) => {
+      this._runNextFollowUpRun(scheduleEpoch).catch((err) => {
         this._trace(`follow-up run failed: session=${this.sessionId}, ${record(err).message || err}`);
-        this._emit({ type: "error", message: String(record(err).message || err) });
       });
     }, FOLLOW_UP_RUN_HANDOFF_DELAY_MS);
   }
 
-  async _runNextFollowUpRun() {
+  async _runNextFollowUpRun(scheduleEpoch = this._queueScheduleEpoch) {
+    if (!await this._canStartQueuedRun()) return false;
     if (
       !this._hasActiveLease()
+      || scheduleEpoch !== this._queueScheduleEpoch
       || this._activeRun
       || this._compactionPromise
-      || this._followUpQueueMutationDepth > 0
+      || this._pendingQueueWrites.size
       || (!this.steeringQueue.hasItems() && !this.followUpQueue.hasItems())
     ) return false;
-    if (this.steeringQueue.hasItems()) return this._runNextSteeringRun();
-    const pendingMessages = this.followUpQueue.drain();
-    if (!pendingMessages.length) return false;
-    this._emitQueueUpdate();
-    await this._runWithLifecycle(pendingMessages);
-    return true;
-  }
-
-  async _runNextSteeringRun() {
-    if (
-      !this._hasActiveLease()
-      || this._activeRun
-      || this._compactionPromise
-      || this._followUpQueueMutationDepth > 0
-      || !this.steeringQueue.hasItems()
-    ) return false;
-    // Keep steering visible until the new run initializes and accepts it at a turn boundary.
-    await this._runWithLifecycle([], { requireSteeringHandoff: true });
+    // Both queues remain visible until initialization completes; steering takes priority.
+    await this._runWithLifecycle([], this.steeringQueue.hasItems()
+      ? { requireSteeringHandoff: true }
+      : { requireFollowUpHandoff: true });
     return true;
   }
 
@@ -788,26 +794,25 @@ export class Agent {
   }
 
   async _removeQueuedMessage(queue: MessageQueue<AgentMessage>, clientMessageId: string, beforeCommit: MessageHook) {
-    const removed = queue.removeByClientMessageId(clientMessageId);
-    if (!removed) return null;
+    const scheduleEpoch = this._queueScheduleEpoch;
+    const queued = queue.peekAll().find(message => message.clientMessageId === clientMessageId);
+    if (!queued) return null;
 
-    this._followUpQueueMutationDepth += 1;
     this._clearScheduledFollowUpRun();
-    const message = this._stripRuntimeMessageFlags(removed.message);
-    try {
-      const cleanup = typeof beforeCommit === "function"
-        ? await beforeCommit(message)
-        : null;
+    const message = this._stripRuntimeMessageFlags(queued);
+    // Keep accepted work visible until cleanup succeeds; a failed deletion never exposes
+    // a transient empty queue. Existing queue-write admission also pauses steering handoff.
+    const write = Promise.resolve().then(async () => {
+      const cleanup = typeof beforeCommit === "function" ? await beforeCommit(message) : null;
+      queue.removeByClientMessageId(clientMessageId, queued);
       this._emitQueueUpdate();
       return { message, cleanup };
-    } catch (error) {
-      queue.insertAt(removed.index, removed.message);
-      this._emitQueueUpdate();
-      throw error;
-    } finally {
-      this._followUpQueueMutationDepth = Math.max(0, this._followUpQueueMutationDepth - 1);
-      this._scheduleNextFollowUpRun();
-    }
+    }).finally(() => {
+      this._pendingQueueWrites.delete(write);
+      this._scheduleNextFollowUpRun(scheduleEpoch);
+    });
+    this._pendingQueueWrites.add(write);
+    return write;
   }
 
   reorderFollowUps(clientMessageIds: string[] = []) {
@@ -1012,13 +1017,34 @@ export class Agent {
     return clean;
   }
 
-  async _runWithLifecycle(initialPendingMessages: AgentMessage[] = [], { requireSteeringHandoff = false, clientMessageId = "" } = {}) {
+  async _runWithLifecycle(initialPendingMessages: AgentMessage[] = [], {
+    requireSteeringHandoff = false, requireFollowUpHandoff = false, clientMessageId = "",
+  } = {}) {
     if (this._activeRun) throw new Error("Already running");
+    this._assertActiveLease();
     this._clearScheduledFollowUpRun();
 
-    this._abortCtrl = new AbortController();
-    const { signal } = this._abortCtrl;
+    // Claim synchronously, before initialization can yield or a queue can lose its last item.
+    // This one promise owns startup, execution and terminal commit; cleanup compares its identity.
+    let resolve: () => void = () => {};
+    const activeRun = new Promise<void>((r) => { resolve = r; });
+    this._activeRun = activeRun;
+    const scheduleEpoch = this._queueScheduleEpoch;
+    const controller = new AbortController();
+    this._abortCtrl = controller;
+    const { signal } = controller;
+    const runId = createRunId(this.sessionId, ++this._runSeq);
+    this._timelineSeq = 0;
+    let started = false;
+    let succeeded = false;
+    let handoffConsumed = !requireSteeringHandoff && !requireFollowUpHandoff;
+    const invalidateHandoff = () => {
+      if (this._queueScheduleEpoch !== scheduleEpoch) return;
+      this._queueScheduleEpoch += 1;
+      this._clearScheduledFollowUpRun();
+    };
     try {
+      this._emit({ type: "session_pending", runId });
       this._assertRunCanStart(signal);
       await whenLanguageReady();
       this._runLanguage = getLanguage();
@@ -1030,35 +1056,30 @@ export class Agent {
       this._toolRegistrySnapshot = this._toolRuntime.snapshot?.(this._runLanguage) || null;
       this._runProfile = await this._buildRunProfile();
       this._assertRunCanStart(signal);
-    } catch (error) {
-      this._abortCtrl = null;
-      this._runProfile = null;
-      this._runtimeConfig = null;
-      this._skillToolRegistrySnapshot = null;
-      this._toolRegistrySnapshot = null;
-      throw error;
-    }
 
-    let resolve: () => void = () => {};
-    const activeRun = new Promise<void>((r) => { resolve = r; });
-    this._activeRun = activeRun;
-    this._resolveRun = resolve;
-
-    this.isStreaming = true;
-    this._timelineSeq = 0;
-    this._llmCallSeq = 0;
-    this._contextUsageSeq = 0;
-    this._lastContextUsageSnapshot = null;
-    this._currentRunId = createRunId(this.sessionId, ++this._runSeq);
-    const runId = this._currentRunId;
-    this._emit({ type: "agent_start", runId,
-      ...(clientMessageId ? { clientMessageId, eventSeq: ++this._timelineSeq } : {}),
-    });
-
-    try {
-      await this._runLoop(signal, initialPendingMessages, { requireSteeringHandoff });
+      this.isStreaming = true;
+      this._llmCallSeq = 0;
+      this._contextUsageSeq = 0;
+      this._lastContextUsageSnapshot = null;
+      this._currentRunId = runId;
+      started = true;
+      this._emit({ type: "agent_start", runId,
+        ...(clientMessageId ? { clientMessageId, eventSeq: ++this._timelineSeq } : {}),
+      });
+      await this._runLoop(signal, initialPendingMessages, {
+        requireSteeringHandoff, requireFollowUpHandoff,
+        onInitialHandoff: () => { handoffConsumed = true; },
+      });
+      succeeded = !signal.aborted;
+      if (signal.aborted) {
+        if (!handoffConsumed) invalidateHandoff();
+        await this._emit({ type: "aborted", runId });
+      }
     } catch (err) {
-      if (this._currentRunId === runId) {
+      if (this._activeRun === activeRun) {
+        // Retain an unconsumed queued message without endlessly retrying its preparation.
+        // Once handed off, execution failures keep the existing next-message behavior.
+        if (!started || !handoffConsumed) invalidateHandoff();
         if (record(err).name === "AbortError") {
           await this._emit({ type: "aborted", runId });
         } else {
@@ -1073,43 +1094,64 @@ export class Agent {
           });
         }
       }
+      if (!started) throw err;
     } finally {
-      if (this._currentRunId === runId) {
-        const terminalProvider = String(this._runProfile?.model?.provider || "").trim();
-        const terminalModel = String(this._runProfile?.model?.id || "").trim();
-        await this._persistIfToolLedgerRepaired(t("agent.toolStopped"));
-        await this._flushPendingContextEvents();
-        try {
-          await this._pruneOldToolResultsIfNeeded();
-        } catch (err) {
-          this._trace(`old tool result prune failed: session=${this.sessionId}, ${record(err).message || err}`);
+      try {
+        if (this._activeRun === activeRun) {
+          try {
+            if (started && this._hasActiveLease()) {
+              await this._persistIfToolLedgerRepaired(t("agent.toolStopped"));
+              await this._flushPendingContextEvents();
+              try {
+                await this._pruneOldToolResultsIfNeeded();
+              } catch (err) {
+                this._trace(`old tool result prune failed: session=${this.sessionId}, ${record(err).message || err}`);
+              }
+            }
+          } catch (err) {
+            invalidateHandoff();
+            await this._emit({ type: "error", runId, message: String(record(err).message || err), code: "AGENT_FINALIZATION_FAILED" });
+          }
+          this.isStreaming = false;
+          const provider = String(this._runProfile?.model?.provider || "").trim();
+          const model = String(this._runProfile?.model?.id || "").trim();
+          this._currentRunId = null;
+          await this._emit({ type: "agent_end", runId,
+            ...(provider ? { provider } : {}), ...(model ? { model } : {}),
+          });
         }
-        this.isStreaming = false;
-        this._abortCtrl = null;
-        this._activeRun = null;
-        this._resolveRun = null;
-        this._currentRunId = null;
-        this._clearDynamicContextSnapshot();
-        this._runProfile = null;
-        this._runtimeConfig = null;
-        this._skillToolRegistrySnapshot = null;
-        this._toolRegistrySnapshot = null;
-        await this._emit({
-          type: "agent_end",
-          runId,
-          ...(terminalProvider ? { provider: terminalProvider } : {}),
-          ...(terminalModel ? { model: terminalModel } : {}),
-        });
-        if (this.steeringQueue.hasItems() || this.followUpQueue.hasItems()) this._scheduleNextFollowUpRun();
+      } catch (err) {
+        invalidateHandoff();
+        throw err;
+      } finally {
+        if (this._activeRun === activeRun) {
+          this.isStreaming = false;
+          this._activeRun = null;
+          if (this._abortCtrl === controller) this._abortCtrl = null;
+          this._currentRunId = null;
+          this._clearDynamicContextSnapshot();
+          this._runProfile = null;
+          this._runtimeConfig = null;
+          this._skillToolRegistrySnapshot = null;
+          this._toolRegistrySnapshot = null;
+          // A user may remove the final queued message while terminal persistence is pending.
+          this._emitQueueUpdate();
+          if (started && (succeeded || handoffConsumed)) {
+            this._scheduleNextFollowUpRun(scheduleEpoch);
+          }
+        }
+        resolve();
       }
-      resolve?.();
     }
   }
 
   /** Core agent loop: nested loops process messages and tool calls. */
-  async _runLoop(signal: AbortSignal, initialPendingMessages: AgentMessage[] = [], { requireSteeringHandoff = false } = {}) {
+  async _runLoop(signal: AbortSignal, initialPendingMessages: AgentMessage[] = [], {
+    requireSteeringHandoff = false, requireFollowUpHandoff = false, onInitialHandoff = () => {},
+  } = {}) {
     let turnCount = 0;
-    let awaitingInitialSteering = requireSteeringHandoff === true;
+    let awaitingInitialHandoff = requireSteeringHandoff || requireFollowUpHandoff;
+    let awaitingFollowUp = requireFollowUpHandoff;
 
     let pendingMessages = Array.isArray(initialPendingMessages) ? [...initialPendingMessages] : [];
 
@@ -1123,17 +1165,19 @@ export class Agent {
         while (this._pendingQueueWrites?.size) await Promise.allSettled([...this._pendingQueueWrites]);
         if (signal.aborted) break outer;
         if (!hasMoreToolCalls && !pendingMessages.length && !this.steeringQueue.hasItems()) break;
-        if (awaitingInitialSteering && pendingMessages.length === 0 && !this.steeringQueue.hasItems()) {
+        if (awaitingInitialHandoff && pendingMessages.length === 0 && !this.steeringQueue.hasItems()
+          && !(awaitingFollowUp && this.followUpQueue.hasItems())) {
           break outer;
         }
         turnCount++;
 
         this._emit({ type: "turn_start", turnIndex: turnCount });
 
-        // Prepare context first; steering stays visible in the queue during this potentially slow step.
+        // Prepare context first; queued messages remain visible until the run can accept them.
         // Drain once at handoff, persist, then broadcast dequeue and message events together.
         const steeringCandidates = this.steeringQueue.peekAll();
-        const pendingCandidates = [...pendingMessages, ...steeringCandidates];
+        const followUpCandidates = awaitingFollowUp ? this.followUpQueue.peekAll().slice(0, 1) : [];
+        const pendingCandidates = [...pendingMessages, ...followUpCandidates, ...steeringCandidates];
         let pendingContextCapsule = null;
         let pendingGoalCapsule = null;
         if (pendingCandidates.some(msg => msg?._refreshDynamicContext)) {
@@ -1148,6 +1192,9 @@ export class Agent {
 
         while (this._pendingQueueWrites?.size) await Promise.allSettled([...this._pendingQueueWrites]);
         if (signal.aborted) break outer;
+        const drainedFollowUps = awaitingFollowUp ? this.followUpQueue.drain() : [];
+        awaitingFollowUp = false;
+        pendingMessages.push(...drainedFollowUps);
         const drainedSteeringMessages = this.steeringQueue.drain();
         if (drainedSteeringMessages.length > 0) {
           pendingMessages.push(...drainedSteeringMessages);
@@ -1164,8 +1211,9 @@ export class Agent {
           acceptedUserMessages.push(cleanMsg);
         }
         if (acceptedUserMessages.length > 0) {
+          if (awaitingInitialHandoff) onInitialHandoff();
           await this._persistConversation();
-          if (drainedSteeringMessages.length > 0) this._emitQueueUpdate();
+          if (drainedFollowUps.length > 0 || drainedSteeringMessages.length > 0) this._emitQueueUpdate();
         }
         for (const cleanMsg of acceptedUserMessages) {
           this._emit({ type: "message_start", message: cleanMsg });
@@ -1173,8 +1221,8 @@ export class Agent {
         }
         pendingMessages = [];
         if (acceptedUserMessages.length > 0) {
-          awaitingInitialSteering = false;
-        } else if (awaitingInitialSteering) {
+          awaitingInitialHandoff = false;
+        } else if (awaitingInitialHandoff) {
           this._emit({ type: "turn_end", turnIndex: turnCount });
           break outer;
         }
@@ -1320,6 +1368,7 @@ export class Agent {
 
   async compactContext(signal?: AbortSignal | null, options: CompactionOptions = {}) {
     this._assertActiveLease();
+    const scheduleEpoch = this._queueScheduleEpoch;
     if (this._activeRun && !this._currentRunId) {
       const error = new Error(`session is already running: ${this.sessionId}`);
       Object.assign(error, { code: "AGENT_ALREADY_RUNNING" });
@@ -1364,12 +1413,13 @@ export class Agent {
       if (standalone && this._activeRun === standaloneRun) {
         this._activeRun = null;
         resolveStandalone?.();
-        this._scheduleNextFollowUpRun();
+        this._scheduleNextFollowUpRun(scheduleEpoch);
       }
     }
   }
 
   async _runContextCompaction(signal: AbortSignal | null | undefined, dynamicContext: DynamicContext | null, toolSchemas: object[], options: CompactionOptions): Promise<CompactionResult> {
+    const scheduleEpoch = this._queueScheduleEpoch;
     if (this._compactionPromise) {
       this._trace(`compact wait: run=${this._currentRunId || ""}`);
       await this._compactionPromise.catch(() => null);
@@ -1382,7 +1432,7 @@ export class Agent {
       if (this._compactionPromise === promise) {
         this._compactionPromise = null;
         this._compactionState = null;
-        this._scheduleNextFollowUpRun();
+        this._scheduleNextFollowUpRun(scheduleEpoch);
       }
     }
   }

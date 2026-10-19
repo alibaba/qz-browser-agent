@@ -62,10 +62,10 @@
   },
   {
     "name": "qingzhou_create_session",
-    "description": "Create a task with an optional first message. Set wait=true to return its completed snapshot, or stream=true for progress events. User-input waits keep observation open. Cancellation stops observing; the browser task continues.",
+    "description": "Create a task with an optional first message. Set wait=true to follow the same task across runs until its current work and accepted follow-ups and steering messages have completed and its queues are empty. stream=true adds progress events. User-input waits keep observation open. Task failure or stopping ends observation. Timeout or cancellation ends observation while the browser task continues; use the returned watch recovery call without resubmitting.",
     "inputSchema": {
       "properties": {
-        "wait": {"type": "boolean", "default": false, "description": "Keep observing until the task finishes, including user-input waits."},
+        "wait": {"type": "boolean", "default": false, "description": "Follow the same task across runs until its work completes and its accepted follow-up and steering queues are empty. User-input waits keep observation open; task failure or stopping ends it."},
         "stream": {"type": "boolean", "default": false, "description": "Implies wait. Send task text, status, and input events through MCP progress notifications when a progressToken is supplied."},
         "waitTimeoutSeconds": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 86400, "default": null, "description": "Optional total observation deadline; null waits indefinitely. timeoutSeconds bounds each browser request."},
         "title": {"default": "", "title": "Title", "type": "string"},
@@ -80,10 +80,10 @@
   },
   {
     "name": "qingzhou_send_message",
-    "description": "Send a message to the specified task. By default, a busy task queues a follow-up for its next run. Set steer=true to guide its current run at the next safe boundary. An idle task starts with either mode. Returns deliveryMode, disposition, and clientMessageId for tracking. Set wait=true to observe the submitted message through completion, including queued follow-ups and user-input waits. stream=true also emits text through MCP progress notifications.",
+    "description": "Send a message to the specified task. By default, a busy task queues a follow-up for its next run. Set steer=true to guide its current run at the next safe boundary. An idle task starts with either mode. Returns deliveryMode, disposition, and clientMessageId to confirm acceptance. Set wait=true to follow the same task across runs until its work completes and its follow-up and steering queues are empty. A queued message removed before execution no longer blocks completion. stream=true emits text from the submitted message onward through MCP progress notifications. Timeout or cancellation ends observation; use the returned watch recovery call without resubmitting.",
     "inputSchema": {
       "properties": {
-        "wait": {"type": "boolean", "default": false, "description": "Keep observing until the task finishes, including user-input waits."},
+        "wait": {"type": "boolean", "default": false, "description": "Follow the same task across runs until its work completes and its accepted follow-up and steering queues are empty. User-input waits keep observation open; task failure or stopping ends it."},
         "stream": {"type": "boolean", "default": false, "description": "Implies wait. Send task text, status, and input events through MCP progress notifications when a progressToken is supplied."},
         "waitTimeoutSeconds": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 86400, "default": null, "description": "Optional total observation deadline; null waits indefinitely. timeoutSeconds bounds each browser request."},
         "text": {"title": "Text", "type": "string"},
@@ -150,7 +150,7 @@
     "description": "Respond using the pending input's responseTemplate: fill answers keyed by field IDs with option values for choices (arrays for multi_choice), then submit; approve a completed action or application consent, or reject. Show location disclosures and obtain explicit user consent before approving with consentVersion. Native Chrome permissions require the user's click in qz. Invalid or stale replies return the current input for correction and keep the request pending.",
     "inputSchema": {
       "properties": {
-        "wait": {"type": "boolean", "default": false, "description": "Keep observing until the task finishes, including user-input waits."},
+        "wait": {"type": "boolean", "default": false, "description": "Follow the same task across runs until its work completes and its accepted follow-up and steering queues are empty. User-input waits keep observation open; task failure or stopping ends it."},
         "stream": {"type": "boolean", "default": false, "description": "Implies wait. Send task text, status, and input events through MCP progress notifications when a progressToken is supplied."},
         "waitTimeoutSeconds": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 86400, "default": null, "description": "Optional total observation deadline; null waits indefinitely. timeoutSeconds bounds each browser request."},
         "sessionId": {"type": "string", "minLength": 1},
@@ -357,7 +357,7 @@
   },
   {
     "name": "qingzhou_watch_task",
-    "description": "Observe an existing task until it finishes without resubmitting it. Questions and Chrome permission requests keep observation open; MCP progress notifications include their full input and responseTemplate. stream=true includes text updates. Cancellation stops observing while the task continues.",
+    "description": "Observe an existing task across runs until its current work and accepted follow-ups and steering messages have completed and its queues are empty, without resubmitting anything. Questions and Chrome permission requests keep observation open; MCP progress notifications include their full input and responseTemplate. stream=true includes text updates. Task failure or stopping ends observation. Timeout or cancellation ends observation while the browser task continues; resume with the returned recovery call using the same sessionId and clientId.",
     "inputSchema": {
       "type": "object",
       "properties": {

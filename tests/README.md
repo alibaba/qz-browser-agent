@@ -60,6 +60,8 @@ The runner uses the locked Chromium, including its full headless mode for Playwr
 Native keyboard, clipboard and control fixtures retain Chromium Headless Shell.
 Page tests can select `QINGZHOU_PLAYWRIGHT_CHANNEL=chrome`;
 other browser entries accept `CHROME_EXECUTABLE`. Keep the browser version fixed for comparisons.
+Session exchange runs headless by default; set `SESSION_EXCHANGE_HEADLESS=0` to open a browser
+window for debugging.
 
 ## Add a test at the right boundary
 

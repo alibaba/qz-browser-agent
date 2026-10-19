@@ -687,7 +687,8 @@
       });
       pointerTarget.addEventListener("pointermove", event => {
         if (!pointerTarget.hasPointerCapture(event.pointerId)) return;
-        state.pointerMoves += 1;
+        // Chrome may combine several input samples into one dispatched event.
+        state.pointerMoves += event.getCoalescedEvents().length || 1;
         render();
       });
       pointerTarget.addEventListener("pointerup", event => {
