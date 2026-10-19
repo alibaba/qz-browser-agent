@@ -13,14 +13,16 @@ const passed = snapshot("next-run", "completed", [
   user("later-message", "next-run"), assistant("next-run", "Later answer"),
 ]);
 
-test("a run completed and replaced before the first poll fails promptly with both run IDs", async () => {
+test("a run completed before the first poll includes its answer and every successor", async () => {
   for (const tracking of [{ expectedMessageId: "requested-message" }, { expectedRunId: "target-run" }]) {
     let calls = 0;
-    await assert.rejects(waitForTask({ sessionId: "task", ...tracking,
+    const updates = [];
+    const done = await waitForTask({ sessionId: "task", ...tracking,
       getSnapshot: () => { assert.equal(++calls, 1); return passed; },
-      onUpdate: () => assert.fail("the later run must not be streamed as the requested result"),
-    }), error => error.code === "task_changed"
-      && error.details.expectedRunId === "target-run" && error.details.actualRunId === "next-run");
+      onUpdate: update => updates.push(update),
+    });
+    assert.equal(done, passed);
+    assert.deepEqual(updates.filter(update => update.type === "text").map(update => update.text), ["Requested answer", "Later answer"]);
     assert.equal(calls, 1);
   }
 });
@@ -37,9 +39,9 @@ test("a stale preceding runtime waits until it catches up with the submitted mes
   assert.deepEqual(updates.filter(update => update.type === "text").map(update => update.text), ["Requested answer"]);
 });
 
-test("CLI replacement recovery inspects the conversation without resending or watching the later run", async () => {
+test("CLI send follows later runs without resending its accepted message", async () => {
   let calls = 0;
-  await assert.rejects(runCli(["send", "task", "Requested message", "--wait"], {
+  const { result } = await runCli(["send", "task", "Requested message", "--wait"], {
     findDaemon: async () => ({ endpoint: "http://127.0.0.1:23456", health: { features: { browserPairing: 1 },
       status: { connected: true, clients: [{ clientId: "browser" }] },
     } }),
@@ -49,14 +51,28 @@ test("CLI replacement recovery inspects the conversation without resending or wa
       assert.equal(name, "qingzhou_get_session_snapshot");
       return passed;
     },
-  }), error => {
-    assert.equal(error.code, "task_changed");
-    assert.equal(error.details.command, "qz show task --client browser");
-    assert.equal(error.details.expectedRunId, "target-run");
-    assert.equal(error.details.actualRunId, "next-run");
-    return true;
   });
+  assert.equal(result.snapshot, passed);
+  assert.equal(result.clientMessageId, "requested-message");
   assert.equal(calls, 2);
+});
+
+test("CLI send finishes when its accepted queued follow-up was removed before observation", async () => {
+  const calls = [], updates = [];
+  const { result } = await runCli(["send", "task", "Removed follow-up", "--stream"], {
+    findDaemon: async () => cliHealth(),
+    callTool: async (_endpoint, name) => {
+      calls.push(name);
+      if (name === "qingzhou_send_message") return { accepted: true, disposition: "queued", clientMessageId: "removed" };
+      assert.equal(name, "qingzhou_get_session_snapshot");
+      return passed;
+    },
+    onTaskUpdate: update => updates.push(update),
+  });
+  assert.equal(result.accepted, true);
+  assert.equal(result.snapshot.status, "completed");
+  assert.equal(updates.some(update => update.type === "text"), false);
+  assert.deepEqual(calls, ["qingzhou_send_message", "qingzhou_get_session_snapshot"]);
 });
 
 test("CLI recovery commands preserve shell-sensitive IDs and option-like values", { skip: process.platform === "win32" }, async () => {
@@ -92,6 +108,37 @@ function cliHealth(clients = [{ clientId: browserA, name: "default" }]) {
   return { endpoint: "http://127.0.0.1:23456", health: { features: { browserPairing: 1 },
     status: { connected: true, clients, browsers: clients.map(client => ({ ...client, online: true })) } } };
 }
+
+test("executing the CLI timeout recovery command follows the original task without resending", async () => {
+  let resumed = false, recovery, reads = 0;
+  const calls = [];
+  const deps = {
+    findDaemon: async () => cliHealth(),
+    callTool: async (_endpoint, name, args) => {
+      assert.equal(args.sessionId, "task");
+      assert.equal(args.clientId, browserA);
+      calls.push(name);
+      if (name === "qingzhou_send_message") return { accepted: true, clientMessageId: "requested-message" };
+      assert.equal(name, "qingzhou_get_session_snapshot");
+      if (resumed) reads++;
+      return resumed && reads === 2 ? passed : {
+        ...passed, status: "pending", runtime: { status: "pending", pendingStart: true },
+      };
+    },
+  };
+  await assert.rejects(runCli(["send", "task", "Requested message", "--wait", "--timeout", "0.01"], deps), error => {
+    assert.equal(error.code, "timeout");
+    recovery = error.details.command;
+    assert.equal(recovery, `qz watch task --client ${browserA} --stream`);
+    return true;
+  });
+  resumed = true;
+  const { result } = await runCli(recovery.split(" ").slice(1), deps);
+  assert.equal(result.sessionId, "task");
+  assert.equal(result.snapshot, passed);
+  assert.equal(reads, 2);
+  assert.equal(calls.filter(name => name === "qingzhou_send_message").length, 1);
+});
 
 for (const deleted of [false, true]) test(`CLI missing-task feedback handles ${deleted ? "deletion" : "an incorrect ID"} with one browser`, async () => {
   const sessionId = deleted ? "task" : "wrong-id";

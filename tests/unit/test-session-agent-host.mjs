@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createSessionRecord } from "../../src/shared/session/session-codec.js";
 import { createLifecycleObservers } from "../../src/background/lifecycle-observers.js";
 import { createTestAgentServices } from "../support/agent-services.mjs";
+import { createSessionSupervisor } from "../../src/background/session/supervisor.js";
+import { reduceSessionRuntime } from "../../src/background/session/runtime-reducer.js";
 
 globalThis.chrome = {
   debugger: {
@@ -35,8 +37,63 @@ await historyMutationHydratesOnlyWhenNeeded();
 await dynamicContextIncludesTaskSites();
 await lifecycleCommitReflectsDurability();
 await customContextPreservesIdentityAndFailure();
+await restoredQueuesResumeWithInitializationOccupancy();
 
 console.log("session Agent host boundary tests passed");
+
+async function restoredQueuesResumeWithInitializationOccupancy() {
+  for (const status of ["aborted", "error", "cancelled"]) {
+    let host;
+    let calls = 0;
+    const initializing = deferred(), release = deferred();
+    const supervisor = createSessionSupervisor({
+      createAgent: lease => host.createAgent(lease),
+      initializeAgent: (agent, id) => host.initializeAgent(agent, id),
+      onAgentEvent: (id, event) => host.handleEvent(id, event),
+    });
+    ({ host } = createHostFixture({
+      owner: supervisor,
+      agentServices: createTestAgentServices({
+        async getRuntimeConfig() {
+          initializing.resolve();
+          await release.promise;
+          return { provider: "test", model: "test-model", contextWindow: 262000, vision: true };
+        },
+      }),
+      llm: {
+        async *chatStream() {
+          calls += 1;
+          yield { type: "done", message: { role: "assistant", content: "done" } };
+        },
+        async chat() { throw new Error("unexpected fallback"); },
+      },
+      recordRuntimeEvent: (id, event) => supervisor.setRuntime(id, reduceSessionRuntime(supervisor.getRuntime(id), event)),
+    }));
+    const previous = await supervisor.getAgent("s1");
+    await supervisor.revoke("s1");
+    supervisor.setRuntime("s1", {
+      status, running: false,
+      pendingFollowUpMessages: [{ role: "user", content: "retained", clientMessageId: "retained" }],
+    });
+    try {
+      const restored = await supervisor.getAgent("s1");
+      assert.notEqual(restored, previous);
+      await initializing.promise;
+      assert.equal(supervisor.getRuntime("s1").status, "pending");
+      assert.equal(restored.isRunning, true);
+      assert.ok(restored.findPendingUserMessage("retained"), "initialization keeps accepted work visible");
+      assert.equal(await restored._runNextFollowUpRun(), false, "initialization occupancy prevents duplicate queue drains");
+      release.resolve();
+      await restored.waitForIdle();
+      assert.equal(calls, 1, "the restored queue resumes automatically without another message");
+      assert.deepEqual(restored.messages.filter(message => message.clientMessageId).map(message => message.clientMessageId), ["retained"]);
+      assert.equal(supervisor.getRuntime("s1").status, "completed");
+    } finally {
+      release.resolve();
+      await supervisor.revoke("s1");
+    }
+  }
+}
 
 async function agentEmitCanWaitForAsyncSubscribers() {
   const gate = deferred();
@@ -328,13 +385,16 @@ function createHostFixture({
   observeAgentEvent = null,
   lifecycle = null,
   contextSources = [],
+  owner = null,
+  llm = emptyLlm(),
+  agentServices = createTestAgentServices(),
 } = {}) {
   const agent = {
     messages: [{ role: "system", content: "system" }, { role: "assistant", content: "done" }],
     exportSession: () => [{ role: "system", content: "system" }, { role: "assistant", content: "done" }],
   };
   const entry = { agent, epoch: 7, ready: Promise.resolve() };
-  const supervisor = {
+  const supervisor = owner || {
     peekEntry: () => entry,
     getEntry: () => entry,
     getAgent: async () => agent,
@@ -342,12 +402,13 @@ function createHostFixture({
   };
   const host = createSessionAgentHost({
     repository: {
+      ...emptyConversationRepository(),
       readRecord: async () => storedRecord,
       isWriteBlocked: () => isWriteBlocked,
     },
     normalizeSessionId: value => String(value || "").trim(),
-    llm: emptyLlm(),
-    agentServices: createTestAgentServices(),
+    llm,
+    agentServices,
     browserContext: emptyBrowserContext(),
     getToolRuntime: emptyTools,
     getSupervisor: () => supervisor,

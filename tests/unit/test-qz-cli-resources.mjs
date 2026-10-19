@@ -90,7 +90,9 @@ test("resource mutation failures are never replayed and JSON preserves export do
 test("send waits for the new run, skips stale completed snapshots, and sends only once", async () => {
   let reads = 0, sends = 0;
   const snapshot = runId => ({ sessionId: "task", status: "completed", runId, runtime: { runId, status: "completed" },
-    transcript: runId === "new-run" ? [{ type: "user", clientMessageId: "message", runId }] : [] });
+    // The accepted message is visible before its runtime catches up. An empty
+    // completed task without this message would instead mean it was removed.
+    transcript: [{ type: "user", clientMessageId: "message", runId: "new-run" }] });
   const result = await runCli(["send", "task", "-", "--stream"], { ...dependencies, readStdin: async () => "Add sources.",
     callTool: async (_endpoint, name, args) => {
       assert.equal(args.clientId, "profile");

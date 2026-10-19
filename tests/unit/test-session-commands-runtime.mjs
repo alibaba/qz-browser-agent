@@ -4,6 +4,9 @@ import { buildSessionTitleMessages } from "../../src/background/agent/prompts.js
 import { createSessionCommands } from "../../src/background/session/commands.js";
 import { createMcpRuntime } from "../../src/background/mcp/mcp-runtime.js";
 import { createSessionRepository } from "../../src/background/session/repository.js";
+import { Agent } from "../../src/background/agent/agent.js";
+import { reduceSessionRuntime } from "../../src/background/session/runtime-reducer.js";
+import { createTestAgentOptions } from "../support/agent-services.mjs";
 import {
   deserializeConversation,
   serializeConversation,
@@ -15,6 +18,7 @@ await creationRunAndHistoryFlow();
 await duplicateAcceptedPromptIsIdempotent();
 await submittedMessageStartsOrQueuesAtomically();
 await acceptedCleanupIsPostCommitAndNonBlocking();
+await preparationFailurePreservesAcceptedWork();
 await queuedFollowUpWaitsForDurableRuntime();
 await stopDoesNotWaitForBestEffortObservers();
 await explicitTaskTitleSkipsGeneration();
@@ -392,26 +396,39 @@ async function acceptedCleanupIsPostCommitAndNonBlocking() {
 }
 
 async function queuedFollowUpWaitsForDurableRuntime() {
-  let releasePersist;
-  const fixture = createFixture({
-    persistSessionRuntime: () => new Promise(resolve => { releasePersist = resolve; }),
-  });
-  await fixture.repository.createMetadata({ id: "durable-queue", title: "Durable queue" });
-  let accepted = false;
-  const followUp = fixture.commands.followUpSessionRuntime({
-    sessionId: "durable-queue",
-    text: "persist before accepting",
-    clientMessageId: "durable-message",
-  }).then(result => {
-    accepted = true;
-    return result;
-  });
-
-  await waitUntil(() => typeof releasePersist === "function", "follow-up runtime persistence did not start");
-  await nextTurn();
-  assert.equal(accepted, false, "follow-up acceptance must wait until its queue is durable");
-  releasePersist(true);
-  assert.equal((await followUp).accepted, true);
+  for (const method of ["followUpSessionRuntime", "submitSessionMessageRuntime"]) {
+    const write = deferred(), entered = deferred();
+    let durable = null, accepted = false, notified = false;
+    const fixture = createFixture({
+      async persistSessionRuntime(id) {
+        const snapshot = structuredClone(fixture.runtimes.get(id));
+        entered.resolve();
+        await write.promise;
+        durable = snapshot;
+      },
+    });
+    const id = `durable-${method}`;
+    await fixture.repository.createMetadata({ id, title: "Durable queue" });
+    const agent = new Agent(id, createTestAgentOptions({ canStartQueuedRun: () => false }));
+    fixture.agents.set(id, agent);
+    agent.subscribe(event => fixture.setRuntime(id, reduceSessionRuntime(fixture.runtimes.get(id), event)));
+    agent.followUp("retained", [], "retained");
+    agent._clearScheduledFollowUpRun();
+    const followUp = fixture.commands[method]({
+      sessionId: id, text: "persist before accepting", clientMessageId: "durable-message",
+      onMessageAccepted: () => { notified = true; },
+    }).then(result => { accepted = true; return result; });
+    try {
+      await entered.promise;
+      assert.equal(accepted, false, "confirmation waits for durable queued input");
+      assert.equal(notified, false, "message acceptance callbacks cannot precede queue persistence");
+      write.resolve();
+      assert.equal((await followUp).accepted, true);
+      assert.deepEqual(durable.pendingFollowUpMessages.map(message => message.clientMessageId), ["retained", "durable-message"]);
+    } finally {
+      write.resolve(); agent._clearScheduledFollowUpRun(); agent.abort();
+    }
+  }
 
   const failed = createFixture({
     persistSessionRuntime: () => Promise.reject(new Error("runtime write failed")),
@@ -430,6 +447,24 @@ async function queuedFollowUpWaitsForDurableRuntime() {
     [],
     "failed durable acceptance must roll back the queued message before it can run",
   );
+}
+
+async function preparationFailurePreservesAcceptedWork() {
+  const entered = deferred(), fail = deferred();
+  const fixture = createFixture({
+    async collectBrowserContext() { entered.resolve(); await fail.promise; throw new Error("context initialization failed"); },
+  });
+  const id = "failed-preparation-with-queue";
+  await fixture.repository.createMetadata({ id, title: "Failed preparation" });
+  const first = await fixture.commands.submitSessionMessageRuntime({ sessionId: id, text: "first", clientMessageId: "first" });
+  await entered.promise;
+  const queued = await fixture.commands.submitSessionMessageRuntime({ sessionId: id, text: "accepted follow-up", clientMessageId: "queued" });
+  assert.equal(queued.disposition, "queued");
+  fail.resolve();
+  await assert.rejects(first.promise, /context initialization failed/);
+  assert.equal(fixture.runtimes.get(id).status, "error");
+  assert.deepEqual(fixture.agent(id).getPendingFollowUps().map(message => message.clientMessageId), ["queued"]);
+  assert.equal(fixture.lifecycleEvents.some(item => item.event?.type === "error"), false, "request errors keep their existing caller-owned presentation");
 }
 
 async function stopDoesNotWaitForBestEffortObservers() {
@@ -1762,6 +1797,7 @@ function createFixture(options = {}) {
     buildSessionTitleMessages: options.buildSessionTitleMessages || buildSessionTitleMessages,
     collectBrowserContext: async (id, collectOptions = {}) => {
       browserContextCalls.push([id, collectOptions]);
+      if (options.collectBrowserContext) return options.collectBrowserContext(id, collectOptions);
       return { sessionId: id, pageUrl: "https://example.test", ...collectOptions };
     },
     releaseRunResources: async input => {

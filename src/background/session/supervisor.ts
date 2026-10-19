@@ -5,6 +5,7 @@ import { createKeyedSerialQueue } from "../internal/serial-queue.js";
 import type { AgentEvent } from '../../shared/contracts/agent-event.js';
 export interface AgentLease { readonly sessionId: string; readonly epoch: number; isActive(): boolean }
 export interface SupervisorAgent {
+  readonly isRunning?: boolean;
   isStreaming?: boolean;
   messages?: unknown[];
   subscribe?(listener: (event: AgentEvent) => unknown): (() => void) | void;
@@ -18,6 +19,7 @@ export interface SupervisorAgent {
 export interface SessionTask {
   sessionId: string; epoch: number; startedAt: string; cancelled: boolean;
   promise: Promise<unknown> | null; messageId?: string; messageAcceptance?: unknown;
+  settled?: boolean;
 }
 interface UserWait {
   sessionId: string; waitId: string; runId: string; epoch: number;
@@ -198,8 +200,19 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     if (task?.promise) await task.promise;
     const current = handles.get(id);
     if (current?.ready) await settleReady(current);
-    if (current?.agent?.isStreaming) await current.agent.waitForIdle?.();
+    if (current?.agent?.isRunning || current?.agent?.isStreaming) await current.agent.waitForIdle?.();
     return id;
+  }
+
+  /** Wait outside the command queue so stop/input remain admissible during task execution. */
+  async function waitForTaskRelease(sessionId: string) {
+    const id = requireSessionId(sessionId);
+    while (true) {
+      const task = await commandQueues.run(id, () => handles.get(id)?.task || null);
+      if (!task) return;
+      // onStart has completed before this serialized read; task cleanup queues before settlement.
+      await task.promise?.catch(() => {});
+    }
   }
 
   function isRunCurrent(sessionId: string, runId: string) {
@@ -478,7 +491,7 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     const type = event?.type;
     if (typeof type !== "string" || !type) return false;
     const runId = normalizeRunId(event?.runId);
-    if (type === "agent_start") {
+    if (type === "session_pending" || type === "agent_start") {
       if (handle.activeRunId && handle.activeRunId !== runId) return false;
       handle.activeRunId = runId;
       handle.lastEventSeq = 0;
@@ -494,7 +507,12 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
 
     let processing: unknown = null;
     try {
-      processing = onAgentEvent(handle.sessionId, { ...event });
+      processing = onAgentEvent(handle.sessionId, {
+        ...event,
+        ...(type === "queue_update" ? {
+          isRunning: Boolean(isTaskActive(handle.task) || handle.agent?.isRunning || handle.agent?.isStreaming),
+        } : {}),
+      });
     } catch (error) {
       logger?.error?.("session supervisor: agent event failed", error);
     }
@@ -558,6 +576,7 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     task.promise = Promise.resolve()
       .then(() => executor({ agent: entry.agent, task, entry }))
       .finally(() => {
+        task.settled = true;
         void commandQueues.run(entry.sessionId, () => {
           const current = handles.get(entry.sessionId);
           if (current === entry && current.task === task) current.task = null;
@@ -577,6 +596,7 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     revoke,
     remove,
     waitForIdle,
+    waitForTaskRelease,
     isRunCurrent,
     getTask,
     getRuntime,
@@ -601,12 +621,13 @@ function isCurrentEpoch(handle: SessionHandle<SupervisorAgent>, epoch: number) {
 }
 
 function isTaskActive(task: SessionTask | null | undefined): task is SessionTask {
-  return Boolean(task && !task.cancelled);
+  return Boolean(task && !task.cancelled && !task.settled);
 }
 
 function hasActiveWork(entry: SessionHandle<SupervisorAgent>) {
   return Boolean(
     isTaskActive(entry?.task)
+    || entry?.agent?.isRunning
     || entry?.agent?.isStreaming
     || entry?.agent?.hasPendingUserInput?.()
   );

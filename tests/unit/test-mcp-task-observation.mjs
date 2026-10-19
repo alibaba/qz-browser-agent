@@ -74,6 +74,26 @@ test("send waits for its tracked steer response and never streams earlier same-r
   assert.equal(calls.filter(call => call.method === "send_message").length, 1);
 });
 
+test("MCP send waits for the current run after its queued steering message was removed", async t => {
+  const calls = [], events = [];
+  let reads = 0;
+  const state = await connectedState(t, async method => {
+    calls.push(method);
+    if (method === "send_message") return { accepted: true, disposition: "queued", clientMessageId: "removed" };
+    assert.equal(method, "get_session_snapshot");
+    assert.ok(++reads <= 2);
+    return snapshot(reads === 1 ? "running" : "completed", [assistant("Earlier answer")]);
+  });
+  const result = await executeMcpTool(state, "qingzhou_send_message", {
+    sessionId: "task", text: "Removed steer", steer: true, stream: true,
+  }, { onTaskUpdate: event => events.push(event) });
+  assert.equal(result.accepted, true);
+  assert.equal(result.snapshot.status, "completed");
+  assert.equal(events.some(event => event.type === "text"), false);
+  assert.deepEqual(events.filter(event => event.type === "status").map(event => event.status), ["running", "completed"]);
+  assert.deepEqual(calls, ["send_message", "get_session_snapshot", "get_session_snapshot"]);
+});
+
 test("native permission input remains actionable while responding waits for the human", async t => {
   const events = [];
   let humanApproved = false;
@@ -131,28 +151,80 @@ test("watch cancellation revokes its pending read without stopping or resubmitti
   assert.equal(completeBrowser(state, read.id, { ok: true, result: snapshot("completed") }), false);
 });
 
-test("observation timeout preserves the task ID and stale runs fail without replaying a message", async t => {
-  let sends = 0;
-  const state = await connectedState(t, async method => {
+test("timeout recovery watches the original task through later runs without replaying a message", async t => {
+  let sends = 0, recovery, resumed = false, reads = 0;
+  const state = await connectedState(t, async (method, params, options) => {
+    assert.equal(params.sessionId, "task");
+    assert.equal(options.clientId, browserId(state, "browser-a"));
     if (method === "send_message") { sends += 1; return { accepted: true, clientMessageId: "target" }; }
-    return { ...snapshot("running", [
+    assert.equal(method, "get_session_snapshot");
+    if (resumed) reads++;
+    return { ...snapshot(resumed && reads === 2 ? "completed" : "running", [
       { type: "user", runId: "old", clientMessageId: "target" },
+      { ...assistant("Requested answer"), runId: "old" },
       { type: "user", runId: "run", clientMessageId: "later" },
+      assistant("Later answer"),
     ]) };
   });
-  await assert.rejects(executeMcpTool(state, "qingzhou_send_message", { sessionId: "task", text: "Hello", wait: true }), error => {
-    assert.equal(error.code, "task_changed");
-    assert.equal(error.details.recovery.tool, "qingzhou_get_session_snapshot");
-    assert.equal(error.details.sessionId, "task");
-    return true;
-  });
-  assert.equal(sends, 1);
-  await assert.rejects(executeMcpTool(state, "qingzhou_watch_task", { sessionId: "task", waitTimeoutSeconds: 0.01 }), error => {
+  await assert.rejects(executeMcpTool(state, "qingzhou_send_message", {
+    sessionId: "task", text: "Hello", wait: true, waitTimeoutSeconds: 0.01,
+  }), error => {
     assert.equal(error.code, "timeout");
-    assert.equal(error.details.recovery.tool, "qingzhou_watch_task");
-    assert.equal(error.details.recovery.arguments.sessionId, "task");
+    recovery = error.details.recovery;
+    assert.deepEqual(recovery, {
+      tool: "qingzhou_watch_task", arguments: { sessionId: "task", clientId: browserId(state, "browser-a") },
+    });
     return true;
   });
+  resumed = true;
+  const result = await executeMcpTool(state, recovery.tool, recovery.arguments);
+  assert.equal(result.snapshot.status, "completed");
+  assert.equal(result.snapshot.runId, "run");
+  assert.equal(reads, 2);
+  assert.equal(sends, 1);
+});
+
+test("all MCP observation entry points follow queued work across run boundaries", async t => {
+  for (const [name, args, accepted] of [
+    ["qingzhou_watch_task", { sessionId: "task", stream: true }, null],
+    ["qingzhou_create_session", { firstMessage: "Start", wait: true }, { session: { id: "task" } }],
+    ["qingzhou_send_message", { sessionId: "task", text: "Follow up", stream: true }, { accepted: true, clientMessageId: "target" }],
+    ["qingzhou_respond_to_user_input", { sessionId: "task", waitId: "old-wait", action: "approve", wait: true }, { accepted: true, runId: "run" }],
+  ]) {
+    let reads = 0, mutations = 0;
+    const transcript = [{ type: "user", runId: "run", clientMessageId: "target" }, assistant("First answer")];
+    const done = { ...snapshot("completed", [...transcript,
+      { type: "user", runId: "next-run", clientMessageId: "next" },
+      { ...assistant("Next answer"), runId: "next-run" }]), runId: "next-run" };
+    const state = await connectedState(t, async method => {
+      if (method !== "get_session_snapshot") { mutations++; return accepted; }
+      reads++;
+      assert.ok(reads <= 2);
+      return reads === 1 ? { ...snapshot("completed", transcript), runtime: { pendingFollowUps: [{}] } } : done;
+    });
+    const events = [];
+    const result = await executeMcpTool(state, name, args, { onTaskUpdate: event => events.push(event) });
+    assert.equal(result.snapshot.runId, "next-run", name);
+    assert.equal(reads, 2, name);
+    assert.equal(mutations, accepted ? 1 : 0, name);
+    assert.deepEqual(events.filter(event => event.type === "text").map(event => event.text), args.stream ? ["First answer", "Next answer"] : [], name);
+  }
+});
+
+test("an accepted MCP message without a tracking ID can recover by watching without another send", async t => {
+  const calls = [];
+  const state = await connectedState(t, async method => {
+    calls.push(method);
+    return method === "send_message" ? { accepted: true } : snapshot("completed");
+  });
+  let recovery;
+  await assert.rejects(executeMcpTool(state, "qingzhou_send_message", { sessionId: "task", text: "Hello", wait: true }), error => {
+    assert.equal(error.code, "invalid_response");
+    recovery = error.details.recovery;
+    return true;
+  });
+  assert.equal((await executeMcpTool(state, recovery.tool, recovery.arguments)).snapshot.status, "completed");
+  assert.deepEqual(calls, ["send_message", "get_session_snapshot"]);
 });
 
 test("MCP missing-task recovery lists the selected browser's tasks while snapshots keep their null protocol", async t => {

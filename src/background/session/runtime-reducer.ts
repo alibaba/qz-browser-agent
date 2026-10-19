@@ -166,11 +166,22 @@ export function reduceSessionRuntimePatch(previous: Partial<SessionRuntime> = {}
           ...(Array.isArray(event.loadedPluginSkillNames) ? event.loadedPluginSkillNames : []),
         ]),
       };
-    case "queue_update":
-      return {
+    case "queue_update": {
+      const patch = {
         pendingFollowUpMessages: cloneArray(event.pendingFollowUpMessages),
         pendingSteeringMessages: cloneArray(event.pendingSteeringMessages),
       };
+      if ((previous.status === SESSION_STATUS.COMPLETED || (event.resume === true && !isActiveSessionStatus(previous.status)))
+        && (patch.pendingFollowUpMessages.length || patch.pendingSteeringMessages.length)) {
+        return { ...patch, status: SESSION_STATUS.PENDING, running: true, pendingStart: true, runId: null, endedAt: "", reason: "" };
+      }
+      // Removing the last queued message can finish an otherwise idle handoff. An active
+      // initialization/terminal commit still owns that decision until its occupancy is released.
+      return previous.status === SESSION_STATUS.PENDING && event.isRunning === false
+        && !patch.pendingFollowUpMessages.length && !patch.pendingSteeringMessages.length
+        ? { ...patch, ...terminalPatch({ status: SESSION_STATUS.COMPLETED, reason: "" }, now) }
+        : patch;
+    }
     case "waiting_for_user":
       return {
         status: SESSION_STATUS.WAITING_USER,
@@ -197,11 +208,16 @@ export function reduceSessionRuntimePatch(previous: Partial<SessionRuntime> = {}
     case "agent_end": {
       const previousStatus = normalizeStatus(previous.status);
       const preserve = isTerminalSessionStatus(previousStatus) && previousStatus !== SESSION_STATUS.COMPLETED;
-      return terminalPatch({
+      const patch = terminalPatch({
         status: preserve ? previous.status : SESSION_STATUS.COMPLETED,
         runId,
         reason: preserve ? (previous.reason || previous.status) : "",
       }, now);
+      // Completion is a task-level observation: a successful run with accepted work still
+      // queued hands off to pending, without an intermediate completed snapshot.
+      return !preserve && (previous.pendingFollowUpMessages?.length || previous.pendingSteeringMessages?.length)
+        ? { ...patch, status: SESSION_STATUS.PENDING, running: true, pendingStart: true, runId: null, endedAt: "" }
+        : patch;
     }
     case "aborted":
     case "session_aborted":

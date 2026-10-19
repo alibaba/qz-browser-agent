@@ -282,6 +282,82 @@ test("task creation and snapshot lookup work through the real MCP transport", as
   assert.deepEqual((await showing).result, { ...snapshot, clientId: client.id });
 });
 
+for (const caller of ["CLI", "MCP"]) test(`${caller} executes timeout recovery through real MCP and drains later runs without resending`, async t => {
+  const server = await startBridge({ port: 0, scopeId: `wait-recovery-${caller}` });
+  t.after(() => server.close());
+  const client = await pairBrowser(server.state, { id: "recovery-browser", pollTimeoutMs: 1000 });
+  await server.state.poll(client, { timeoutMs: 1 });
+  const dependencies = { findDaemon: async () => ({ endpoint: server.endpoint, health: await readHealth(server.endpoint) }) };
+  const sessionId = "task-recovery";
+  const methods = [];
+  const reply = async (method, result) => {
+    const requests = await server.state.poll(client, { timeoutMs: 2000 });
+    assert.equal(requests.length, 1, `Expected ${method} for the selected browser`);
+    const [request] = requests;
+    methods.push(request.method);
+    assert.equal(request.method, method);
+    assert.equal(request.params.sessionId, sessionId);
+    assert.equal(completeBrowser(server.state, request.id, { clientId: client.id, ok: true, result }), true);
+    return request;
+  };
+  const transcript = [{ type: "user", runId: "run-1", clientMessageId: "accepted-message", content: "Continue" }];
+  const snapshot = (runId, status, queues = {}) => ({
+    sessionId, session: { id: sessionId }, runId, status,
+    runtime: { runId, status, pendingFollowUps: [], pendingSteerings: [], ...queues },
+    transcript: structuredClone(transcript),
+  });
+  const sending = (caller === "CLI"
+    ? runCli(["send", sessionId, "Continue", "--client", client.id, "--wait", "--timeout", "1"], dependencies)
+    : callTool(server.endpoint, "qingzhou_send_message", {
+      sessionId, text: "Continue", clientId: client.id, wait: true, timeoutSeconds: 5, waitTimeoutSeconds: 1,
+    }))
+    .then(() => assert.fail("The held task must time out"), error => error);
+  await reply("send_message", { accepted: true, clientMessageId: "accepted-message", disposition: "started" });
+  await reply("get_session_snapshot", snapshot("run-1", "running"));
+  const failure = await sending;
+  assert.equal(failure.code, "timeout");
+  assert.equal(failure.details.sessionId, sessionId);
+  assert.equal(failure.details.clientId, client.id);
+  assert.equal(server.state.pending.size, 0);
+  assert.equal(server.state.inflight.size, 0);
+
+  // A second browser makes UUID preservation observable: unscoped recovery is ambiguous.
+  const unrelated = await pairBrowser(server.state, { id: "unrelated-browser", pollTimeoutMs: 1000 });
+  await server.state.poll(unrelated, { timeoutMs: 1 });
+  let recovery;
+  if (caller === "CLI") {
+    assert.equal(failure.details.command, `qz watch ${sessionId} --client ${client.id} --stream`);
+    recovery = runCli(failure.details.command.split(" ").slice(1), dependencies).then(value => value.result);
+  } else {
+    assert.deepEqual(failure.details.recovery, {
+      tool: "qingzhou_watch_task", arguments: { sessionId, clientId: client.id },
+    });
+    const { tool, arguments: args } = failure.details.recovery;
+    recovery = callTool(server.endpoint, tool, args);
+  }
+  const recovered = recovery.then(value => ({ value }), error => ({ error }));
+  transcript.push({ type: "assistant", runId: "run-1", id: "answer-1", content: "First answer" });
+  await reply("get_session_snapshot", snapshot("run-1", "completed", { pendingFollowUps: [{ clientMessageId: "followup" }] }));
+  transcript.push({ type: "user", runId: "run-2", clientMessageId: "followup", content: "Next" });
+  await reply("get_session_snapshot", snapshot("run-2", "pending"));
+  transcript.push({ type: "assistant", runId: "run-2", id: "answer-2", content: "Next answer" });
+  await reply("get_session_snapshot", snapshot("run-2", "completed", { pendingSteerings: [{ clientMessageId: "steering" }] }));
+  transcript.push({ type: "user", runId: "run-3", clientMessageId: "steering", content: "Last" },
+    { type: "assistant", runId: "run-3", id: "answer-3", content: "Final answer" });
+  await reply("get_session_snapshot", snapshot("run-3", "completed"));
+  const result = await recovered;
+  assert.equal(result.error, undefined);
+  assert.equal(result.value.sessionId, sessionId);
+  assert.equal(result.value.snapshot.runId, "run-3");
+  assert.equal(result.value.snapshot.status, "completed");
+  assert.deepEqual(result.value.snapshot.transcript, transcript);
+  assert.deepEqual(methods, ["send_message", ...Array(5).fill("get_session_snapshot")],
+    "timeout and recovery only observe after the single accepted send");
+  assert.deepEqual(await server.state.poll(unrelated, { timeoutMs: 1 }), []);
+  assert.equal(server.state.pending.size, 0);
+  assert.equal(server.state.inflight.size, 0);
+});
+
 test("real MCP CLI binds form replies to the displayed wait and follows the resumed task", async t => {
   const server = await startBridge({ port: 0, scopeId: "input-test" });
   t.after(() => server.close());

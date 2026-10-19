@@ -30,6 +30,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   GIT_REPOSITORY_TAB_FAILED: { label: "toolError.GIT_REPOSITORY_TAB_FAILED.label" },
   INVALID_CONTENT_RESPONSE: { label: "toolError.INVALID_CONTENT_RESPONSE.label" },
   AGENT_RUN_FAILED: { label: "toolError.AGENT_RUN_FAILED.label" },
+  AGENT_FINALIZATION_FAILED: { label: "toolError.AGENT_RUN_FAILED.label" },
   AUTOMATION_RUNTIME_UNAVAILABLE: { label: "toolError.AUTOMATION_RUNTIME_UNAVAILABLE.label", message: "toolError.AUTOMATION_RUNTIME_UNAVAILABLE.message" },
   AX_ROOT_UNRESOLVED: { label: "toolError.AX_ROOT_UNRESOLVED.label" },
   CANNOT_DELETE_CALLER_SESSION: { label: "toolError.CANNOT_DELETE_CALLER_SESSION.label", message: "toolError.CANNOT_DELETE_CALLER_SESSION.message" },

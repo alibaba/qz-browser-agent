@@ -323,7 +323,7 @@ async function assertAgentFollowUpQueueEvents() {
     agent.steerFollowUp(id);
   }
   await assert.rejects(agent.removeSteering("steer_restore", async () => {
-    assert.equal(await agent._runNextSteeringRun(), false, "steering cleanup must pause queue handoff");
+    assert.equal(await agent._runNextFollowUpRun(), false, "steering cleanup must pause queue handoff");
     throw Object.assign(new Error("cleanup failed"), { code: "CLEANUP_FAILED" });
   }), error => error.code === "CLEANUP_FAILED");
   assert.deepEqual(agent.getPendingSteerings().map(item => item.clientMessageId), ["steer_before", "steer_restore", "steer_after"]);
@@ -598,8 +598,11 @@ async function assertRemovedIdleSteeringDoesNotStartAnEmptyTurn() {
 async function assertAgentIdleSteeringRunsBeforeFollowUps() {
   const { agent } = await createTestAgent("steering-idle-priority");
   const runs = [];
+  let admissions = 0;
+  agent._canStartQueuedRun = async () => { admissions += 1; return true; };
   agent._scheduleNextFollowUpRun = () => {};
-  agent._runWithLifecycle = async (pending = []) => {
+  agent._runWithLifecycle = async (pending = [], { requireFollowUpHandoff = false } = {}) => {
+    if (requireFollowUpHandoff) pending = agent.followUpQueue.drain();
     runs.push({
       initial: pending.map(message => message.clientMessageId),
       visibleSteerings: agent.getPendingSteerings().map(message => message.clientMessageId),
@@ -613,12 +616,14 @@ async function assertAgentIdleSteeringRunsBeforeFollowUps() {
   agent.steerFollowUp("cm_steer_second");
 
   assert.equal(await agent._runNextFollowUpRun(), true);
+  assert.equal(admissions, 1, "steering and follow-ups share one supervisor admission per run");
   assert.deepEqual(runs, [{
     initial: [],
     visibleSteerings: ["cm_steer_first", "cm_steer_second"],
   }], "idle fallback must keep steering visible through run startup");
   assert.deepEqual(agent.getPendingFollowUps().map(item => item.clientMessageId), ["cm_follow_after"]);
   assert.equal(await agent._runNextFollowUpRun(), true);
+  assert.equal(admissions, 2);
   assert.deepEqual(runs, [{
     initial: [],
     visibleSteerings: ["cm_steer_first", "cm_steer_second"],
@@ -633,7 +638,8 @@ async function assertAgentFollowUpsRunOneAtATime() {
   const runs = [];
   const events = [];
   agent.subscribe(event => events.push(event));
-  agent._runWithLifecycle = async (initialPendingMessages = []) => {
+  agent._runWithLifecycle = async (initialPendingMessages = [], { requireFollowUpHandoff = false } = {}) => {
+    if (requireFollowUpHandoff) initialPendingMessages = agent.followUpQueue.drain();
     runs.push(initialPendingMessages.map(msg => msg.clientMessageId));
     agent._emit({ type: "agent_start", runId: `run_${runs.length}` });
     for (const msg of initialPendingMessages) {

@@ -1247,6 +1247,7 @@ async function providerFaultLifecycleMatrix(page, providerServer) {
         }
 
         const boundary = await eventCount(page);
+        const recoveryRequests = providerServer.count("QZ_E2E_RECOVER");
         providerServer.release(marker);
         if (action === "DELETE" || action === "STOP") {
           // Allow the late network failure to cross the real worker/Port boundary.
@@ -1272,6 +1273,8 @@ async function providerFaultLifecycleMatrix(page, providerServer) {
             await waitForAgentEndCount(page, sessionId, after, 2, 20_000);
             const history = await historyMessages(page, sessionId);
             assert.equal(history.filter(message => message.role === "user" && messageText(message) === "QZ_E2E_RECOVER").length, 1);
+            assert.equal(providerServer.count("QZ_E2E_RECOVER"), recoveryRequests + 1,
+              "queued steering must continue automatically and reach the provider exactly once");
             assertRuntimeQueuesEmpty(await readRuntime(page, sessionId));
             assert.deepEqual(await visibleQueueRows(page), []);
             assertGaplessSteeringHandoff(await sessionEvents(page, sessionId, after), [queuedId]);

@@ -48,6 +48,7 @@ try {
   await submitAndWait();
   await queuedFollowupStream();
   await steerCurrentRun();
+  await timeoutRecovery();
   await confirmations();
   await permissionGuidance();
   await locationConsent();
@@ -133,7 +134,7 @@ function trackCommand(args, extra = {}) {
 
 // Exercise the real CLI entry point in a separate process. Only daemon discovery is
 // injected so the child uses this isolated browser instead of the developer's service.
-function startCliProcess(args) {
+function startCliProcess(args, { timeout = 30 } = {}) {
   const child = spawn(process.execPath, ["--input-type=module", "--eval", `
     import { main } from "./services/mcp-bridge/src/cli.mjs";
     import { readHealth } from "./services/mcp-bridge/src/client.mjs";
@@ -145,7 +146,7 @@ function startCliProcess(args) {
     });
     process.exitCode = exitCode;
     process.disconnect();
-  `, "--", environment.bridge.endpoint, ...args, "--timeout", "30"], {
+  `, "--", environment.bridge.endpoint, ...args, "--timeout", String(timeout)], {
     cwd: PROJECT_ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
   cliProcesses.add(child);
@@ -166,17 +167,27 @@ function startCliProcess(args) {
       resolve();
     });
   });
-  tracked.finish = async () => {
+  tracked.envelope = async () => {
     await tracked.done;
     if (tracked.error) throw tracked.error;
-    assert.equal(tracked.code, 0, `CLI failed: ${tracked.stdout}\n${tracked.stderr}`);
     const lines = tracked.stdout.trim().split("\n");
     assert.equal(lines.length, 1, "machine output must contain one final JSON result");
-    const output = JSON.parse(lines[0]);
+    return JSON.parse(lines[0]);
+  };
+  tracked.finish = async () => {
+    const output = await tracked.envelope();
+    assert.equal(tracked.code, 0, `CLI failed: ${tracked.stdout}\n${tracked.stderr}`);
     assert.equal(output.ok, true);
     return output.result;
   };
   return tracked;
+}
+
+async function waitForObservedRun(tracked, runId) {
+  return waitUntil(() => {
+    assert.equal(tracked.settled, false, `Observer ended before run ${runId}: ${tracked.stdout || tracked.error || ""}`);
+    return tracked.updates.find(event => event.type === "status" && event.runId === runId && event.status === "running");
+  }, `Observer did not follow run ${runId}`);
 }
 
 async function assertStillWaiting(tracked, message) {
@@ -340,6 +351,7 @@ async function submitAndWait() {
 
 async function mcpStreamingParity() {
   const marker = "QZ_INPUT_MCP_FORMS";
+  const followup = "QZ_INPUT_MCP_FOLLOWUP";
   const client = new Client({ name: "qz-parity-e2e", version: "1.0.0" });
   const transport = new StreamableHTTPClientTransport(new URL("/mcp", environment.bridge.endpoint), { fetch: localFetch });
   const controller = new AbortController();
@@ -383,17 +395,34 @@ async function mcpStreamingParity() {
     const watching = stream("qingzhou_watch_task", { sessionId });
     const watchedInput = await inputEvent(watching);
     assert.equal(watchedInput.waitId, second.waitId);
+    const queued = await command(["send", sessionId, followup]);
+    assert.equal(queued.accepted, true);
+    assert.equal(queued.disposition, "queued");
     // Complete the MCP task from the CLI, using only IDs and fields received in MCP progress.
-    const cliResult = await command(["submit", sessionId, JSON.stringify({ choice: "report", formats: ["csv"] }), "--wait-id", second.waitId, "--wait"]);
+    const cliResponse = trackCommand(["submit", sessionId, JSON.stringify({ choice: "report", formats: ["csv"] }),
+      "--wait-id", second.waitId, "--wait"]);
+    await waitUntil(() => fixture.count(followup) === 1, "MCP observers did not reach the queued follow-up");
+    const nextRunId = (await command(["show", sessionId])).runId;
+    assert.notEqual(nextRunId, first.runId);
+    await Promise.all([creation, submission, watching].map(tracked => waitForObservedRun(tracked, nextRunId)));
+    assert.equal(cliResponse.settled, false, "CLI response also waits for queued work");
+    fixture.release(followup);
+    const cliResult = await cliResponse.finish();
     assert.equal(cliResult.snapshot.status, "completed");
+    assert.equal(cliResult.snapshot.runId, nextRunId);
     for (const tracked of [creation, submission, watching]) {
-      assert.equal((await tracked.finish()).snapshot.status, "completed");
-      assert.match(tracked.updates.filter(event => event.type === "text").map(event => event.text).join(""), /QZ_INPUT_MCP_FORMS: answers received/);
+      const completed = await tracked.finish();
+      assert.equal(completed.snapshot.status, "completed");
+      assert.equal(completed.snapshot.runId, nextRunId);
+      assert.equal(tracked.updates.filter(event => event.type === "text").map(event => event.text).join(""),
+        `${marker}: answers received.${followup}: answers received.`);
     }
     assert.deepEqual(creation.updates.filter(event => event.type === "input").map(event => event.waitId), [first.waitId, second.waitId]);
     assert.equal(fixture.count(marker), 3, "parallel observers must never replay a mutation");
+    assert.equal(fixture.count(followup), 1);
     assert.deepEqual(fixture.toolResult(marker, 1).answers, answers);
-    report.cases.push({ name: "mcp-create-response-watch-progress-cli-completion", ok: true, sessionId, observers: 3, inputRounds: 2 });
+    report.cases.push({ name: "mcp-create-response-watch-progress-cli-completion-and-followup", ok: true, sessionId,
+      observers: 3, inputRounds: 2, runIds: [first.runId, nextRunId] });
   } finally {
     controller.abort();
     await Promise.allSettled(pending);
@@ -425,7 +454,15 @@ async function confirmations() {
 async function queuedFollowupStream() {
   const marker = "QZ_INPUT_SEND_WAIT";
   const followup = "QZ_INPUT_SEND_FOLLOWUP";
-  const { sessionId, input } = await createWaiting(marker, "form");
+  const nextFollowup = "QZ_INPUT_SEND_NEXT_FOLLOWUP";
+  const creating = startCliProcess(["create", marker, "--client", clientId, "--stream", "--json"]);
+  await waitUntil(() => {
+    assert.equal(creating.settled, false, `Creation ended before its form: ${creating.stdout}`);
+    return creating.created;
+  }, "Creation did not report its task");
+  const sessionId = creating.created.session.id;
+  const input = await waitForInput(sessionId, "form");
+  const watching = startCliProcess(["watch", sessionId, "--client", clientId, "--stream", "--json"]);
   const sending = startCliProcess(["send", sessionId, followup, "--client", clientId, "--stream", "--json"]);
   const pending = await waitUntil(() => {
     assert.equal(sending.settled, false, `send --stream exited while its message was queued: ${sending.stdout}\n${sending.stderr}`);
@@ -433,19 +470,30 @@ async function queuedFollowupStream() {
   }, "Queued send did not expose the preceding run's pending form");
   assert.deepEqual(pending.form, input.form);
   assert.deepEqual(pending.responseTemplate, input.responseTemplate);
-  assert.equal(sending.stdout, "", "queued JSON output stays empty until its own run completes");
-  await assertStillWaiting(sending, "send --stream must wait behind the existing form");
+  assert.equal(sending.stdout, "", "queued JSON output stays empty until all accepted work completes");
   await unchangedWait(sessionId, input.waitId, marker, 1);
   assert.equal(fixture.count(followup), 0, "a follow-up cannot start before the existing form resolves");
 
-  const answer = await command(["submit", sessionId, JSON.stringify({ note: "Finish the existing task first" }), "--wait-id", input.waitId]);
-  assert.equal(answer.accepted, true);
+  const responseUpdates = [];
+  const answering = trackCommand(["submit", sessionId, JSON.stringify({ note: "Finish the existing task first" }),
+    "--wait-id", input.waitId, "--wait"], { onTaskUpdate: event => responseUpdates.push(event) });
+  answering.updates = responseUpdates;
   await waitUntil(() => fixture.count(followup) === 1, "The queued follow-up did not start a new model run");
   assert.equal(fixture.finished.has(marker), true, "the previous run finishes before its queued follow-up starts");
-  await assertStillWaiting(sending, "the previous run's completion must not complete send --stream");
+  const firstRunId = (await command(["show", sessionId])).runId;
+  const observers = [creating, watching, sending, answering];
+  await Promise.all(observers.map(observer => waitForObservedRun(observer, firstRunId)));
   assert.equal(sending.updates.some(event => event.type === "text" || event.type === "replace"), false,
     "queued send must suppress the previous run's assistant response");
-  fixture.releaseFollowup();
+  const next = await command(["send", sessionId, nextFollowup]);
+  assert.equal(next.accepted, true);
+  assert.equal(next.disposition, "queued");
+  fixture.release(followup);
+  await waitUntil(() => fixture.count(nextFollowup) === 1, "The second follow-up did not start");
+  const finalRunId = (await command(["show", sessionId])).runId;
+  assert.notEqual(finalRunId, firstRunId);
+  await Promise.all(observers.map(observer => waitForObservedRun(observer, finalRunId)));
+  fixture.release(nextFollowup);
 
   const result = await sending.finish();
   assert.equal(result.accepted, true);
@@ -457,12 +505,25 @@ async function queuedFollowupStream() {
   const submitted = result.snapshot.transcript.find(entry => entry.type === "user" && entry.clientMessageId === result.clientMessageId);
   assert.ok(submitted?.runId, "the accepted message ID identifies its actual run in the transcript");
   assert.notEqual(submitted.runId, input.runId);
-  assert.equal(result.snapshot.runId, submitted.runId);
-  assert.equal(sending.updates.filter(event => event.type === "text").map(event => event.text).join(""), `${followup}: answers received.`);
+  assert.equal(submitted.runId, firstRunId);
+  assert.equal(result.snapshot.runId, finalRunId);
+  assert.equal(sending.updates.filter(event => event.type === "text").map(event => event.text).join(""),
+    `${followup}: answers received.${nextFollowup}: answers received.`);
+  for (const observer of [creating, watching, answering]) {
+    const observed = await observer.finish();
+    assert.equal(observed.snapshot.status, "completed");
+    assert.equal(observed.snapshot.runId, finalRunId, "every wrapper waits through both follow-ups");
+  }
+  for (const accepted of [result, next]) {
+    assert.equal(result.snapshot.transcript.filter(entry => entry.clientMessageId === accepted.clientMessageId).length, 1);
+  }
+  assert.deepEqual(result.snapshot.runtime.pendingFollowUps, []);
+  assert.deepEqual(result.snapshot.runtime.pendingSteerings, []);
   assert.equal(fixture.count(marker), 2);
   assert.equal(fixture.count(followup), 1, "queued send executes exactly once");
-  report.cases.push({ name: "queued-send-stream-preserves-pending-input-and-follows-own-run", ok: true, sessionId,
-    previousRunId: input.runId, runId: submitted.runId, clientMessageId: result.clientMessageId });
+  assert.equal(fixture.count(nextFollowup), 1);
+  report.cases.push({ name: "create-watch-send-response-follow-two-queued-runs", ok: true, sessionId,
+    runIds: [input.runId, firstRunId, finalRunId], clientMessageIds: [result.clientMessageId, next.clientMessageId], observers: observers.length });
 }
 
 async function permissionGuidance() {
@@ -540,6 +601,7 @@ async function permissionGuidance() {
 async function steerCurrentRun() {
   const marker = "QZ_INPUT_STEER_WAIT";
   const redirected = "QZ_INPUT_STEER_RESULT";
+  const followup = "QZ_INPUT_STEER_FOLLOWUP";
   const { sessionId, input } = await createWaiting(marker, "form");
   const other = await createWaiting("QZ_INPUT_STEER_UNRELATED", "form");
   await switchToSession(other.sessionId);
@@ -555,7 +617,15 @@ async function steerCurrentRun() {
   assert.equal(sending.updates.some(event => event.type === "text" || event.type === "replace"), false,
     "steering must not stream earlier assistant text from the same run");
 
+  const queued = await command(["send", sessionId, followup]);
+  assert.equal(queued.accepted, true);
+  assert.equal(queued.disposition, "queued");
   assert.equal((await command(["submit", sessionId, JSON.stringify({ note: "Use the new direction" }), "--wait-id", input.waitId])).accepted, true);
+  await waitUntil(() => fixture.count(followup) === 1, "The follow-up after steering did not start");
+  const finalRunId = (await command(["show", sessionId])).runId;
+  assert.notEqual(finalRunId, input.runId);
+  await waitForObservedRun(sending, finalRunId);
+  fixture.release(followup);
   const result = await sending.finish();
   assert.equal(result.accepted, true);
   assert.equal(result.deliveryMode, "steer");
@@ -563,16 +633,61 @@ async function steerCurrentRun() {
   const matching = result.snapshot.transcript.filter(entry => entry.type === "user" && entry.clientMessageId === result.clientMessageId);
   assert.equal(matching.length, 1, "a steering message is consumed exactly once");
   assert.equal(matching[0].runId, input.runId, "steering joins the target's active run");
-  assert.equal(result.snapshot.runId, input.runId, "steering does not start a follow-up run");
+  assert.equal(result.snapshot.runId, finalRunId, "the steering observer also follows accepted follow-ups");
+  assert.equal(result.snapshot.transcript.find(entry => entry.clientMessageId === queued.clientMessageId)?.runId, finalRunId);
   assert.match(assistantText(result.snapshot), /Prior context before steering\./, "the fixture contains earlier text from this same run");
-  assert.equal(sending.updates.filter(event => event.type === "text").map(event => event.text).join(""), `${redirected}: answers received.`);
+  assert.equal(sending.updates.filter(event => event.type === "text").map(event => event.text).join(""),
+    `${redirected}: answers received.${followup}: answers received.`);
   assert.equal(fixture.count(marker), 1, "the existing run adopts steering at its next model call");
   assert.equal(fixture.count(redirected), 1);
+  assert.equal(fixture.count(followup), 1);
   await unchangedWait(other.sessionId, other.input.waitId, "QZ_INPUT_STEER_UNRELATED", 1);
   assert.equal((await command(["show", other.sessionId])).transcript.some(entry => entry.clientMessageId === result.clientMessageId), false);
   await command(["cancel", other.sessionId]);
-  report.cases.push({ name: "steer-current-run-target-isolation-form-preserved-own-stream", ok: true, sessionId,
-    runId: input.runId, clientMessageId: result.clientMessageId });
+  report.cases.push({ name: "steer-current-run-and-followup-target-isolation-form-preserved-own-stream", ok: true, sessionId,
+    runId: input.runId, finalRunId, clientMessageId: result.clientMessageId });
+}
+
+async function timeoutRecovery() {
+  const marker = "QZ_INPUT_TIMEOUT";
+  const followup = "QZ_INPUT_TIMEOUT_FOLLOWUP";
+  const created = await command(["create", marker]);
+  const sessionId = created.session.id;
+  await waitUntil(() => fixture.count(marker) === 1, "The timeout task did not reach its provider gate");
+  const watching = startCliProcess(["watch", sessionId, "--client", clientId, "--json"], { timeout: 2 });
+  const timedOut = await watching.envelope();
+  assert.equal(watching.code, 1);
+  assert.equal(timedOut.ok, false);
+  assert.equal(timedOut.error.code, "timeout");
+  assert.equal(timedOut.error.sessionId, sessionId);
+  assert.equal(timedOut.error.clientId, clientId);
+  assert.equal(timedOut.error.command, `qz watch ${sessionId} --client ${clientId} --stream`);
+  const running = await command(["show", sessionId]);
+  assert.equal(running.status, "running", "ending observation leaves the browser task running");
+  const accepted = await command(["send", sessionId, followup]);
+  assert.equal(accepted.accepted, true);
+  // Execute the returned command, including its original task and browser UUID.
+  const recovering = startCliProcess([...timedOut.error.command.split(" ").slice(1), "--json"]);
+  await waitForObservedRun(recovering, running.runId);
+  fixture.release(marker);
+  await waitUntil(() => fixture.count(followup) === 1, "Recovery did not reach the queued follow-up");
+  const nextRunId = (await command(["show", sessionId])).runId;
+  assert.notEqual(nextRunId, running.runId);
+  await waitForObservedRun(recovering, nextRunId);
+  fixture.release(followup);
+  const recovered = await recovering.finish();
+  assert.equal(recovered.sessionId, sessionId);
+  assert.equal(recovered.snapshot.clientId, clientId);
+  assert.equal(recovered.snapshot.status, "completed");
+  assert.equal(recovered.snapshot.runId, nextRunId);
+  assert.equal(recovered.snapshot.transcript.filter(entry => entry.type === "user" && entry.text === marker).length, 1);
+  assert.equal(recovered.snapshot.transcript.filter(entry => entry.clientMessageId === accepted.clientMessageId).length, 1);
+  assert.equal(fixture.count(marker), 1, "timeout and recovery never replay the initial request");
+  assert.equal(fixture.count(followup), 1);
+  assert.equal(recovering.updates.filter(event => event.type === "text").map(event => event.text).join(""),
+    `${marker}: answers received.${followup}: answers received.`);
+  report.cases.push({ name: "timeout-execute-returned-watch-command-through-followup", ok: true, sessionId, clientId,
+    command: timedOut.error.command, runIds: [running.runId, nextRunId] });
 }
 
 async function locationConsent() {
@@ -634,8 +749,10 @@ function textContent(content) {
 async function startFixture() {
   const requests = [];
   const finished = new Set();
-  let releaseFollowup;
-  const followupGate = new Promise(resolve => { releaseFollowup = resolve; });
+  const gates = new Map([
+    "QZ_INPUT_SEND_FOLLOWUP", "QZ_INPUT_SEND_NEXT_FOLLOWUP", "QZ_INPUT_STEER_FOLLOWUP",
+    "QZ_INPUT_TIMEOUT", "QZ_INPUT_TIMEOUT_FOLLOWUP", "QZ_INPUT_MCP_FOLLOWUP",
+  ].map(marker => [marker, Promise.withResolvers()]));
   let baseUrl;
   const server = createServer(async (request, response) => {
     if (request.url === "/card.png") {
@@ -669,7 +786,7 @@ async function startFixture() {
         send({ role: "assistant", tool_calls: [{ index: 0, id: `${marker}_${index + 1}`, type: "function", function: { name: step.name, arguments: JSON.stringify(step.args) } }] });
         send({}, "tool_calls");
       } else {
-        if (marker === "QZ_INPUT_SEND_FOLLOWUP") await followupGate;
+        if (gates.has(marker)) await gates.get(marker).promise;
         send({ role: "assistant", content: `${marker}: ` });
         if (["QZ_INPUT_FORMS", "QZ_INPUT_MCP_FORMS", "QZ_INPUT_SEND_FOLLOWUP", "QZ_INPUT_STEER_RESULT"].includes(marker)) await delay(1200);
         send({ content: "answers received." });
@@ -687,14 +804,18 @@ async function startFixture() {
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   baseUrl = `http://127.0.0.1:${server.address().port}`;
   return {
-    endpoint: `${baseUrl}/v1/chat/completions`, requests, finished, releaseFollowup,
+    endpoint: `${baseUrl}/v1/chat/completions`, requests, finished,
+    release(marker) { assert.ok(gates.has(marker), `Unknown provider gate: ${marker}`); gates.get(marker).resolve(); },
     count: marker => requests.filter(item => item.marker === marker && item.stream).length,
     toolResult(marker, step) {
       const result = requests.filter(item => item.marker === marker).flatMap(item => item.results || []).find(item => item.id === `${marker}_${step}`);
       assert.ok(result, `provider did not receive ${marker} tool result ${step}`);
       return JSON.parse(result.content);
     },
-    close: () => new Promise(resolve => { releaseFollowup(); server.close(resolve); server.closeAllConnections(); }),
+    close: () => new Promise(resolve => {
+      for (const gate of gates.values()) gate.resolve();
+      server.close(resolve); server.closeAllConnections();
+    }),
   };
 }
 
@@ -722,7 +843,8 @@ function scenario(marker, baseUrl) {
     ] },
   ])];
   if (["QZ_INPUT_WAIT", "QZ_INPUT_SEND_WAIT", "QZ_INPUT_STEER_WAIT", "QZ_INPUT_STEER_UNRELATED"].includes(marker)) return [ask([{ id: "note", label: "Note", type: "text", required: true }])];
-  if (marker === "QZ_INPUT_SEND_FOLLOWUP" || marker === "QZ_INPUT_STEER_RESULT") return [];
+  if (["QZ_INPUT_SEND_FOLLOWUP", "QZ_INPUT_SEND_NEXT_FOLLOWUP", "QZ_INPUT_STEER_RESULT", "QZ_INPUT_STEER_FOLLOWUP",
+    "QZ_INPUT_TIMEOUT", "QZ_INPUT_TIMEOUT_FOLLOWUP", "QZ_INPUT_MCP_FOLLOWUP"].includes(marker)) return [];
   if (marker === "QZ_INPUT_PERMISSION") return [{ name: "browse_history", args: { action: "recent", limit: 1 } }];
   if (marker.startsWith("QZ_INPUT_LOCATION")) return [{ name: "get_location", args: {} }];
   return [{ name: "wait_for_user", args: { message: "Confirm the synthetic action before continuing." } }];

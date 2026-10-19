@@ -253,18 +253,21 @@ restart a working service. To update, finish current tasks, run `stop`, update a
 [connection and upgrade details](cli.md#connect-and-stop).
 
 `create` accepts the task text directly, with an optional title.
-`--wait` waits for the result; `--stream` also displays progress. Both stay connected through
-questions and permission requests, then continue automatically after you respond. Pending output
-includes the full request, field IDs, option values, and a submission template. Use `show TASK_ID` to
+`--wait` follows the task across runs until its current work and accepted follow-ups and steering
+messages have completed and its queues are empty; `--stream` also displays progress. Both stay
+connected through questions and permission requests, then continue automatically after you respond.
+Pending output includes the full request, field IDs, option values, and a submission template. Use `show TASK_ID` to
 read the request again, answer fields with `submit`, continue a confirmation with
 `approve`, or decline it with `reject`. Responses bind to the current wait; `--wait-id ID` selects a
 specific request. `submit`, `approve`, and `reject` also accept `--wait` and `--stream`. Review the displayed
 application consent notice before approving. Native Chrome permissions require a click in the
 side panel; the CLI preserves the wait and tells you where to confirm. Respond in the side panel or
-another terminal while the original command keeps watching. `watch` follows an existing task.
+another terminal while the original command keeps watching. `watch` follows an existing task with
+the same completion condition. Task failure or stopping ends observation.
 Task observation has no default time limit. Add `--timeout SECONDS` to set a total deadline,
 including user-input pauses. Each individual connection request remains bounded (180 seconds by
-default). Timeout or Ctrl-C ends watching; `watch TASK_ID --stream` resumes observation and
+default). Timeout or Ctrl-C ends watching; execute the returned `watch` recovery command with the
+same task ID and browser UUID to resume observation. Observation never resends a message.
 `cancel TASK_ID` stops the task.
 
 If the selected browser has no matching task, `show` fails with `task_not_found` and exit code 1.

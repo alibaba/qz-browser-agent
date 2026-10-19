@@ -169,7 +169,7 @@ test("message tracking handles immediate completion and a transcript arriving be
   const immediate = await sequence([done], { expectedMessageId: "message-2" });
   assert.equal(immediate.result, done); assert.equal(immediate.calls, 1);
   assert.equal(immediate.updates.find(item => item.type === "text").text, "Quick answer");
-  const delayed = await sequence([snapshot("completed", [user]), done], { expectedMessageId: "message-2" });
+  const delayed = await sequence([snapshot("completed", [user]), done], { expectedMessageId: "message-2", messageWasQueued: true });
   assert.equal(delayed.result, done); assert.equal(delayed.calls, 2);
   assert.ok(delayed.updates.every(item => item.runId === "run-2"));
 });
@@ -186,6 +186,37 @@ test("same-run steering streams only assistant entries after the submitted messa
   assert.deepEqual(updates.filter(event => event.type === "input").map(event => event.waitId), ["question"]);
   const immediate = await sequence([done], { expectedMessageId: "steer-message" });
   assert.deepEqual(immediate.updates.filter(event => event.type === "text").map(event => event.text), ["Sources checked."]);
+});
+
+test("a queued message removed before the first poll completes the task without emitting an earlier answer", async () => {
+  const done = snapshot("completed", [assistant("Earlier answer", { streaming: false })]);
+  const { result, calls, updates } = await sequence([done], { expectedMessageId: "removed", messageWasQueued: true });
+  assert.equal(result, done);
+  assert.equal(calls, 1);
+  assert.deepEqual(updates.map(event => event.type), ["status"]);
+});
+
+test("observing a message in either queue proves acceptance if it is subsequently removed", async () => {
+  for (const field of ["pendingFollowUps", "pendingFollowUpMessages", "pendingSteerings", "pendingSteeringMessages"]) {
+    const queued = snapshot("running", [], { runtime: { [field]: [{ clientMessageId: "removed" }] } });
+    const done = snapshot("completed", [assistant("Earlier answer", { streaming: false })]);
+    const { result, calls, updates } = await sequence([queued, done], { expectedMessageId: "removed" });
+    assert.equal(result, done);
+    assert.equal(calls, 2);
+    assert.equal(updates.some(event => event.type === "text"), false);
+  }
+});
+
+test("removing the tracked queued message still waits for other accepted work to finish", async () => {
+  const done = snapshot("completed", [assistant("Other message answered", { runId: "run-2" })], { runId: "run-2" });
+  const { result, calls, updates } = await sequence([
+    snapshot("completed", [], { runtime: { pendingFollowUps: [{ clientMessageId: "other" }] } }),
+    snapshot("pending", [], { runId: "run-2", runtime: { pendingStart: true } }),
+    snapshot("running", [], { runId: "run-2" }), done,
+  ], { expectedMessageId: "removed", messageWasQueued: true });
+  assert.equal(result, done);
+  assert.equal(calls, 4);
+  assert.equal(updates.some(event => event.type === "text"), false);
 });
 
 test("queued observation remains cancellable and stops if the preceding task is aborted or deleted", async () => {
@@ -349,6 +380,14 @@ test("a resumed task can finish before running is observed; watching an idle tas
   assert.equal((await sequence([idle], { allowIdle: true })).result, idle);
 });
 
+test("a response ignores its stale question while runtime catches up to the acknowledged run", async () => {
+  const old = snapshot("waiting_user", [], { runId: "old-run", runtime: { waitId: "old-wait" } });
+  const done = snapshot("completed");
+  const { result, updates } = await sequence([old, done], { expectedRunId: "run-1", ignoreWaitId: "old-wait" });
+  assert.equal(result, done);
+  assert.equal(updates.some(event => event.type === "input" || event.status === "waiting_user"), false);
+});
+
 test("a persistent stale wait times out rather than falsely reporting a new request", async () => {
   let emitted = 0;
   await assert.rejects(waitForTask({ sessionId: "session-1", timeoutSeconds: 0.03, pollIntervalMs: 100,
@@ -381,13 +420,13 @@ test("failure, cancellation and interruption return the real snapshot promptly",
   }
 });
 
-test("previous/expected run IDs ignore stale completed state and old assistant messages", async () => {
+test("the expected run ignores stale completed state and old assistant messages", async () => {
   const old = assistant("Old answer", { runId: "run-old", streaming: false });
   const done = snapshot("completed", [old, assistant("New answer", { streaming: false })]);
   const { result, updates } = await sequence([
     snapshot("completed", [old], { runId: "run-old" }), snapshot("idle", [old]),
     snapshot("running", [old, assistant("New")]), done,
-  ], { previousRunId: "run-old", expectedRunId: "run-1" });
+  ], { expectedRunId: "run-1" });
   assert.equal(result, done);
   assert.deepEqual(updates.filter(update => update.type === "text").map(update => update.text), ["New", " answer"]);
 });
@@ -476,10 +515,54 @@ test("snapshot failures propagate once and never repeat task mutations", async (
   assert.equal(calls, 1);
 });
 
-test("a different Session or replacement run cannot be mistaken for the watched task", async () => {
+test("a different Session is rejected while later runs continue the watched task", async () => {
   await assert.rejects(sequence([snapshot("running", [], { sessionId: "other" })]), error => error.code === "task_changed");
-  await assert.rejects(sequence([snapshot("running"), snapshot("completed", [], { runId: "run-2" })]), error => error.code === "task_changed");
-  await assert.rejects(sequence([snapshot("running"), snapshot("completed", [], { runId: "run-2" })], { expectedRunId: "run-1" }), error => error.code === "task_changed");
+  for (const tracking of [{}, { expectedRunId: "run-1" }]) {
+    const done = snapshot("completed", [], { runId: "run-2" });
+    assert.equal((await sequence([snapshot("running"), done], tracking)).result, done);
+  }
+});
+
+test("watch follows consecutive follow-ups and steering, including a run skipped between polls", async () => {
+  const turn = (runId, text) => [{ type: "user", runId, clientMessageId: runId },
+    assistant(text, { runId, streaming: false })];
+  const old = turn("old-run", "Old context");
+  const first = [...old, ...turn("run-1", "First")];
+  const second = [...first, ...turn("run-2", "Second")];
+  const all = [...second, ...turn("run-3", "Third"), ...turn("run-4", "Fourth")];
+  const done = snapshot("completed", all, { runId: "run-4" });
+  const { result, updates } = await sequence([
+    snapshot("running", first),
+    snapshot("completed", first, { runtime: { pendingFollowUps: [{ clientMessageId: "run-2" }] } }),
+    snapshot("pending", first, { runId: "run-2", runtime: { pendingStart: true } }),
+    snapshot("completed", second, { runId: "run-2", runtime: { pendingSteerings: [{ clientMessageId: "run-3" }] } }),
+    snapshot("running", all, { runId: "run-4" }), done,
+  ]);
+  assert.equal(result, done);
+  const texts = updates.filter(update => update.type === "text");
+  assert.deepEqual(texts.map(update => update.text), ["First", "Second", "Third", "Fourth"]);
+  assert.equal(new Set(texts.map(update => update.messageId)).size, 4, "reused span IDs remain scoped to their own run");
+});
+
+test("successful and idle snapshots cannot finish while execution or either queue remains", async () => {
+  for (const status of ["completed", "idle"]) {
+    for (const work of ["pendingFollowUps", "pendingFollowUpMessages", "pendingSteerings", "pendingSteeringMessages", "pendingStart", "running"]) {
+      const pending = snapshot(status, [], { runtime: { [work]: work.startsWith("pending") && work !== "pendingStart" ? [{}] : true } });
+      const done = snapshot("completed");
+      const { result, calls } = await sequence([pending, done], { allowIdle: true });
+      assert.equal(result, done, `${status} with ${work}`);
+      assert.equal(calls, 2);
+    }
+  }
+});
+
+test("initialization failures and stops end observation even with queued work or an unmatched run", async () => {
+  for (const status of ["error", "failed", "aborted", "cancelled", "interrupted"]) {
+    const end = snapshot(status, [], { runId: "initializing", runtime: { pendingFollowUps: [{}], pendingSteerings: [{}] } });
+    for (const tracking of [{}, { expectedMessageId: "not-yet-delivered" }, { expectedRunId: "previous-run" }]) {
+      assert.equal((await sequence([end], tracking)).result, end);
+    }
+  }
 });
 
 test("a deleted Session fails immediately before or after observing its active run", async () => {
