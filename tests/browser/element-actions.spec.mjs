@@ -286,6 +286,10 @@ for (const mode of ["desktop", "mobile"]) {
         expect(events(state, "checkbox", "touchstart")).toHaveLength(2);
         expect(events(state, "checkbox", "touchstart").every(event => event.trusted)).toBe(true);
       }
+      // open_tab creates a background tab. Its paint-dependent rollback needs a
+      // foreground frame; the preceding input checks cover the non-painting path.
+      await h.page.bringToFront();
+      await h.page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
       for (const id of ["rollback", "cancelled"]) {
         expect(await h.act(id, "check")).toMatchObject({ code: "ELEMENT_CHECK_STATE_MISMATCH", checked: false });
         state = await h.state();

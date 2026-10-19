@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInNewContext, Script } from "node:vm";
 import { minify } from "terser";
 import { buildExtension, compileEmbeddedScript, EXTENSION_ENTRIES, watchExtension } from "../../scripts/build-extension.mjs";
+import { acquireBuildOutput, isBuildProcessRunning } from "../../scripts/build-output-lock.mjs";
 import { bundleExtension, stableDebugSourceMap } from "../../scripts/build-extension-bundles.mjs";
 import { capabilityUiAssets } from "../../scripts/capability-catalog.mjs";
 import { capabilityLocaleAssets } from "../../scripts/capability-locales.mjs";
@@ -655,8 +656,11 @@ test("watch discovers added and removed capability files without touching the ho
     await until(() => catalogs.at(-1).includes("parallel/replacement.js"));
     assert.equal(await contributionCount(), "1");
     await assert.rejects(access(join(outputDir, "capabilities/parallel/tools.js")), { code: "ENOENT" });
+    await put(sourceDir, "capabilities/parallel/replacement.ts", 'export default () => "edited replacement";\n');
+    await until(async () => /edited replacement/.test(await readFile(join(outputDir, "capabilities/parallel/replacement.js"), "utf8")));
+    const buildsBeforeRemoval = catalogs.length;
     renameSync(join(sourceDir, "capabilities/parallel"), join(work, "removed"));
-    await until(() => catalogs.length > 3 && !catalogs.at(-1).includes("parallel/"));
+    await until(() => catalogs.length > buildsBeforeRemoval && !catalogs.at(-1).includes("parallel/"));
     assert.equal(await contributionCount(), "0");
     await assert.rejects(access(join(outputDir, "capabilities/parallel/replacement.js")), { code: "ENOENT" });
     assert.equal(await readFile(join(sourceDir, "background/service-worker.ts"), "utf8"), host);
@@ -791,10 +795,11 @@ test("killing npm stops its watcher and an immediate npm restart owns the output
       await waitForWatchStartup(running.child);
       const nextPid = await ownerPid();
       assert.notEqual(nextPid, previousPid);
-      await until(() => {
-        try { process.kill(previousPid, 0); return false; }
-        catch (error) { if (error.code === "ESRCH") return true; throw error; }
-      });
+      await until(() => !isBuildProcessRunning(previousPid));
+      // Exited owners include unreaped Linux zombies: their abandoned lock is recoverable.
+      await put(dirname(outputDir), ".abandoned.qingzhou-build-lock/owner.json", JSON.stringify({ pid: previousPid }));
+      const release = await acquireBuildOutput({ sourceDir, outputDir: join(dirname(outputDir), "abandoned") });
+      await release();
       previousPid = nextPid;
     }
     await put(sourceDir, "shared/value.ts", "export const value = 109;");

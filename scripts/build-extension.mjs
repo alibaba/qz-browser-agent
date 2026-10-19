@@ -10,7 +10,7 @@ import { parseArgs } from "node:util";
 import { Script } from "node:vm";
 import { generateModelsDevIndex, modelsDevIndexPlugin } from "./models-dev-assets.mjs";
 import { bundleExtension, readRuntimeModuleGraph, stableDebugSourceMap } from "./build-extension-bundles.mjs";
-import { acquireBuildOutput, BuildOutputLockedError } from "./build-output-lock.mjs";
+import { acquireBuildOutput, BuildOutputLockedError, getBuildProcessParentPid, isBuildProcessRunning } from "./build-output-lock.mjs";
 import { readProductProfile } from "./product-profile.mjs";
 import { capabilityBuildProfile, capabilityUiAssets, generateCapabilityCatalogs } from "./capability-catalog.mjs";
 import { capabilityLocaleAssets } from "./capability-locales.mjs";
@@ -437,6 +437,7 @@ export async function watchExtension(options = {}, { onBuild = () => {}, onError
   let pending = false;
   let closed = false;
   let watcher;
+  let refreshWatcher = false;
   let closing;
   async function close() {
     if (closing) return closing;
@@ -448,10 +449,26 @@ export async function watchExtension(options = {}, { onBuild = () => {}, onError
     return closing;
   }
   const interrupted = () => { void close().catch(onError); };
+  function watchSources() {
+    const next = watch(options.sourceDir, { recursive: true }, event => {
+      if (event === "rename") refreshWatcher = true;
+      clearTimeout(timer);
+      timer = setTimeout(rebuild, debounceMs);
+    });
+    next.on("error", onError);
+    watcher?.close();
+    watcher = next;
+    refreshWatcher = false;
+  }
   async function rebuild() {
     if (closed) return;
     if (active) { pending = true; return; }
-    active = compileExtension(options).then(onBuild, onError);
+    active = (async () => {
+      // Recursive watches can retain the old directory's inode after an atomic replacement.
+      // Reattach before rebuilding so later edits and removals reach the new directory too.
+      if (refreshWatcher) watchSources();
+      return compileExtension(options);
+    })().then(onBuild, onError);
     try { await active; } finally {
       active = null;
       if (pending) { pending = false; await rebuild(); }
@@ -459,11 +476,7 @@ export async function watchExtension(options = {}, { onBuild = () => {}, onError
   }
   try {
     options.signal?.throwIfAborted();
-    watcher = watch(options.sourceDir, { recursive: true }, () => {
-      clearTimeout(timer);
-      timer = setTimeout(rebuild, debounceMs);
-    });
-    watcher.on("error", onError);
+    watchSources();
     options.signal?.addEventListener("abort", interrupted, { once: true });
     await rebuild();
     return { close };
@@ -537,12 +550,14 @@ Options:
   options.signal = controller.signal;
   if (values.watch) {
     options.launcherPid = launcherPid;
+    // npm's shell may survive npm's SIGKILL; retain its original parent, before reparenting.
+    const launcherParentPid = process.env.npm_lifecycle_event ? getBuildProcessParentPid(launcherPid) : undefined;
+    options.launcherParentPid = launcherParentPid;
     // Killing npm alone does not necessarily signal its child. The CLI watcher belongs
     // to its launcher, including when the terminal closes or npm is killed with SIGKILL.
     const checkParent = () => {
-      let exited = launcherPid <= 1 || process.ppid !== launcherPid;
-      try { process.kill(launcherPid, 0); }
-      catch (error) { if (error.code === "ESRCH") exited = true; }
+      const exited = process.ppid !== launcherPid || [launcherPid, launcherParentPid]
+        .some(pid => Number.isSafeInteger(pid) && (pid <= 1 || !isBuildProcessRunning(pid)));
       if (exited) controller.abort(new Error("Dev launcher exited"));
     };
     parentTimer = setInterval(checkParent, 200).unref();

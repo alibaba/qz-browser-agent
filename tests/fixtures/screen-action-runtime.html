@@ -180,6 +180,7 @@
         inputEvents: 0,
         keyEvents: [],
         wheelEvents: 0,
+        trustedWheelEvents: 0,
         wheelDeltaX: 0,
         wheelDeltaY: 0,
         viewportScrollEvents: 0,
@@ -263,6 +264,7 @@
       document.querySelector("#wheel-target").addEventListener("wheel", event => {
         event.preventDefault();
         state.wheelEvents += 1;
+        if (event.isTrusted) state.trustedWheelEvents += 1;
         state.wheelDeltaX += event.deltaX;
         state.wheelDeltaY += event.deltaY;
         render();

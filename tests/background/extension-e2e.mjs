@@ -40,6 +40,8 @@ try {
     viewport: { width: 980, height: 860 },
     args: [
       "--lang=zh-CN",
+      // Keep headless compositor input progressing on the task's background tab.
+      "--disable-frame-rate-limit",
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
     ],
@@ -185,8 +187,14 @@ async function mcpOutputSchemaSurvivesExtensionCsp(page, providerServer) {
 
 async function screenActionFeedbackRoundTrip(page, browserContext, providerServer) {
   const sessionId = await createSession(page, "screen action feedback");
+  const activeTabId = await page.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id);
   const result = await runPrompt(page, sessionId, "QZ_E2E_SCREEN_ACTION");
   assert.match(result, /QZ_E2E_SCREEN_ACTION_OK/);
+
+  const tabs = await page.evaluate(() => chrome.tabs.query({}));
+  const targetTab = tabs.find(tab => tab.url === providerServer.screenActionUrl);
+  assert.equal(targetTab?.active, false, "screen actions must work on the owned background tab");
+  assert.equal(tabs.find(tab => tab.active && tab.windowId === targetTab.windowId)?.id, activeTabId, "screen actions must preserve the user's active tab");
 
   const targetPage = browserContext.pages().find(candidate => candidate.url() === providerServer.screenActionUrl);
   assert.ok(targetPage, "screen action should keep its owned target tab");
@@ -206,6 +214,7 @@ async function screenActionFeedbackRoundTrip(page, browserContext, providerServe
   assert.ok(observedState.longPressMs >= 260, `the page should observe the requested long press (${observedState.longPressMs}ms)`);
   assert.equal(observedState.inputValue, "扩展最终值");
   assert.equal(observedState.keyEvents.at(-1)?.key, "Enter");
+  assert.equal(observedState.trustedWheelEvents, 3, "every requested wheel must reach the page as native input");
   assert.equal(observedState.wheelDeltaX, 30);
   assert.equal(observedState.wheelDeltaY, 360);
   assert.equal(observedState.scrollY, 0);
@@ -2066,6 +2075,7 @@ async function createProviderServer() {
     || state.inputValue !== "扩展最终值"
     || state.keyEvents.at(-1)?.key !== "Enter"
     || state.wheelEvents !== 3
+    || state.trustedWheelEvents !== 3
     || state.wheelDeltaX !== 30
     || state.wheelDeltaY !== 360
     || state.scrollY !== 0
