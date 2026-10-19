@@ -1612,7 +1612,6 @@
   gap: 8px;
   overflow-x: auto;
   padding: 4px 2px 2px;
-  scrollbar-gutter: stable;
 }
 
 .data-image-gallery-thumb {

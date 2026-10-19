@@ -96,6 +96,7 @@ test("saving a changed language reloads the panel once and retains the chat draf
   await openApp(page);
   await page.locator("#input").fill("fixture draft stays unchanged");
   await page.locator("#btn-settings").click();
+  await expect(page.locator("#btn-close-settings")).toHaveAccessibleName("Close");
   await expect(page.locator("[data-settings-tab]:visible")).toHaveText(["Model", "Advanced"]);
   await expect(page.locator('[data-settings-tab="i18n-language"]')).toHaveCount(0);
   await page.locator('[data-settings-tab="advanced"]').click();
@@ -124,6 +125,7 @@ test("saving a changed language reloads the panel once and retains the chat draf
   await expectReload(page, "ja");
   await expect(page.locator("#input")).toHaveValue("fixture draft stays unchanged");
   await openLanguage(page);
+  await expect(page.locator("#btn-close-settings")).toHaveAccessibleName("閉じる");
   await expect(select).toHaveValue("ja");
   await expect(page.locator('[data-settings-tab="advanced"]')).toHaveText("詳細設定");
   await expect(select.locator('option[value="system"]')).toHaveText("ブラウザーに合わせる");
