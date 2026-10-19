@@ -55,6 +55,7 @@ try {
   await waitForWorkspaceReady(page);
   await installHarness(page);
   await saveConfig(page, provider.endpoint);
+  await runProfileInitializationFailureIsVisible(page, context);
   await locationOnlyWhenRequested(page);
   await mcpOutputSchemaSurvivesExtensionCsp(page, provider);
   page = await automationAlarmRunsWithoutSidepanel(page, context, extensionId, provider);
@@ -93,7 +94,7 @@ try {
 
   console.log(JSON.stringify({
     ok: true,
-    scenarios: ["data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "skill_selection_reload_submit_cancel", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart"],
+    scenarios: ["run_profile_initialization_error_recovery", "data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "skill_selection_reload_submit_cancel", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart"],
     providerRequests: provider.requests.length,
     providerFaultCases: 16,
   }));
@@ -129,6 +130,68 @@ try {
   await gitRepository.close();
   await provider.close();
   rmSync(profile, { recursive: true, force: true });
+}
+
+async function runProfileInitializationFailureIsVisible(page, browserContext) {
+  const sessionId = await createSession(page, "Run profile initialization failure");
+  const worker = browserContext.serviceWorkers().find(worker => worker.url().startsWith("chrome-extension://"));
+  assert.ok(worker);
+  const failure = "QZ run profile initialization failed: platform information unavailable";
+  try {
+    assert.match(await runPrompt(page, sessionId, "QZ_E2E_BASIC"), /QZ_E2E_BASIC_OK/);
+    await switchUiToSession(page, sessionId);
+    await page.waitForFunction(() => document.querySelector("#messages")?.innerText.includes("QZ_E2E_BASIC_OK"));
+    // Fail one native dependency of _buildRunProfile, before Agent can emit agent_start.
+    await worker.evaluate(message => {
+      const original = chrome.runtime.getPlatformInfo;
+      let entered;
+      globalThis.__qzRunProfileFault = {
+        entered: new Promise(resolve => { entered = resolve; }),
+        restore: () => { chrome.runtime.getPlatformInfo = original; },
+      };
+      chrome.runtime.getPlatformInfo = () => {
+        chrome.runtime.getPlatformInfo = original;
+        return new Promise((_resolve, reject) => {
+          globalThis.__qzRunProfileFault.reject = () => reject(new Error(message));
+          entered();
+        });
+      };
+    }, failure);
+    const after = await eventCount(page);
+    await submitComposerMessage(page, "Follow up after the completed answer");
+    const pending = await waitEvent(page, { type: "session_pending", sessionId }, after);
+    await worker.evaluate(() => globalThis.__qzRunProfileFault.entered);
+    await worker.evaluate(() => globalThis.__qzRunProfileFault.reject());
+    const failed = await waitEvent(page, { type: "error", sessionId, runId: pending.runId }, after);
+    await waitEvent(page, { type: "agent_end", sessionId, runId: pending.runId }, after);
+    assert.equal(failed.message, failure);
+    assert.equal(await matchingEventCount(page, { type: "agent_start", sessionId, runId: pending.runId }, after), 0);
+    const state = await request(page, "get_state", { sessionId }, "state");
+    assert.equal(state.status, "error");
+    assert.equal(state.runtime?.reason, failure);
+    await page.waitForFunction(message => [...document.querySelectorAll(".chat-error-card")]
+      .some(card => card.textContent.includes(message)), failure, { timeout: 10_000 });
+    assert.match(await page.locator("#messages").innerText(), /QZ_E2E_BASIC_OK/);
+    assert.equal(await page.locator("#status-bar").isVisible(), false);
+    assert.equal(await page.locator("#input").isEditable(), true);
+    const recoveryAfter = await eventCount(page);
+    await submitComposerMessage(page, "QZ_E2E_RECOVER");
+    const recovered = await waitEvent(page, { type: "agent_start", sessionId }, recoveryAfter);
+    assert.notEqual(recovered.runId, pending.runId);
+    await waitEvent(page, { type: "agent_end", sessionId, runId: recovered.runId }, recoveryAfter);
+    await page.waitForFunction(() => document.querySelector("#messages")?.innerText.includes("QZ_E2E_RECOVER_OK"));
+    assert.equal((await request(page, "get_state", { sessionId }, "state")).status, "completed");
+    assert.match(await page.locator("#messages").innerText(), /QZ_E2E_BASIC_OK/);
+    assert.equal(await page.locator("#input").isEditable(), true);
+    console.log(JSON.stringify({ scenario: "run_profile_initialization_error_recovery", ok: true }));
+  } finally {
+    await worker.evaluate(() => {
+      globalThis.__qzRunProfileFault?.restore();
+      globalThis.__qzRunProfileFault?.reject?.();
+      delete globalThis.__qzRunProfileFault;
+    });
+    await deleteSession(page, sessionId);
+  }
 }
 
 async function locationOnlyWhenRequested(page) {

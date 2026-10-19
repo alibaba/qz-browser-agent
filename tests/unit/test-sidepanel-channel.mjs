@@ -70,6 +70,9 @@ assert.deepEqual(first.sent.at(-1).runtime.pendingFollowUpMessages, [{ images: [
 assert.deepEqual(first.sent.at(-1).runtime.pendingSteeringMessages, [{ text: "private-body" }]);
 assert.equal(first.sent.at(-1).runtime.pendingFollowUpCount, 1);
 assert.deepEqual(first.sent.at(-1).runtime.pendingFollowUps, [{ messageId: "queued" }]);
+channel.broadcast({ type: "session_pending", sessionId: "s1", runId: "next-run" });
+assert.equal(first.sent.at(-1).runId, "next-run");
+assert.deepEqual(first.sent.at(-1).runtime, enriched.runtime, "initialization events include the authoritative runtime snapshot");
 channel.broadcast({ type: "queue_update", sessionId: "s1", pendingFollowUpMessages: [{ images: ["private-image-body"] }],
   pendingSteeringMessages: [], pendingFollowUpCount: 1, pendingFollowUps: [{ messageId: "queued" }],
 });

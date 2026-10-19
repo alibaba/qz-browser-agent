@@ -13,6 +13,7 @@ interface ChannelOptions {
 const object = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const RUNTIME_EVENT_TYPES = new Set([
   "state",
+  "session_pending",
   "agent_start",
   "turn_start",
   "thinking_update",

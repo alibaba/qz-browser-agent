@@ -76,6 +76,53 @@ export function testSessionCausality() {
   assert.equal(nextRun.snapshot.runtime.runId, "next");
 }
 
+export function testPendingRunLifecycle() {
+  for (const terminal of ["error", "aborted", "agent_end"]) {
+    const state = createSessionState();
+    const emit = (type, runId, eventSeq, fields = {}) => state.applyEvent({
+      type, sessionId: "s1", runId, eventSeq, ...fields,
+    });
+    emit("agent_start", "r1", 1);
+    emit("message_end", "r1", 2, { spanId: "answer", message: { role: "assistant", content: "First answer" } });
+    emit("agent_end", "r1", 3);
+    const transcript = state.getTranscript("s1");
+
+    const pending = emit("session_pending", "r2", 1);
+    assert.equal(pending.accepted, true, "initialization must establish the next run before agent_start");
+    assert.equal(pending.snapshot.runtime.runId, "r2");
+    assert.equal(pending.snapshot.runtime.status, "pending");
+    assert.equal(pending.snapshot.runtime.running, true);
+    assert.equal(pending.snapshot.runtime.pendingStart, true);
+    assert.equal(pending.snapshot.runtime.endedAt, "");
+    assert.deepEqual(state.getTranscript("s1"), transcript, "initialization preserves the previous answer");
+    assert.equal(emit("session_pending", "r2", 1).reason, "stale_event_seq");
+    assert.equal(emit("error", "r1", 4, { message: "stale error" }).reason, "stale_run");
+    assert.equal(emit("agent_end", "r1", 5).reason, "stale_run");
+
+    let eventSeq = 2;
+    if (terminal === "agent_end") {
+      const started = emit("agent_start", "r2", eventSeq++);
+      assert.equal(started.snapshot.runtime.status, "running");
+      assert.equal(started.snapshot.runtime.pendingStart, false);
+    }
+    assert.equal(emit(terminal, "r2", eventSeq++, { message: "Model configuration failed" }).accepted, true);
+    if (terminal !== "agent_end") emit("agent_end", "r2", eventSeq++);
+    const ended = state.getRuntime("s1");
+    assert.equal(ended.status, terminal === "agent_end" ? "completed" : terminal);
+    assert.equal(ended.running, false);
+    assert.equal(ended.pendingStart, false);
+    const errors = state.getTranscript("s1").filter(entry => entry.type === "error");
+    assert.deepEqual(errors.map(entry => entry.text), terminal === "error" ? ["Model configuration failed"] : []);
+    assert.equal(emit("session_pending", "r2", 1).reason, "stale_event_seq", "a replay cannot reopen a terminal run");
+
+    assert.equal(emit("session_pending", "r3", 1).accepted, true);
+    assert.equal(emit("agent_end", "r2", eventSeq).reason, "stale_run");
+    emit("agent_start", "r3", 2);
+    emit("agent_end", "r3", 3);
+    assert.equal(state.getRuntime("s1").status, "completed", "initialization failure or cancellation permits a later run");
+  }
+}
+
 export function testSessionReducerGates() {
   const state = createSessionState({ now: () => "2026-07-11 12:00:00" });
   state.mergeRecord({ id: "s1", title: "原始" });
@@ -231,6 +278,18 @@ export function testEventRouterCausality() {
   const acceptedTerminal = calls.filter(call => call.name === "accepted.agent_end");
   assert.equal(acceptedTerminal.length, 1);
   assert.equal(acceptedTerminal[0].value.sessionId, "background", "the capability receives the accepted background terminal fact");
+
+  const startsBeforePending = countCalls(calls, "run.start");
+  router.handle({ type: "session_pending", sessionId: "background", runId: "r3", eventSeq: 1 });
+  assert.equal(state.getRuntime("background").status, "pending");
+  assert.equal(countCalls(calls, "run.start"), startsBeforePending, "background initialization must not start the current chat");
+  router.handle({ type: "error", sessionId: "background", runId: "r3", eventSeq: 2, message: "Initialization failed" });
+  assert.equal(state.getRuntime("background").status, "error");
+  assert.equal(state.getTranscript("background").at(-1).text, "Initialization failed");
+
+  router.handle({ type: "agent_end", sessionId: "current", runId: "r1", eventSeq: 4 });
+  router.handle({ type: "session_pending", sessionId: "current", runId: "r4", eventSeq: 1 });
+  assert.equal(countCalls(calls, "run.start"), startsBeforePending + 1, "the current chat tracks initialization before agent_start");
 }
 
 export async function testSessionNavigationSingleReveal() {
