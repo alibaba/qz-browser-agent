@@ -243,7 +243,6 @@ To add a tool, view, setting, or provider that qz doesn't include yet, see the [
 
 - [Architecture](docs/architecture.md)
 - [Commands and build options](docs/commands.md)
-- [Benchmarks](docs/benchmarks.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## License
