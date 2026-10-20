@@ -20,7 +20,7 @@ function containsMarker(value) {
   return JSON.stringify(value ?? null).includes(MARKER);
 }
 
-async function harness({ holdWrite = false, holdConfig = false, holdModel = false } = {}) {
+async function harness({ holdWrite = false, holdConfig = false, holdModel = false, failConfig = false } = {}) {
   const storage = createMemoryStorage();
   const writeEntered = deferred();
   const releaseWrite = deferred();
@@ -50,6 +50,7 @@ async function harness({ holdWrite = false, holdConfig = false, holdModel = fals
         async getRuntimeConfig() {
           configEntered.resolve();
           if (holdConfig) await releaseConfig.promise;
+          if (failConfig) throw new Error("runtime config unavailable");
           return { provider: "test", model: "test-model", contextWindow: 262000, vision: true };
         },
       }),
@@ -124,6 +125,19 @@ test("stopping after the user-message write still drops the unstarted prompt", a
   await run.task.promise.catch(() => {});
   assert.equal(containsMarker(await run.conversation()), false);
   assert.equal(containsMarker(run.transcript.snapshot(run.sessionId)), false);
+  assert.equal(run.events.some(event => event.type === "agent_start"), false);
+});
+
+test("a later stop keeps a prompt whose startup already failed", async t => {
+  const run = await harness({ failConfig: true });
+  t.after(() => { run.releaseWrite.resolve(); run.releaseConfig.resolve(); run.releaseModel.resolve(); });
+  await assert.rejects(run.task.promise, /runtime config unavailable/);
+  const agent = run.supervisor.peekEntry(run.sessionId).agent;
+  assert.equal(agent.discardUnstartedPrompt(), null);
+  const revoked = await run.stop();
+  assert.equal(revoked.discardedPrompt, null);
+  assert.equal(containsMarker(await run.conversation()), true);
+  assert.equal(containsMarker(run.transcript.snapshot(run.sessionId)), true);
   assert.equal(run.events.some(event => event.type === "agent_start"), false);
 });
 
