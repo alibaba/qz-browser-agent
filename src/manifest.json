@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0FI/dQE0u8Khsk1nu7w7qi1NPeoGYd+pQzrulyj3MCNtlIFtCl3es1PQj2K6j85L6UKfpForSN3EUuNu7U45VXy5KjvbM71qH6Jy//yH7Jioh6jgeJ87F25aTQvCH6UQ5X9Add5eRd5S5IP3djxCmxi5WiXl5tLTLHGdw9dXKbjheM+1q6eocRw+VrZ6lWvRZyEChfD4T9GaM6BI+0O+1jaE2KBHVQLOekvYBdsl/DQJvMg1aCkcawislUFd7Ejj+/Ht4mCIsN8EyLJK8wlzud26Xop/DmDeYl9z8YOegXJ/TEscpPLGC85sflVYTzO51EPrUuHpbI2vW19uuziZZwIDAQAB",
   "name": "__MSG_extensionName__",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "__MSG_extensionDescription__",
   "permissions": [
     "activeTab",
