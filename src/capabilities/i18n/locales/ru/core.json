@@ -15,6 +15,7 @@
   "core.chat": "Чат",
   "core.cancelled": "Отменено",
   "core.runFailed": "Ошибка выполнения",
+  "core.runInterrupted": "Выполнение прервано. Сохранённое содержимое чата восстановлено. Отправьте сообщение, чтобы продолжить.",
   "core.completed": "Завершено",
   "core.statusUpdated": "Статус обновлён",
   "core.recordingSaved": "Запись сохранена: {filename}",

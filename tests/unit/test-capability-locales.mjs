@@ -8,6 +8,9 @@ import { installBenchmarkChromeStub } from "../browser/benchmark-chrome-stub.mjs
 import { capabilityLocaleAssets } from "../../scripts/capability-locales.mjs";
 import { chromeMessageId, decodeChromeMessage, encodeChromeMessage, HISTORICAL_LABELS_MESSAGE_ID } from "../../src/shared/i18n/definition.ts";
 import { createLanguageRuntime } from "../../src/shared/i18n/runtime.ts";
+import languagePacks from "../../src/capabilities/i18n/locales.ts";
+import coreMessages from "../../src/sidepanel/i18n/messages.ts";
+import { backendMessages } from "../../src/shared/i18n/backend-messages.ts";
 
 async function fixture(t, packs = [{ language: "ja", chromeLocale: "ja", name: "日本語", catalog: "./ja" }]) {
   const source = await realpath(await mkdtemp(join(tmpdir(), "qingzhou-locales-")));
@@ -33,6 +36,25 @@ async function metadata(source, packs) {
 function catalog(result, source, locale = "ja") {
   return JSON.parse(result.assets.get(join(source, "_locales", locale, "messages.json")));
 }
+
+test("interruption recovery copy is consistent and translated in every shipped language", async () => {
+  const source = await realpath(new URL("../../src", import.meta.url));
+  const assets = capabilityLocaleAssets(source);
+  const english = "The run was interrupted. Saved chat content has been restored. Send a message to continue.";
+  const chinese = "运行已中断，已恢复保存的对话。发送消息可继续。";
+  for (const { language, chromeLocale, catalog: contributed } of languagePacks) {
+    const native = catalog(assets, source, chromeLocale);
+    const core = contributed ? decodeChromeMessage(native[chromeMessageId("core.runInterrupted")])
+      : coreMessages.messages.runInterrupted[language];
+    const backend = contributed ? decodeChromeMessage(native[chromeMessageId("backend.status.runInterrupted")])
+      : backendMessages.messages["status.runInterrupted"][language];
+    assert.ok(core, `${language}: recovery notice must be translated`);
+    assert.equal(core, backend, `${language}: panel and persisted notice must agree`);
+    if (language === "en") assert.equal(core, english);
+    else if (language === "zh-CN") assert.equal(core, chinese);
+    else assert.notEqual(core, english, `${language}: no unintended English fallback`);
+  }
+});
 
 test("language packages generate deterministic native resources without copying their JSON into runtime modules", async t => {
   const source = await fixture(t, [

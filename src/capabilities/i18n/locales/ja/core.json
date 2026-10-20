@@ -15,6 +15,7 @@
   "core.chat": "チャット",
   "core.cancelled": "キャンセル済み",
   "core.runFailed": "実行に失敗しました",
+  "core.runInterrupted": "実行が中断されました。保存済みのチャットを復元しました。メッセージを送信すると続行できます。",
   "core.completed": "完了",
   "core.statusUpdated": "ステータスを更新しました",
   "core.recordingSaved": "記録を保存しました: {filename}",

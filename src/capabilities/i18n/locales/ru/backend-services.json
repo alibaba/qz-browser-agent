@@ -96,6 +96,7 @@
   "backend.session.editRole": "Редактируемый запрос должен быть сообщением пользователя.",
   "backend.session.historicalToolInterrupted": "Предыдущий вызов инструмента не завершён и отмечен как прерванный.",
   "backend.status.runFailed": "Ошибка выполнения",
+  "backend.status.runInterrupted": "Выполнение прервано. Сохранённое содержимое чата восстановлено. Отправьте сообщение, чтобы продолжить.",
   "backend.session.failedToolIncomplete": "Выполнение завершилось ошибкой до окончания вызова инструмента.",
   "backend.session.interruptedToolIncomplete": "Выполнение прервано до получения полного результата инструмента.",
   "backend.session.argumentsIncomplete": "Модель не завершила генерацию аргументов; инструмент не запускался.",

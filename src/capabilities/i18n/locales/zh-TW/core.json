@@ -280,6 +280,7 @@
   "core.rowsReturned": "已傳回 {count} 列，共 {total} 列",
   "core.rowsShown": "{shown} / {total} 列",
   "core.runFailed": "執行失敗",
+  "core.runInterrupted": "執行已中斷，已還原儲存的對話。傳送訊息即可繼續。",
   "core.runFailedSentence": "執行失敗。",
   "core.running": "執行中",
   "core.safetyGuardrails": "安全護欄",

@@ -14,6 +14,7 @@ const records = new Map([
   )],
 ]);
 const active = new Map([["active", [{ role: "assistant", content: "active" }]]]);
+const runtimes = new Map();
 let exports = 0;
 const liveEntry = { agent: { exportSession: () => { exports++; return [{ role: "assistant", content: "live" }]; } } };
 const transcript = createSessionTranscript({
@@ -23,6 +24,7 @@ const transcript = createSessionTranscript({
   },
   supervisor: {
     peekEntry: id => id === "fallback" ? liveEntry : null,
+    getRuntime: id => runtimes.get(id),
   },
   getLiveAgentEntry: async id => id === "live" ? liveEntry : null,
   normalizeSessionId: value => String(value || "").trim(),
@@ -82,13 +84,43 @@ records.set("interrupted", createSessionRecord(serializeConversation(previous), 
   { type: "assistant", content: "previous answer" },
 ]));
 active.set("interrupted", checkpoint);
+runtimes.set("interrupted", {
+  status: "interrupted", runId: "recovered-run", reason: "service_worker_restarted",
+  endedAt: "2026-10-20 12:00:00",
+});
 for (const supplied of [null, checkpoint]) {
   transcript.remove("interrupted");
   const restored = await transcript.hydrate("interrupted", supplied);
-  assert.deepEqual(restored.map(entry => entry.text || entry.content), [
+  assert.deepEqual(restored.slice(0, -1).map(entry => entry.text || entry.content), [
     "previous question", "preserved thinking", "previous answer", "follow-up", "completed before restart",
   ]);
+  assert.equal(restored.at(-1).type, "run-status");
+  assert.equal(restored.at(-1).status, "interrupted");
+  assert.equal(restored.at(-1).runId, "recovered-run");
+  assert.equal(restored.at(-1).timestamp, "2026-10-20 12:00:00");
   assert.equal(await transcript.get("interrupted"), restored, "later reads reuse the complete recovered projection");
 }
+records.set("interrupted", createSessionRecord(checkpoint, await transcript.get("interrupted")));
+transcript.remove("interrupted");
+assert.equal((await transcript.hydrate("interrupted")).filter(entry => entry.type === "run-status").length, 1,
+  "rehydrating an already saved interruption must not duplicate the notice");
+runtimes.set("interrupted", { status: "running", runId: "next-run" });
+transcript.recordEvent("interrupted", {
+  type: "message_start", runId: "next-run",
+  message: { role: "user", content: "continue", clientMessageId: "continue" },
+});
+assert.equal((await transcript.get("interrupted")).at(-2).runId, "recovered-run",
+  "a new run keeps the interruption notice before its new user message");
+const continued = serializeConversation([
+  ...checkpoint.entries.map(entry => entry.message),
+  { role: "user", content: "continue", clientMessageId: "continue" },
+]);
+records.set("interrupted", createSessionRecord(continued, await transcript.get("interrupted")));
+active.set("interrupted", continued);
+transcript.remove("interrupted");
+const reopened = await transcript.hydrate("interrupted");
+assert.equal(reopened.at(-2).runId, "recovered-run", "saving and reopening keeps the old notice before the new round");
+assert.equal(reopened.at(-1).clientMessageId, "continue");
+assert.equal(reopened.filter(entry => entry.type === "run-status").length, 1);
 
 console.log("session transcript tests passed");

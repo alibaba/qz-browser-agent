@@ -172,6 +172,7 @@ After a Worker restart, history recovery uses the active conversation checkpoint
 It retains saved thinking and tool presentation for unchanged history and reconstructs newer
 messages from the checkpoint. Opening a Session and reading its history use the same recovery
 rules. Recovery displays persisted content; it does not resume an interrupted model or tool call.
+The recovered turn ends with a localized interruption notice inviting the user to send a message to continue.
 
 [Compaction](../src/background/agent/compaction.ts) changes the model's sending window after a
 checkpoint commits. It carries earlier summaries, the Goal, and durable document references forward;

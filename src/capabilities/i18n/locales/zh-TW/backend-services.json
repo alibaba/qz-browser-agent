@@ -96,6 +96,7 @@
   "backend.session.editRole": "要編輯的請求必須是使用者訊息。",
   "backend.session.historicalToolInterrupted": "先前的工具呼叫未完成，已標記為中斷。",
   "backend.status.runFailed": "執行失敗",
+  "backend.status.runInterrupted": "執行已中斷，已還原儲存的對話。傳送訊息即可繼續。",
   "backend.session.failedToolIncomplete": "工具呼叫完成前，執行已失敗。",
   "backend.session.interruptedToolIncomplete": "工具呼叫回傳完整結果前，執行已中斷。",
   "backend.session.argumentsIncomplete": "模型未完成產生工具參數，工具未執行。",

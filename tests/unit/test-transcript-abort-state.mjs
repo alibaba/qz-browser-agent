@@ -563,9 +563,16 @@ function assertInterruptedRuntimeSettlesStreamingState() {
   assert.equal(tool?.argsState, "aborted");
   assert.equal(tool?.result?.code, "TOOL_INTERRUPTED");
   assert.equal(tool?.result?.interrupted, true);
-  assert.equal(result.transcript.some(entry => entry.type === "run-status"), false, "restart recovery should not masquerade as user cancellation");
+  const notice = result.transcript.at(-1);
+  assert.equal(notice.type, "run-status");
+  assert.equal(notice.status, "interrupted", "restart recovery must remain distinct from user cancellation");
+  assert.equal(notice.runId, runId);
+  assert.equal(notice.text, "运行已中断，已恢复保存的对话。发送消息可继续。");
+  assert.equal(notice.reason, "service_worker_restarted");
+  const saved = readSessionRecord(createSessionRecord([], result.transcript));
+  assert.deepEqual(saved.transcript.at(-1), notice, "the interruption notice survives persistence");
 
-  result = updateTranscriptWithAgentEvent(result.transcript, {
+  result = updateTranscriptWithAgentEvent(saved.transcript, {
     type: "state",
     runId,
     isStreaming: false,
@@ -573,6 +580,13 @@ function assertInterruptedRuntimeSettlesStreamingState() {
     runtime: { status: "interrupted", running: false, runId },
   });
   assert.equal(result.changed, false, "repeated interrupted snapshots should be idempotent");
+  assert.equal(result.transcript.filter(entry => entry.type === "run-status").length, 1);
+  result = updateTranscriptWithAgentEvent(result.transcript, {
+    type: "message_start", runId: "next-run",
+    message: { role: "user", content: "继续", clientMessageId: "continue-after-restart" },
+  });
+  assert.equal(result.transcript.at(-2).status, "interrupted", "continuing keeps the notice with its old round");
+  assert.equal(result.transcript.at(-1).text, "继续");
 }
 
 function assertWaitTerminalReasonPersistence() {

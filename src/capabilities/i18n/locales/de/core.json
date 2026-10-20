@@ -15,6 +15,7 @@
   "core.chat": "Chat",
   "core.cancelled": "Abgebrochen",
   "core.runFailed": "Ausführung fehlgeschlagen",
+  "core.runInterrupted": "Die Ausführung wurde unterbrochen. Der gespeicherte Chat wurde wiederhergestellt. Sende eine Nachricht, um fortzufahren.",
   "core.completed": "Abgeschlossen",
   "core.statusUpdated": "Status aktualisiert",
   "core.recordingSaved": "Aufzeichnung gespeichert: {filename}",

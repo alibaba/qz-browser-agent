@@ -75,7 +75,8 @@ for (const statusFields of [{ status: "interrupted" }, { runtime: { status: "int
     assert.equal(snapshots().length, 0);
     t.mock.timers.tick(1);
     assert.deepEqual(snapshots(), [{ name: "snapshot", args: ["visible", { persist: false }] }]);
-    assert.deepEqual(f.state.getTranscript("visible"), oldTranscript, "reconciliation only requests a snapshot");
+    assert.deepEqual(f.state.getTranscript("visible").slice(0, -1), oldTranscript, "reconciliation preserves saved content");
+    assert.equal(f.state.getTranscript("visible").at(-1).status, "interrupted");
     f.router.handle(interrupted);
     t.mock.timers.tick(2499);
     f.router.handle(interrupted);

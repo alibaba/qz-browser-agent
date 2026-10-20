@@ -235,7 +235,8 @@ export function updateTranscriptWithAgentEvent(transcript: readonly TranscriptEn
       if (!phase) return { transcript: history, changed: false };
       const streamingChanged = finalizeAllStreamingTranscriptEntries(history, phase === "not_executed" ? "completed" : phase);
       const toolChanged = finalizeToolTranscriptEntries(history, event, phase);
-      const statusChanged = phase === "aborted" ? upsertRunStatusTranscriptEntry(history, event, "aborted") : false;
+      const statusChanged = ["aborted", "interrupted"].includes(phase)
+        ? upsertRunStatusTranscriptEntry(history, event, phase) : false;
       const changed = streamingChanged || toolChanged || statusChanged;
       return { transcript: history, changed };
     }
@@ -823,6 +824,7 @@ function upsertRunStatusTranscriptEntry(history: TranscriptEntry[], event: Trans
     const merged = {
       ...existing,
       ...next,
+      reason: next.reason || existing.reason,
       timestamp: existing.timestamp || next.timestamp,
       endedAt: next.endedAt || existing.endedAt || next.timestamp,
     };
@@ -837,7 +839,7 @@ function upsertRunStatusTranscriptEntry(history: TranscriptEntry[], event: Trans
 function normalizeRunStatus(status: unknown = "") {
   const value = String(status || "").trim().toLowerCase();
   if (["aborted", "cancelled", "canceled"].includes(value)) return "aborted";
-  if (["error", "completed"].includes(value)) return value;
+  if (["error", "completed", "interrupted"].includes(value)) return value;
   return "";
 }
 
@@ -854,6 +856,7 @@ function normalizeRunStatusReason(reason: unknown = "") {
 
 function runStatusText(status: unknown = "") {
   if (status === "aborted") return t("status.cancelled");
+  if (status === "interrupted") return t("status.runInterrupted");
   if (status === "error") return t("status.runFailed");
   if (status === "completed") return t("status.completed");
   return t("status.updated");

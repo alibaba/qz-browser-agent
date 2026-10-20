@@ -1500,7 +1500,20 @@ async function serviceWorkerRestartKeepsCompletedCheckpoints(page, browserContex
   const marker = "QZ_E2E_WORKER_CHECKPOINT";
   const completedText = "QZ_CHECKPOINT_COMPLETED_BEFORE_RESTART";
   const toolCallId = "call_worker_checkpoint_tabs";
+  const interruptedText = "运行已中断，已恢复保存的对话。发送消息可继续。";
+  const assertInterruptedNotice = async () => {
+    const notice = page.locator("#messages .msg-run-status-interrupted");
+    await notice.waitFor({ state: "visible", timeout: 10_000 });
+    assert.equal(await notice.count(), 1);
+    assert.equal((await notice.textContent()).trim(), interruptedText);
+    assert.equal(await notice.evaluate((element, completedText) => {
+      const completed = [...document.querySelectorAll("#messages .msg-assistant .msg-content")]
+        .find(node => node.textContent.includes(completedText));
+      return Boolean(completed && (completed.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING));
+    }, completedText), true, "the interruption notice must follow the recovered checkpoint");
+  };
   try {
+    assert.equal(await page.locator("html").getAttribute("lang"), "zh-CN");
     assert.match(await runPrompt(page, sessionId, "QZ_E2E_BASIC"), /QZ_E2E_BASIC_OK/);
     await switchUiToSession(page, sessionId);
     const after = await eventCount(page);
@@ -1543,6 +1556,17 @@ async function serviceWorkerRestartKeepsCompletedCheckpoints(page, browserContex
     const state = await request(page, "get_state", { sessionId }, "state");
     assert.equal(state.status, "interrupted");
     assert.equal(state.runtime?.reason, "service_worker_restarted");
+    await assertInterruptedNotice();
+    await page.reload();
+    await waitForWorkspaceReady(page);
+    await installHarness(page);
+    await switchUiToSession(page, sessionId);
+    await assertInterruptedNotice();
+    const otherSessionId = await createSession(page, "switch away from interrupted checkpoint");
+    await switchUiToSession(page, otherSessionId);
+    await switchUiToSession(page, sessionId);
+    await assertInterruptedNotice();
+    await deleteSession(page, otherSessionId);
     assert.equal(providerServer.count(marker), 2, "reopening must not resend the interrupted request");
     console.log(JSON.stringify({ scenario: "worker_restart_checkpoint", ok: true }));
     await deleteSession(page, sessionId);

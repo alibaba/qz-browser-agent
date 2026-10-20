@@ -15,6 +15,7 @@
   "core.chat": "Conversa",
   "core.cancelled": "Cancelado",
   "core.runFailed": "Falha na execução",
+  "core.runInterrupted": "A execução foi interrompida. O conteúdo salvo da conversa foi restaurado. Envie uma mensagem para continuar.",
   "core.completed": "Concluído",
   "core.statusUpdated": "Status atualizado",
   "core.recordingSaved": "Gravação salva: {filename}",

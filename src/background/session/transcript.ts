@@ -12,7 +12,10 @@ interface RestoredTranscriptEntry extends TranscriptEntry { tools?: RestoredTran
 interface LiveEntry { agent: { exportSession(): unknown } }
 interface TranscriptOptions {
   repository: { readRecord(sessionId: string): Promise<unknown>; readActiveConversation(sessionId: string): Promise<unknown> };
-  supervisor: { peekEntry(sessionId: string): { agent?: LiveEntry["agent"] | null } | null };
+  supervisor: {
+    peekEntry(sessionId: string): { agent?: LiveEntry["agent"] | null } | null;
+    getRuntime(sessionId: string): { status?: string; runId?: string | null; reason?: unknown; endedAt?: unknown } | null | undefined;
+  };
   getLiveAgentEntry(sessionId: string): Promise<LiveEntry | null>;
   normalizeSessionId(value: unknown): string;
   resolveToolDefinition(name: string): unknown;
@@ -73,7 +76,14 @@ export function createSessionTranscript({
       fallbackConversation ?? repository.readActiveConversation(id),
     ]);
     if (cache.has(id)) return cache.get(id) || [];
-    const transcript = resolveIdentities(readSessionSnapshot(saved, conversation).transcript);
+    let transcript = resolveIdentities(readSessionSnapshot(saved, conversation).transcript);
+    const runtime = supervisor.getRuntime(id);
+    if (runtime?.status === "interrupted") {
+      transcript = updateTranscriptWithAgentEvent(transcript, {
+        type: "state", status: runtime.status, runId: runtime.runId,
+        reason: String(runtime.reason || ""), timestamp: String(runtime.endedAt || ""),
+      }).transcript;
+    }
     cache.set(id, transcript);
     return transcript;
   }
