@@ -980,7 +980,7 @@ function cleanTitleText(text: unknown) {
   return title.slice(0, end).trimEnd();
 }
 
-function normalizeConversationSnapshot(input: unknown): Conversation {
+export function normalizeConversationSnapshot(input: unknown): Conversation {
   const conversation = record(input);
   assertConversationReadable(input);
   if (conversation?.type === "conversation" && Array.isArray(conversation.entries)) {

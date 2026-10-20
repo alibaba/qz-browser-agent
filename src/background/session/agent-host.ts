@@ -116,13 +116,13 @@ export function createSessionAgentHost({
     const id = normalizeSessionId(sessionId);
     const supervisor = getSupervisor();
     await agent.hydrateFromStore();
+    await hydrateTranscript(id, agent.messages.length > 1 ? agent.exportSession() : null);
     const runtime = supervisor.getRuntime(id) || {};
     agent.restoreLoadedSkillToolNames(runtime.loadedPluginSkillNames || []);
     agent.restorePendingQueues({
       followUps: runtime.pendingFollowUpMessages || [],
       steerings: runtime.pendingSteeringMessages || [],
     });
-    await hydrateTranscript(id, agent.exportSession());
   }
 
   function handleEvent(sessionId: string, event: SessionEvent) {

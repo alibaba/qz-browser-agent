@@ -17,6 +17,9 @@ import { getMcpSkillToolName } from "../../src/capabilities/mcp/skill-contract.j
 import { ensureTestExtension } from "../support/extension-build.mjs";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const scenarioIndex = process.argv.indexOf("--scenario");
+const workerRestartOnly = scenarioIndex >= 0 && process.argv[scenarioIndex + 1] === "worker_restart";
+if (scenarioIndex >= 0 && !workerRestartOnly) throw new Error("Supported scenario: --scenario worker_restart");
 const extensionPath = await ensureTestExtension({
   extensionDir: process.env.QINGZHOU_EXTENSION_PATH || process.env.QINGZHOU_TEST_EXTENSION_DIR,
 });
@@ -55,48 +58,50 @@ try {
   await waitForWorkspaceReady(page);
   await installHarness(page);
   await saveConfig(page, provider.endpoint);
-  await runProfileInitializationFailureIsVisible(page, context);
-  await locationOnlyWhenRequested(page);
-  await mcpOutputSchemaSurvivesExtensionCsp(page, provider);
-  page = await automationAlarmRunsWithoutSidepanel(page, context, extensionId, provider);
-  await runningAutomationCanBeDeleted(page, provider);
+  if (!workerRestartOnly) {
+    await runProfileInitializationFailureIsVisible(page, context);
+    await locationOnlyWhenRequested(page);
+    await mcpOutputSchemaSurvivesExtensionCsp(page, provider);
+    page = await automationAlarmRunsWithoutSidepanel(page, context, extensionId, provider);
+    await runningAutomationCanBeDeleted(page, provider);
 
-  const attachmentFixtureBase64 = process.env.QINGZHOU_ATTACHMENT_E2E_BASE64
-    || Buffer.from(await createDocumentBytes({
-      format: "xlsx",
-      title: "Attachment E2E",
-      sheets: [{
-        name: "Data",
-        columns: ["id", "value"],
-        rows: [{ id: "1", value: "真实后台解析" }],
-      }],
-    })).toString("base64");
-  await saveConfig(page, provider.endpoint, { vision: true });
-  await screenActionFeedbackRoundTrip(page, context, provider);
-  page = await composerDraftSurvivesActualSidepanelCloseAndResize(page, context, extensionId);
-  await composerAttachmentsSurviveSessionSwitchAndSend(page, attachmentFixtureBase64, provider);
-  await saveConfig(page, provider.endpoint);
-  await gitSkillSourceAuthenticatedArchive(page, gitRepository);
-  await skillResultSelectionRoundTrip(page, provider);
-  await uiComposerRoundTrip(page);
-  await manualCompactRendersLifecycleCard(page);
-  await queuedComposerBubbleUsesOutgoingMotion(page);
-  await basicAndRetryScenarios(page, provider);
-  await steeringReentersTheActiveRun(page, provider);
-  await steeringQueueLifecycleMatrix(page, provider);
-  await providerFailureReleasesTheSession(page);
-  await providerFaultLifecycleMatrix(page, provider);
-  await manageExistingSession(page, provider);
-  await stopCutsOffLateStreaming(page, provider);
-  await concurrentSessionsStayIsolated(page);
-  await sidepanelReloadKeepsTheBackgroundRun(page);
-  await serviceWorkerRestartSettlesInterruptedTurn(page, context, extensionId, provider);
+    const attachmentFixtureBase64 = process.env.QINGZHOU_ATTACHMENT_E2E_BASE64
+      || Buffer.from(await createDocumentBytes({
+        format: "xlsx",
+        title: "Attachment E2E",
+        sheets: [{
+          name: "Data",
+          columns: ["id", "value"],
+          rows: [{ id: "1", value: "真实后台解析" }],
+        }],
+      })).toString("base64");
+    await saveConfig(page, provider.endpoint, { vision: true });
+    await screenActionFeedbackRoundTrip(page, context, provider);
+    page = await composerDraftSurvivesActualSidepanelCloseAndResize(page, context, extensionId);
+    await composerAttachmentsSurviveSessionSwitchAndSend(page, attachmentFixtureBase64, provider);
+    await saveConfig(page, provider.endpoint);
+    await gitSkillSourceAuthenticatedArchive(page, gitRepository);
+    await skillResultSelectionRoundTrip(page, provider);
+    await uiComposerRoundTrip(page);
+    await manualCompactRendersLifecycleCard(page);
+    await queuedComposerBubbleUsesOutgoingMotion(page);
+    await basicAndRetryScenarios(page, provider);
+    await steeringReentersTheActiveRun(page, provider);
+    await steeringQueueLifecycleMatrix(page, provider);
+    await providerFailureReleasesTheSession(page);
+    await providerFaultLifecycleMatrix(page, provider);
+    await manageExistingSession(page, provider);
+    await stopCutsOffLateStreaming(page, provider);
+    await concurrentSessionsStayIsolated(page);
+    await sidepanelReloadKeepsTheBackgroundRun(page);
+  }
+  page = await serviceWorkerRestartSettlesInterruptedTurn(page, context, extensionId, provider);
 
   console.log(JSON.stringify({
     ok: true,
-    scenarios: ["run_profile_initialization_error_recovery", "data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "skill_selection_reload_submit_cancel", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart"],
+    scenarios: workerRestartOnly ? ["worker_restart"] : ["run_profile_initialization_error_recovery", "data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "skill_selection_reload_submit_cancel", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart"],
     providerRequests: provider.requests.length,
-    providerFaultCases: 16,
+    providerFaultCases: workerRestartOnly ? 0 : 16,
   }));
 } catch (error) {
   const events = await page?.evaluate(() => window.__qzBackgroundE2E?.events?.() || []).catch(() => []);
@@ -1487,6 +1492,64 @@ async function serviceWorkerRestartSettlesInterruptedTurn(page, browserContext, 
   const requestRecord = [...providerServer.requests].reverse().find(item => item.marker === "QZ_E2E_WORKER_NEW");
   assert.equal(requestRecord?.settledInterruptedTurn, true, "the provider must not receive consecutive unresolved user turns");
   await deleteSession(page, sessionId);
+  return serviceWorkerRestartKeepsCompletedCheckpoints(page, browserContext, extensionId, providerServer);
+}
+
+async function serviceWorkerRestartKeepsCompletedCheckpoints(page, browserContext, extensionId, providerServer) {
+  const sessionId = await createSession(page, "restore completed checkpoint after restart");
+  const marker = "QZ_E2E_WORKER_CHECKPOINT";
+  const completedText = "QZ_CHECKPOINT_COMPLETED_BEFORE_RESTART";
+  const toolCallId = "call_worker_checkpoint_tabs";
+  try {
+    assert.match(await runPrompt(page, sessionId, "QZ_E2E_BASIC"), /QZ_E2E_BASIC_OK/);
+    await switchUiToSession(page, sessionId);
+    const after = await eventCount(page);
+    await submitComposerMessage(page, marker);
+    await waitEvent(page, { type: "tool_execution_end", sessionId, toolCallId }, after);
+    await page.waitForFunction(async ({ sessionId, completedText, toolCallId }) => {
+      const key = `_active_conversation_${sessionId}`;
+      const messages = (await chrome.storage.local.get(key))[key]?.entries?.map(entry => entry.message) || [];
+      return messages.some(message => message?.role === "assistant" && message.content === completedText)
+        && messages.some(message => message?.role === "tool" && message.tool_call_id === toolCallId);
+    }, { sessionId, completedText, toolCallId }, { timeout: 20_000 });
+    await page.waitForFunction(() => document.querySelector("#messages")?.innerText.includes("QZ_CHECKPOINT_IN_PROGRESS"));
+    const savedRecord = await page.evaluate(async sessionId => {
+      const key = `_session_${sessionId}`;
+      return (await chrome.storage.local.get(key))[key];
+    }, sessionId);
+    assert.match(JSON.stringify(savedRecord), /QZ_E2E_BASIC_OK/);
+    assert.doesNotMatch(JSON.stringify(savedRecord), /QZ_E2E_WORKER_CHECKPOINT/,
+      "the completed record must lag the active conversation checkpoint in this fixture");
+
+    await terminateExtensionServiceWorker(page, browserContext, extensionId);
+    await page.close();
+    page = await browserContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sidepanel/sidepanel.html`);
+    await waitForWorkspaceReady(page);
+    await installHarness(page);
+    await switchUiToSession(page, sessionId);
+    await page.waitForFunction(text => document.querySelector("#messages")?.innerText.includes(text), completedText);
+    assert.equal(await page.locator("#messages .msg-user").filter({ hasText: marker }).count(), 1);
+    for (const text of ["QZ_E2E_BASIC_OK", completedText]) {
+      assert.equal(await page.locator("#messages .msg-assistant").filter({ hasText: text }).count(), 1);
+    }
+    const restored = await request(page, "get_messages", { sessionId }, "messages");
+    assert.equal(restored.transcript.filter(entry => entry.type === "user" && entry.text === marker).length, 1);
+    assert.equal(restored.transcript.filter(entry => entry.type === "assistant" && entry.content === completedText).length, 1);
+    const tools = restored.transcript.filter(entry => entry.type === "tool" && entry.toolCallId === toolCallId);
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0].isError, false);
+    assert.ok(tools[0].result);
+    const state = await request(page, "get_state", { sessionId }, "state");
+    assert.equal(state.status, "interrupted");
+    assert.equal(state.runtime?.reason, "service_worker_restarted");
+    assert.equal(providerServer.count(marker), 2, "reopening must not resend the interrupted request");
+    console.log(JSON.stringify({ scenario: "worker_restart_checkpoint", ok: true }));
+    await deleteSession(page, sessionId);
+    return page;
+  } finally {
+    providerServer.release(marker);
+  }
 }
 
 async function saveConfig(page, endpoint, overrides = {}) {
@@ -1959,6 +2022,21 @@ async function createProviderServer() {
       return;
     }
 
+    if (marker === "QZ_E2E_WORKER_CHECKPOINT") {
+      res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+      if (count === 1) {
+        res.write(`data: ${JSON.stringify(streamChunk("QZ_CHECKPOINT_COMPLETED_BEFORE_RESTART", true))}\n\n`);
+        res.write(`data: ${JSON.stringify(streamToolCall("call_worker_checkpoint_tabs", "list_tabs", "{}"))}\n\n`);
+        res.write(`data: ${JSON.stringify(streamToolCallsDone())}\n\n`);
+        res.end("data: [DONE]\n\n");
+      } else {
+        res.write(`data: ${JSON.stringify(streamChunk("QZ_CHECKPOINT_IN_PROGRESS", true))}\n\n`);
+        await waitForRelease(marker);
+        if (!res.destroyed) res.end();
+      }
+      return;
+    }
+
     if (marker === "QZ_E2E_LOCATION" && count <= 2) {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(`data: ${JSON.stringify(streamToolCall(`location_${count}`, "get_location", "{}"))}\n\n`);
@@ -2329,7 +2407,7 @@ function detectMarker(body) {
     "QZ_E2E_STEER_MULTI_DELETE_STEERING", "QZ_E2E_STEER_MULTI_DELETE_FOLLOWUP",
     "QZ_E2E_STOP", "QZ_E2E_AFTER_ABORT_1", "QZ_E2E_AFTER_ABORT_2", "QZ_QUEUE_ACTIVE", "QZ_QUEUE_NEXT",
     "QZ_E2E_PARALLEL_A", "QZ_E2E_PARALLEL_B", "QZ_E2E_RECONNECT",
-    "QZ_E2E_WORKER_OLD", "QZ_E2E_WORKER_NEW",
+    "QZ_E2E_WORKER_OLD", "QZ_E2E_WORKER_NEW", "QZ_E2E_WORKER_CHECKPOINT",
   ];
   for (const message of [...messages].reverse()) {
     if (message?.role !== "user") continue;

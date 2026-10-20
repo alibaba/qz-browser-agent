@@ -43,16 +43,16 @@ interface NavigationOptions {
   startPerfTrace?: ReturnType<typeof createPerfTrace>["start"];
   perfTrace: ReturnType<typeof createPerfTrace>["measure"]; perfTraceAsync: ReturnType<typeof createPerfTrace>["measureAsync"];
   getRuntime?(id: string): ClientRuntime; isRuntimeRunning?(runtime: ClientRuntime | undefined): boolean;
-  storage: { local: { get(key: string): Promise<PortMessage> } };
+  storage: { local: { get(key: string | string[]): Promise<PortMessage> } };
 }
 
 import { isSessionFormatError } from "../../../shared/session/session-format.js";
 import {
   createSessionTitle,
   SESSION_TITLE_MAX_LENGTH,
-  readSessionRecord,
   transcriptFromConversation,
 } from "../../../shared/session/session-codec.js";
+import { readSessionSnapshot } from "../../../shared/session/session-recovery.js";
 import {
   ACTIVE_CONVERSATION_PREFIX,
   genSessionId,
@@ -393,8 +393,9 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
       }
 
       const key = storedSessionKey(targetId);
+      const activeKey = `${ACTIVE_CONVERSATION_PREFIX}${targetId}`;
       const savedRecord = await options.perfTraceAsync?.("session.switch.storageRecord", { sessionId: targetId }, () => {
-        return options.storage.local.get(key);
+        return options.storage.local.get([key, activeKey]);
       });
       if (signal?.aborted || !isLatestSwitch(switchEpoch, targetId)) return;
       const saved = savedRecord?.[key];
@@ -404,32 +405,14 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
         hasRecord: Boolean(saved),
       });
       try {
-        record = readSessionRecord(saved);
+        record = readSessionSnapshot(saved, savedRecord?.[activeKey]);
       } finally {
         endReadRecord?.({
           hasConversation: Boolean(record?.conversation),
           transcript: record?.transcript?.length || 0,
         });
       }
-      let conversation: unknown = record.conversation;
-      let transcript = record.transcript;
-      if (!conversation || transcript.length === 0) {
-        const activeKey = `${ACTIVE_CONVERSATION_PREFIX}${targetId}`;
-        const activeRecord = await options.perfTraceAsync?.(
-          "session.switch.storageActiveFallback",
-          { sessionId: targetId },
-          () => options.storage.local.get(activeKey),
-        );
-        if (signal?.aborted || !isLatestSwitch(switchEpoch, targetId)) return;
-        const activeConversation = activeRecord?.[activeKey];
-        if (activeConversation) {
-          conversation = activeConversation;
-          transcript = options.perfTrace?.("session.switch.transcriptFromActive", { sessionId: targetId }, () => {
-            return transcriptFromConversation(activeConversation);
-          });
-        }
-      }
-      if (!transcript.length && conversation) transcript = transcriptFromConversation(conversation);
+      const { conversation, transcript } = record;
       options.perfTrace?.("session.switch.hydrateTranscript", {
         sessionId: targetId,
         transcript: transcript.length,

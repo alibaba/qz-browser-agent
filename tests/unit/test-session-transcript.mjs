@@ -67,4 +67,28 @@ assert.equal(grouped[0].tools[0].capabilityId, "canonical_tool");
 assert.equal(transcript.remove("group"), true);
 assert.deepEqual(transcript.getCached("group"), []);
 
+const previous = [
+  { role: "user", content: "previous question", clientMessageId: "previous" },
+  { role: "assistant", content: "previous answer" },
+];
+const checkpoint = serializeConversation([
+  ...previous,
+  { role: "user", content: "follow-up", clientMessageId: "follow-up" },
+  { role: "assistant", content: "completed before restart" },
+]);
+records.set("interrupted", createSessionRecord(serializeConversation(previous), [
+  { type: "user", text: "previous question", clientMessageId: "previous" },
+  { type: "thinking", text: "preserved thinking" },
+  { type: "assistant", content: "previous answer" },
+]));
+active.set("interrupted", checkpoint);
+for (const supplied of [null, checkpoint]) {
+  transcript.remove("interrupted");
+  const restored = await transcript.hydrate("interrupted", supplied);
+  assert.deepEqual(restored.map(entry => entry.text || entry.content), [
+    "previous question", "preserved thinking", "previous answer", "follow-up", "completed before restart",
+  ]);
+  assert.equal(await transcript.get("interrupted"), restored, "later reads reuse the complete recovered projection");
+}
+
 console.log("session transcript tests passed");

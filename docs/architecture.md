@@ -168,6 +168,11 @@ The repository validates record and conversation versions before selecting or re
 List summaries and [artifact projections](../src/background/session/artifacts.ts) derive from
 records, transcripts, and resource stores.
 
+After a Worker restart, history recovery uses the active conversation checkpoint when present.
+It retains saved thinking and tool presentation for unchanged history and reconstructs newer
+messages from the checkpoint. Opening a Session and reading its history use the same recovery
+rules. Recovery displays persisted content; it does not resume an interrupted model or tool call.
+
 [Compaction](../src/background/agent/compaction.ts) changes the model's sending window after a
 checkpoint commits. It carries earlier summaries, the Goal, and durable document references forward;
 transcripts and exports retain full history. Manual and automatic compaction use this boundary.

@@ -38,8 +38,32 @@ await dynamicContextIncludesTaskSites();
 await lifecycleCommitReflectsDurability();
 await customContextPreservesIdentityAndFailure();
 await restoredQueuesResumeWithInitializationOccupancy();
+await initializationRestoresTranscriptBeforePublishingQueues();
 
 console.log("session Agent host boundary tests passed");
+
+async function initializationRestoresTranscriptBeforePublishingQueues() {
+  let hydrated = false, queueEvents = 0;
+  const { host } = createHostFixture({
+    hydrateTranscript: async (_id, conversation) => {
+      assert.equal(conversation, null, "an unhydrated Agent must allow recovery from the stored record");
+      hydrated = true;
+    },
+    recordTranscriptEvent: (_id, event) => {
+      if (event.type !== "queue_update") return;
+      assert.ok(hydrated, "queue events must not seed an incomplete projection before history recovery");
+      queueEvents += 1;
+    },
+  });
+  const agent = host.createAgent(activeLease("s1"));
+  const unsubscribe = agent.subscribe(event => host.handleEvent("s1", event));
+  try {
+    await host.initializeAgent(agent, "s1");
+    assert.equal(queueEvents, 1);
+  } finally {
+    unsubscribe();
+  }
+}
 
 async function restoredQueuesResumeWithInitializationOccupancy() {
   for (const status of ["aborted", "error", "cancelled"]) {
@@ -381,6 +405,7 @@ function createHostFixture({
   recordTranscriptEvent = () => {},
   recordRuntimeEvent = () => {},
   recordResourceEvent = () => {},
+  hydrateTranscript = async () => {},
   releaseRunResources = async () => ({ released: 0 }),
   observeAgentEvent = null,
   lifecycle = null,
@@ -422,7 +447,7 @@ function createHostFixture({
     recordRuntimeEvent,
     persistRuntime,
     recordResourceEvent,
-    hydrateTranscript: async () => {},
+    hydrateTranscript,
     getTranscript: async () => [],
     releaseRunResources,
     closeOwnedTabs: async () => {},

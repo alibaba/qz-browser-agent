@@ -9,7 +9,7 @@ import { createSessionRepository, SESSION_RUNTIME_PREFIX } from "../../src/backg
 import { createSessionSupervisor } from "../../src/background/session/supervisor.js";
 import { createSessionRuntimeState } from "../../src/background/session/runtime-state.js";
 import { createSessionTranscript } from "../../src/background/session/transcript.js";
-import { serializeConversation, readSessionRecord, deserializeConversation } from "../../src/shared/session/session-codec.js";
+import { createSessionRecord, serializeConversation, readSessionRecord, deserializeConversation } from "../../src/shared/session/session-codec.js";
 import { createSessionExchangePayload } from "../../src/shared/session/session-exchange.js";
 import { normalizeSessionRuntimeStatus } from "../../src/shared/session/session-runtime-status.js";
 import { SESSION_RECORD_PREFIX } from "../../src/shared/session/session-store.js";
@@ -84,6 +84,48 @@ test("opening a naturally imported conversation restores its complete model hist
   assert.equal(history.messages.some(message => message.role === "assistant" && message.content === "I remember 742"), true);
   const persisted = deserializeConversation(await f.repository.readActiveConversation(id));
   assert.deepEqual(persisted.find(message => message.role === "user"), user);
+});
+
+test("reopening an interrupted follow-up restores the latest checkpoint to both the chat and Agent", async () => {
+  const f = fixture();
+  const id = "interrupted-follow-up";
+  await f.repository.createMetadata({ id, title: "Interrupted follow-up" });
+  const checkpoint = serializeConversation([
+    ...messages,
+    { role: "user", content: "Continue with the image", clientMessageId: "follow-up" },
+    { role: "assistant", content: "Saved answer before restart" },
+  ]);
+  await f.storage.set({
+    [`_session_${id}`]: createSessionRecord(serializeConversation(messages), [
+      { type: "user", text: "Remember fixture number 742 and this image", images: [{ dataUrl: image }] },
+      { type: "thinking", text: "Saved reasoning" },
+      { type: "assistant", content: "I remember 742" },
+    ]),
+    [`_active_conversation_${id}`]: checkpoint,
+  });
+  let currentId = null, epoch = 0;
+  const seeded = [], restores = [];
+  const navigation = createSessionNavigationFeature({
+    getCurrentSessionId: () => currentId, setCurrentSessionIdValue: value => { currentId = value; },
+    getSessionSwitchEpoch: () => epoch, incrementSessionSwitchEpoch: () => ++epoch,
+    chatTab: "chat", getCurrentTab: () => "other", chatScroll: { requestLatest: noop },
+    storage: { local: f.storage }, perfTrace: (_name, _detail, action) => action(),
+    perfTraceAsync: async (_name, _detail, action) => action(),
+    runController: { setSuppressEvents: noop, finish: noop, beginRestore: noop },
+    transcriptRenderer: { hasTranscript: () => false, seedFromStorage: (_id, entries) => { seeded.push(entries); return true; }, renderCurrent: noop },
+    send(event) {
+      if (event.type === "restore_session") restores.push(f.commands.restoreSessionFromApi(event.sessionId, event.session));
+    },
+  });
+  await navigation.switchToSession(id);
+  await Promise.all(restores);
+  assert.deepEqual(seeded[0].map(entry => entry.text || entry.content), [
+    "Remember fixture number 742 and this image", "Saved reasoning", "I remember 742",
+    "Continue with the image", "Saved answer before restart",
+  ]);
+  assert.equal(seeded[0][0].images[0].dataUrl, image);
+  const history = await f.commands.getSessionHistoryRuntime(id);
+  assert.deepEqual(history.messages.filter(message => message.role !== "system"), checkpoint.entries.map(entry => entry.message));
 });
 
 for (const [stage, prefix] of [["runtime checkpoint", SESSION_RUNTIME_PREFIX], ["history record", SESSION_RECORD_PREFIX]]) {

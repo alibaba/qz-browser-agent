@@ -14,7 +14,7 @@ function fixture(t, seed) {
 const conversation = content => [{ role: "user", content }];
 const record = transcript => ({ type: "qz-browser-agent-session", version: 4, transcript });
 
-test("stored transcript takes precedence over conversation fallback without rewriting storage", async t => {
+test("active conversation restores newer content without rewriting storage", async t => {
   const storage = fixture(t, {
     _session_task: { ...record([{ type: "user", text: "stored" }]), conversation: conversation("saved conversation") },
     _active_conversation_task: conversation("active conversation"),
@@ -22,17 +22,21 @@ test("stored transcript takes precedence over conversation fallback without rewr
   const before = storage.snapshot();
   const reads = t.mock.method(storage, "get");
   const result = await readStoredTranscript(" task ");
-  assert.equal(result[0].text, "stored");
+  assert.equal(result[0].text, "active conversation");
   assert.equal(reads.mock.callCount(), 1);
   assert.deepEqual(storage.snapshot(), before);
   assert.deepEqual(storage.writes, []);
 });
 
-test("legacy record conversation is projected before considering active storage", async t => {
+test("active conversation takes precedence over a legacy record conversation", async t => {
   const storage = fixture(t, {
     _session_task: { ...record([]), version: 3, conversation: conversation("legacy record") },
     _active_conversation_task: conversation("active conversation"),
   });
+  assert.equal((await readStoredTranscript("task"))[0].text, "active conversation");
+  assert.deepEqual(storage.writes, []);
+  await storage.remove("_active_conversation_task");
+  storage.writes.length = 0;
   assert.equal((await readStoredTranscript("task"))[0].text, "legacy record");
   assert.deepEqual(storage.writes, []);
 });
@@ -54,7 +58,7 @@ test("absent history is empty, and invalid session identity never touches storag
   for (const id of [undefined, null, " ", 42, {}]) assert.deepEqual(await readStoredTranscript(id), []);
   assert.equal(reads.mock.callCount(), 0);
   assert.deepEqual(await readStoredTranscript("missing"), []);
-  assert.equal(reads.mock.callCount(), 2);
+  assert.equal(reads.mock.callCount(), 1);
 });
 
 test("unrecognized stored versions block fallback instead of becoming empty history", async t => {
@@ -77,7 +81,7 @@ test("storage failure propagates without rewriting history", async t => {
   assert.deepEqual(storage.writes, []);
 });
 
-for (const cancelAt of [0, 1, 2]) {
+for (const cancelAt of [0, 1]) {
   test(`cancellation at read boundary ${cancelAt} cannot return late history`, async t => {
     const storage = fixture(t, { _active_conversation_task: conversation("late result") });
     const controller = new AbortController();

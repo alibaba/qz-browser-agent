@@ -3,8 +3,9 @@ import test from "node:test";
 import { createSessionState } from "../../src/sidepanel/features/sessions/session-state.js";
 import { createSidepanelEventRouter } from "../../src/sidepanel/features/app/sidepanel-event-router.js";
 import { createSidepanelUiRuntime } from "../../src/sidepanel/capability-host/runtime.js";
+import { createTranscriptReconcileFeature } from "../../src/sidepanel/features/chat/transcript/recovery.js";
 
-function fixture({ current = "visible", listen } = {}) {
+function fixture({ current = "visible", listen, reconcile = false } = {}) {
   const state = createSessionState({ now: () => "2026-09-18 12:00:00" });
   const calls = [], observed = [], errors = [];
   const ui = createSidepanelUiRuntime({ host: { root: {}, settings: {}, extensions: {} },
@@ -18,6 +19,12 @@ function fixture({ current = "visible", listen } = {}) {
     return {};
   } });
   const call = name => (...args) => { calls.push({ name, args }); };
+  const transcriptReconcile = reconcile ? createTranscriptReconcileFeature({
+    getCurrentSessionId: () => current,
+    getCurrentTranscriptCount: () => state.getTranscript(current).length,
+    isDeletedSession: id => router.isDeletedSession(id),
+    requestSnapshot: call("snapshot"),
+  }) : { handleEvent: call("reconcile"), clear: call("clearReconcile") };
   router = createSidepanelEventRouter({
     sessionState: state, switchToSession: call("switch"),
     getCurrentSessionId: () => current, isCurrentSession: id => id === current,
@@ -28,6 +35,8 @@ function fixture({ current = "visible", listen } = {}) {
       accept: () => true, acceptTerminal: () => true, isRestoring: () => false,
       areEventsSuppressed: () => false, isBlocked: () => false,
       forgetSession: call("forgetRun"), setSuppressEvents: call("suppress"), requestCurrentState: call("getState"),
+      hasVisibleConversation: () => true, hideWelcome: call("hideWelcome"),
+      handleRuntimeContextUsage: call("contextUsage"), applySnapshot: call("applySnapshot"),
     },
     transcriptRenderer: {
       markChanged: call("markChanged"), scheduleRender: call("render"),
@@ -35,7 +44,7 @@ function fixture({ current = "visible", listen } = {}) {
       seedCreated: session => state.mergeRecord(session), hideAssistantActions: call("hideActions"),
       forgetSession: call("forgetTranscript"),
     },
-    transcriptReconcile: { handleEvent: call("reconcile"), clear: call("clearReconcile") },
+    transcriptReconcile,
     queuedFollowups: { itemsSignature: (a, b) => JSON.stringify([a, b]), render: call("queue"), settleAccepted: () => null },
     goalStrip: { renderCurrent: call("goal"), forget: call("forgetGoal") },
     forgetComposerSession: call("forgetComposer"), syncKeepAlive: call("keepAlive"),
@@ -43,10 +52,72 @@ function fixture({ current = "visible", listen } = {}) {
     onUiEvent: event => { calls.push({ name: "uiEvent", event, deleted: router.isDeletedSession(event.sessionId || current) }); },
     transitionToSession: async () => false,
   });
-  return { state, router, ui, calls, observed, errors };
+  return { state, router, ui, calls, observed, errors, transcriptReconcile };
 }
 const event = (type, sessionId = "visible", fields = {}) => ({ type, sessionId, runId: "new", ...fields });
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+for (const statusFields of [{ status: "interrupted" }, { runtime: { status: "interrupted" } }]) {
+  test(`equivalent interrupted state recovers nonempty history with throttled read-only snapshots (${Object.keys(statusFields)[0]})`, async t => {
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10_000 });
+    const f = fixture({ reconcile: true });
+    t.after(() => f.transcriptReconcile.reset());
+    const oldTranscript = [{ type: "user", text: "saved question" }, { type: "assistant", content: "saved partial answer" }];
+    f.state.replaceTranscript("visible", oldTranscript);
+    const interrupted = event("state", "visible", { hasHistory: true, isStreaming: false, ...statusFields });
+    f.state.applyEvent(interrupted);
+    const before = f.state.get("visible");
+    const snapshots = () => f.calls.filter(call => call.name === "snapshot");
+    f.router.handle(interrupted);
+    f.router.handle(interrupted);
+    assert.deepEqual(f.state.get("visible"), before, "reconnection may repeat an already projected state");
+    t.mock.timers.tick(399);
+    assert.equal(snapshots().length, 0);
+    t.mock.timers.tick(1);
+    assert.deepEqual(snapshots(), [{ name: "snapshot", args: ["visible", { persist: false }] }]);
+    assert.deepEqual(f.state.getTranscript("visible"), oldTranscript, "reconciliation only requests a snapshot");
+    f.router.handle(interrupted);
+    t.mock.timers.tick(2499);
+    f.router.handle(interrupted);
+    t.mock.timers.tick(1);
+    assert.equal(snapshots().length, 1, "equivalent events obey the existing request interval");
+    f.router.handle(interrupted);
+    t.mock.timers.tick(400);
+    assert.equal(snapshots().length, 2, "a later reconnection can recover again");
+
+    const completed = event("state", "visible", { hasHistory: true, status: "completed", isStreaming: false });
+    f.router.handle(completed);
+    t.mock.timers.tick(10_000);
+    f.router.handle(completed);
+    t.mock.timers.tick(400);
+    assert.equal(snapshots().length, 2, "normal completed history does not cause repeated snapshot reads");
+    await f.ui.dispose();
+  });
+}
+
+test("reconnection recovery retains stale-event, inactive-session and deletion barriers", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10_000 });
+  const f = fixture({ reconcile: true });
+  t.after(() => f.transcriptReconcile.reset());
+  f.state.replaceTranscript("visible", [{ type: "assistant", content: "saved partial answer" }]);
+  f.state.applyEvent(event("agent_start", "visible", { eventSeq: 2 }));
+  const interrupted = event("state", "visible", { hasHistory: true, status: "interrupted", isStreaming: false, eventSeq: 3 });
+  f.router.handle({ ...interrupted, runId: "old", eventSeq: 99 });
+  f.router.handle({ ...interrupted, eventSeq: 1 });
+  f.router.handle({ ...interrupted, sessionId: "background" });
+  t.mock.timers.tick(400);
+  assert.equal(f.calls.some(call => call.name === "snapshot"), false);
+  assert.equal(f.state.getRuntime("visible").running, true);
+
+  f.router.handle(interrupted);
+  f.router.handle(event("session_deleted"));
+  t.mock.timers.tick(400);
+  f.router.handle({ ...interrupted, eventSeq: 99 });
+  t.mock.timers.tick(400);
+  assert.equal(f.calls.some(call => call.name === "snapshot"), false, "deletion cancels scheduled reads and blocks late events");
+  assert.equal(f.state.has("visible"), false);
+  await f.ui.dispose();
+});
 
 test("capabilities receive accepted projections from background sessions before active-chat filtering", async () => {
   const f = fixture();

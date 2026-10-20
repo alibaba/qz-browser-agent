@@ -3,6 +3,7 @@ import {
   transcriptFromConversation,
   updateTranscriptWithAgentEvent,
 } from "../../shared/session/session-codec.js";
+import { readSessionSnapshot } from "../../shared/session/session-recovery.js";
 import { createSessionListSummaryFromAgentEvent } from "../../shared/session/session-list-summary.js";
 
 import type { TranscriptEntry, TranscriptAgentEvent } from "../../shared/contracts/session.js";
@@ -67,12 +68,12 @@ export function createSessionTranscript({
     const id = normalizeSessionId(sessionId);
     if (!id) return [];
     if (cache.has(id)) return cache.get(id) || [];
-    const record = readSessionRecord(await repository.readRecord(id));
-    const transcript = resolveIdentities(
-      record.transcript?.length
-        ? record.transcript
-        : transcriptFromConversation(fallbackConversation || record.conversation),
-    );
+    const [saved, conversation] = await Promise.all([
+      repository.readRecord(id),
+      fallbackConversation ?? repository.readActiveConversation(id),
+    ]);
+    if (cache.has(id)) return cache.get(id) || [];
+    const transcript = resolveIdentities(readSessionSnapshot(saved, conversation).transcript);
     cache.set(id, transcript);
     return transcript;
   }
