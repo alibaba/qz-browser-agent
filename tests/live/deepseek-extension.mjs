@@ -1,6 +1,6 @@
 import { runSessionManagementCases } from "./session-management-cases.mjs";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,22 +43,26 @@ async function runSelected(name, operation) {
 
 try {
   context = await chromium.launchPersistentContext(profile, {
+    locale: "zh-CN",
     headless: process.env.QINGZHOU_LIVE_HEADLESS === "1",
     executablePath,
     ignoreDefaultArgs: ["--disable-extensions"],
     viewport: { width: 980, height: 860 },
     args: [
+      "--lang=zh-CN",
       `--disable-extensions-except=${extensionPath}`,
       `--load-extension=${extensionPath}`,
     ],
   });
   const extensionId = await getExtensionId(context, profile);
   attachWorkerDiagnostics(context, diagnostics, apiKey);
-  page = await context.newPage();
-  page.on("pageerror", error => diagnostics.push(redact(String(error), apiKey)));
-  page.on("console", message => {
-    if (message.type() === "error") diagnostics.push(redact(message.text(), apiKey));
+  context.on("page", current => {
+    current.on("pageerror", error => diagnostics.push(redact(String(error), apiKey)));
+    current.on("console", message => {
+      if (message.type() === "error") diagnostics.push(redact(message.text(), apiKey));
+    });
   });
+  page = await context.newPage();
   await page.goto(`chrome-extension://${extensionId}/sidepanel/sidepanel.html`);
   await acceptDataDisclosure(page);
   await page.waitForFunction(() => {
@@ -92,7 +96,7 @@ try {
 
     const deleteRunning = await runSelected("deleteRunning", () => assertDeleteRunningSession(page));
 
-    const workerRestart = await runSelected("workerRestart", () => assertServiceWorkerRestart(page, context, extensionId));
+    const workerRestart = await runSelected("workerRestart", () => assertServiceWorkerRestart(context, extensionId));
 
     const followUp = await runSelected("followUp", () => assertFollowUpHandoff(page));
 
@@ -388,37 +392,155 @@ async function assertDeleteRunningSession(page) {
   return { storageStayedDeleted: true, lateUpdates: 0 };
 }
 
-async function assertServiceWorkerRestart(page, browserContext, extensionId) {
+async function assertServiceWorkerRestart(browserContext, extensionId) {
   const sessionId = await createSession(page, "DeepSeek worker restart");
-  const after = await eventCount(page);
-  await send(page, "prompt", {
-    sessionId,
-    text: "必须调用 wait 工具，seconds=60。等待完成后只回复 QZ_WAIT_FINISHED。",
-    clientMessageId: id("worker-restart-old"),
-  });
-  const started = await waitEvent(page, { type: "agent_start", sessionId }, after, 90_000);
-  await waitEvent(page, { type: "tool_execution_start", sessionId, runId: started.runId, toolName: "wait" }, after, 90_000);
-  const beforeRestart = await readRuntimeCheckpoint(page, sessionId);
-  assert.equal(beforeRestart?.status, "running");
+  const memoryMarker = id("QZ_TRIP_MEMORY");
+  const completedMarker = id("QZ_NEW_FACT_SAVED");
+  const thirdMessageId = id("worker-restart-checkpoint");
+  const noticeText = "运行已中断，已恢复保存的对话。发送消息可继续。";
+  const evidence = { sessionId, turns: [], requests: [], screenshots: [] };
+  report.scenarios.workerRestart = evidence;
+  const onRequest = request => {
+    const url = new URL(request.url());
+    if (request.method() === "POST" && url.hostname === "api.deepseek.com" && url.pathname.endsWith("/chat/completions")) {
+      evidence.requests.push({ at: new Date().toISOString(), url: `${url.origin}${url.pathname}` });
+    }
+  };
+  const transcript = async () => (await requestWithoutId(page, "get_messages", { sessionId }, "messages", 20_000, { sessionId })).transcript;
+  const summarize = entries => entries.map(entry => ({ type: entry.type, runId: entry.runId,
+    text: String(entry.text || entry.content || "").slice(0, 2000),
+    ...(entry.type === "tool" ? { name: entry.name, toolCallId: entry.toolCallId, isError: entry.isError } : {}),
+  }));
+  const assertNotice = async () => {
+    const notice = page.locator("#messages .msg-run-status-interrupted");
+    await notice.waitFor({ state: "visible", timeout: 10_000 });
+    assert.equal(await notice.count(), 1);
+    assert.equal((await notice.textContent()).trim(), noticeText);
+    assert.equal(await notice.evaluate((element, marker) => {
+      const completed = [...document.querySelectorAll("#messages .msg-assistant .msg-content")]
+        .find(node => node.textContent.includes(marker));
+      return Boolean(completed && (completed.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING));
+    }, completedMarker), true, "the notice must follow the recovered third-turn answer");
+  };
+  const screenshot = async name => {
+    const directory = dirname(resolve(process.env.QINGZHOU_LIVE_REPORT || "tests/results/deepseek-recovery/report.json"));
+    mkdirSync(directory, { recursive: true });
+    const path = join(directory, `worker-restart-${name}.png`);
+    await page.screenshot({ path });
+    evidence.screenshots.push(path);
+  };
+  let controlPage, otherSessionId;
+  browserContext.on("request", onRequest);
+  try {
+    assert.equal(await page.locator("html").getAttribute("lang"), "zh-CN");
+    for (const text of [
+      `我计划去京都旅行，总预算8000元。请记住唯一记忆标签 ${memoryMarker}。本轮不要调用工具，只简短确认目的地、预算和记忆标签。`,
+      "请沿用上一轮的目的地与预算，为我拟定三日旅行计划。必须先调用一次 list_tabs 工具，不调用其他工具，拿到结果后给出简短计划。",
+    ]) {
+      const result = await runPrompt(page, sessionId, text);
+      evidence.turns.push({ user: text, assistant: result.assistantText, runId: result.runId });
+    }
+    assert.ok(evidence.turns[0].assistant.includes(memoryMarker));
+    const oldTranscript = await transcript();
+    assert.ok(oldTranscript.some(entry => entry.type === "tool" && entry.name === "list_tabs" && !entry.isError), "second turn must complete its real tool call");
+    await openLiveSession(page, sessionId);
+    const thirdPrompt = `新增事实：同行者对花生过敏，第三天必须在17:00前回到酒店。请按以下顺序执行：先在完整的助手正文中确认这两点，并原样写出 ${completedMarker}；在该次响应的工具调用批次中只调用一次 list_tabs。收到 list_tabs 结果后，在下一次模型响应中单独调用 wait，seconds=60。严禁把 list_tabs 和 wait 放在同一批工具调用中。等待完成后再总结。`;
+    const after = await eventCount(page);
+    await send(page, "prompt", { sessionId, text: thirdPrompt, clientMessageId: thirdMessageId });
+    const started = await waitEvent(page, { type: "agent_start", sessionId }, after, 90_000);
+    const listed = await waitEvent(page, { type: "tool_execution_end", sessionId, runId: started.runId, toolName: "list_tabs" }, after, 90_000);
+    const waiting = await waitEvent(page, { type: "tool_execution_start", sessionId, runId: started.runId, toolName: "wait" }, after, 90_000);
+    assert.equal(listed.isError, false);
+    const stored = await readSessionStorage(page, sessionId);
+    const activeMessages = (stored.activeConversation?.entries || []).map(entry => entry.message).filter(Boolean);
+    const listIndex = activeMessages.findIndex(message => message.tool_calls?.some(call => call.id === listed.toolCallId));
+    const waitIndex = activeMessages.findIndex(message => message.tool_calls?.some(call => call.id === waiting.toolCallId));
+    assert.ok(listIndex >= 0 && waitIndex > listIndex, "fixture must reach separate list_tabs and wait model responses");
+    assert.deepEqual(activeMessages[listIndex].tool_calls.map(call => call.function.name), ["list_tabs"]);
+    assert.deepEqual(activeMessages[waitIndex].tool_calls.map(call => call.function.name), ["wait"]);
+    assert.equal(JSON.parse(activeMessages[waitIndex].tool_calls[0].function.arguments).seconds, 60);
+    assert.ok(activeMessages.some(message => message.role === "tool" && message.tool_call_id === listed.toolCallId));
+    const confirmed = activeMessages.find(message => message.role === "assistant" && messageText(message).includes(completedMarker));
+    assert.ok(confirmed, "fixture must save the model's real third-turn confirmation before interruption");
+    assert.ok(JSON.stringify(stored.record).includes(memoryMarker));
+    assert.equal(JSON.stringify(stored.record).includes(thirdMessageId), false, "completed record must still precede the active checkpoint");
+    assert.equal(stored.runtime?.status, "running");
+    evidence.turns.push({ user: thirdPrompt, assistant: messageText(confirmed), runId: started.runId, interrupted: true });
+    evidence.beforeTranscript = summarize(await transcript());
+    evidence.requestsBeforeRestart = evidence.requests.length;
+    assert.ok(evidence.requestsBeforeRestart > 0, "request observation must capture real provider calls");
 
-  await terminateExtensionServiceWorker(page, browserContext, extensionId);
-  const recovered = await requestWithoutId(page, "get_state", { sessionId }, "state", 20_000, { sessionId });
-  assert.equal(recovered.status, "interrupted");
-  assert.equal(recovered.runtime?.reason, "service_worker_restarted");
-  assert.equal(recovered.runtime?.runId, started.runId);
+    controlPage = await browserContext.newPage();
+    await page.close();
+    await terminateExtensionServiceWorker(controlPage, browserContext, extensionId);
+    await controlPage.close();
+    page = await browserContext.newPage();
+    await page.setViewportSize({ width: 420, height: 900 });
+    await page.goto(`chrome-extension://${extensionId}/sidepanel/sidepanel.html`);
+    await page.waitForFunction(() => document.querySelector("#app") && !document.querySelector("#app").hasAttribute("data-workspace-booting"));
+    await installHarness(page);
+    await openLiveSession(page, sessionId);
+    await assertNotice();
+    const recoveredTranscript = await transcript();
+    evidence.recoveredTranscript = summarize(recoveredTranscript);
+    assert.equal(recoveredTranscript.filter(entry => entry.type === "user" && entry.clientMessageId === thirdMessageId).length, 1);
+    for (const text of evidence.turns.map(turn => turn.assistant)) {
+      assert.equal(recoveredTranscript.filter(entry => entry.type === "assistant" && entry.content === text).length, 1);
+    }
+    for (const tool of oldTranscript.filter(entry => entry.type === "tool").concat({ toolCallId: listed.toolCallId })) {
+      assert.equal(recoveredTranscript.filter(entry => entry.type === "tool" && entry.toolCallId === tool.toolCallId && !entry.isError).length, 1);
+    }
+    const recovered = await requestWithoutId(page, "get_state", { sessionId }, "state", 20_000, { sessionId });
+    assert.equal(recovered.status, "interrupted");
+    assert.equal(recovered.runtime?.reason, "service_worker_restarted");
+    assert.equal(recovered.runtime?.runId, started.runId);
+    await page.locator(".msg-run-status-interrupted").scrollIntoViewIfNeeded();
+    await screenshot("recovered");
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector("#app") && !document.querySelector("#app").hasAttribute("data-workspace-booting"));
+    await installHarness(page);
+    await openLiveSession(page, sessionId);
+    await assertNotice();
+    otherSessionId = await createSession(page, "DeepSeek recovery switch check");
+    await openLiveSession(page, otherSessionId);
+    await openLiveSession(page, sessionId);
+    await assertNotice();
+    evidence.requestsAfterRecovery = evidence.requests.length;
+    assert.equal(evidence.requestsAfterRecovery, evidence.requestsBeforeRestart, "reopening, reload and session switches must not resend model requests");
 
-  const continuation = await runPrompt(
-    page,
-    sessionId,
-    "不要调用工具，只回复精确文本 QZ_AFTER_WORKER_RESTART_OK。",
-    { timeoutMs: 90_000 },
-  );
-  assert.match(continuation.assistantText, /QZ_AFTER_WORKER_RESTART_OK/);
-  const finalRuntime = await readRuntimeCheckpoint(page, sessionId);
-  assert.equal(finalRuntime.status, "completed");
-  assert.notEqual(finalRuntime.runId, started.runId);
-  await deleteSession(page, sessionId);
-  return { recoveredAsInterrupted: true, continuationCompleted: true };
+    const finalPrompt = "继续本对话，不调用任何工具。请从此前对话回忆：第一轮的目的地、预算、唯一记忆标签；第二轮计划共几天；第三轮新增的饮食限制和返店时限。简短列出以上信息，以 QZ_AFTER_WORKER_RESTART_OK 开头。";
+    const continuation = await runPrompt(page, sessionId, finalPrompt);
+    evidence.turns.push({ user: finalPrompt, assistant: continuation.assistantText, runId: continuation.runId });
+    assert.ok(evidence.requests.length > evidence.requestsAfterRecovery, "continuation must reach the real provider");
+    for (const text of ["QZ_AFTER_WORKER_RESTART_OK", "京都", "8000", memoryMarker, "花生"]) assert.ok(continuation.assistantText.includes(text), `continuation must recall ${text}`);
+    assert.match(continuation.assistantText, /三[日天]|3\s*[日天]/u);
+    assert.match(continuation.assistantText, /17[:：]00|17\s*点|下午\s*[5五]\s*点/u);
+    const finalRuntime = await readRuntimeCheckpoint(page, sessionId);
+    assert.equal(finalRuntime.status, "completed");
+    assert.notEqual(finalRuntime.runId, started.runId);
+    const finalTranscript = await transcript();
+    const notices = finalTranscript.filter(entry => entry.type === "run-status" && entry.status === "interrupted");
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].runId, started.runId);
+    assert.ok(finalTranscript.indexOf(notices[0]) < finalTranscript.findIndex(entry => entry.type === "user" && entry.text === finalPrompt));
+    await assertNotice();
+    await page.locator("#messages .msg-assistant").last().scrollIntoViewIfNeeded();
+    await screenshot("continued");
+    return { ...evidence, recoveredAsInterrupted: true, continuationCompleted: true };
+  } finally {
+    browserContext.off("request", onRequest);
+    await controlPage?.close().catch(() => undefined);
+    if (!page.isClosed()) {
+      if (otherSessionId) await deleteSession(page, otherSessionId).catch(() => undefined);
+      await deleteSession(page, sessionId).catch(() => undefined);
+    }
+  }
+}
+
+async function openLiveSession(currentPage, sessionId) {
+  await currentPage.locator('.tab-btn[data-tab="sessions"]').click();
+  await currentPage.locator(`.session-card[data-id="${sessionId}"]`).click();
+  await currentPage.waitForFunction(() => document.querySelector('.tab-btn[data-tab="chat"]')?.classList.contains("active"));
 }
 
 async function assertFollowUpHandoff(page) {
@@ -860,10 +982,6 @@ async function terminateExtensionServiceWorker(page, browserContext, extensionId
   } finally {
     await cdp.detach().catch(() => undefined);
   }
-
-  await page.waitForTimeout(100);
-  await page.evaluate(() => window.__qzLiveHarness.reconnect());
-  // Reconnecting does not push a state snapshot; the caller queries its session explicitly.
 }
 
 async function getExtensionId(browserContext, userDataDir) {

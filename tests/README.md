@@ -301,6 +301,11 @@ lifecycle run and this management run use separate temporary profiles. Set `QING
 an output JSON path for `live deepseek` or `live rate` to retain success and failure evidence; the
 parent directory must already exist.
 
+Use `QINGZHOU_LIVE_CASES=workerRestart` to run a four-turn conversation, close the panel and stop
+the Worker during the third turn, then verify checkpoint recovery and continue the same chat.
+The report includes recovered transcripts, request counts, and screenshots when
+`QINGZHOU_LIVE_REPORT` is set.
+
 Key precedence is an explicit key file (`--ak-file` / `--key-file` or the corresponding file
 variable), the provider environment variable, then root `.env.local`. The explicit live invocation
 loads the chosen key into a temporary profile and removes that profile on exit.
