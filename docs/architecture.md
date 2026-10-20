@@ -168,14 +168,19 @@ The repository validates record and conversation versions before selecting or re
 List summaries and [artifact projections](../src/background/session/artifacts.ts) derive from
 records, transcripts, and resource stores.
 
-While a task runs, the transcript owner saves complete display snapshots through the Repository.
+The transcript owner keeps completed history (H) separate from the current operation (C).
+Agent events update C; explicit `finish` moves it into H. Ordinary UI saves checkpoint state
+without finishing the operation.
 Message and tool boundaries save immediately; streaming updates share a fixed one-second deadline.
-Each snapshot retains the completed history and the current turn's thinking, text, tools, and images.
-Edits and replacements cancel pending snapshots, and queued writes validate the Agent lease.
-After a Worker restart, opening a Session and reading its history restore the saved transcript
-directly. The active conversation remains the model execution checkpoint; it does not rebuild the
-display history. Recovery does not resume an interrupted model or tool call.
-The recovered turn ends with a localized interruption notice inviting the user to send a message to continue.
+The first checkpoint writes H and the initial C together in one baseline record. Later checkpoints
+replace only C in a separate versioned key tied to that baseline revision, retaining all display content.
+The Repository coalesces pending checkpoints and validates the Agent lease before queued writes.
+Full saves and edits establish a new revision; a completed save supplies the next operation's baseline.
+After a Worker restart, readers combine H with the matching saved C, or the baseline's initial C.
+Readers remove internal checkpoint fields so repeated reads do not duplicate current content.
+The active conversation remains the separate model execution checkpoint.
+Recovery settles interrupted display state and does not resume an interrupted model or tool call.
+The recovered turn ends with a localized notice inviting the user to send a message to continue.
 
 [Compaction](../src/background/agent/compaction.ts) changes the model's sending window after a
 checkpoint commits. It carries earlier summaries, the Goal, and durable document references forward;

@@ -23,6 +23,10 @@ export interface TranscriptEntry extends TranscriptMeta, CompactMeta, Partial<To
   isError?: boolean; isRunning?: boolean; streaming?: boolean; statusText?: string;
   waitId?: string; message?: string; form?: unknown; reason?: string; summary?: string;
 }
+export interface TranscriptSnapshot {
+  history: readonly TranscriptEntry[];
+  current: readonly TranscriptEntry[];
+}
 export interface SessionMessage extends ModelMessage {
   _compact?: CompactMeta;
   _contextCapsule?: { reason?: string; createdAt?: string; signature?: string };

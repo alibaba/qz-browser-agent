@@ -59,6 +59,7 @@ import {
   getSessions,
   ROOT_SESSION_ID,
   storedSessionKey,
+  transcriptCheckpointKey,
 } from "../../../shared/session/session-store.js";
 
 export function createSessionNavigationFeature(options: NavigationOptions) {
@@ -394,8 +395,9 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
 
       const key = storedSessionKey(targetId);
       const activeKey = `${ACTIVE_CONVERSATION_PREFIX}${targetId}`;
+      const checkpointKey = transcriptCheckpointKey(targetId);
       const savedRecord = await options.perfTraceAsync?.("session.switch.storageRecord", { sessionId: targetId }, () => {
-        return options.storage.local.get([key, activeKey]);
+        return options.storage.local.get([key, activeKey, checkpointKey]);
       });
       if (signal?.aborted || !isLatestSwitch(switchEpoch, targetId)) return;
       const saved = savedRecord?.[key];
@@ -405,7 +407,7 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
         hasRecord: Boolean(saved),
       });
       try {
-        record = readSessionSnapshot(saved, savedRecord?.[activeKey]);
+        record = readSessionSnapshot(saved, savedRecord?.[activeKey], savedRecord?.[checkpointKey]);
       } finally {
         endReadRecord?.({
           hasConversation: Boolean(record?.conversation),

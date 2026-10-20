@@ -46,6 +46,7 @@ interface SessionCommandsDependencies {
   >>;
   transcript: Readonly<Pick<Transcript,
     "get" | "getConversation" | "set" | "resolveIdentities" | "recordEvent" | "remove"
+    | "snapshot" | "checkpoint" | "finish"
   >>;
   artifacts: Readonly<Pick<Artifacts,
     "clearListSummaryPatch" | "clearSummaryRefresh" | "buildListSummary" | "collect" | "empty"
@@ -80,6 +81,7 @@ import type { ComposerDraft } from "../../shared/contracts/composer-draft.js";
 import { isSessionFormatError } from "../../shared/session/session-format.js";
 import {
   createSessionRecord,
+  normalizeTranscript,
   createSessionTitle,
   getConversationPreview,
   readSessionRecord,
@@ -388,6 +390,14 @@ function cleanGeneratedSessionTitle(text: unknown) {
 }
 
 async function saveSessionRecordRuntime({ sessionId, conversation, transcript }: Fields = {}) {
+  return persistSessionRecord({ sessionId, conversation, transcript }, false);
+}
+
+async function commitSessionRecordRuntime({ sessionId, conversation }: Fields = {}) {
+  return persistSessionRecord({ sessionId, conversation }, true);
+}
+
+async function persistSessionRecord({ sessionId, conversation, transcript }: Fields, commit: boolean) {
   await sessionRuntimeReady;
   const id = normalizeSessionId(sessionId);
   if (!id) return { saved: false, reason: "missing_session_id" };
@@ -397,19 +407,23 @@ async function saveSessionRecordRuntime({ sessionId, conversation, transcript }:
   if (!session) return { saved: false, reason: "missing_session", sessionId: id };
 
   const resolvedConversation = await sessionTranscript.getConversation(id, conversation);
-  const rawTranscript = Array.isArray(transcript)
-    ? transcript
-    : await sessionTranscript.get(id, resolvedConversation);
-  const resolvedTranscript = sessionTranscript.resolveIdentities(rawTranscript);
+  const replacement = Array.isArray(transcript) ? sessionTranscript.resolveIdentities(transcript) : null;
+  if (!replacement) await sessionTranscript.get(id, resolvedConversation);
+  const snapshot = replacement ? { history: replacement, current: [] } : sessionTranscript.snapshot(id);
 
-  const record = createSessionRecord(resolvedConversation, resolvedTranscript);
+  const record = {
+    ...createSessionRecord(resolvedConversation, sessionTranscript.resolveIdentities([...snapshot.history])),
+    currentTranscript: normalizeTranscript(sessionTranscript.resolveIdentities([...snapshot.current])),
+  };
   const now = nowBeijingDateTime();
-  await sessionRepository.writeRecord(id, record);
-  sessionTranscript.set(id, resolvedTranscript);
+  const checkpoint = !commit && !replacement ? sessionTranscript.checkpoint(id) : null;
+  if (checkpoint) await checkpoint;
+  else await sessionRepository.writeRecord(id, record, undefined, replacement ? undefined : snapshot.history);
+  if (replacement) sessionTranscript.set(id, replacement);
   const result = await sessionRepository.updateMetadata(id, async (current) => {
     const listSummary = mergeSessionListSummary(
       current.listSummary,
-      await sessionArtifacts.buildListSummary(id, record.transcript, now),
+      await sessionArtifacts.buildListSummary(id, [...record.transcript, ...record.currentTranscript], now),
     );
     return {
       ...current,
@@ -1004,8 +1018,9 @@ async function resendSessionMessageRuntime(params: PromptInput = {}) {
         context,
         onReplaced: async ({ conversation }) => {
           const transcript = transcriptFromConversation(conversation);
-          sessionTranscript.set(sessionId, transcript);
-          await saveSessionRecordRuntime({ sessionId, conversation, transcript });
+          // The replacement user is already accepted; agent_start will bind it.
+          sessionTranscript.set(sessionId, transcript.slice(0, -1), transcript.slice(-1));
+          await commitSessionRecordRuntime({ sessionId, conversation });
           broadcast({ type: "transcript_replace", sessionId, transcript });
         },
       });
@@ -1095,15 +1110,16 @@ async function compactSessionContextRuntime(params: Fields = {}) {
     task = await startSessionAgentTask({
       sessionId: id,
       operationName: "compact_context",
-      operation: async ({ agent }) => {
+      operation: async ({ agent, task }) => {
         compaction.result = await agent.compactContext(null, {
           trigger: "slash_command",
           instruction,
         });
+        if (task.cancelled) return;
         if (compaction.result?.compacted || compaction.result?.failed) {
+          sessionTranscript.finish(id);
           const conversation = agent.exportSession();
-          const transcript = await sessionTranscript.get(id, conversation);
-          await saveSessionRecordRuntime({ sessionId: id, conversation, transcript });
+          await commitSessionRecordRuntime({ sessionId: id, conversation });
         }
         return compaction.result?.failed
           ? { status: "error", reason: object(compaction.result.error).message || t("agent.compactionFailed") }
@@ -1186,7 +1202,6 @@ async function getLastMessagesRuntime({ sessionId, num = 5 }: { sessionId?: unkn
     const activeConversation = await sessionRepository.readActiveConversation(id);
     if (activeConversation) {
       transcript = transcriptFromConversation(activeConversation);
-      sessionTranscript.set(id, transcript);
       source = "active_conversation";
     }
   }
@@ -1230,7 +1245,6 @@ async function resolveSessionArtifactTranscript(sessionId: string) {
     const activeConversation = await sessionRepository.readActiveConversation(id);
     if (activeConversation) {
       transcript = transcriptFromConversation(activeConversation);
-      sessionTranscript.set(id, transcript);
       if (transcript.length) return transcript;
     }
   } catch(_err) {
@@ -1241,7 +1255,6 @@ async function resolveSessionArtifactTranscript(sessionId: string) {
   try {
     const record = readSessionRecord(await sessionRepository.readRecord(id));
     transcript = record.transcript || [];
-    if (transcript.length) sessionTranscript.set(id, transcript);
     return transcript;
   } catch(_err) {
     if (isSessionFormatError(_err)) throw _err;
@@ -1428,8 +1441,7 @@ async function clearSessionGoalRuntime(input: Fields & { signal?: AbortSignal; r
       eventAppended = appendResult === true;
       if (eventAppended) {
         const conversation = agent.exportSession();
-        const transcript = await sessionTranscript.get(id, conversation);
-        await saveSessionRecordRuntime({ sessionId: id, conversation, transcript });
+        await commitSessionRecordRuntime({ sessionId: id, conversation });
       }
     }
   }
@@ -1886,11 +1898,11 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
         status: runtime.status,
         runtime,
       });
+      sessionTranscript.finish(id);
 
       if (snapshot.conversation) {
         await sessionRepository.replaceActiveConversation(id, snapshot.conversation);
-        const transcript = await sessionTranscript.get(id, snapshot.conversation);
-        await saveSessionRecordRuntime({ sessionId: id, conversation: snapshot.conversation, transcript });
+        await commitSessionRecordRuntime({ sessionId: id, conversation: snapshot.conversation });
       }
       await runtimeState.persist(id, { terminal: true });
       // The supervisor detaches the agent listener before aborting the run, so
@@ -2039,6 +2051,7 @@ function sessionError(code: string, message: string) {
     createSessionMetadataRuntime,
     renameSessionRuntime,
     saveSessionRecordRuntime,
+    commitSessionRecordRuntime,
     exportSessionExchangeRuntime,
     importSessionExchangeRuntime,
     startSessionAgentTask,

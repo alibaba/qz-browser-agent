@@ -2,6 +2,7 @@ import { t } from "../../shared/i18n/backend.js";
 import type { StorageAdapter } from "../internal/storage.js";
 import type { SessionMetadata } from "../../shared/session/session-store.js";
 import type { SessionListSummary } from "../../shared/session/session-list-summary.js";
+import type { TranscriptEntry, TranscriptSnapshot } from "../../shared/contracts/session.js";
 import type { AgentLease } from "./supervisor.js";
 type Fields = Record<string, unknown>;
 type RuntimeCheckpoint = Fields & { schemaVersion: number; sessionId: string };
@@ -17,19 +18,38 @@ interface PendingRuntime {
   waiters: { resolve(value: RuntimeCheckpoint | null): void; reject(error: unknown): void }[];
   timer: ReturnType<typeof setTimeout> | null;
 }
+interface TranscriptCheckpoint {
+  version: 2;
+  baseRevision: string;
+  transcript: TranscriptEntry[];
+}
+interface TranscriptCheckpointBase {
+  history: readonly TranscriptEntry[];
+  transcript: TranscriptEntry[];
+  revision: string;
+  persisted: boolean;
+}
+interface PendingTranscriptCheckpoint {
+  base: TranscriptCheckpointBase;
+  lease: Lease;
+  checkpoint: TranscriptCheckpoint;
+  promise: Promise<void>;
+}
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 
 import { assertSessionRecordReadable, assertConversationReadable } from "../../shared/session/session-format.js";
+import { readCheckpointRecord } from "../../shared/session/session-recovery.js";
 import {
   ACTIVE_CONVERSATION_PREFIX,
   ROOT_SESSION_ID,
   SESSIONS_KEY,
   SESSION_RECORD_PREFIX,
+  transcriptCheckpointKey,
   genSessionId,
   normalizeParentSessionId,
   normalizeSessionId,
 } from "../../shared/session/session-store.js";
-import { createSessionTitle } from "../../shared/session/session-codec.js";
+import { createSessionRecord, createSessionTitle, normalizeTranscript } from "../../shared/session/session-codec.js";
 import {
   createSessionListSummaryFromFirstMessage,
   normalizeSessionListSummary,
@@ -45,6 +65,7 @@ import {
 export const LEGACY_SESSION_RUNTIME_KEY = "_session_runtime";
 export const SESSION_RUNTIME_PREFIX = "_session_runtime_";
 export const SESSION_RUNTIME_MIGRATION_KEY = "_session_runtime_schema_version";
+export { SESSION_TRANSCRIPT_CHECKPOINT_PREFIX } from "../../shared/session/session-store.js";
 
 export class StaleSessionLeaseError extends Error {
   code: string;
@@ -82,6 +103,8 @@ export function createSessionRepository({
   const conversationQueues = createKeyedSerialQueue();
   const runtimeQueues = createKeyedSerialQueue();
   const runtimePending = new Map<string, PendingRuntime>();
+  const transcriptBases = new Map<string, TranscriptCheckpointBase>();
+  const transcriptPending = new Map<string, PendingTranscriptCheckpoint>();
   const deletedSessionIds = new Set<string>();
 
   async function listMetadata() {
@@ -194,6 +217,8 @@ export function createSessionRepository({
   function deleteSession(sessionId: string) {
     const id = requireSessionId(sessionId);
     deletedSessionIds.add(id);
+    transcriptBases.delete(id);
+    transcriptPending.delete(id);
     return metadataQueue.run(async () => {
       // A create queued before this delete may have cleared the eager tombstone.
       // Reassert it at the serialized deletion boundary so late writes stay rejected.
@@ -206,7 +231,7 @@ export function createSessionRepository({
         if (normalizeParentSessionId(session.parentSessionId) === id) session.parentSessionId = parentId;
       }
       await storageArea.set({ [SESSIONS_KEY]: sessions });
-      await recordQueues.run(id, () => storageArea.remove(recordKey(id))).catch(error => console.warn("[轻舟] deleted Session record cleanup failed", error));
+      await recordQueues.run(id, () => storageArea.remove([recordKey(id), transcriptCheckpointKey(id)])).catch(error => console.warn("[轻舟] deleted Session record cleanup failed", error));
       await conversationQueues.run(id, () => storageArea.remove(activeConversationKey(id))).catch(error => console.warn("[轻舟] deleted Session conversation cleanup failed", error));
       await deleteRuntime(id).catch(error => console.warn("[轻舟] deleted Session runtime cleanup failed", error));
       return { sessionId: id, deleted: true, existed };
@@ -219,22 +244,104 @@ export function createSessionRepository({
   async function readRecord(sessionId: string) {
     const id = requireSessionId(sessionId);
     const key = recordKey(id);
-    return (await storageArea.get(key))[key] ?? null;
+    const values = await storageArea.get([key, transcriptCheckpointKey(id)]);
+    return readCheckpointRecord(values[key], values[transcriptCheckpointKey(id)]);
   }
 
-  function writeRecord(sessionId: string, record: unknown, lease?: Lease) {
+  function writeRecord(sessionId: string, input: unknown, lease?: Lease, savedHistory?: readonly TranscriptEntry[]) {
     const id = requireSessionId(sessionId);
     assertSessionWritable(id);
     if (lease !== undefined) assertLease(id, lease);
+    if (savedHistory !== undefined && (!Array.isArray(savedHistory) || !Array.isArray(record(input).transcript))) {
+      throw new TypeError("savedHistory requires a complete transcript record");
+    }
+    const revision = crypto.randomUUID();
+    // Explicit commits capture their completed history now. Checkpoints queued
+    // after this write can reuse its revision without rewriting the history.
+    const base = savedHistory === undefined ? null : {
+      history: savedHistory, transcript: record(input).transcript as TranscriptEntry[], revision, persisted: false,
+    };
+    // This queued full write is a barrier: older checkpoint slots stay before
+    // it, while later checkpoints capture a new baseline and cannot merge back.
+    if (base) transcriptBases.set(id, base);
+    else transcriptBases.delete(id);
+    transcriptPending.delete(id);
     return recordQueues.run(id, async () => {
       assertSessionWritable(id);
       if (lease !== undefined) assertLease(id, lease);
-      assertSessionRecordReadable(record);
+      assertSessionRecordReadable(input);
       await readCompatibleStorage(id);
       assertSessionWritable(id);
       if (lease !== undefined) assertLease(id, lease);
-      return storageArea.set({ [recordKey(id)]: clone(record) });
+      await storageArea.set({
+        [recordKey(id)]: input == null ? input : {
+          ...clone(record(input)), transcriptRevision: revision,
+        },
+      });
+      if (base) {
+        base.persisted = true;
+        base.transcript = [];
+      }
+      assertSessionWritable(id);
+      if (lease !== undefined) assertLease(id, lease);
+      // The new revision already invalidates the old current snapshot if cleanup fails.
+      await storageArea.remove(transcriptCheckpointKey(id));
     });
+  }
+
+  function writeTranscriptCheckpoint(sessionId: string, snapshot: TranscriptSnapshot, lease: Lease) {
+    const id = requireSessionId(sessionId);
+    assertSessionWritable(id);
+    assertLease(id, lease);
+    let base = transcriptBases.get(id);
+    if (!base || base.history !== snapshot.history) {
+      base = {
+        history: snapshot.history, transcript: clone(normalizeTranscript(snapshot.history)),
+        revision: crypto.randomUUID(), persisted: false,
+      };
+      transcriptBases.set(id, base);
+    }
+    const checkpoint: TranscriptCheckpoint = {
+      version: 2, baseRevision: base.revision,
+      transcript: clone(normalizeTranscript(snapshot.current)),
+    };
+    const existing = transcriptPending.get(id);
+    if (existing?.base === base && existing.lease === lease) {
+      existing.checkpoint = checkpoint;
+      return existing.promise;
+    }
+    const queued: PendingTranscriptCheckpoint = {
+      base, lease, checkpoint,
+      promise: recordQueues.run(id, async () => {
+        if (transcriptPending.get(id) === queued) transcriptPending.delete(id);
+        assertSessionWritable(id);
+        assertLease(id, queued.lease);
+        if (!queued.base.persisted) {
+          const values = await readCompatibleStorage(id);
+          assertSessionWritable(id);
+          assertLease(id, queued.lease);
+          const saved = values[recordKey(id)] ?? createSessionRecord(values[activeConversationKey(id)] ?? [], []);
+          // One key contains a complete history and current snapshot. Later
+          // writes replace only current, so even the first checkpoint is complete.
+          await storageArea.set({
+            [recordKey(id)]: {
+              ...record(saved), transcript: queued.base.transcript,
+              currentTranscript: queued.checkpoint.transcript, transcriptRevision: queued.base.revision,
+            },
+          });
+          queued.base.persisted = true;
+          queued.base.transcript = [];
+          assertSessionWritable(id);
+          assertLease(id, queued.lease);
+          return;
+        }
+        await storageArea.set({ [transcriptCheckpointKey(id)]: queued.checkpoint });
+        assertSessionWritable(id);
+        assertLease(id, queued.lease);
+      }),
+    };
+    transcriptPending.set(id, queued);
+    return queued.promise;
   }
 
   async function readActiveConversation(sessionId: string) {
@@ -243,9 +350,10 @@ export function createSessionRepository({
   }
 
   async function readCompatibleStorage(id: string) {
-    const values = await storageArea.get([recordKey(id), activeConversationKey(id)]);
+    const values = await storageArea.get([recordKey(id), activeConversationKey(id), transcriptCheckpointKey(id)]);
     assertSessionRecordReadable(values[recordKey(id)]);
     assertConversationReadable(values[activeConversationKey(id)]);
+    readCheckpointRecord(values[recordKey(id)], values[transcriptCheckpointKey(id)]);
     return values;
   }
 
@@ -389,6 +497,7 @@ export function createSessionRepository({
     deleteSession,
     readRecord,
     writeRecord,
+    writeTranscriptCheckpoint,
     readActiveConversation,
     writeActiveConversation,
     clearActiveConversation,

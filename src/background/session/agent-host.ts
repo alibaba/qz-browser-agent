@@ -10,13 +10,13 @@ import type { AgentLease, SessionHandle, createSessionSupervisor } from "./super
 import type { createSessionRepository } from "./repository.js";
 import type { ContextRequest, ContextSource, ContextCapabilityHost } from "../../sdk/background/context.js";
 import type { TabReference } from "../../shared/tab-utils.js";
-import type { TranscriptEntry, SessionEvent } from "../../shared/contracts/session.js";
+import type { SessionEvent } from "../../shared/contracts/session.js";
 type Fields = Record<string, unknown>;
 type HostSupervisor = ReturnType<typeof createSessionSupervisor<Agent>>;
 interface HostCommands {
   canUseSessionGoal(sessionId: string): Promise<boolean>;
   canManageSessionTools(sessionId: string): Promise<boolean>;
-  saveSessionRecordRuntime(input: { sessionId: string; conversation: unknown; transcript: TranscriptEntry[] }): Promise<unknown>;
+  commitSessionRecordRuntime(input: { sessionId: string; conversation: unknown }): Promise<unknown>;
 }
 interface AgentHostOptions {
   repository: Pick<ReturnType<typeof createSessionRepository>, "readRecord" | "readActiveConversation" | "writeActiveConversation" | "clearActiveConversation" | "isWriteBlocked">;
@@ -32,7 +32,6 @@ interface AgentHostOptions {
   persistRuntime?(sessionId: string, options: { terminal: boolean }): Promise<unknown>;
   recordResourceEvent(sessionId: string, event: SessionEvent): unknown;
   hydrateTranscript(sessionId: string, conversation: unknown): Promise<unknown>;
-  getTranscript(sessionId: string, conversation: unknown): Promise<TranscriptEntry[]>;
   releaseRunResources?(context: { sessionId: string; runId: string; eventType: string }): Promise<unknown>;
   closeOwnedTabs(sessionId: string, reason: string): Promise<unknown>;
   contextSources?: readonly ContextSource[];
@@ -63,7 +62,6 @@ export function createSessionAgentHost({
   persistRuntime,
   recordResourceEvent,
   hydrateTranscript,
-  getTranscript,
   releaseRunResources = async () => ({ released: 0 }),
   closeOwnedTabs,
   contextSources = [],
@@ -219,8 +217,7 @@ export function createSessionAgentHost({
     const entry = await getLiveEntry(id);
     if (!entry) return { saved: false, reason: "missing_agent", sessionId: id };
     const conversation = entry.agent!.exportSession();
-    const transcript = await getTranscript(id, conversation);
-    return getCommands().saveSessionRecordRuntime({ sessionId: id, conversation, transcript });
+    return getCommands().commitSessionRecordRuntime({ sessionId: id, conversation });
   }
 
   async function ensureConversationForHistoryMutation(sessionId: string, agent: Agent | null) {

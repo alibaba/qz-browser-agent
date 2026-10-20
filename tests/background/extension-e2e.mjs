@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDocumentBytes } from "../../src/shared/documents/document-codecs.js";
 import { AUTOMATION_SCHEDULER_ALARM } from "../../src/background/automation/runtime.js";
+import { readCheckpointRecord } from "../../src/shared/session/session-recovery.js";
 import {
   createZip,
   skillFromSkillMarkdown,
@@ -21,8 +22,8 @@ const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const scenarioIndex = process.argv.indexOf("--scenario");
 const scenario = scenarioIndex < 0 ? "" : process.argv[scenarioIndex + 1];
 const workerRestartOnly = scenarioIndex >= 0;
-if (workerRestartOnly && !["worker_restart", "worker_restart_images", "worker_restart_errors", "worker_restart_checkpoint"].includes(scenario)) {
-  throw new Error("Supported scenarios: worker_restart, worker_restart_images, worker_restart_errors, worker_restart_checkpoint");
+if (workerRestartOnly && !["worker_restart", "worker_restart_images", "worker_restart_errors", "worker_restart_checkpoint", "worker_restart_compact"].includes(scenario)) {
+  throw new Error("Supported scenarios: worker_restart, worker_restart_images, worker_restart_errors, worker_restart_checkpoint, worker_restart_compact");
 }
 const extensionPath = await ensureTestExtension({
   extensionDir: process.env.QINGZHOU_EXTENSION_PATH || process.env.QINGZHOU_TEST_EXTENSION_DIR,
@@ -103,6 +104,7 @@ try {
   if (scenario === "worker_restart_checkpoint") page = await serviceWorkerRestartKeepsCompletedCheckpoints(page, context, extensionId, provider);
   if (!workerRestartOnly || ["worker_restart", "worker_restart_images"].includes(scenario)) await serviceWorkerRestartKeepsImagesAndThinking(page, context, extensionId, provider);
   if (!workerRestartOnly || ["worker_restart", "worker_restart_errors"].includes(scenario)) await serviceWorkerRestartKeepsProviderFailure(page, context, extensionId);
+  if (!workerRestartOnly || ["worker_restart", "worker_restart_compact"].includes(scenario)) await serviceWorkerRestartCancelsCompaction(page, context, extensionId, provider);
 
   console.log(JSON.stringify({
     ok: true,
@@ -1341,7 +1343,7 @@ async function providerFaultLifecycleMatrix(page, providerServer) {
           }, boundary), 0, "late deltas must not cross a terminal boundary");
           if (action === "DELETE") {
             const records = await page.evaluate(id => chrome.storage.local.get([
-              `_session_${id}`, `_session_runtime_${id}`, `_active_conversation_${id}`,
+              `_session_${id}`, `_session_runtime_${id}`, `_active_conversation_${id}`, `_session_transcript_checkpoint_${id}`,
             ]), sessionId);
             assert.deepEqual(records, {}, "late provider failure must not revive deleted records");
           } else {
@@ -1539,18 +1541,20 @@ async function serviceWorkerRestartKeepsCompletedCheckpoints(page, browserContex
       const snapshot = await page.evaluate(async sessionId => {
         const recordKey = `_session_${sessionId}`;
         const activeKey = `_active_conversation_${sessionId}`;
-        const values = await chrome.storage.local.get([recordKey, activeKey]);
-        return { record: values[recordKey], active: values[activeKey] };
+        const checkpointKey = `_session_transcript_checkpoint_${sessionId}`;
+        const values = await chrome.storage.local.get([recordKey, activeKey, checkpointKey]);
+        return { record: values[recordKey], active: values[activeKey], checkpoint: values[checkpointKey] };
       }, sessionId);
       const messages = snapshot.active?.entries?.map(entry => entry.message) || [];
-      const transcript = snapshot.record?.transcript || [];
+      const record = readCheckpointRecord(snapshot.record, snapshot.checkpoint);
+      const transcript = record?.transcript || [];
       if (messages.some(message => message?.role === "assistant" && message.content === completedText)
         && messages.some(message => message?.role === "tool" && message.tool_call_id === toolCallId)
         && transcript.some(entry => entry.type === "user" && entry.text === marker)
         && transcript.some(entry => entry.type === "assistant" && entry.content === completedText)
         && transcript.some(entry => entry.type === "tool" && entry.toolCallId === toolCallId && entry.result && !entry.isRunning)
         && transcript.some(entry => entry.type === "assistant" && entry.content === partialText)) {
-        savedRecord = snapshot.record;
+        savedRecord = record;
         break;
       }
       await sleep(50);
@@ -1624,6 +1628,59 @@ async function restartWorkerAndReloadSession(page, browserContext, extensionId, 
   await waitForWorkspaceReady(page);
   await installHarness(page);
   await switchUiToSession(page, sessionId);
+}
+
+async function serviceWorkerRestartCancelsCompaction(page, browserContext, extensionId, providerServer) {
+  const sessionId = await createSession(page, "restore interrupted manual compaction");
+  const marker = "QZ_E2E_WORKER_COMPACT";
+  try {
+    const longRound = "compact fixture history ".repeat(80);
+    for (const round of ["first", "second", "retained"]) await runPrompt(page, sessionId, `${longRound} ${round}`);
+    await switchUiToSession(page, sessionId);
+    const after = await eventCount(page);
+    await submitComposerMessage(page, `/compact ${marker}`);
+    const started = await waitEvent(page, { type: "context_compaction_start", sessionId }, after, 20_000);
+    assert.ok(started.compactId);
+    const deadline = Date.now() + 5_000;
+    let savedCompact;
+    while (Date.now() < deadline) {
+      const snapshot = await page.evaluate(async sessionId => {
+        const recordKey = `_session_${sessionId}`;
+        const checkpointKey = `_session_transcript_checkpoint_${sessionId}`;
+        const values = await chrome.storage.local.get([recordKey, checkpointKey]);
+        return { record: values[recordKey], checkpoint: values[checkpointKey] };
+      }, sessionId);
+      savedCompact = readCheckpointRecord(snapshot.record, snapshot.checkpoint)?.transcript
+        .find(entry => entry.type === "compact" && entry.compactId === started.compactId);
+      if (savedCompact?.status === "running" && providerServer.count(marker) === 1) break;
+      await sleep(50);
+    }
+    assert.equal(savedCompact?.status, "running", "the in-progress compaction must reach storage before Worker termination");
+    assert.equal(providerServer.count(marker), 1, "the summary provider request must be held at its gate");
+
+    for (const continued of [false, true]) {
+      if (continued) assert.match(await runPrompt(page, sessionId, "QZ_E2E_RECOVER"), /QZ_E2E_RECOVER_OK/);
+      await restartWorkerAndReloadSession(page, browserContext, extensionId, sessionId);
+      const transcript = (await request(page, "get_messages", { sessionId }, "messages")).transcript;
+      const compact = transcript.filter(entry => entry.type === "compact");
+      assert.equal(compact.length, 1);
+      assert.equal(compact[0].compactId, started.compactId);
+      assert.equal(compact[0].status, "aborted");
+      assert.equal(Boolean(compact[0].streaming), false);
+      const card = page.locator("#messages .msg-compact");
+      await card.waitFor({ state: "visible" });
+      assert.equal(await card.count(), 1);
+      await card.locator('.compact-node[data-status="aborted"]').waitFor({ state: "visible" });
+      assert.ok((await card.innerText()).includes("压缩已取消，未写入新的上下文边界。"));
+      assert.equal(await card.locator(".compact-node-dot").evaluate(node => getComputedStyle(node).animationName), "none");
+      assert.equal(providerServer.count(marker), 1, "reopening must not replay the interrupted compaction");
+      if (continued) assert.equal(transcript.filter(entry => entry.type === "assistant" && entry.content === "QZ_E2E_RECOVER_OK").length, 1);
+    }
+    console.log(JSON.stringify({ scenario: "worker_restart_compact", ok: true }));
+  } finally {
+    providerServer.release(marker);
+    await deleteSession(page, sessionId);
+  }
 }
 
 async function serviceWorkerRestartKeepsImagesAndThinking(page, browserContext, extensionId, providerServer) {
@@ -2169,6 +2226,10 @@ async function createProviderServer() {
       sendJson(res, 503, { error: { message: "QZ injected overloaded" } });
       return;
     }
+    if (marker === "QZ_E2E_WORKER_COMPACT") {
+      await waitForRelease(marker);
+      if (res.destroyed) return;
+    }
     if (body.stream !== true) {
       sendJson(res, 200, completion("QZ validation OK"));
       return;
@@ -2577,7 +2638,7 @@ function detectMarker(body) {
     "QZ_E2E_STEER_MULTI_DELETE_STEERING", "QZ_E2E_STEER_MULTI_DELETE_FOLLOWUP",
     "QZ_E2E_STOP", "QZ_E2E_AFTER_ABORT_1", "QZ_E2E_AFTER_ABORT_2", "QZ_QUEUE_ACTIVE", "QZ_QUEUE_NEXT",
     "QZ_E2E_PARALLEL_A", "QZ_E2E_PARALLEL_B", "QZ_E2E_RECONNECT",
-    "QZ_E2E_WORKER_OLD", "QZ_E2E_WORKER_NEW", "QZ_E2E_WORKER_CHECKPOINT", "QZ_E2E_WORKER_IMAGES",
+    "QZ_E2E_WORKER_OLD", "QZ_E2E_WORKER_NEW", "QZ_E2E_WORKER_CHECKPOINT", "QZ_E2E_WORKER_IMAGES", "QZ_E2E_WORKER_COMPACT",
   ];
   for (const message of [...messages].reverse()) {
     if (message?.role !== "user") continue;

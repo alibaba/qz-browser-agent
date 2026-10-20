@@ -29,6 +29,23 @@ assertToolExecutionEndPreservesEventTime();
 assertStaleSnapshotPreservesLiveToolEvidence();
 assertFinalToolSnapshotCanReplaceLocalInterruptedEvidence();
 assertFailedLocalUserSurvivesSnapshotReconciliation();
+assertTerminalEventsPreservePreviousSnapshot();
+
+function assertTerminalEventsPreservePreviousSnapshot() {
+  for (const type of ["aborted", "error", "agent_end", "state"]) {
+    const history = Object.freeze([
+      Object.freeze({ type: "assistant", content: "partial", streaming: true }),
+      Object.freeze({ type: "thinking", text: "reasoning", streaming: true }),
+      Object.freeze({ type: "tool", toolCallId: "pending", runId: "run", isRunning: true, argsState: "executing" }),
+      Object.freeze({ type: "assistant", content: "completed" }),
+    ]);
+    const previous = structuredClone(history);
+    const result = updateTranscriptWithAgentEvent(history, { type, runId: "run", status: "interrupted", message: "failed" });
+    assert.deepEqual(history, previous, `${type} must preserve the previous checkpoint's entries`);
+    for (let index = 0; index < 3; index++) assert.notEqual(result.transcript[index], history[index]);
+    assert.equal(result.transcript[3], history[3], "unchanged entries retain their identity");
+  }
+}
 
 function assertFailedLocalUserSurvivesSnapshotReconciliation() {
   const failed = {

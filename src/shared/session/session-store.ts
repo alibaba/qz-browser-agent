@@ -19,6 +19,7 @@ import { normalizeSessionListSummary } from "./session-list-summary.js";
 export const SESSIONS_KEY = "_sessions";
 export const SESSION_RECORD_PREFIX = "_session_";
 export const ACTIVE_CONVERSATION_PREFIX = "_active_conversation_";
+export const SESSION_TRANSCRIPT_CHECKPOINT_PREFIX = "_session_transcript_checkpoint_";
 export const ROOT_SESSION_ID = "0";
 
 export function genSessionId() {
@@ -63,5 +64,9 @@ export function storedSessionKey(sessionId: string) {
 
 export function activeConversationKey(sessionId: string) {
   return `${ACTIVE_CONVERSATION_PREFIX}${sessionId}`;
+}
+
+export function transcriptCheckpointKey(sessionId: string) {
+  return `${SESSION_TRANSCRIPT_CHECKPOINT_PREFIX}${sessionId}`;
 }
 

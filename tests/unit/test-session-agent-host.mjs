@@ -440,7 +440,7 @@ function createHostFixture({
     getCommands: () => ({
       canManageSessionTools: async () => true,
       canUseSessionGoal: async () => true,
-      saveSessionRecordRuntime: saveRecord,
+      commitSessionRecordRuntime: saveRecord,
     }),
     getWorkingTabContext: async () => null,
     recordTranscriptEvent,

@@ -170,6 +170,24 @@ test('navigation projects legacy history only without a display snapshot and pre
   }
 });
 
+for (const current of [undefined, [], [{ type: 'assistant', content: 'running turn', streaming: true }]]) test(`navigation restores current content before requesting the live snapshot (${current === undefined ? 'base' : current.length ? 'checkpoint' : 'empty'})`, async () => {
+  const storage = createMemoryStorage({
+    _session_test: {
+      ...legacyRecord(), transcriptRevision: 'base',
+      currentTranscript: [{ type: 'assistant', content: 'initial current' }],
+    },
+    ...(current === undefined ? {} : {
+      _session_transcript_checkpoint_test: { version: 2, baseRevision: 'base', transcript: current },
+    }),
+  });
+  const before = storage.snapshot();
+  const fixture = navigationFixture(storage);
+  await fixture.navigation.switchToSession('test');
+  assert.deepEqual(fixture.transcript.map(entry => entry.text || entry.content),
+    ['old question', 'old answer', ...(current === undefined ? ['initial current'] : current.map(entry => entry.content))]);
+  assert.deepEqual(storage.snapshot(), before);
+});
+
 function navigationFixture(storage) {
   let current = null;
   let epoch = 0;

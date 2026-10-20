@@ -699,9 +699,14 @@ function finalizeTranscriptEntry(history: TranscriptEntry[], type: string, spanI
 
 function finalizeAllStreamingTranscriptEntries(history: TranscriptEntry[], phase = "") {
   const endedAt = nowBeijingDateTime();
+  const compactStatus = phase === "interrupted" ? "aborted" : phase;
   let changed = false;
-  for (const entry of history) {
-    if (!entry?.streaming) continue;
+  for (let index = 0; index < history.length; index++) {
+    const current = history[index];
+    const unfinishedCompact = current?.type === "compact" && current.status === "running"
+      && (compactStatus === "aborted" || compactStatus === "error");
+    if (!current?.streaming && !unfinishedCompact) continue;
+    const entry = history[index] = { ...current };
     entry.endedAt = entry.endedAt || endedAt;
     delete entry.streaming;
     if (entry.type === "tool") {
@@ -713,9 +718,7 @@ function finalizeAllStreamingTranscriptEntries(history: TranscriptEntry[], phase
     if (entry.type === "thinking" && (phase === "aborted" || phase === "error")) {
       entry.phase = phase;
     }
-    if (entry.type === "compact") {
-      if (phase === "aborted" || phase === "error") entry.status = phase;
-    }
+    if (unfinishedCompact) entry.status = compactStatus;
     changed = true;
   }
   return changed;
@@ -725,9 +728,11 @@ function finalizeToolTranscriptEntries(history: TranscriptEntry[], event: Transc
   const runId = eventRunId(event);
   const endedAt = nowBeijingDateTime();
   let changed = false;
-  for (const entry of history) {
-    if (!isUnfinishedToolTranscriptEntry(entry)) continue;
-    if (runId && entry.runId && entry.runId !== runId) continue;
+  for (let index = 0; index < history.length; index++) {
+    const current = history[index];
+    if (!isUnfinishedToolTranscriptEntry(current)) continue;
+    if (runId && current.runId && current.runId !== runId) continue;
+    const entry = history[index] = { ...current };
     const hadIncompleteArgs = entry.argsIncomplete === true
       || entry.argsGenerating === true
       || entry.argsState === "generating"
@@ -1013,7 +1018,7 @@ export function normalizeConversationSnapshot(input: unknown): Conversation {
   return serializeConversation(readEntries(input).map(entry => entry.message ?? entry));
 }
 
-function normalizeTranscript(transcript: unknown): TranscriptEntry[] {
+export function normalizeTranscript(transcript: unknown): TranscriptEntry[] {
   if (!Array.isArray(transcript)) return [];
   return transcript.map(normalizeTranscriptEvent).filter((entry): entry is TranscriptEntry => entry !== null);
 }
@@ -1050,6 +1055,7 @@ function normalizeTranscriptEvent(input: unknown): TranscriptEntry | null {
       compactId: String(event.compactId || ""),
       status: normalizeCompactStatus(event.status),
       summary: String(event.summary || ""),
+      ...(event.streaming === true ? { streaming: true } : {}),
       inputTokensBefore: finiteNumber(event.inputTokensBefore),
       inputTokensAfter: finiteNumber(event.inputTokensAfter),
       contextWindow: finiteNumber(event.contextWindow),

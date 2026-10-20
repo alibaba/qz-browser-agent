@@ -304,7 +304,7 @@ export async function testSessionNavigationSingleReveal() {
     local: {
       async get(keys) {
         return Object.fromEntries((Array.isArray(keys) ? keys : [keys])
-          .filter(key => key.startsWith("_session_")).map(key => [key, record]));
+          .filter(key => key === "_session_session-1").map(key => [key, record]));
       },
     },
   };
