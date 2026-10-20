@@ -1088,9 +1088,14 @@ async function reorderSessionFollowUpsRuntime(sessionId: string, clientMessageId
 async function resetSessionRuntime(sessionId: string) {
   const id = normalizeSessionId(sessionId);
   await stopSingleSessionRuntime(id, { source: "reset" });
-  const agent = await agentHost.getAgent(id);
-  await agent.reset();
-  agentHost.handleEvent(id, { type: "reset" });
+  await sessionSupervisor.withAgent(id, async agent => {
+    await agent.reset();
+    const conversation = agent.exportSession();
+    await sessionRepository.replaceActiveConversation(id, conversation);
+    await saveSessionRecordRuntime({ sessionId: id, conversation, transcript: [] });
+    agentHost.handleEvent(id, { type: "reset" });
+    await runtimeState.persist(id, { terminal: true });
+  });
   return { sessionId: id, reset: true };
 }
 

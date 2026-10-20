@@ -22,8 +22,8 @@ const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const scenarioIndex = process.argv.indexOf("--scenario");
 const scenario = scenarioIndex < 0 ? "" : process.argv[scenarioIndex + 1];
 const workerRestartOnly = scenarioIndex >= 0;
-if (workerRestartOnly && !["worker_restart", "worker_restart_images", "worker_restart_errors", "worker_restart_checkpoint", "worker_restart_compact"].includes(scenario)) {
-  throw new Error("Supported scenarios: worker_restart, worker_restart_images, worker_restart_errors, worker_restart_checkpoint, worker_restart_compact");
+if (workerRestartOnly && !["worker_restart", "worker_restart_images", "worker_restart_errors", "worker_restart_checkpoint", "worker_restart_compact", "reset_reopen"].includes(scenario)) {
+  throw new Error("Supported scenarios: worker_restart, worker_restart_images, worker_restart_errors, worker_restart_checkpoint, worker_restart_compact, reset_reopen");
 }
 const extensionPath = await ensureTestExtension({
   extensionDir: process.env.QINGZHOU_EXTENSION_PATH || process.env.QINGZHOU_TEST_EXTENSION_DIR,
@@ -105,10 +105,11 @@ try {
   if (!workerRestartOnly || ["worker_restart", "worker_restart_images"].includes(scenario)) await serviceWorkerRestartKeepsImagesAndThinking(page, context, extensionId, provider);
   if (!workerRestartOnly || ["worker_restart", "worker_restart_errors"].includes(scenario)) await serviceWorkerRestartKeepsProviderFailure(page, context, extensionId);
   if (!workerRestartOnly || ["worker_restart", "worker_restart_compact"].includes(scenario)) await serviceWorkerRestartCancelsCompaction(page, context, extensionId, provider);
+  if (!workerRestartOnly || scenario === "reset_reopen") await resetSurvivesSessionReopen(page, provider);
 
   console.log(JSON.stringify({
     ok: true,
-    scenarios: workerRestartOnly ? [scenario] : ["run_profile_initialization_error_recovery", "data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "skill_selection_reload_submit_cancel", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart"],
+    scenarios: workerRestartOnly ? [scenario] : ["run_profile_initialization_error_recovery", "data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "skill_selection_reload_submit_cancel", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart", "reset_reopen"],
     providerRequests: provider.requests.length,
     providerFaultCases: workerRestartOnly ? 0 : 16,
   }));
@@ -1477,6 +1478,57 @@ async function sidepanelReloadKeepsTheBackgroundRun(page) {
   await deleteSession(page, sessionId);
 }
 
+async function resetSurvivesSessionReopen(page, providerServer) {
+  const sessionId = await createSession(page, "reset and reopen");
+  const otherSessionId = await createSession(page, "switch away after reset");
+  const oldPrompt = `QZ_E2E_RESET_OLD ${id("old-context")}`;
+  try {
+    assert.match(await runPrompt(page, sessionId, oldPrompt), /QZ_E2E_RESET_OLD_OK/);
+    await switchUiToSession(page, sessionId);
+    await page.waitForFunction(() => document.querySelector("#messages")?.innerText.includes("QZ_E2E_RESET_OLD_OK"));
+    const after = await eventCount(page);
+    await send(page, "reset", { sessionId });
+    await waitEvent(page, { type: "reset", sessionId }, after);
+    const cleared = await page.evaluate(async sessionId => {
+      const key = `_session_${sessionId}`, activeKey = `_active_conversation_${sessionId}`;
+      const checkpointKey = `_session_transcript_checkpoint_${sessionId}`;
+      const saved = await chrome.storage.local.get([key, activeKey, checkpointKey]);
+      return { record: saved[key], active: saved[activeKey], checkpoint: saved[checkpointKey] };
+    }, sessionId);
+    assert.deepEqual(cleared.active?.entries, [], "reset completion must follow the empty active-conversation write");
+    assert.deepEqual(cleared.record?.conversation?.entries, [], "reset must replace the durable model history");
+    assert.deepEqual(readCheckpointRecord(cleared.record, cleared.checkpoint)?.transcript, []);
+    await page.waitForFunction(() => !document.querySelector("#messages")?.innerText.includes("QZ_E2E_RESET_OLD"));
+    await switchUiToSession(page, otherSessionId);
+    await switchUiToSession(page, sessionId);
+
+    // Await the same saved-conversation restore protocol used when opening a session.
+    const conversation = await page.evaluate(async sessionId => {
+      const { readSessionSnapshot } = await import(chrome.runtime.getURL("shared/session/session-recovery.js"));
+      const key = `_session_${sessionId}`, activeKey = `_active_conversation_${sessionId}`;
+      const checkpointKey = `_session_transcript_checkpoint_${sessionId}`;
+      const saved = await chrome.storage.local.get([key, activeKey, checkpointKey]);
+      return readSessionSnapshot(saved[key], saved[activeKey], saved[checkpointKey]).conversation;
+    }, sessionId);
+    await request(page, "restore_session", { sessionId, session: conversation }, "session_restored");
+    const reopened = await request(page, "get_messages", { sessionId }, "messages");
+    assert.doesNotMatch(JSON.stringify(reopened.transcript), /QZ_E2E_RESET_OLD/);
+    assert.doesNotMatch(await page.locator("#messages").innerText(), /QZ_E2E_RESET_OLD/);
+    assert.match(await runPrompt(page, sessionId, "QZ_E2E_RESET_NEW"), /QZ_E2E_RESET_NEW_OK/);
+    const nextRequest = providerServer.requests.find(item => item.marker === "QZ_E2E_RESET_NEW");
+    assert.ok(nextRequest);
+    assert.equal(nextRequest.containsResetHistory, false, "reset must remove old context from the next model request");
+    assert.equal(nextRequest.userTexts.includes(oldPrompt), false);
+    assert.equal(providerServer.count("QZ_E2E_RESET_OLD"), 1);
+    assert.equal(providerServer.count("QZ_E2E_RESET_NEW"), 1);
+    assert.doesNotMatch(JSON.stringify((await request(page, "get_messages", { sessionId }, "messages")).transcript), /QZ_E2E_RESET_OLD/);
+    console.log(JSON.stringify({ scenario: "reset_reopen", ok: true }));
+  } finally {
+    await deleteSession(page, sessionId);
+    await deleteSession(page, otherSessionId);
+  }
+}
+
 async function serviceWorkerRestartSettlesInterruptedTurn(page, browserContext, extensionId, providerServer) {
   const sessionId = await createSession(page, "service worker restart");
   const after = await eventCount(page);
@@ -2187,6 +2239,7 @@ async function createProviderServer() {
       ...imageProjectionStats(body.messages),
       documentCapsuleCount: documentCapsuleCount(body),
       containsDisplayProjection: JSON.stringify(body?.messages || []).includes("imageWithAction"),
+      ...(marker === "QZ_E2E_RESET_NEW" ? { containsResetHistory: JSON.stringify(body.messages).includes("QZ_E2E_RESET_OLD") } : {}),
       ...(marker.startsWith("QZ_E2E_SELECTION_") ? {
         selectionResult: selectionToolResult(body),
         selectionContainsUnselected: JSON.stringify(body.messages).includes("northstar-backend"),
@@ -2597,6 +2650,8 @@ async function createGitRepositoryServer() {
 function outputForMarker(marker) {
   return {
     QZ_E2E_BASIC: "QZ_E2E_BASIC_OK",
+    QZ_E2E_RESET_OLD: "QZ_E2E_RESET_OLD_OK",
+    QZ_E2E_RESET_NEW: "QZ_E2E_RESET_NEW_OK",
     QZ_E2E_UI: "QZ_E2E_UI_OK",
     QZ_E2E_ATTACHMENT_HISTORY_SEED: "QZ_E2E_ATTACHMENT_HISTORY_SEED_OK",
     QZ_E2E_ATTACHMENT_HISTORY: "QZ_E2E_ATTACHMENT_HISTORY_OK",
@@ -2629,6 +2684,7 @@ function outputForMarker(marker) {
 function detectMarker(body) {
   const messages = Array.isArray(body?.messages) ? body.messages : [];
   const markers = ["QZ_E2E_LOCATION", "QZ_E2E_SELECTION_PICK", "QZ_E2E_SELECTION_CANCEL",
+    "QZ_E2E_RESET_OLD", "QZ_E2E_RESET_NEW",
     "QZ_E2E_MANAGED_CHILD", "QZ_E2E_MANAGE", "QZ_E2E_HTTP_ERROR", "QZ_E2E_UNSUPPORTED_IMAGE", "QZ_E2E_RETRY", "QZ_E2E_BASIC", "QZ_E2E_UI",
     "QZ_E2E_ATTACHMENT_HISTORY_SEED", "QZ_E2E_ATTACHMENT_HISTORY", "QZ_E2E_ATTACHMENT_NEW",
     "QZ_E2E_AUTOMATION", "QZ_E2E_DELETE_RUNNING_AUTOMATION", "QZ_E2E_SCREEN_ACTION", "QZ_E2E_MCP_OUTPUT_SCHEMA", "QZ_E2E_RECOVER",

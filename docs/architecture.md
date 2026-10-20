@@ -161,6 +161,7 @@ lease after asynchronous operations before accepting results. Stop establishes t
 revokes subscriptions and write authority before cleanup. Delete also installs a repository
 tombstone that rejects late writes. Stop preserves accepted steering and follow-ups; reset and
 delete clear them. A new run receives a new epoch.
+Reset completes after the empty model conversation, display history, and reset runtime are persisted.
 
 [Session codecs](../src/shared/session/session-codec.ts) normalize historical records when reading.
 The repository validates record and conversation versions before selecting or replacing a copy. The

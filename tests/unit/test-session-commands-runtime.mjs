@@ -31,6 +31,7 @@ await steeringQueueFlow();
 await compactContextCommandFlow();
 await recordExchangeAndFallbackFlow();
 await rejectedRecordWritePreservesTranscript();
+await resetPersistsEmptyConversationAndDisplay();
 await lateUiSavePreservesStreamingCurrentTurn();
 await readOnlyFallbackPreservesPendingUserAdmission();
 await goalWaitAndPermissionFlow();
@@ -1024,6 +1025,78 @@ async function rejectedRecordWritePreservesTranscript() {
   }), { code: "UNSUPPORTED_SESSION_RECORD_VERSION" });
   assert.equal(fixture.transcripts.get("blocked-record"), original);
   assert.equal(await fixture.repository.readRecord("blocked-record"), null);
+}
+
+async function resetPersistsEmptyConversationAndDisplay() {
+  for (const boundary of ["replaceActiveConversation", "writeRecord", "runtime"]) {
+    for (const fail of [false, true]) {
+      const sessionId = `reset-${boundary}-${fail}`;
+      const entered = deferred(), release = deferred();
+      let resetting = false;
+      const waitForWrite = async name => {
+        if (!resetting || name !== boundary) return;
+        entered.resolve();
+        await release.promise;
+        if (fail) throw new Error("reset storage failed");
+      };
+      const fixture = createFixture({
+        wrapRepository: base => ({
+          ...base,
+          async replaceActiveConversation(...args) {
+            await waitForWrite("replaceActiveConversation");
+            return base.replaceActiveConversation(...args);
+          },
+          async writeRecord(...args) {
+            await waitForWrite("writeRecord");
+            return base.writeRecord(...args);
+          },
+        }),
+        persistSessionRuntime: () => waitForWrite("runtime"),
+      });
+      await fixture.repository.createMetadata({ id: sessionId, title: "Reset" });
+      const conversation = serializeConversation([{ role: "user", content: "old context" }]);
+      const history = transcriptFromConversation(conversation);
+      await fixture.commands.saveSessionRecordRuntime({ sessionId, conversation, transcript: history });
+      await fixture.repository.replaceActiveConversation(sessionId, conversation);
+      await fixture.repository.writeTranscriptCheckpoint(sessionId, {
+        history, current: [{ type: "assistant", content: "old partial answer" }],
+      }, { sessionId, isActive: () => true });
+      resetting = true;
+      let settled = false;
+      const resettingSession = fixture.commands.resetSessionRuntime(sessionId)
+        .finally(() => { settled = true; });
+      try {
+        assert.equal(await Promise.race([
+          entered.promise.then(() => "writing"),
+          resettingSession.then(() => "returned"),
+        ]), "writing", `reset must await ${boundary}`);
+        assert.equal(settled, false);
+        if (boundary !== "runtime") {
+          assert.equal(fixture.lifecycleEvents.some(({ event }) => event.type === "reset"), false,
+            "reset is announced only after the empty model and display are saved");
+        }
+        if (fail) {
+          const rejected = assert.rejects(resettingSession, /reset storage failed/);
+          release.resolve();
+          await rejected;
+          continue;
+        }
+        release.resolve();
+        assert.deepEqual(await resettingSession, { sessionId, reset: true });
+        const saved = await fixture.repository.readRecord(sessionId);
+        assert.deepEqual(saved.conversation.entries, []);
+        assert.deepEqual(saved.transcript, []);
+        assert.deepEqual((await fixture.repository.readActiveConversation(sessionId)).entries, []);
+        assert.deepEqual(fixture.transcripts.get(sessionId), []);
+        await fixture.commands.restoreSessionFromApi(sessionId, saved.conversation);
+        assert.deepEqual((await fixture.commands.getSessionHistoryRuntime(sessionId)).messages, []);
+      } finally {
+        release.resolve();
+        await resettingSession.catch(() => {});
+        await fixture.repository.flush();
+      }
+    }
+  }
 }
 
 async function lateUiSavePreservesStreamingCurrentTurn() {
