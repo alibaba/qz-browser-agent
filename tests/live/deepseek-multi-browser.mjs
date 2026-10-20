@@ -76,7 +76,7 @@ async function closeMcp(browser) {
 }
 async function mcp(browser, name, args = {}, options = {}) {
   const at = Date.now();
-  const result = await browser.mcp.callTool({ name, arguments: { clientId: browser.uuid, timeoutSeconds: 35, ...args } }, undefined,
+  const result = await browser.mcp.callTool({ name, arguments: { clientId: browser.uuid, ...args } }, undefined,
     { timeout: (taskTimeout + 30) * 1000, resetTimeoutOnProgress: true, ...options });
   const value = resultValue(result);
   report.operations.push({ at, route: "mcp", browser: browser.name, clientId: browser.uuid, name, ok: !result.isError, durationMs: Date.now() - at });

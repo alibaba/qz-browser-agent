@@ -179,7 +179,7 @@ async def run_case_with_new_client(
     ) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            client = QingzhouMcpClient(session, bridge_timeout=bridge_timeout)
+            client = QingzhouMcpClient(session)
             return await run_case(client, case, run_tag, capture)
 
 
@@ -286,7 +286,7 @@ async def amain() -> int:
         async with streamablehttp_client(args.bridge_url, timeout=args.bridge_timeout, sse_read_timeout=max(300, args.bridge_timeout)) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                client = QingzhouMcpClient(session, bridge_timeout=args.bridge_timeout)
+                client = QingzhouMcpClient(session)
                 status = await client.call("qingzhou_bridge_status", {})
                 if int(status.get("clientCount") or 0) <= 0:
                     raise SystemExit("No Qingzhou extension client is connected to the MCP bridge.")

@@ -51,7 +51,7 @@ finally {
 function persist() { writeFileSync(reportPath, JSON.stringify(report, null, 2)); }
 async function mcp(name, args = {}, options = {}) {
   const started = Date.now();
-  const result = await client.callTool({ name, arguments: { clientId, timeoutSeconds: 45, ...args } }, undefined, { timeout: 210_000, resetTimeoutOnProgress: true, ...options });
+  const result = await client.callTool({ name, arguments: { clientId, ...args } }, undefined, { timeout: 210_000, resetTimeoutOnProgress: true, ...options });
   const value = resultValue(result); report.operations.push({ channel: "mcp", name, ok: !result.isError, ms: Date.now() - started });
   assert.equal(result.isError || false, false, JSON.stringify(value)); return value;
 }
