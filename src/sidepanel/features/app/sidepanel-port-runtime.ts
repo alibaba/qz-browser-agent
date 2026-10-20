@@ -17,7 +17,7 @@ export function createSidepanelPortRuntime(options: RuntimeOptions = {}) {
   const client = createPortClient({
     name: "sidepanel",
     connect: options.connect,
-    keepAliveMs: options.keepAliveMs || 20_000,
+    keepAliveMs: options.keepAliveMs,
     reconnectDelayMs: options.reconnectDelayMs || 300,
     maxReconnectDelayMs: options.maxReconnectDelayMs || 3000,
     shouldKeepAlive: options.shouldKeepAlive,
