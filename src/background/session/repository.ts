@@ -222,13 +222,17 @@ export function createSessionRepository({
     return (await storageArea.get(key))[key] ?? null;
   }
 
-  function writeRecord(sessionId: string, record: unknown) {
+  function writeRecord(sessionId: string, record: unknown, lease?: Lease) {
     const id = requireSessionId(sessionId);
     assertSessionWritable(id);
+    if (lease !== undefined) assertLease(id, lease);
     return recordQueues.run(id, async () => {
+      assertSessionWritable(id);
+      if (lease !== undefined) assertLease(id, lease);
       assertSessionRecordReadable(record);
       await readCompatibleStorage(id);
       assertSessionWritable(id);
+      if (lease !== undefined) assertLease(id, lease);
       return storageArea.set({ [recordKey(id)]: clone(record) });
     });
   }

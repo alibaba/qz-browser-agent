@@ -1,5 +1,6 @@
 import { acceptDataDisclosure } from "../support/data-consent.mjs";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,8 +19,11 @@ import { ensureTestExtension } from "../support/extension-build.mjs";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const scenarioIndex = process.argv.indexOf("--scenario");
-const workerRestartOnly = scenarioIndex >= 0 && process.argv[scenarioIndex + 1] === "worker_restart";
-if (scenarioIndex >= 0 && !workerRestartOnly) throw new Error("Supported scenario: --scenario worker_restart");
+const scenario = scenarioIndex < 0 ? "" : process.argv[scenarioIndex + 1];
+const workerRestartOnly = scenarioIndex >= 0;
+if (workerRestartOnly && !["worker_restart", "worker_restart_images", "worker_restart_errors", "worker_restart_checkpoint"].includes(scenario)) {
+  throw new Error("Supported scenarios: worker_restart, worker_restart_images, worker_restart_errors, worker_restart_checkpoint");
+}
 const extensionPath = await ensureTestExtension({
   extensionDir: process.env.QINGZHOU_EXTENSION_PATH || process.env.QINGZHOU_TEST_EXTENSION_DIR,
 });
@@ -95,11 +99,14 @@ try {
     await concurrentSessionsStayIsolated(page);
     await sidepanelReloadKeepsTheBackgroundRun(page);
   }
-  page = await serviceWorkerRestartSettlesInterruptedTurn(page, context, extensionId, provider);
+  if (!workerRestartOnly || scenario === "worker_restart") page = await serviceWorkerRestartSettlesInterruptedTurn(page, context, extensionId, provider);
+  if (scenario === "worker_restart_checkpoint") page = await serviceWorkerRestartKeepsCompletedCheckpoints(page, context, extensionId, provider);
+  if (!workerRestartOnly || ["worker_restart", "worker_restart_images"].includes(scenario)) await serviceWorkerRestartKeepsImagesAndThinking(page, context, extensionId, provider);
+  if (!workerRestartOnly || ["worker_restart", "worker_restart_errors"].includes(scenario)) await serviceWorkerRestartKeepsProviderFailure(page, context, extensionId);
 
   console.log(JSON.stringify({
     ok: true,
-    scenarios: workerRestartOnly ? ["worker_restart"] : ["run_profile_initialization_error_recovery", "data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "skill_selection_reload_submit_cancel", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart"],
+    scenarios: workerRestartOnly ? [scenario] : ["run_profile_initialization_error_recovery", "data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "skill_selection_reload_submit_cancel", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart"],
     providerRequests: provider.requests.length,
     providerFaultCases: workerRestartOnly ? 0 : 16,
   }));
@@ -1499,6 +1506,7 @@ async function serviceWorkerRestartKeepsCompletedCheckpoints(page, browserContex
   const sessionId = await createSession(page, "restore completed checkpoint after restart");
   const marker = "QZ_E2E_WORKER_CHECKPOINT";
   const completedText = "QZ_CHECKPOINT_COMPLETED_BEFORE_RESTART";
+  const partialText = "QZ_CHECKPOINT_IN_PROGRESS";
   const toolCallId = "call_worker_checkpoint_tabs";
   const interruptedText = "运行已中断，已恢复保存的对话。发送消息可继续。";
   const assertInterruptedNotice = async () => {
@@ -1515,24 +1523,41 @@ async function serviceWorkerRestartKeepsCompletedCheckpoints(page, browserContex
   try {
     assert.equal(await page.locator("html").getAttribute("lang"), "zh-CN");
     assert.match(await runPrompt(page, sessionId, "QZ_E2E_BASIC"), /QZ_E2E_BASIC_OK/);
+    const completedTranscript = await page.evaluate(async sessionId => {
+      const key = `_session_${sessionId}`;
+      return (await chrome.storage.local.get(key))[key]?.transcript;
+    }, sessionId);
+    assert.ok(completedTranscript?.some(entry => entry.type === "assistant" && entry.content === "QZ_E2E_BASIC_OK"));
     await switchUiToSession(page, sessionId);
     const after = await eventCount(page);
     await submitComposerMessage(page, marker);
     await waitEvent(page, { type: "tool_execution_end", sessionId, toolCallId }, after);
-    await page.waitForFunction(async ({ sessionId, completedText, toolCallId }) => {
-      const key = `_active_conversation_${sessionId}`;
-      const messages = (await chrome.storage.local.get(key))[key]?.entries?.map(entry => entry.message) || [];
-      return messages.some(message => message?.role === "assistant" && message.content === completedText)
-        && messages.some(message => message?.role === "tool" && message.tool_call_id === toolCallId);
-    }, { sessionId, completedText, toolCallId }, { timeout: 20_000 });
-    await page.waitForFunction(() => document.querySelector("#messages")?.innerText.includes("QZ_CHECKPOINT_IN_PROGRESS"));
-    const savedRecord = await page.evaluate(async sessionId => {
-      const key = `_session_${sessionId}`;
-      return (await chrome.storage.local.get(key))[key];
-    }, sessionId);
-    assert.match(JSON.stringify(savedRecord), /QZ_E2E_BASIC_OK/);
-    assert.doesNotMatch(JSON.stringify(savedRecord), /QZ_E2E_WORKER_CHECKPOINT/,
-      "the completed record must lag the active conversation checkpoint in this fixture");
+    await page.waitForFunction(text => document.querySelector("#messages")?.innerText.includes(text), partialText);
+    const deadline = Date.now() + 5_000;
+    let savedRecord;
+    while (Date.now() < deadline) {
+      const snapshot = await page.evaluate(async sessionId => {
+        const recordKey = `_session_${sessionId}`;
+        const activeKey = `_active_conversation_${sessionId}`;
+        const values = await chrome.storage.local.get([recordKey, activeKey]);
+        return { record: values[recordKey], active: values[activeKey] };
+      }, sessionId);
+      const messages = snapshot.active?.entries?.map(entry => entry.message) || [];
+      const transcript = snapshot.record?.transcript || [];
+      if (messages.some(message => message?.role === "assistant" && message.content === completedText)
+        && messages.some(message => message?.role === "tool" && message.tool_call_id === toolCallId)
+        && transcript.some(entry => entry.type === "user" && entry.text === marker)
+        && transcript.some(entry => entry.type === "assistant" && entry.content === completedText)
+        && transcript.some(entry => entry.type === "tool" && entry.toolCallId === toolCallId && entry.result && !entry.isRunning)
+        && transcript.some(entry => entry.type === "assistant" && entry.content === partialText)) {
+        savedRecord = snapshot.record;
+        break;
+      }
+      await sleep(50);
+    }
+    assert.ok(savedRecord, "the current transcript, including partial output, must reach storage while the provider stream remains open");
+    assert.deepEqual(savedRecord.transcript.slice(0, completedTranscript.length), completedTranscript,
+      "checkpointing the current turn must leave the completed transcript unchanged");
 
     await terminateExtensionServiceWorker(page, browserContext, extensionId);
     await page.close();
@@ -1541,14 +1566,17 @@ async function serviceWorkerRestartKeepsCompletedCheckpoints(page, browserContex
     await waitForWorkspaceReady(page);
     await installHarness(page);
     await switchUiToSession(page, sessionId);
-    await page.waitForFunction(text => document.querySelector("#messages")?.innerText.includes(text), completedText);
-    assert.equal(await page.locator("#messages .msg-user").filter({ hasText: marker }).count(), 1);
-    for (const text of ["QZ_E2E_BASIC_OK", completedText]) {
-      assert.equal(await page.locator("#messages .msg-assistant").filter({ hasText: text }).count(), 1);
-    }
     const restored = await request(page, "get_messages", { sessionId }, "messages");
+    assert.deepEqual(restored.transcript.slice(0, completedTranscript.length), completedTranscript);
     assert.equal(restored.transcript.filter(entry => entry.type === "user" && entry.text === marker).length, 1);
     assert.equal(restored.transcript.filter(entry => entry.type === "assistant" && entry.content === completedText).length, 1);
+    assert.equal(restored.transcript.filter(entry => entry.type === "assistant" && entry.content === partialText).length, 1);
+    await page.waitForFunction(texts => texts.every(text => document.querySelector("#messages")?.innerText.includes(text)),
+      [completedText, partialText]);
+    assert.equal(await page.locator("#messages .msg-user").filter({ hasText: marker }).count(), 1);
+    for (const text of ["QZ_E2E_BASIC_OK", completedText, partialText]) {
+      assert.equal(await page.locator("#messages .msg-assistant").filter({ hasText: text }).count(), 1);
+    }
     const tools = restored.transcript.filter(entry => entry.type === "tool" && entry.toolCallId === toolCallId);
     assert.equal(tools.length, 1);
     assert.equal(tools[0].isError, false);
@@ -1568,11 +1596,111 @@ async function serviceWorkerRestartKeepsCompletedCheckpoints(page, browserContex
     await assertInterruptedNotice();
     await deleteSession(page, otherSessionId);
     assert.equal(providerServer.count(marker), 2, "reopening must not resend the interrupted request");
+    const oldRunId = state.runtime.runId;
+    assert.match(await runPrompt(page, sessionId, "QZ_E2E_RECOVER"), /QZ_E2E_RECOVER_OK/);
+    const completed = await request(page, "get_state", { sessionId }, "state");
+    assert.equal(completed.status, "completed");
+    assert.notEqual(completed.runtime.runId, oldRunId);
+    await restartWorkerAndReloadSession(page, browserContext, extensionId, sessionId);
+    await assertInterruptedNotice();
+    const afterContinuation = (await request(page, "get_messages", { sessionId }, "messages")).transcript;
+    const notices = afterContinuation.filter(entry => entry.type === "run-status" && entry.status === "interrupted");
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].runId, oldRunId);
+    assert.ok(afterContinuation.indexOf(notices[0]) < afterContinuation.findIndex(entry => entry.type === "user" && entry.text === "QZ_E2E_RECOVER"));
+    assert.equal(afterContinuation.filter(entry => entry.type === "assistant" && entry.content === "QZ_E2E_RECOVER_OK").length, 1);
+    assert.equal(providerServer.count(marker), 2);
     console.log(JSON.stringify({ scenario: "worker_restart_checkpoint", ok: true }));
     await deleteSession(page, sessionId);
     return page;
   } finally {
     providerServer.release(marker);
+  }
+}
+
+async function restartWorkerAndReloadSession(page, browserContext, extensionId, sessionId) {
+  await terminateExtensionServiceWorker(page, browserContext, extensionId);
+  await page.reload();
+  await waitForWorkspaceReady(page);
+  await installHarness(page);
+  await switchUiToSession(page, sessionId);
+}
+
+async function serviceWorkerRestartKeepsImagesAndThinking(page, browserContext, extensionId, providerServer) {
+  const sessionId = await createSession(page, "restore nine real screenshots and thinking");
+  const project = transcript => ({
+    screenshots: transcript.filter(entry => entry.type === "tool" && entry.name === "screenshot").map(entry => ({
+      toolCallId: entry.toolCallId, args: entry.args, result: entry.result,
+      imageHash: createHash("sha256").update(entry.image || "").digest("hex"),
+    })),
+    thinking: transcript.filter(entry => entry.type === "thinking").map(entry => ({ text: entry.text, runId: entry.runId, spanId: entry.spanId })),
+  });
+  try {
+    await saveConfig(page, providerServer.endpoint, { vision: true });
+    const after = await eventCount(page);
+    await send(page, "prompt", { sessionId, text: "QZ_E2E_WORKER_IMAGES", clientMessageId: id("worker-images") });
+    await waitEvent(page, { type: "agent_end", sessionId }, after, 60_000);
+    assert.match(await latestAssistantText(page, sessionId), /QZ_E2E_WORKER_IMAGES_OK/);
+    const before = (await request(page, "get_messages", { sessionId }, "messages")).transcript;
+    const screenshots = before.filter(entry => entry.type === "tool" && entry.name === "screenshot");
+    assert.equal(screenshots.length, 9);
+    for (const entry of screenshots) {
+      assert.equal(entry.isError, false);
+      assert.match(entry.image || "", /^data:image\/jpeg;base64,/);
+      assert.ok(entry.args._tabId > 0, "real execution must enrich the model's empty screenshot arguments");
+      assert.equal(entry.args._pageTitle, "Act on screen behavior fixture");
+      assert.equal(entry.args._pageUrl, providerServer.screenActionUrl);
+    }
+    const expected = project(before);
+    assert.equal(expected.thinking.length, 9);
+    await restartWorkerAndReloadSession(page, browserContext, extensionId, sessionId);
+    const restored = (await request(page, "get_messages", { sessionId }, "messages")).transcript;
+    assert.deepEqual(project(restored), expected, "reopening must preserve all nine images, enriched arguments, results and complete thinking");
+    const closedTools = page.locator('#messages .msg-tool > .tool-summary[aria-expanded="false"]');
+    while (await closedTools.count()) await closedTools.first().click();
+    const closedThinking = page.locator('#messages .thinking-group-summary[aria-expanded="false"]');
+    while (await closedThinking.count()) await closedThinking.first().click();
+    await page.waitForFunction(() => {
+      const images = [...document.querySelectorAll("#messages .tool-screenshot img")];
+      return images.length === 9 && images.every(image => image.complete && image.naturalWidth > 0);
+    });
+    for (const { text } of expected.thinking) assert.ok((await page.locator("#messages").innerText()).includes(text));
+    console.log(JSON.stringify({ scenario: "worker_restart_images", screenshots: 9, thinking: expected.thinking.length, ok: true }));
+  } finally {
+    await saveConfig(page, providerServer.endpoint);
+    await deleteSession(page, sessionId);
+  }
+}
+
+async function serviceWorkerRestartKeepsProviderFailure(page, browserContext, extensionId) {
+  const sessionId = await createSession(page, "restore provider error before and after retry");
+  try {
+    await switchUiToSession(page, sessionId);
+    const after = await eventCount(page);
+    await submitComposerMessage(page, "QZ_E2E_HTTP_ERROR");
+    await waitEvent(page, { type: "error", sessionId }, after);
+    await waitEvent(page, { type: "agent_end", sessionId }, after);
+    const before = (await request(page, "get_messages", { sessionId }, "messages")).transcript;
+    const failure = before.find(entry => entry.type === "assistant" && /LLM 调用失败/.test(entry.content || ""));
+    assert.ok(failure);
+    const errorCard = page.locator("#messages .chat-error-card");
+    await errorCard.waitFor({ state: "visible" });
+    const failureText = await errorCard.innerText();
+    assert.match(failureText, /401|injected auth failure/);
+    for (const recovered of [false, true]) {
+      if (recovered) assert.match(await runPrompt(page, sessionId, "QZ_E2E_RECOVER"), /QZ_E2E_RECOVER_OK/);
+      await restartWorkerAndReloadSession(page, browserContext, extensionId, sessionId);
+      const restored = (await request(page, "get_messages", { sessionId }, "messages")).transcript;
+      assert.equal(restored.filter(entry => entry.type === "assistant" && entry.content === failure.content).length, 1,
+        `the provider failure text must survive restart${recovered ? " after a successful retry" : ""}`);
+      await errorCard.waitFor({ state: "visible" });
+      assert.equal(await errorCard.count(), 1);
+      assert.equal(await errorCard.innerText(), failureText);
+      if (recovered) assert.equal(restored.filter(entry => entry.type === "assistant" && entry.content === "QZ_E2E_RECOVER_OK").length, 1);
+    }
+    console.log(JSON.stringify({ scenario: "worker_restart_errors", ok: true }));
+  } finally {
+    await deleteSession(page, sessionId);
   }
 }
 
@@ -2046,6 +2174,23 @@ async function createProviderServer() {
       return;
     }
 
+    if (marker === "QZ_E2E_WORKER_IMAGES" && count <= 10) {
+      res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+      if (count > 1) {
+        const thinking = streamChunk("", true);
+        thinking.choices[0].delta.reasoning_content = `QZ_SCREEN_THINK_${count - 1}: retain the complete reasoning for screenshot ${count - 1}.`;
+        res.write(`data: ${JSON.stringify(thinking)}\n\n`);
+        res.write(`data: ${JSON.stringify(streamChunk(`QZ_SCREENSHOT_${count - 1}`, false))}\n\n`);
+      }
+      const call = count === 1
+        ? streamToolCall("call_worker_images_open", "open_tab", JSON.stringify({ url: `http://127.0.0.1:${server.address().port}/screen-action-target` }))
+        : streamToolCall(`call_worker_image_${count - 1}`, "screenshot", "{}");
+      res.write(`data: ${JSON.stringify(call)}\n\n`);
+      res.write(`data: ${JSON.stringify(streamToolCallsDone())}\n\n`);
+      res.end("data: [DONE]\n\n");
+      return;
+    }
+
     if (marker === "QZ_E2E_WORKER_CHECKPOINT") {
       res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
       if (count === 1) {
@@ -2416,6 +2561,7 @@ function outputForMarker(marker) {
     QZ_E2E_RECONNECT: "QZ_E2E_RECONNECT_OK",
     QZ_E2E_WORKER_OLD: "QZ_E2E_WORKER_OLD_STREAM_MUST_BE_INTERRUPTED",
     QZ_E2E_WORKER_NEW: "QZ_E2E_WORKER_NEW_OK",
+    QZ_E2E_WORKER_IMAGES: "QZ_E2E_WORKER_IMAGES_OK",
   }[marker] || "QZ_DEFAULT_OK";
 }
 
@@ -2431,7 +2577,7 @@ function detectMarker(body) {
     "QZ_E2E_STEER_MULTI_DELETE_STEERING", "QZ_E2E_STEER_MULTI_DELETE_FOLLOWUP",
     "QZ_E2E_STOP", "QZ_E2E_AFTER_ABORT_1", "QZ_E2E_AFTER_ABORT_2", "QZ_QUEUE_ACTIVE", "QZ_QUEUE_NEXT",
     "QZ_E2E_PARALLEL_A", "QZ_E2E_PARALLEL_B", "QZ_E2E_RECONNECT",
-    "QZ_E2E_WORKER_OLD", "QZ_E2E_WORKER_NEW", "QZ_E2E_WORKER_CHECKPOINT",
+    "QZ_E2E_WORKER_OLD", "QZ_E2E_WORKER_NEW", "QZ_E2E_WORKER_CHECKPOINT", "QZ_E2E_WORKER_IMAGES",
   ];
   for (const message of [...messages].reverse()) {
     if (message?.role !== "user") continue;

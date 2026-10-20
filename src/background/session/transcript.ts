@@ -1,4 +1,5 @@
 import {
+  createSessionRecord,
   readSessionRecord,
   transcriptFromConversation,
   updateTranscriptWithAgentEvent,
@@ -9,11 +10,16 @@ import { createSessionListSummaryFromAgentEvent } from "../../shared/session/ses
 import type { TranscriptEntry, TranscriptAgentEvent } from "../../shared/contracts/session.js";
 import type { ToolIdentity } from "../../shared/tools/tool-identity.js";
 interface RestoredTranscriptEntry extends TranscriptEntry { tools?: RestoredTranscriptEntry[]; items?: RestoredTranscriptEntry[]; displayName?: string }
+interface CheckpointLease { sessionId: string; isActive(): boolean }
 interface LiveEntry { agent: { exportSession(): unknown } }
 interface TranscriptOptions {
-  repository: { readRecord(sessionId: string): Promise<unknown>; readActiveConversation(sessionId: string): Promise<unknown> };
+  repository: {
+    readRecord(sessionId: string): Promise<unknown>;
+    readActiveConversation(sessionId: string): Promise<unknown>;
+    writeRecord?(sessionId: string, record: unknown, lease: CheckpointLease): Promise<unknown>;
+  };
   supervisor: {
-    peekEntry(sessionId: string): { agent?: LiveEntry["agent"] | null } | null;
+    peekEntry(sessionId: string): { agent?: LiveEntry["agent"] | null; lease?: CheckpointLease | null } | null;
     getRuntime(sessionId: string): { status?: string; runId?: string | null; reason?: unknown; endedAt?: unknown } | null | undefined;
   };
   getLiveAgentEntry(sessionId: string): Promise<LiveEntry | null>;
@@ -41,6 +47,38 @@ export function createSessionTranscript({
   if (typeof getToolIdentity !== "function") throw new TypeError("getToolIdentity is required");
 
   const cache = new Map<string, RestoredTranscriptEntry[]>();
+  const checkpoints = new Map<string, ReturnType<typeof setTimeout>>();
+  const streamingEvents = new Set(["message_update", "thinking_update", "tool_call_update", "tool_execution_update"]);
+
+  function cancelCheckpoint(id: string) {
+    clearTimeout(checkpoints.get(id));
+    checkpoints.delete(id);
+  }
+
+  function checkpoint(id: string) {
+    cancelCheckpoint(id);
+    const entry = supervisor.peekEntry(id);
+    if (!repository.writeRecord || !entry?.agent || !entry.lease?.isActive() || !cache.has(id)) return;
+    try {
+      // Capture both values synchronously, then enqueue immediately. A later edit
+      // queues its authoritative record after this write; a revoked lease drops it.
+      const snapshot = structuredClone(createSessionRecord(entry.agent.exportSession(), cache.get(id)));
+      void repository.writeRecord(id, snapshot, entry.lease).catch(reportCheckpointFailure);
+    } catch (error) { reportCheckpointFailure(error); }
+  }
+
+  function reportCheckpointFailure(error: unknown) {
+    if (["STALE_SESSION_LEASE", "SESSION_DELETED"].includes(String((error as { code?: unknown })?.code))) return;
+    console.warn("[轻舟] persist transcript checkpoint failed:", error);
+  }
+
+  function scheduleCheckpoint(id: string, event: TranscriptAgentEvent) {
+    if (!repository.writeRecord || !supervisor.peekEntry(id)?.lease?.isActive()) return;
+    if (!streamingEvents.has(event.type || "")) checkpoint(id);
+    // A fixed deadline bounds scheduling delay during a stream; each delta must
+    // not postpone the pending snapshot. The callback captures the latest cache.
+    else if (!checkpoints.has(id)) checkpoints.set(id, setTimeout(() => checkpoint(id), 1000));
+  }
 
   function recordEvent(sessionId: string, event: TranscriptAgentEvent & Record<string, unknown> = {}) {
     const id = normalizeSessionId(sessionId);
@@ -48,7 +86,11 @@ export function createSessionTranscript({
     const fallback = cache.has(id) ? null : supervisor.peekEntry(id)?.agent?.exportSession?.() || null;
     const current = getCached(id, fallback);
     const result = updateTranscriptWithAgentEvent(current, event);
-    if (result.changed) cache.set(id, result.transcript);
+    if (event.type === "agent_end") cancelCheckpoint(id);
+    if (result.changed) {
+      cache.set(id, result.transcript);
+      if (event.type !== "agent_end") scheduleCheckpoint(id, event);
+    }
     const summaryPatch = createSessionListSummaryFromAgentEvent(event);
     if (result.changed && summaryPatch) {
       scheduleListSummaryPatch(id, summaryPatch, {
@@ -108,12 +150,15 @@ export function createSessionTranscript({
   function set(sessionId: string, transcript: RestoredTranscriptEntry[] = []) {
     const id = normalizeSessionId(sessionId);
     const next = resolveIdentities(transcript);
+    cancelCheckpoint(id);
     cache.set(id, next);
     return next;
   }
 
   function remove(sessionId: string) {
-    return cache.delete(normalizeSessionId(sessionId));
+    const id = normalizeSessionId(sessionId);
+    cancelCheckpoint(id);
+    return cache.delete(id);
   }
 
   function resolveIdentities(transcript: RestoredTranscriptEntry[] = []) {

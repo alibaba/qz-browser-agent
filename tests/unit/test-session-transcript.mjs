@@ -78,10 +78,12 @@ const checkpoint = serializeConversation([
   { role: "user", content: "follow-up", clientMessageId: "follow-up" },
   { role: "assistant", content: "completed before restart" },
 ]);
-records.set("interrupted", createSessionRecord(serializeConversation(previous), [
+records.set("interrupted", createSessionRecord(checkpoint, [
   { type: "user", text: "previous question", clientMessageId: "previous" },
   { type: "thinking", text: "preserved thinking" },
   { type: "assistant", content: "previous answer" },
+  { type: "user", text: "follow-up", clientMessageId: "follow-up", runId: "recovered-run" },
+  { type: "assistant", content: "completed before restart", runId: "recovered-run" },
 ]));
 active.set("interrupted", checkpoint);
 runtimes.set("interrupted", {

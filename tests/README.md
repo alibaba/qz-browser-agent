@@ -80,6 +80,12 @@ restart recovery. The deterministic [`background/extension-e2e.mjs`](background/
 provides local HTTP errors, slow streams, concurrent runs, and restart scenarios through a local
 provider.
 
+Run its restart regressions with
+`node --import ./tests/support/typescript-loader.mjs tests/background/extension-e2e.mjs --scenario worker_restart`.
+The focused selectors `worker_restart_images`, `worker_restart_errors`, and
+`worker_restart_checkpoint` cover real page screenshots and thinking, provider failures before and
+after a successful retry, and interrupted conversations continued before a second Worker restart.
+
 Playwright tests import `test` and `expect` from [`browser/fixtures.mjs`](browser/fixtures.mjs) to
 inherit error diagnostics and coverage. Use `sidepanel-fixtures.mjs` when the full panel is needed;
 its Chrome stub has explicit responses and is ready before interaction. Existing UI fixtures use

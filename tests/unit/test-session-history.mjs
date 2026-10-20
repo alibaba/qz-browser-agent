@@ -14,7 +14,7 @@ function fixture(t, seed) {
 const conversation = content => [{ role: "user", content }];
 const record = transcript => ({ type: "qz-browser-agent-session", version: 4, transcript });
 
-test("active conversation restores newer content without rewriting storage", async t => {
+test("saved display snapshot takes precedence over active model history without rewriting storage", async t => {
   const storage = fixture(t, {
     _session_task: { ...record([{ type: "user", text: "stored" }]), conversation: conversation("saved conversation") },
     _active_conversation_task: conversation("active conversation"),
@@ -22,15 +22,15 @@ test("active conversation restores newer content without rewriting storage", asy
   const before = storage.snapshot();
   const reads = t.mock.method(storage, "get");
   const result = await readStoredTranscript(" task ");
-  assert.equal(result[0].text, "active conversation");
+  assert.deepEqual(result, [{ type: "user", text: "stored", images: [], documents: [] }]);
   assert.equal(reads.mock.callCount(), 1);
   assert.deepEqual(storage.snapshot(), before);
   assert.deepEqual(storage.writes, []);
 });
 
-test("active conversation takes precedence over a legacy record conversation", async t => {
+test("without a display snapshot, active conversation takes precedence over a legacy record conversation", async t => {
   const storage = fixture(t, {
-    _session_task: { ...record([]), version: 3, conversation: conversation("legacy record") },
+    _session_task: { type: "qz-browser-agent-session", version: 3, conversation: conversation("legacy record") },
     _active_conversation_task: conversation("active conversation"),
   });
   assert.equal((await readStoredTranscript("task"))[0].text, "active conversation");
@@ -42,12 +42,12 @@ test("active conversation takes precedence over a legacy record conversation", a
 });
 
 for (const wrap of [messages => messages, messages => ({ messages }), messages => ({ entries: messages.map(message => ({ message })) })]) {
-  test("missing or empty record falls back to historical active conversation formats", async t => {
+  test("historical active conversation formats restore only without a saved display snapshot", async t => {
     const storage = fixture(t, { _active_conversation_task: wrap(conversation("legacy active")) });
     assert.equal((await readStoredTranscript("task"))[0].text, "legacy active");
     await storage.set({ _session_task: record([]) });
     storage.writes.length = 0;
-    assert.equal((await readStoredTranscript("task"))[0].text, "legacy active");
+    assert.deepEqual(await readStoredTranscript("task"), []);
     assert.deepEqual(storage.writes, []);
   });
 }

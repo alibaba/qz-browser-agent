@@ -168,10 +168,13 @@ The repository validates record and conversation versions before selecting or re
 List summaries and [artifact projections](../src/background/session/artifacts.ts) derive from
 records, transcripts, and resource stores.
 
-After a Worker restart, history recovery uses the active conversation checkpoint when present.
-It retains saved thinking and tool presentation for unchanged history and reconstructs newer
-messages from the checkpoint. Opening a Session and reading its history use the same recovery
-rules. Recovery displays persisted content; it does not resume an interrupted model or tool call.
+While a task runs, the transcript owner saves complete display snapshots through the Repository.
+Message and tool boundaries save immediately; streaming updates share a fixed one-second deadline.
+Each snapshot retains the completed history and the current turn's thinking, text, tools, and images.
+Edits and replacements cancel pending snapshots, and queued writes validate the Agent lease.
+After a Worker restart, opening a Session and reading its history restore the saved transcript
+directly. The active conversation remains the model execution checkpoint; it does not rebuild the
+display history. Recovery does not resume an interrupted model or tool call.
 The recovered turn ends with a localized interruption notice inviting the user to send a message to continue.
 
 [Compaction](../src/background/agent/compaction.ts) changes the model's sending window after a

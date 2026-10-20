@@ -442,6 +442,7 @@ async function assertServiceWorkerRestart(browserContext, extensionId) {
     }
     assert.ok(evidence.turns[0].assistant.includes(memoryMarker));
     const oldTranscript = await transcript();
+    const oldSavedTranscript = (await readSessionStorage(page, sessionId)).record.transcript;
     assert.ok(oldTranscript.some(entry => entry.type === "tool" && entry.name === "list_tabs" && !entry.isError), "second turn must complete its real tool call");
     await openLiveSession(page, sessionId);
     const thirdPrompt = `新增事实：同行者对花生过敏，第三天必须在17:00前回到酒店。请按以下顺序执行：先在完整的助手正文中确认这两点，并原样写出 ${completedMarker}；在该次响应的工具调用批次中只调用一次 list_tabs。收到 list_tabs 结果后，在下一次模型响应中单独调用 wait，seconds=60。严禁把 list_tabs 和 wait 放在同一批工具调用中。等待完成后再总结。`;
@@ -451,7 +452,17 @@ async function assertServiceWorkerRestart(browserContext, extensionId) {
     const listed = await waitEvent(page, { type: "tool_execution_end", sessionId, runId: started.runId, toolName: "list_tabs" }, after, 90_000);
     const waiting = await waitEvent(page, { type: "tool_execution_start", sessionId, runId: started.runId, toolName: "wait" }, after, 90_000);
     assert.equal(listed.isError, false);
-    const stored = await readSessionStorage(page, sessionId);
+    let stored;
+    const checkpointDeadline = Date.now() + 5_000;
+    while (true) {
+      stored = await readSessionStorage(page, sessionId);
+      const entries = stored.record?.transcript || [];
+      if (entries.some(entry => entry.type === "user" && entry.clientMessageId === thirdMessageId)
+        && entries.some(entry => entry.type === "tool" && entry.toolCallId === listed.toolCallId && entry.result)
+        && entries.some(entry => entry.type === "tool" && entry.toolCallId === waiting.toolCallId && entry.isRunning)) break;
+      assert.ok(Date.now() < checkpointDeadline, "the current turn's complete display snapshot must reach storage");
+      await page.waitForTimeout(50);
+    }
     const activeMessages = (stored.activeConversation?.entries || []).map(entry => entry.message).filter(Boolean);
     const listIndex = activeMessages.findIndex(message => message.tool_calls?.some(call => call.id === listed.toolCallId));
     const waitIndex = activeMessages.findIndex(message => message.tool_calls?.some(call => call.id === waiting.toolCallId));
@@ -463,7 +474,8 @@ async function assertServiceWorkerRestart(browserContext, extensionId) {
     const confirmed = activeMessages.find(message => message.role === "assistant" && messageText(message).includes(completedMarker));
     assert.ok(confirmed, "fixture must save the model's real third-turn confirmation before interruption");
     assert.ok(JSON.stringify(stored.record).includes(memoryMarker));
-    assert.equal(JSON.stringify(stored.record).includes(thirdMessageId), false, "completed record must still precede the active checkpoint");
+    assert.deepEqual(stored.record.transcript.slice(0, oldSavedTranscript.length), oldSavedTranscript,
+      "checkpointing the current turn must preserve completed display history");
     assert.equal(stored.runtime?.status, "running");
     evidence.turns.push({ user: thirdPrompt, assistant: messageText(confirmed), runId: started.runId, interrupted: true });
     evidence.beforeTranscript = summarize(await transcript());
@@ -490,6 +502,9 @@ async function assertServiceWorkerRestart(browserContext, extensionId) {
     for (const tool of oldTranscript.filter(entry => entry.type === "tool").concat({ toolCallId: listed.toolCallId })) {
       assert.equal(recoveredTranscript.filter(entry => entry.type === "tool" && entry.toolCallId === tool.toolCallId && !entry.isError).length, 1);
     }
+    const interruptedTool = recoveredTranscript.find(entry => entry.type === "tool" && entry.toolCallId === waiting.toolCallId);
+    assert.equal(interruptedTool?.phase, "interrupted");
+    assert.equal(interruptedTool.isRunning, false);
     const recovered = await requestWithoutId(page, "get_state", { sessionId }, "state", 20_000, { sessionId });
     assert.equal(recovered.status, "interrupted");
     assert.equal(recovered.runtime?.reason, "service_worker_restarted");
@@ -526,6 +541,16 @@ async function assertServiceWorkerRestart(browserContext, extensionId) {
     await assertNotice();
     await page.locator("#messages .msg-assistant").last().scrollIntoViewIfNeeded();
     await screenshot("continued");
+    const requestsBeforeSecondRestart = evidence.requests.length;
+    await terminateExtensionServiceWorker(page, browserContext, extensionId);
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector("#app") && !document.querySelector("#app").hasAttribute("data-workspace-booting"));
+    await installHarness(page);
+    await openLiveSession(page, sessionId);
+    await assertNotice();
+    assert.deepEqual(summarize(await transcript()), summarize(finalTranscript));
+    assert.equal(evidence.requests.length, requestsBeforeSecondRestart);
+    evidence.secondRestartPreserved = true;
     return { ...evidence, recoveredAsInterrupted: true, continuationCompleted: true };
   } finally {
     browserContext.off("request", onRequest);

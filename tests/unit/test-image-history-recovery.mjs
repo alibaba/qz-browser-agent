@@ -96,10 +96,12 @@ test("reopening an interrupted follow-up restores the latest checkpoint to both 
     { role: "assistant", content: "Saved answer before restart" },
   ]);
   await f.storage.set({
-    [`_session_${id}`]: createSessionRecord(serializeConversation(messages), [
+    [`_session_${id}`]: createSessionRecord(checkpoint, [
       { type: "user", text: "Remember fixture number 742 and this image", images: [{ dataUrl: image }] },
       { type: "thinking", text: "Saved reasoning" },
       { type: "assistant", content: "I remember 742" },
+      { type: "user", text: "Continue with the image", clientMessageId: "follow-up" },
+      { type: "assistant", content: "Saved answer before restart" },
     ]),
     [`_active_conversation_${id}`]: checkpoint,
   });

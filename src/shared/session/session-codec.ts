@@ -35,7 +35,7 @@ export function createSessionRecord(conversation: unknown, transcript: unknown) 
   };
 }
 
-export function readSessionRecord(input: unknown) {
+export function readSessionRecord(input: unknown, { repairTools = true } = {}) {
   const saved = record(input);
   assertSessionRecordReadable(input);
   if (!input) {
@@ -45,7 +45,7 @@ export function readSessionRecord(input: unknown) {
   const transcript = normalizeTranscript(saved.transcript);
   return {
     conversation,
-    transcript: repairTranscriptToolResults(transcript, conversation),
+    transcript: repairTools ? repairTranscriptToolResults(transcript, conversation) : transcript,
   };
 }
 
@@ -1036,12 +1036,12 @@ function normalizeTranscriptEvent(input: unknown): TranscriptEntry | null {
   if (event.type === "thinking") {
     const text = String(event.text ?? "");
     const phase = normalizeThinkingPhase(event.phase || event.status);
-    return text ? { type: "thinking", text, ...(phase ? { phase } : {}), ...meta, ...timing } : null;
+    return text ? { type: "thinking", text, ...(phase ? { phase } : {}), ...(event.streaming === true ? { streaming: true } : {}), ...meta, ...timing } : null;
   }
 
   if (event.type === "assistant") {
     const content = String(event.content ?? "");
-    return content ? { type: "assistant", content, ...meta, ...timing } : null;
+    return content ? { type: "assistant", content, ...(event.streaming === true ? { streaming: true } : {}), ...meta, ...timing } : null;
   }
 
   if (event.type === "compact") {
