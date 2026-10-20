@@ -8,7 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDocumentBytes } from "../../src/shared/documents/document-codecs.js";
 import { AUTOMATION_SCHEDULER_ALARM } from "../../src/background/automation/runtime.js";
-import { readCheckpointRecord } from "../../src/shared/session/session-recovery.js";
+import { readCheckpointRecord, readSessionSnapshot } from "../../src/shared/session/session-recovery.js";
 import {
   createZip,
   skillFromSkillMarkdown,
@@ -1503,13 +1503,13 @@ async function resetSurvivesSessionReopen(page, providerServer) {
     await switchUiToSession(page, sessionId);
 
     // Await the same saved-conversation restore protocol used when opening a session.
-    const conversation = await page.evaluate(async sessionId => {
-      const { readSessionSnapshot } = await import(chrome.runtime.getURL("shared/session/session-recovery.js"));
+    const stored = await page.evaluate(async sessionId => {
       const key = `_session_${sessionId}`, activeKey = `_active_conversation_${sessionId}`;
       const checkpointKey = `_session_transcript_checkpoint_${sessionId}`;
       const saved = await chrome.storage.local.get([key, activeKey, checkpointKey]);
-      return readSessionSnapshot(saved[key], saved[activeKey], saved[checkpointKey]).conversation;
+      return { record: saved[key], active: saved[activeKey], checkpoint: saved[checkpointKey] };
     }, sessionId);
+    const { conversation } = readSessionSnapshot(stored.record, stored.active, stored.checkpoint);
     await request(page, "restore_session", { sessionId, session: conversation }, "session_restored");
     const reopened = await request(page, "get_messages", { sessionId }, "messages");
     assert.doesNotMatch(JSON.stringify(reopened.transcript), /QZ_E2E_RESET_OLD/);
