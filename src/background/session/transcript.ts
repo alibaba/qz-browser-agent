@@ -178,6 +178,20 @@ export function createSessionTranscript({
     return { history, current, transcript: current.length ? [...history, ...current] : history as RestoredTranscriptEntry[] };
   }
 
+  function dropUnstartedUserMessage(sessionId: string, clientMessageId: string) {
+    const id = normalizeSessionId(sessionId);
+    const messageId = String(clientMessageId || "").trim();
+    if (!id || !messageId || !cache.has(id)) return false;
+    const state = cache.get(id)!;
+    const drop = (entry: RestoredTranscriptEntry) => entry?.type === "user" && entry.clientMessageId === messageId && !entry.runId;
+    const history = state.history.filter(entry => !drop(entry));
+    const current = state.current.filter(entry => !drop(entry));
+    if (history.length === state.history.length && current.length === state.current.length) return false;
+    cancelCheckpoint(id);
+    cache.set(id, displayState(history, current));
+    return true;
+  }
+
   function remove(sessionId: string) {
     const id = normalizeSessionId(sessionId);
     cancelCheckpoint(id);
@@ -216,6 +230,7 @@ export function createSessionTranscript({
     snapshot,
     checkpoint,
     finish,
+    dropUnstartedUserMessage,
     remove,
     resolveIdentities,
   });

@@ -39,6 +39,7 @@ await atomicRuntimeInputSnapshots();
 await sessionWindowDraftFlow();
 await serializedSessionDraftMutations();
 await stopCascadeAndDeleteFlow();
+await stopBeforeStartDropsUnstartedPrompt();
 await stopPortOrderingAndIdleNoOp();
 await cancelledRemoteAdmissionsDoNotStartWork();
 await cancelledRemoteTerminalCommandsLeaveTasksIntact();
@@ -1475,6 +1476,35 @@ async function goalWaitAndPermissionFlow() {
   assert.deepEqual(aborted.pendingIds, ["root"]);
 }
 
+async function stopBeforeStartDropsUnstartedPrompt() {
+  let transcript;
+  const fixture = createFixture({
+    createTranscript: ({ repository, supervisor }) => (transcript = createSessionTranscript({
+      repository,
+      supervisor: { ...supervisor, peekEntry: () => null },
+      getLiveAgentEntry: async () => null,
+      normalizeSessionId: value => String(value || "").trim(),
+      resolveToolDefinition: () => null,
+      getToolIdentity: () => ({}),
+    })),
+  });
+  const sessionId = "pending-stop";
+  await fixture.repository.createMetadata({ id: sessionId, title: "Pending stop" });
+  fixture.agent(sessionId).acceptUnstartedPrompt("QZ_PENDING_SHOULD_NOT_RUN", "pending-user");
+  fixture.setRuntime(sessionId, { status: "pending", running: true, pendingStart: true, runId: null });
+  transcript.recordEvent(sessionId, {
+    type: "message_start",
+    clientMessageId: "pending-user",
+    message: { role: "user", content: "QZ_PENDING_SHOULD_NOT_RUN", clientMessageId: "pending-user", _origin: "user" },
+  });
+  const stopped = await fixture.commands.stopSessionRuntime(sessionId, { source: "live_pending", cascade: false });
+  assert.equal(stopped.status, "aborted");
+  assert.equal(JSON.stringify(await fixture.repository.readActiveConversation(sessionId)).includes("QZ_PENDING_SHOULD_NOT_RUN"), false);
+  assert.equal(JSON.stringify(transcript.snapshot(sessionId)).includes("QZ_PENDING_SHOULD_NOT_RUN"), false);
+  const record = await fixture.repository.readRecord(sessionId);
+  assert.equal(JSON.stringify(record?.transcript || []).includes("QZ_PENDING_SHOULD_NOT_RUN"), false);
+}
+
 async function stopCascadeAndDeleteFlow() {
   const fixture = createFixture();
   await fixture.repository.createMetadata({ id: "parent", title: "Parent" });
@@ -1840,7 +1870,8 @@ function createFixture(options = {}) {
   };
   const revoke = async (sessionId, options = {}, remove = false) => {
     const id = normalizeId(sessionId);
-    const snapshot = snapshotFor(id);
+    const discardedPrompt = agents.get(id)?.discardUnstartedPrompt?.() || null;
+    const snapshot = { ...snapshotFor(id), discardedPrompt };
     const task = tasks.get(id);
     if (task) task.cancelled = true;
     agents.get(id)?.abort?.();
@@ -2123,6 +2154,7 @@ function createFixture(options = {}) {
 
 function createFakeAgent(sessionId, calls, options = {}) {
   let messages = [{ role: "system", content: "system" }];
+  let unstartedPrompt = null;
   const pendingFollowUps = [];
   const pendingSteerings = [];
   const summarizeQueued = queue => queue.map((message, index) => ({
@@ -2244,6 +2276,17 @@ function createFakeAgent(sessionId, calls, options = {}) {
       return true;
     },
     exportSession: () => serializeConversation(messages),
+    acceptUnstartedPrompt(text, clientMessageId) {
+      unstartedPrompt = { checkpoint: messages.length, clientMessageId };
+      messages.push({ role: "user", content: text, clientMessageId, _origin: "user" });
+    },
+    discardUnstartedPrompt() {
+      if (!unstartedPrompt || this.isStreaming) return null;
+      messages.length = unstartedPrompt.checkpoint;
+      const discarded = { clientMessageId: unstartedPrompt.clientMessageId };
+      unstartedPrompt = null;
+      return discarded;
+    },
   };
 }
 

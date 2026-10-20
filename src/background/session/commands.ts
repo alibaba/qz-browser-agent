@@ -46,7 +46,7 @@ interface SessionCommandsDependencies {
   >>;
   transcript: Readonly<Pick<Transcript,
     "get" | "getConversation" | "set" | "resolveIdentities" | "recordEvent" | "remove"
-    | "snapshot" | "checkpoint" | "finish"
+    | "snapshot" | "checkpoint" | "finish" | "dropUnstartedUserMessage"
   >>;
   artifacts: Readonly<Pick<Artifacts,
     "clearListSummaryPatch" | "clearSummaryRefresh" | "buildListSummary" | "collect" | "empty"
@@ -1905,6 +1905,8 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
       });
       sessionTranscript.finish(id);
 
+      const discardedId = String(snapshot.discardedPrompt?.clientMessageId || "").trim();
+      if (discardedId) sessionTranscript.dropUnstartedUserMessage(id, discardedId);
       if (snapshot.conversation) {
         await sessionRepository.replaceActiveConversation(id, snapshot.conversation);
         await commitSessionRecordRuntime({ sessionId: id, conversation: snapshot.conversation });

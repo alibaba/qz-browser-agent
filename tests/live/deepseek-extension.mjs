@@ -9,6 +9,7 @@ import { readTestApiKey } from "../support/local-credentials.mjs";
 import { acceptDataDisclosure } from "../support/data-consent.mjs";
 import { skillFromSkillMarkdown } from "../../src/shared/skills/skill-package.js";
 import { normalizeModernSkill } from "../../src/shared/skills/skill-utils.js";
+import { readCheckpointRecord } from "../../src/shared/session/session-recovery.js";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const akFile = String(process.env.QINGZHOU_DEEPSEEK_AK_FILE || "").trim();
@@ -329,7 +330,7 @@ async function assertStopRestartHandoff(page) {
     clientMessageId: id("handoff-old"),
   });
   const oldStart = await waitEvent(page, { type: "agent_start", sessionId }, after, 90_000);
-  await waitEvent(page, { type: "message_update", sessionId, runId: oldStart.runId }, after, 90_000);
+  await waitForRunOutput(page, sessionId, oldStart.runId, after, 90_000);
   const raceAfter = await eventCount(page);
   const stopBoundary = await requestThenSend(page, {
     type: "stop_session",
@@ -383,6 +384,7 @@ async function assertDeleteRunningSession(page) {
   assert.equal(persisted.runtime, undefined);
   assert.equal(persisted.activeConversation, undefined);
   assert.equal(persisted.record, undefined);
+  assert.equal(persisted.checkpoint, undefined);
   const rejected = await requestEither(page, "prompt", {
     sessionId,
     text: "不要调用工具，只回复 QZ_DELETED_BAD。",
@@ -921,6 +923,16 @@ function send(page, type, payload = {}) {
   return page.evaluate(({ type, payload }) => window.__qzLiveHarness.send(type, payload), { type, payload });
 }
 
+function waitForRunOutput(page, sessionId, runId, after = 0, timeoutMs = 90_000) {
+  return page.evaluate(({ sessionId, runId, after, timeoutMs }) => (
+    window.__qzLiveHarness.wait({}, after, timeoutMs, message => (
+      message?.sessionId === sessionId
+      && message?.runId === runId
+      && (message.type === "thinking_update" || message.type === "message_update")
+    ))
+  ), { sessionId, runId, after, timeoutMs });
+}
+
 function waitEvent(page, expected, after = 0, timeoutMs = 30_000) {
   return page.evaluate(({ expected, after, timeoutMs }) => window.__qzLiveHarness.wait(expected, after, timeoutMs), {
     expected,
@@ -978,19 +990,22 @@ function readActiveConversation(page, sessionId) {
   }, sessionId);
 }
 
-function readSessionStorage(page, sessionId) {
-  return page.evaluate(async sessionId => {
+async function readSessionStorage(page, sessionId) {
+  const values = await page.evaluate(async sessionId => {
     const runtimeKey = `_session_runtime_${sessionId}`;
     const activeKey = `_active_conversation_${sessionId}`;
     const recordKey = `_session_${sessionId}`;
-    const values = await chrome.storage.local.get(["_sessions", runtimeKey, activeKey, recordKey]);
+    const checkpointKey = `_session_transcript_checkpoint_${sessionId}`;
+    const values = await chrome.storage.local.get(["_sessions", runtimeKey, activeKey, recordKey, checkpointKey]);
     return {
       metadata: values._sessions?.[sessionId],
       runtime: values[runtimeKey],
       activeConversation: values[activeKey],
       record: values[recordKey],
+      checkpoint: values[checkpointKey],
     };
   }, sessionId);
+  return { ...values, record: values.record === undefined ? undefined : readCheckpointRecord(values.record, values.checkpoint) };
 }
 
 async function terminateExtensionServiceWorker(page, browserContext, extensionId) {
