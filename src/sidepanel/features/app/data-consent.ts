@@ -3,9 +3,10 @@ import { t } from "../../i18n/index.js";
 import { localizeDocument } from "../../i18n/dom.js";
 
 /** Defer workspace initialization, including context collection, until consent is stored. */
-export async function ensureDataConsent(): Promise<void> {
+export async function ensureDataConsent({ onPrompt }: { onPrompt?: () => void } = {}): Promise<void> {
   const data = await chrome.storage.local.get(DATA_CONSENT_KEY);
   if (hasDataConsent(data[DATA_CONSENT_KEY])) return;
+  onPrompt?.();
   const app = document.querySelector<HTMLElement>("#app")!;
   const template = document.querySelector<HTMLTemplateElement>("#data-consent-template")!;
   const card = template.content.firstElementChild!.cloneNode(true) as HTMLElement;

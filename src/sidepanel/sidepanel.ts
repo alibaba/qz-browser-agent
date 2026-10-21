@@ -16,6 +16,7 @@ function revealFallback(message: string, reason: string) {
 
 let timeout: ReturnType<typeof setTimeout> | undefined;
 function startBootTimer() {
+  clearTimeout(timeout);
   timeout = setTimeout(() => revealFallback(t("startupSlow"), "timeout"), WORKSPACE_BOOT_TIMEOUT_MS);
 }
 startBootTimer();
@@ -25,11 +26,11 @@ try {
   document.documentElement.lang = getLanguage();
   document.documentElement.dir = getTextDirection();
   localizeDocument(document);
-  clearTimeout(timeout);
   fallback?.classList.add("hidden");
   app?.setAttribute("data-workspace-booting", "");
+  startBootTimer();
   const { ensureDataConsent } = await import("./features/app/data-consent.js");
-  await ensureDataConsent();
+  await ensureDataConsent({ onPrompt: () => clearTimeout(timeout) });
   startBootTimer();
   await import("./app.js");
   fallback?.classList.add("hidden");
