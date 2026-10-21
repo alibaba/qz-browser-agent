@@ -57,7 +57,7 @@ const chatSearchState = {
 
 document.addEventListener("keydown", handleChatSearchGlobalKeydown, { capture: true });
 chatSearchInput?.addEventListener("input", handleChatSearchInput);
-chatSearchInput?.addEventListener("keydown", handleChatSearchKeydown);
+chatSearchBar?.addEventListener("keydown", handleChatSearchKeydown);
 chatSearchPrev?.addEventListener("click", () => jumpChatSearch(-1));
 chatSearchNext?.addEventListener("click", () => jumpChatSearch(1));
 chatSearchClose?.addEventListener("click", () => closeChatSearch());
@@ -73,6 +73,7 @@ function isChatSearchShortcut(event: KeyboardEvent) {
 }
 
 function handleChatSearchGlobalKeydown(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return;
   if (isChatSearchShortcut(event)) {
     event.preventDefault();
     event.stopPropagation();
@@ -123,13 +124,14 @@ function handleChatSearchInput() {
 }
 
 function handleChatSearchKeydown(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();
     closeChatSearch();
     return;
   }
-  if (event.key === "Enter") {
+  if (event.key === "Enter" && event.target === chatSearchInput) {
     event.preventDefault();
     event.stopPropagation();
     jumpChatSearch(event.shiftKey ? -1 : 1);

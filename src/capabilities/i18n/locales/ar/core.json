@@ -15,6 +15,7 @@
   "core.chat": "محادثة",
   "core.cancelled": "أُلغي",
   "core.runFailed": "فشل التنفيذ",
+  "core.runInterrupted": "انقطع التنفيذ. تمت استعادة محتوى المحادثة المحفوظ. أرسل رسالة للمتابعة.",
   "core.completed": "اكتمل",
   "core.statusUpdated": "تم تحديث الحالة",
   "core.recordingSaved": "تم حفظ التسجيل: {filename}",

@@ -26,6 +26,7 @@ export default defineMessages("core", {
   chat: { "zh-CN": "对话", en: "Chat" },
   cancelled: { "zh-CN": "已取消", en: "Canceled" },
   runFailed: { "zh-CN": "运行失败", en: "Run failed" },
+  runInterrupted: { "zh-CN": "运行已中断，已恢复保存的对话。发送消息可继续。", en: "The run was interrupted. Saved chat content has been restored. Send a message to continue." },
   completed: { "zh-CN": "已完成", en: "Completed" },
   statusUpdated: { "zh-CN": "状态已更新", en: "Status updated" },
   recordingSaved: { "zh-CN": "case 录制已保存：{filename}", en: "Recording saved: {filename}" },

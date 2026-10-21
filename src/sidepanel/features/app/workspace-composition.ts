@@ -257,6 +257,7 @@ export function createWorkspaceComposition(options: WorkspaceOptions) {
 export function runStatusText(status: unknown = "") {
   if (status === "aborted") return t("cancelled");
   if (status === "error") return t("runFailed");
+  if (status === "interrupted") return t("runInterrupted");
   if (status === "completed") return t("completed");
   return t("statusUpdated");
 }

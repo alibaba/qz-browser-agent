@@ -15,6 +15,7 @@
   "core.chat": "채팅",
   "core.cancelled": "취소됨",
   "core.runFailed": "실행 실패",
+  "core.runInterrupted": "실행이 중단되었습니다. 저장된 대화를 복원했습니다. 메시지를 보내면 계속할 수 있습니다.",
   "core.completed": "완료됨",
   "core.statusUpdated": "상태 업데이트됨",
   "core.recordingSaved": "기록 저장됨: {filename}",

@@ -1,6 +1,9 @@
 import { sessionIdText as normalizeSessionId } from "../../sessions/session-id.js";
 import type { TranscriptEntry } from "../../../tools/renderer-input.js";
-interface ReconcileEvent { type?: string; hasHistory?: boolean; isStreaming?: boolean }
+interface ReconcileEvent {
+  type?: string; hasHistory?: boolean; isStreaming?: boolean;
+  status?: unknown; runtime?: { status?: unknown };
+}
 interface ReconcileOptions<Runtime> {
   minIntervalMs?: number; watchdogStaleMs?: number; watchdogMinIntervalMs?: number; userScrollIdleMs?: number;
   activeConversationPrefix?: string;
@@ -77,7 +80,8 @@ export function createTranscriptReconcileFeature<Runtime>(options: ReconcileOpti
   function shouldReconcile(event: ReconcileEvent) {
     if (!event?.type) return false;
     if (event.type === "state") {
-      return Boolean(event.hasHistory && (event.isStreaming || options.getCurrentTranscriptCount?.() === 0));
+      const interrupted = (event.status || event.runtime?.status) === "interrupted";
+      return Boolean(event.hasHistory && (event.isStreaming || interrupted || options.getCurrentTranscriptCount?.() === 0));
     }
     return [
       "agent_start",

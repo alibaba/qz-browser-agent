@@ -4,6 +4,7 @@ import { buildSessionTitleMessages } from "../../src/background/agent/prompts.js
 import { createSessionCommands } from "../../src/background/session/commands.js";
 import { createMcpRuntime } from "../../src/background/mcp/mcp-runtime.js";
 import { createSessionRepository } from "../../src/background/session/repository.js";
+import { createSessionTranscript } from "../../src/background/session/transcript.js";
 import { Agent } from "../../src/background/agent/agent.js";
 import { reduceSessionRuntime } from "../../src/background/session/runtime-reducer.js";
 import { createTestAgentOptions } from "../support/agent-services.mjs";
@@ -30,11 +31,15 @@ await steeringQueueFlow();
 await compactContextCommandFlow();
 await recordExchangeAndFallbackFlow();
 await rejectedRecordWritePreservesTranscript();
+await resetPersistsEmptyConversationAndDisplay();
+await lateUiSavePreservesStreamingCurrentTurn();
+await readOnlyFallbackPreservesPendingUserAdmission();
 await goalWaitAndPermissionFlow();
 await atomicRuntimeInputSnapshots();
 await sessionWindowDraftFlow();
 await serializedSessionDraftMutations();
 await stopCascadeAndDeleteFlow();
+await stopBeforeStartDropsUnstartedPrompt();
 await stopPortOrderingAndIdleNoOp();
 await cancelledRemoteAdmissionsDoNotStartWork();
 await cancelledRemoteTerminalCommandsLeaveTasksIntact();
@@ -895,12 +900,29 @@ async function compactContextCommandFlow() {
     error => error?.code === "SESSION_NOT_FOUND",
   );
 
-  const cancellable = createFixture();
+  const releasing = deferred(), release = deferred();
+  let transcript;
+  const cancellable = createFixture({
+    releaseRunResources: async () => { releasing.resolve(); await release.promise; },
+    createTranscript: ({ repository, supervisor }) => (transcript = createSessionTranscript({
+      repository,
+      supervisor: { ...supervisor, peekEntry: () => null },
+      getLiveAgentEntry: async () => null,
+      normalizeSessionId: value => String(value || "").trim(),
+      resolveToolDefinition: () => null,
+      getToolIdentity: () => ({}),
+    })),
+  });
   await cancellable.repository.createMetadata({ id: "compact-cancel", title: "Compact cancel" });
+  transcript.set("compact-cancel", []);
   const cancellableAgent = cancellable.agent("compact-cancel");
   let compactStarted = false;
   let resolveCompact;
   cancellableAgent.compactContext = async () => {
+    cancellable.setRuntime("compact-cancel", { status: "running", running: true, runId: "compact-run" });
+    transcript.recordEvent("compact-cancel", {
+      type: "context_compaction_start", compactId: "cancelled-compact", runId: "compact-run",
+    });
     compactStarted = true;
     return new Promise(resolve => { resolveCompact = resolve; });
   };
@@ -910,10 +932,28 @@ async function compactContextCommandFlow() {
     plan: { inputTokens: 4200 },
   });
   const compactPromise = cancellable.commands.compactSessionContextRuntime({ sessionId: "compact-cancel" });
+  const compactStopped = assert.rejects(compactPromise, error => error?.code === "OPERATION_ABORTED");
   await waitUntil(() => compactStarted, "manual compaction should enter the Session task lifecycle");
-  const stopped = await cancellable.commands.stopSessionRuntime("compact-cancel", { source: "ui", cascade: false });
-  assert.equal(stopped.stopped, true);
-  await assert.rejects(compactPromise, error => error?.code === "OPERATION_ABORTED");
+  const stopping = cancellable.commands.stopSessionRuntime("compact-cancel", { source: "ui", cascade: false });
+  try {
+    await releasing.promise;
+    await compactStopped;
+    const pending = transcript.snapshot("compact-cancel");
+    assert.equal(pending.history.length, 0, "the cancelled compact result must not archive its still-running card");
+    assert.equal(pending.current[0].status, "running", "stop owns finalization after resource cleanup");
+    release.resolve();
+    assert.equal((await stopping).stopped, true);
+    const saved = await cancellable.repository.readRecord("compact-cancel");
+    const card = saved.transcript.find(entry => entry.compactId === "cancelled-compact");
+    assert.equal(card.status, "aborted");
+    assert.equal(Boolean(card.streaming), false);
+    assert.equal(transcript.snapshot("compact-cancel").current.length, 0);
+  } finally {
+    release.resolve();
+    await stopping;
+    transcript.remove("compact-cancel");
+    await cancellable.repository.flush();
+  }
 }
 
 async function steeringQueueFlow() {
@@ -986,6 +1026,192 @@ async function rejectedRecordWritePreservesTranscript() {
   }), { code: "UNSUPPORTED_SESSION_RECORD_VERSION" });
   assert.equal(fixture.transcripts.get("blocked-record"), original);
   assert.equal(await fixture.repository.readRecord("blocked-record"), null);
+}
+
+async function resetPersistsEmptyConversationAndDisplay() {
+  for (const boundary of ["replaceActiveConversation", "writeRecord", "runtime"]) {
+    for (const fail of [false, true]) {
+      const sessionId = `reset-${boundary}-${fail}`;
+      const entered = deferred(), release = deferred();
+      let resetting = false;
+      const waitForWrite = async name => {
+        if (!resetting || name !== boundary) return;
+        entered.resolve();
+        await release.promise;
+        if (fail) throw new Error("reset storage failed");
+      };
+      const fixture = createFixture({
+        wrapRepository: base => ({
+          ...base,
+          async replaceActiveConversation(...args) {
+            await waitForWrite("replaceActiveConversation");
+            return base.replaceActiveConversation(...args);
+          },
+          async writeRecord(...args) {
+            await waitForWrite("writeRecord");
+            return base.writeRecord(...args);
+          },
+        }),
+        persistSessionRuntime: () => waitForWrite("runtime"),
+      });
+      await fixture.repository.createMetadata({ id: sessionId, title: "Reset" });
+      const conversation = serializeConversation([{ role: "user", content: "old context" }]);
+      const history = transcriptFromConversation(conversation);
+      await fixture.commands.saveSessionRecordRuntime({ sessionId, conversation, transcript: history });
+      await fixture.repository.replaceActiveConversation(sessionId, conversation);
+      await fixture.repository.writeTranscriptCheckpoint(sessionId, {
+        history, current: [{ type: "assistant", content: "old partial answer" }],
+      }, { sessionId, isActive: () => true });
+      resetting = true;
+      let settled = false;
+      const resettingSession = fixture.commands.resetSessionRuntime(sessionId)
+        .finally(() => { settled = true; });
+      try {
+        assert.equal(await Promise.race([
+          entered.promise.then(() => "writing"),
+          resettingSession.then(() => "returned"),
+        ]), "writing", `reset must await ${boundary}`);
+        assert.equal(settled, false);
+        if (boundary !== "runtime") {
+          assert.equal(fixture.lifecycleEvents.some(({ event }) => event.type === "reset"), false,
+            "reset is announced only after the empty model and display are saved");
+        }
+        if (fail) {
+          const rejected = assert.rejects(resettingSession, /reset storage failed/);
+          release.resolve();
+          await rejected;
+          continue;
+        }
+        release.resolve();
+        assert.deepEqual(await resettingSession, { sessionId, reset: true });
+        const saved = await fixture.repository.readRecord(sessionId);
+        assert.deepEqual(saved.conversation.entries, []);
+        assert.deepEqual(saved.transcript, []);
+        assert.deepEqual((await fixture.repository.readActiveConversation(sessionId)).entries, []);
+        assert.deepEqual(fixture.transcripts.get(sessionId), []);
+        await fixture.commands.restoreSessionFromApi(sessionId, saved.conversation);
+        assert.deepEqual((await fixture.commands.getSessionHistoryRuntime(sessionId)).messages, []);
+      } finally {
+        release.resolve();
+        await resettingSession.catch(() => {});
+        await fixture.repository.flush();
+      }
+    }
+  }
+}
+
+async function lateUiSavePreservesStreamingCurrentTurn() {
+  const sessionId = "late-ui-save";
+  const writing = deferred(), release = deferred();
+  const writes = [];
+  let transcript;
+  const conversation = serializeConversation([
+    { role: "user", content: "first question" },
+    { role: "assistant", content: "first answer" },
+    { role: "user", content: "follow up" },
+  ]);
+  const entry = {
+    agent: { exportSession: () => conversation },
+    lease: { sessionId, isActive: () => true },
+  };
+  const fixture = createFixture({
+    wrapRepository: base => Object.fromEntries(Object.entries(base).map(([name, method]) => [name,
+      ["writeRecord", "writeTranscriptCheckpoint"].includes(name) ? async (...args) => {
+        writes.push(name);
+        writing.resolve();
+        await release.promise;
+        return method(...args);
+      } : method,
+    ])),
+    createTranscript: ({ repository }) => (transcript = createSessionTranscript({
+      repository,
+      supervisor: { peekEntry: () => entry, getRuntime: () => ({ status: "running", runId: "r2" }) },
+      getLiveAgentEntry: async () => entry,
+      normalizeSessionId: value => String(value || "").trim(),
+      resolveToolDefinition: () => null,
+      getToolIdentity: () => ({}),
+    })),
+  });
+  await fixture.repository.createMetadata({ id: sessionId, title: "Late UI save" });
+  transcript.set(sessionId, [
+    { type: "user", text: "first question" },
+    { type: "assistant", content: "first answer", runId: "r1" },
+  ], [
+    { type: "user", text: "follow up", runId: "r2" },
+    { type: "assistant", content: "first partial", runId: "r2", spanId: "reply", streaming: true },
+  ]);
+  const history = transcript.snapshot(sessionId).history;
+  try {
+    const saving = fixture.commands.saveSessionRecordRuntime({ sessionId });
+    await writing.promise;
+    transcript.recordEvent(sessionId, { type: "message_update", runId: "r2", spanId: "reply", content: "newer partial" });
+    const current = transcript.snapshot(sessionId).current;
+    release.resolve();
+    assert.deepEqual(await saving, { saved: true, sessionId });
+    assert.deepEqual(writes, ["writeTranscriptCheckpoint"], "an ordinary UI save checkpoints the current display");
+    assert.strictEqual(transcript.snapshot(sessionId).history, history, "UI save must not archive the current turn");
+    assert.strictEqual(transcript.snapshot(sessionId).current, current, "a late save must not replace newer streamed content");
+    assert.equal(current.at(-1).content, "newer partial");
+    assert.equal(current.at(-1).streaming, true);
+    transcript.recordEvent(sessionId, { type: "message_update", runId: "r2", spanId: "reply", content: "continued partial" });
+    assert.equal(transcript.snapshot(sessionId).current.length, 2);
+    assert.equal(transcript.snapshot(sessionId).current.at(-1).content, "continued partial");
+    assert.strictEqual(transcript.snapshot(sessionId).history, history);
+  } finally {
+    release.resolve();
+    transcript.remove(sessionId);
+    await fixture.repository.flush();
+  }
+}
+
+async function readOnlyFallbackPreservesPendingUserAdmission() {
+  for (const operation of ["getLastMessagesRuntime", "resolveSessionArtifactTranscript"]) {
+    const sessionId = `pending-user-${operation}`;
+    const message = { role: "user", content: "accepted after the read", clientMessageId: "pending-user", _origin: "user" };
+    const conversation = serializeConversation([message]);
+    const entry = {
+      agent: { exportSession: () => conversation },
+      lease: { sessionId, isActive: () => true },
+    };
+    let transcript;
+    const fixture = createFixture({
+      createTranscript: ({ repository }) => (transcript = createSessionTranscript({
+        repository,
+        supervisor: { peekEntry: () => entry, getRuntime: () => ({ status: "pending" }) },
+        getLiveAgentEntry: async () => entry,
+        normalizeSessionId: value => String(value || "").trim(),
+        resolveToolDefinition: () => null,
+        getToolIdentity: () => ({}),
+      })),
+    });
+    await fixture.repository.createMetadata({ id: sessionId, title: "Pending user admission" });
+    try {
+      await transcript.hydrate(sessionId);
+      const before = transcript.snapshot(sessionId);
+      assert.deepEqual(before, { history: [], current: [] });
+      await fixture.repository.replaceActiveConversation(sessionId, conversation);
+      const result = operation === "getLastMessagesRuntime"
+        ? (await fixture.commands.getLastMessagesRuntime({ sessionId })).messages
+        : await fixture.commands.resolveSessionArtifactTranscript(sessionId);
+      assert.equal(result.length, 1);
+      assert.equal(result[0].text, message.content);
+      assert.strictEqual(transcript.snapshot(sessionId).history, before.history, `${operation} must not archive the unaccepted user`);
+      assert.strictEqual(transcript.snapshot(sessionId).current, before.current, `${operation} must not change the current turn`);
+
+      transcript.recordEvent(sessionId, { type: "message_start", message, clientMessageId: message.clientMessageId });
+      transcript.recordEvent(sessionId, { type: "agent_start", runId: "accepted-run", clientMessageId: message.clientMessageId, eventSeq: 1 });
+      const accepted = transcript.snapshot(sessionId);
+      assert.deepEqual(accepted.history, []);
+      assert.equal(accepted.current.length, 1);
+      assert.equal(accepted.current[0].type, "user");
+      assert.equal(accepted.current[0].clientMessageId, message.clientMessageId);
+      assert.equal(accepted.current[0].runId, "accepted-run");
+      assert.equal(transcript.getCached(sessionId).filter(item => item.type === "user").length, 1);
+    } finally {
+      transcript.remove(sessionId);
+      await fixture.repository.flush();
+    }
+  }
 }
 
 async function recordExchangeAndFallbackFlow() {
@@ -1248,6 +1474,35 @@ async function goalWaitAndPermissionFlow() {
   });
   assert.equal(aborted.aborted, true);
   assert.deepEqual(aborted.pendingIds, ["root"]);
+}
+
+async function stopBeforeStartDropsUnstartedPrompt() {
+  let transcript;
+  const fixture = createFixture({
+    createTranscript: ({ repository, supervisor }) => (transcript = createSessionTranscript({
+      repository,
+      supervisor: { ...supervisor, peekEntry: () => null },
+      getLiveAgentEntry: async () => null,
+      normalizeSessionId: value => String(value || "").trim(),
+      resolveToolDefinition: () => null,
+      getToolIdentity: () => ({}),
+    })),
+  });
+  const sessionId = "pending-stop";
+  await fixture.repository.createMetadata({ id: sessionId, title: "Pending stop" });
+  fixture.agent(sessionId).acceptUnstartedPrompt("QZ_PENDING_SHOULD_NOT_RUN", "pending-user");
+  fixture.setRuntime(sessionId, { status: "pending", running: true, pendingStart: true, runId: null });
+  transcript.recordEvent(sessionId, {
+    type: "message_start",
+    clientMessageId: "pending-user",
+    message: { role: "user", content: "QZ_PENDING_SHOULD_NOT_RUN", clientMessageId: "pending-user", _origin: "user" },
+  });
+  const stopped = await fixture.commands.stopSessionRuntime(sessionId, { source: "live_pending", cascade: false });
+  assert.equal(stopped.status, "aborted");
+  assert.equal(JSON.stringify(await fixture.repository.readActiveConversation(sessionId)).includes("QZ_PENDING_SHOULD_NOT_RUN"), false);
+  assert.equal(JSON.stringify(transcript.snapshot(sessionId)).includes("QZ_PENDING_SHOULD_NOT_RUN"), false);
+  const record = await fixture.repository.readRecord(sessionId);
+  assert.equal(JSON.stringify(record?.transcript || []).includes("QZ_PENDING_SHOULD_NOT_RUN"), false);
 }
 
 async function stopCascadeAndDeleteFlow() {
@@ -1558,6 +1813,7 @@ function createFixture(options = {}) {
   const repository = options.wrapRepository?.(baseRepository) || baseRepository;
   const runtimes = new Map();
   const transcripts = new Map();
+  const currentTranscripts = new Map();
   const agents = new Map();
   const tasks = new Map();
   const broadcasts = [];
@@ -1614,7 +1870,8 @@ function createFixture(options = {}) {
   };
   const revoke = async (sessionId, options = {}, remove = false) => {
     const id = normalizeId(sessionId);
-    const snapshot = snapshotFor(id);
+    const discardedPrompt = agents.get(id)?.discardUnstartedPrompt?.() || null;
+    const snapshot = { ...snapshotFor(id), discardedPrompt };
     const task = tasks.get(id);
     if (task) task.cancelled = true;
     agents.get(id)?.abort?.();
@@ -1700,12 +1957,14 @@ function createFixture(options = {}) {
       ensureConversationForHistoryMutation: async () => true,
       handleEvent: (id, event) => lifecycleEvents.push({ sessionId: id, event }),
     },
-    transcript: {
+    transcript: options.createTranscript?.({ repository, supervisor }) || {
       async get(id, fallbackConversation = null) {
         const sessionId = normalizeId(id);
-        if (transcripts.has(sessionId)) return transcripts.get(sessionId);
+        if (transcripts.has(sessionId)) return [...transcripts.get(sessionId), ...(currentTranscripts.get(sessionId) || [])];
         const conversation = fallbackConversation || agents.get(sessionId)?.exportSession() || null;
-        return conversation ? transcriptFromConversation(conversation) : [];
+        const history = conversation ? transcriptFromConversation(conversation) : [];
+        transcripts.set(sessionId, history);
+        return history;
       },
       async getConversation(id, explicit = null) {
         if (explicit) return explicit;
@@ -1715,12 +1974,32 @@ function createFixture(options = {}) {
         const record = await repository.readRecord(sessionId);
         return record?.conversation || serializeConversation([]);
       },
-      set(id, value) {
+      set(id, value, current = []) {
         transcripts.set(normalizeId(id), Array.isArray(value) ? value : []);
+        currentTranscripts.set(normalizeId(id), current);
+      },
+      snapshot(id) {
+        return { history: transcripts.get(normalizeId(id)) || [], current: currentTranscripts.get(normalizeId(id)) || [] };
+      },
+      checkpoint(id) {
+        const sessionId = normalizeId(id);
+        if (!agents.has(sessionId)) return null;
+        return repository.writeTranscriptCheckpoint(sessionId, this.snapshot(sessionId), {
+          sessionId, isActive: () => agents.has(sessionId),
+        });
+      },
+      finish(id) {
+        const sessionId = normalizeId(id);
+        const current = currentTranscripts.get(sessionId) || [];
+        if (current.length) transcripts.set(sessionId, [...(transcripts.get(sessionId) || []), ...current]);
+        currentTranscripts.delete(sessionId);
       },
       resolveIdentities: value => value,
       recordEvent: (id, event) => lifecycleEvents.push({ sessionId: id, event: { ...event, transcript: true } }),
-      remove: id => transcripts.delete(normalizeId(id)),
+      remove: id => {
+        currentTranscripts.delete(normalizeId(id));
+        return transcripts.delete(normalizeId(id));
+      },
     },
     artifacts: {
       clearListSummaryPatch() {},
@@ -1875,6 +2154,7 @@ function createFixture(options = {}) {
 
 function createFakeAgent(sessionId, calls, options = {}) {
   let messages = [{ role: "system", content: "system" }];
+  let unstartedPrompt = null;
   const pendingFollowUps = [];
   const pendingSteerings = [];
   const summarizeQueued = queue => queue.map((message, index) => ({
@@ -1996,6 +2276,17 @@ function createFakeAgent(sessionId, calls, options = {}) {
       return true;
     },
     exportSession: () => serializeConversation(messages),
+    acceptUnstartedPrompt(text, clientMessageId) {
+      unstartedPrompt = { checkpoint: messages.length, clientMessageId };
+      messages.push({ role: "user", content: text, clientMessageId, _origin: "user" });
+    },
+    discardUnstartedPrompt() {
+      if (!unstartedPrompt || this.isStreaming) return null;
+      messages.length = unstartedPrompt.checkpoint;
+      const discarded = { clientMessageId: unstartedPrompt.clientMessageId };
+      unstartedPrompt = null;
+      return discarded;
+    },
   };
 }
 

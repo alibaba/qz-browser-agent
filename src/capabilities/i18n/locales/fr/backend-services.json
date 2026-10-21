@@ -96,6 +96,7 @@
   "backend.session.editRole": "La demande modifiée doit être un message utilisateur.",
   "backend.session.historicalToolInterrupted": "Un appel d’outil précédent n’a pas abouti et a été marqué comme interrompu.",
   "backend.status.runFailed": "Échec de l’exécution",
+  "backend.status.runInterrupted": "L’exécution a été interrompue. Le contenu enregistré de la conversation a été restauré. Envoyez un message pour continuer.",
   "backend.session.failedToolIncomplete": "L’exécution a échoué avant la fin de l’appel de l’outil.",
   "backend.session.interruptedToolIncomplete": "L’exécution a été interrompue avant le retour du résultat complet de l’outil.",
   "backend.session.argumentsIncomplete": "Le modèle n’a pas fini de générer les arguments ; l’outil n’a pas été exécuté.",

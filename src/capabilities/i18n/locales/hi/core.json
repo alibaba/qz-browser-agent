@@ -15,6 +15,7 @@
   "core.chat": "चैट",
   "core.cancelled": "रद्द किया गया",
   "core.runFailed": "रन विफल हुआ",
+  "core.runInterrupted": "रन बाधित हो गया। सहेजी गई बातचीत बहाल कर दी गई है। जारी रखने के लिए संदेश भेजें।",
   "core.completed": "पूरा हुआ",
   "core.statusUpdated": "स्थिति अपडेट हुई",
   "core.recordingSaved": "रिकॉर्डिंग सहेजी गई: {filename}",

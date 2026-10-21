@@ -96,6 +96,7 @@
   "backend.session.editRole": "A solicitação editada deve ser uma mensagem do usuário.",
   "backend.session.historicalToolInterrupted": "Uma chamada anterior não terminou e foi marcada como interrompida.",
   "backend.status.runFailed": "Falha na execução",
+  "backend.status.runInterrupted": "A execução foi interrompida. O conteúdo salvo da conversa foi restaurado. Envie uma mensagem para continuar.",
   "backend.session.failedToolIncomplete": "A execução falhou antes da conclusão da chamada da ferramenta.",
   "backend.session.interruptedToolIncomplete": "A execução foi interrompida antes do retorno do resultado completo da ferramenta.",
   "backend.session.argumentsIncomplete": "O modelo não terminou de gerar os argumentos; a ferramenta não foi executada.",

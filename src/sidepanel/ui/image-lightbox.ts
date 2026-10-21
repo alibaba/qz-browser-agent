@@ -184,7 +184,7 @@ function scrollGalleryThumbIntoView(thumb: HTMLElement | null, behavior: ScrollB
   const thumbRect = thumb.getBoundingClientRect();
   const stripRect = strip.getBoundingClientRect();
   const delta = (thumbRect.left + thumbRect.width / 2) - (stripRect.left + stripRect.width / 2);
-  const left = Math.max(0, strip.scrollLeft + delta);
+  const left = strip.scrollLeft + delta;
   if (behavior === "auto") {
     strip.scrollLeft = left;
   } else {

@@ -728,6 +728,7 @@ export const backendMessages = defineMessages("backend", {
   "session.editRole": {"zh-CN": "编辑后的请求必须是用户消息。", "en": "The edited request must be a user message."},
   "session.historicalToolInterrupted": {"zh-CN": "历史中的工具调用没有完成，已按中止处理。", "en": "An earlier tool call did not finish and was marked as interrupted."},
   "status.runFailed": {"zh-CN": "运行失败", "en": "Run failed"},
+  "status.runInterrupted": {"zh-CN": "运行已中断，已恢复保存的对话。发送消息可继续。", "en": "The run was interrupted. Saved chat content has been restored. Send a message to continue."},
   "session.failedToolIncomplete": {"zh-CN": "运行失败，工具调用未完成。", "en": "The run failed before the tool call finished."},
   "session.interruptedToolIncomplete": {"zh-CN": "运行意外中断，工具调用未返回完整结果。", "en": "The run was interrupted before the tool call returned a complete result."},
   "session.argumentsIncomplete": {"zh-CN": "模型没有完成工具参数生成，工具未执行。", "en": "The model did not finish generating tool arguments; the tool did not run."},

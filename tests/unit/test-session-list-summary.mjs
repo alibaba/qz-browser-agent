@@ -496,7 +496,7 @@ function assertSourceContracts() {
   );
   assert.match(
     sessionCommands,
-    /saveSessionRecordRuntime[\s\S]*sessionArtifacts\.buildListSummary\(id,\s*record\.transcript,\s*now\)/,
+    /persistSessionRecord[\s\S]*sessionArtifacts\.buildListSummary\(id,\s*\[\.\.\.record\.transcript,\s*\.\.\.record\.currentTranscript\],\s*now\)/,
     "saving a terminal session record should not write a transcript-only listSummary",
   );
   assert.match(

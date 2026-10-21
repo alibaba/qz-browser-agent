@@ -12,6 +12,7 @@ export interface SupervisorAgent {
   getRunState?(): { runId?: string | null; [field: string]: unknown };
   getAbortSignal?(): AbortSignal | null;
   exportSession?(): unknown;
+  discardUnstartedPrompt?(): { clientMessageId: string } | null;
   hasPendingUserInput?(): boolean;
   waitForIdle?(): Promise<unknown>;
   abort?(reason: string): unknown;
@@ -36,6 +37,7 @@ interface Revocation<A extends SupervisorAgent> {
   sessionId: string; epoch: number; agent: A | null; task: SessionTask | null;
   liveState: { runId?: string | null; [field: string]: unknown }; activeRunId: string; conversation: unknown;
   hasHistory: boolean; hadAgent: boolean; hadTask: boolean;
+  discardedPrompt: { clientMessageId: string } | null;
 }
 interface RevokeOptions<A extends SupervisorAgent> {
   abort?: boolean; reason?: string; beforeRelease?: ((snapshot: Revocation<A>) => unknown | Promise<unknown>) | null;
@@ -422,7 +424,9 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     admissionSignal?.throwIfAborted();
     const agent = entry.agent;
     const task = entry.task;
+    const discardedPrompt = agent?.discardUnstartedPrompt?.() || null;
     const liveState = agent?.getRunState?.() || {};
+    const messageCount = Array.isArray(agent?.messages) ? agent.messages.length : 0;
     const snapshot = {
       sessionId: entry.sessionId,
       epoch: entry.epoch,
@@ -431,9 +435,10 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
       liveState,
       activeRunId: entry.activeRunId || liveState.runId || "",
       conversation: agent?.exportSession?.() || null,
-      hasHistory: Boolean(agent?.messages?.length),
+      hasHistory: messageCount > 1,
       hadAgent: Boolean(agent),
       hadTask: isTaskActive(task),
+      discardedPrompt,
     };
 
     if (task) task.cancelled = true;
@@ -645,6 +650,7 @@ function emptyRevocation(sessionId: string) {
     hasHistory: false,
     hadAgent: false,
     hadTask: false,
+    discardedPrompt: null,
   };
 }
 

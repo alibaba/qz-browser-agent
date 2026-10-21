@@ -96,6 +96,7 @@
   "backend.session.editRole": "يجب أن يكون الطلب المعدّل رسالة مستخدم.",
   "backend.session.historicalToolInterrupted": "لم يكتمل استدعاء أداة سابق ووُسم بأنه منقطع.",
   "backend.status.runFailed": "فشل التنفيذ",
+  "backend.status.runInterrupted": "انقطع التنفيذ. تمت استعادة محتوى المحادثة المحفوظ. أرسل رسالة للمتابعة.",
   "backend.session.failedToolIncomplete": "فشل التنفيذ قبل اكتمال استدعاء الأداة.",
   "backend.session.interruptedToolIncomplete": "انقطع التنفيذ قبل أن تعيد الأداة نتيجة كاملة.",
   "backend.session.argumentsIncomplete": "لم يكمل النموذج توليد معاملات الأداة؛ لم تُشغّل الأداة.",

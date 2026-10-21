@@ -19,14 +19,12 @@ except Exception as exc:  # pragma: no cover - exercised by CLI users.
 
 
 class QingzhouMcpClient:
-    def __init__(self, session: ClientSession, bridge_timeout: int) -> None:
+    def __init__(self, session: ClientSession) -> None:
         self.session = session
-        self.bridge_timeout = bridge_timeout
 
     async def call(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
-        payload = dict(args)
-        payload.setdefault("timeoutSeconds", self.bridge_timeout)
-        result = await self.session.call_tool(name, payload)
+        # timeoutSeconds is the retired bridge field. The streamable HTTP client timeout bounds the call.
+        result = await self.session.call_tool(name, dict(args))
         text = "\n".join(
             item.text for item in (result.content or [])
             if getattr(item, "type", "") == "text" and hasattr(item, "text")

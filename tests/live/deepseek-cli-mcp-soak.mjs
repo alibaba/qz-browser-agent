@@ -122,7 +122,7 @@ async function connectMcp() {
 async function mcp(name, args = {}, options = {}) {
   const started = Date.now(); report.mcpCalls++;
   try {
-    const result = await client.callTool({ name, arguments: { clientId, timeoutSeconds: 45, ...args } }, undefined,
+    const result = await client.callTool({ name, arguments: { clientId, ...args } }, undefined,
       { timeout: (taskTimeoutSeconds + 20) * 1000, resetTimeoutOnProgress: true, ...options });
     const value = resultValue(result);
     if (result.isError) throw new Error(`MCP ${name}: ${JSON.stringify(value)}`);

@@ -2720,7 +2720,7 @@ def expect_sidepanel_automation_artifacts_smoke(browser, visual_url):
           savedAt: '2026-06-14 09:03:12',
         },
       };
-      const clone = (value) => JSON.parse(JSON.stringify(value));
+      const clone = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
       const emit = (event) => listeners.message.slice().forEach(fn => fn(event));
       const storageGet = async (keys) => {
         if (typeof keys === 'string') return { [keys]: clone(storage[keys]) };

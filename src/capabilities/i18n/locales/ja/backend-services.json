@@ -96,6 +96,7 @@
   "backend.session.editRole": "編集するリクエストはユーザーメッセージである必要があります。",
   "backend.session.historicalToolInterrupted": "以前のツール呼び出しが未完了のため、中断として記録しました。",
   "backend.status.runFailed": "実行に失敗しました",
+  "backend.status.runInterrupted": "実行が中断されました。保存済みのチャットを復元しました。メッセージを送信すると続行できます。",
   "backend.session.failedToolIncomplete": "ツール呼び出しが完了する前に実行が失敗しました。",
   "backend.session.interruptedToolIncomplete": "ツールから完全な結果が返る前に実行が中断されました。",
   "backend.session.argumentsIncomplete": "モデルが引数の生成を完了しなかったため、ツールは実行されていません。",

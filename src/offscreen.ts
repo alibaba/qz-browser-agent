@@ -16,7 +16,7 @@ setInterval(() => {
   }).catch(() => {
     // The service worker may be restarting; the next tick will reconnect.
   });
-}, 20_000);
+}, 10_000);
 
 const HOST_SOURCE = "qz-inner-runner-host";
 const SANDBOX_SOURCE = "qz-inner-runner-sandbox";

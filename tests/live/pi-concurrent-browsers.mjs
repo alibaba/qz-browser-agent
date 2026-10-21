@@ -160,7 +160,7 @@ Wait for the follow-up to complete and report the findings, source links, browse
   finally { clearInterval(heartbeat); entry.finishedAt = new Date().toISOString(); log("pi-finished", { name: spec.name, ok: entry.ok }); }
 }
 async function fullSnapshot(uuid, sessionId) {
-  return callTool(daemon.endpoint, "qingzhou_get_session_snapshot", { clientId: uuid, sessionId, compact: false, tail: false, includeArtifacts: true, timeoutSeconds: 20 }, { timeoutMs: 25000 });
+  return callTool(daemon.endpoint, "qingzhou_get_session_snapshot", { clientId: uuid, sessionId, compact: false, tail: false, includeArtifacts: true }, { timeoutMs: 25000 });
 }
 function sourceSeen(browser, source) {
   const expected = new URL(source); expected.hash = "";

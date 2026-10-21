@@ -96,6 +96,7 @@
   "backend.session.editRole": "편집할 요청은 사용자 메시지여야 합니다.",
   "backend.session.historicalToolInterrupted": "이전 도구 호출이 완료되지 않아 중단으로 표시했습니다.",
   "backend.status.runFailed": "실행 실패",
+  "backend.status.runInterrupted": "실행이 중단되었습니다. 저장된 대화를 복원했습니다. 메시지를 보내면 계속할 수 있습니다.",
   "backend.session.failedToolIncomplete": "도구 호출이 완료되기 전에 실행이 실패했습니다.",
   "backend.session.interruptedToolIncomplete": "도구가 완전한 결과를 반환하기 전에 실행이 중단되었습니다.",
   "backend.session.argumentsIncomplete": "모델이 도구 인수 생성을 완료하지 않아 도구가 실행되지 않았습니다.",

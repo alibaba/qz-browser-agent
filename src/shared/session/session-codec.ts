@@ -35,7 +35,7 @@ export function createSessionRecord(conversation: unknown, transcript: unknown) 
   };
 }
 
-export function readSessionRecord(input: unknown) {
+export function readSessionRecord(input: unknown, { repairTools = true } = {}) {
   const saved = record(input);
   assertSessionRecordReadable(input);
   if (!input) {
@@ -45,7 +45,7 @@ export function readSessionRecord(input: unknown) {
   const transcript = normalizeTranscript(saved.transcript);
   return {
     conversation,
-    transcript: repairTranscriptToolResults(transcript, conversation),
+    transcript: repairTools ? repairTranscriptToolResults(transcript, conversation) : transcript,
   };
 }
 
@@ -235,7 +235,8 @@ export function updateTranscriptWithAgentEvent(transcript: readonly TranscriptEn
       if (!phase) return { transcript: history, changed: false };
       const streamingChanged = finalizeAllStreamingTranscriptEntries(history, phase === "not_executed" ? "completed" : phase);
       const toolChanged = finalizeToolTranscriptEntries(history, event, phase);
-      const statusChanged = phase === "aborted" ? upsertRunStatusTranscriptEntry(history, event, "aborted") : false;
+      const statusChanged = ["aborted", "interrupted"].includes(phase)
+        ? upsertRunStatusTranscriptEntry(history, event, phase) : false;
       const changed = streamingChanged || toolChanged || statusChanged;
       return { transcript: history, changed };
     }
@@ -698,9 +699,14 @@ function finalizeTranscriptEntry(history: TranscriptEntry[], type: string, spanI
 
 function finalizeAllStreamingTranscriptEntries(history: TranscriptEntry[], phase = "") {
   const endedAt = nowBeijingDateTime();
+  const compactStatus = phase === "interrupted" ? "aborted" : phase;
   let changed = false;
-  for (const entry of history) {
-    if (!entry?.streaming) continue;
+  for (let index = 0; index < history.length; index++) {
+    const current = history[index];
+    const unfinishedCompact = current?.type === "compact" && current.status === "running"
+      && (compactStatus === "aborted" || compactStatus === "error");
+    if (!current?.streaming && !unfinishedCompact) continue;
+    const entry = history[index] = { ...current };
     entry.endedAt = entry.endedAt || endedAt;
     delete entry.streaming;
     if (entry.type === "tool") {
@@ -712,9 +718,7 @@ function finalizeAllStreamingTranscriptEntries(history: TranscriptEntry[], phase
     if (entry.type === "thinking" && (phase === "aborted" || phase === "error")) {
       entry.phase = phase;
     }
-    if (entry.type === "compact") {
-      if (phase === "aborted" || phase === "error") entry.status = phase;
-    }
+    if (unfinishedCompact) entry.status = compactStatus;
     changed = true;
   }
   return changed;
@@ -724,9 +728,11 @@ function finalizeToolTranscriptEntries(history: TranscriptEntry[], event: Transc
   const runId = eventRunId(event);
   const endedAt = nowBeijingDateTime();
   let changed = false;
-  for (const entry of history) {
-    if (!isUnfinishedToolTranscriptEntry(entry)) continue;
-    if (runId && entry.runId && entry.runId !== runId) continue;
+  for (let index = 0; index < history.length; index++) {
+    const current = history[index];
+    if (!isUnfinishedToolTranscriptEntry(current)) continue;
+    if (runId && current.runId && current.runId !== runId) continue;
+    const entry = history[index] = { ...current };
     const hadIncompleteArgs = entry.argsIncomplete === true
       || entry.argsGenerating === true
       || entry.argsState === "generating"
@@ -823,6 +829,7 @@ function upsertRunStatusTranscriptEntry(history: TranscriptEntry[], event: Trans
     const merged = {
       ...existing,
       ...next,
+      reason: next.reason || existing.reason,
       timestamp: existing.timestamp || next.timestamp,
       endedAt: next.endedAt || existing.endedAt || next.timestamp,
     };
@@ -837,7 +844,7 @@ function upsertRunStatusTranscriptEntry(history: TranscriptEntry[], event: Trans
 function normalizeRunStatus(status: unknown = "") {
   const value = String(status || "").trim().toLowerCase();
   if (["aborted", "cancelled", "canceled"].includes(value)) return "aborted";
-  if (["error", "completed"].includes(value)) return value;
+  if (["error", "completed", "interrupted"].includes(value)) return value;
   return "";
 }
 
@@ -854,6 +861,7 @@ function normalizeRunStatusReason(reason: unknown = "") {
 
 function runStatusText(status: unknown = "") {
   if (status === "aborted") return t("status.cancelled");
+  if (status === "interrupted") return t("status.runInterrupted");
   if (status === "error") return t("status.runFailed");
   if (status === "completed") return t("status.completed");
   return t("status.updated");
@@ -980,7 +988,7 @@ function cleanTitleText(text: unknown) {
   return title.slice(0, end).trimEnd();
 }
 
-function normalizeConversationSnapshot(input: unknown): Conversation {
+export function normalizeConversationSnapshot(input: unknown): Conversation {
   const conversation = record(input);
   assertConversationReadable(input);
   if (conversation?.type === "conversation" && Array.isArray(conversation.entries)) {
@@ -1010,7 +1018,7 @@ function normalizeConversationSnapshot(input: unknown): Conversation {
   return serializeConversation(readEntries(input).map(entry => entry.message ?? entry));
 }
 
-function normalizeTranscript(transcript: unknown): TranscriptEntry[] {
+export function normalizeTranscript(transcript: unknown): TranscriptEntry[] {
   if (!Array.isArray(transcript)) return [];
   return transcript.map(normalizeTranscriptEvent).filter((entry): entry is TranscriptEntry => entry !== null);
 }
@@ -1033,12 +1041,12 @@ function normalizeTranscriptEvent(input: unknown): TranscriptEntry | null {
   if (event.type === "thinking") {
     const text = String(event.text ?? "");
     const phase = normalizeThinkingPhase(event.phase || event.status);
-    return text ? { type: "thinking", text, ...(phase ? { phase } : {}), ...meta, ...timing } : null;
+    return text ? { type: "thinking", text, ...(phase ? { phase } : {}), ...(event.streaming === true ? { streaming: true } : {}), ...meta, ...timing } : null;
   }
 
   if (event.type === "assistant") {
     const content = String(event.content ?? "");
-    return content ? { type: "assistant", content, ...meta, ...timing } : null;
+    return content ? { type: "assistant", content, ...(event.streaming === true ? { streaming: true } : {}), ...meta, ...timing } : null;
   }
 
   if (event.type === "compact") {
@@ -1047,6 +1055,7 @@ function normalizeTranscriptEvent(input: unknown): TranscriptEntry | null {
       compactId: String(event.compactId || ""),
       status: normalizeCompactStatus(event.status),
       summary: String(event.summary || ""),
+      ...(event.streaming === true ? { streaming: true } : {}),
       inputTokensBefore: finiteNumber(event.inputTokensBefore),
       inputTokensAfter: finiteNumber(event.inputTokensAfter),
       contextWindow: finiteNumber(event.contextWindow),

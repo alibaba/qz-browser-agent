@@ -407,7 +407,6 @@ const sessionAgentHost = createSessionAgentHost({
   persistRuntime: (...args) => sessionRuntimeState.persist(...args),
   recordResourceEvent: (...args) => sessionArtifacts.recordResourceEvent(...args),
   hydrateTranscript: (...args) => sessionTranscript.hydrate(...args),
-  getTranscript: (...args) => sessionTranscript.get(...args),
   releaseRunResources: releaseAgentRunResources,
   closeOwnedTabs: (...args) => sessionTabs.closeOwnedTabsAfterTerminal(...args),
   getAutomationRuntime: () => automationRuntime,

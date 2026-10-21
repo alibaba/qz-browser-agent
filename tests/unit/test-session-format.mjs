@@ -147,15 +147,18 @@ test('queued writes validate the current stored version when they execute', asyn
   assert.deepEqual(base.snapshot()._session_test, futureRecord());
 });
 
-test('navigation restores legacy record-only history and displays future-version recovery guidance', async () => {
-  for (const saved of [{ ...legacyRecord(), transcript: [] }, futureRecord()]) {
+test('navigation projects legacy history only without a display snapshot and preserves future-version guidance', async () => {
+  const legacyWithoutTranscript = legacyRecord();
+  delete legacyWithoutTranscript.transcript;
+  for (const saved of [legacyWithoutTranscript, { ...legacyRecord(), transcript: [] }, futureRecord()]) {
     const storage = createMemoryStorage({ _session_test: saved, _active_conversation_test: currentConversation() });
     if (saved.version === 3) await storage.remove('_active_conversation_test');
     const before = storage.snapshot();
     const fixture = navigationFixture(storage);
     const result = await fixture.navigation.switchToSession('test');
     if (saved.version === 3) {
-      assert.equal(fixture.transcript[0].text, 'old question');
+      if ('transcript' in saved) assert.deepEqual(fixture.transcript, []);
+      else assert.deepEqual(fixture.transcript.map(entry => entry.text ?? entry.content), ['old question', 'old answer']);
       assert.equal(fixture.sent.find(message => message.type === 'restore_session').session.entries.length, 2);
     } else {
       assert.equal(result, false);
@@ -165,6 +168,24 @@ test('navigation restores legacy record-only history and displays future-version
     }
     assert.deepEqual(storage.snapshot(), before);
   }
+});
+
+for (const current of [undefined, [], [{ type: 'assistant', content: 'running turn', streaming: true }]]) test(`navigation restores current content before requesting the live snapshot (${current === undefined ? 'base' : current.length ? 'checkpoint' : 'empty'})`, async () => {
+  const storage = createMemoryStorage({
+    _session_test: {
+      ...legacyRecord(), transcriptRevision: 'base',
+      currentTranscript: [{ type: 'assistant', content: 'initial current' }],
+    },
+    ...(current === undefined ? {} : {
+      _session_transcript_checkpoint_test: { version: 2, baseRevision: 'base', transcript: current },
+    }),
+  });
+  const before = storage.snapshot();
+  const fixture = navigationFixture(storage);
+  await fixture.navigation.switchToSession('test');
+  assert.deepEqual(fixture.transcript.map(entry => entry.text || entry.content),
+    ['old question', 'old answer', ...(current === undefined ? ['initial current'] : current.map(entry => entry.content))]);
+  assert.deepEqual(storage.snapshot(), before);
 });
 
 function navigationFixture(storage) {

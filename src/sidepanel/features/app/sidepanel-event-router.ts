@@ -339,7 +339,8 @@ export function createSidepanelEventRouter(options: RouterOptions) {
       transcriptChanged: change.transcriptChanged,
       transcriptCount: transcriptRenderer.getTranscript(sessionId).length,
     });
-    if (change.runtimeChanged || change.transcriptChanged || change.recordChanged || change.artifactsChanged) {
+    const changed = change.runtimeChanged || change.transcriptChanged || change.recordChanged || change.artifactsChanged;
+    if (changed) {
       options.syncKeepAlive?.();
       options.onUiEvent?.({ type: "ui_sessions_refresh", delay: 120 });
       const nextRuntime = sessionState.getRuntime(sessionId);
@@ -350,12 +351,12 @@ export function createSidepanelEventRouter(options: RouterOptions) {
       if (queueChanged && options.isCurrentSession?.(sessionId)) queuedFollowups.render();
       if (change.runtimeChanged && options.isCurrentSession?.(sessionId)) goalStrip.renderCurrent();
       runController.renderStatusVisibility();
-      transcriptReconcile.handleEvent(sessionId, event);
       if (change.transcriptChanged) {
         options.emitStreamTrace?.("ui_render_schedule", event, { delay: 0 });
         transcriptRenderer.scheduleRender(sessionId, { delay: 0 });
       }
     }
+    if (changed || event.type === "state") transcriptReconcile.handleEvent(sessionId, event);
     return true;
   }
 

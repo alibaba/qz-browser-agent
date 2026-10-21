@@ -96,6 +96,7 @@
   "backend.session.editRole": "बदला जाने वाला अनुरोध उपयोगकर्ता संदेश होना चाहिए।",
   "backend.session.historicalToolInterrupted": "पिछला टूल कॉल पूरा नहीं हुआ और बाधित चिह्नित किया गया।",
   "backend.status.runFailed": "रन असफल रहा",
+  "backend.status.runInterrupted": "रन बाधित हो गया। सहेजी गई बातचीत बहाल कर दी गई है। जारी रखने के लिए संदेश भेजें।",
   "backend.session.failedToolIncomplete": "टूल कॉल पूरा होने से पहले रन असफल हो गया।",
   "backend.session.interruptedToolIncomplete": "टूल का पूरा नतीजा आने से पहले रन बाधित हो गया।",
   "backend.session.argumentsIncomplete": "मॉडल ने टूल आर्ग्युमेंट पूरे नहीं बनाए; टूल नहीं चला।",

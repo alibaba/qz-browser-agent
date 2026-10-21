@@ -303,6 +303,7 @@ export class Agent {
   _loadedSkillToolNames = new Set<string>();
   _pendingContextEvents: AgentMessage[] = [];
   _followUpRunTimer: ReturnType<typeof setTimeout> | null = null;
+  _unstartedPrompt: { checkpoint: number; clientMessageId: string } | null = null;
   _queueScheduleEpoch = 0;
   _pendingQueueWrites = new Set<Promise<unknown>>();
   readonly sessionId: string;
@@ -480,6 +481,15 @@ export class Agent {
 
   exportSession() {
     return serializeConversation(this.messages);
+  }
+
+  /** Drop a prompt that was stored before agent_start. A started run keeps its messages. */
+  discardUnstartedPrompt(): { clientMessageId: string } | null {
+    const pending = this._unstartedPrompt;
+    if (!pending || this.isStreaming || this._currentRunId) return null;
+    this.messages.length = pending.checkpoint;
+    this._unstartedPrompt = null;
+    return { clientMessageId: pending.clientMessageId };
   }
 
   getPendingFollowUps() {
@@ -847,40 +857,47 @@ export class Agent {
     await this._persistIfInterruptedTurnRepaired();
     this._assertActiveLease();
     const messageCheckpoint = this.messages.length;
-    const contextCapsule = this._buildContextCapsuleMessage(dynamicContext, "prompt");
-    if (contextCapsule) this.messages.push(contextCapsule);
-    const goalCapsule = this._buildGoalSnapshotCapsuleMessage(dynamicContext, "user_message");
-    if (goalCapsule) this.messages.push(goalCapsule);
-    const normalizedDocuments = normalizeMessageDocuments(documents);
-    if (!String(text || "").trim() && !normalizeUserImageInputs(images).length && !normalizedDocuments.length) {
-      throw new Error(t("agent.emptyRequest"));
-    }
-    const documentCapsule = this._buildDocumentCapsuleMessage(normalizedDocuments, clientMessageId);
-    if (documentCapsule) this.messages.push(documentCapsule);
-    const userMsg: AgentMessage = {
-      ...this._markUserMessage(this._buildUserMessage(text, images, clientMessageId, normalizedDocuments)),
-      _accepting: true,
-    };
-    this.messages.push(userMsg);
-    await this._persistConversation({
-      rethrow: true,
-      retryOnce: true,
-      deliveryMessageId: clientMessageId,
-    }).catch(error => {
-      this.messages.length = messageCheckpoint;
-      throw error;
-    });
-    delete userMsg._accepting;
-    this._assertActiveLease();
-    traceMessageDelivery(this._trace, {
-      phase: "agent.accepted",
-      session: this.sessionId,
-      message: clientMessageId,
-    });
-    this._emitUserMessageAccepted(userMsg);
-    void Promise.resolve().then(() => onAccepted?.(userMsg)).catch(error => this._trace(`agent accepted hook failed: ${error?.message || error}`));
+    const unstartedPrompt = { checkpoint: messageCheckpoint, clientMessageId: String(clientMessageId || "").trim() };
+    this._unstartedPrompt = unstartedPrompt;
+    try {
+      const contextCapsule = this._buildContextCapsuleMessage(dynamicContext, "prompt");
+      if (contextCapsule) this.messages.push(contextCapsule);
+      const goalCapsule = this._buildGoalSnapshotCapsuleMessage(dynamicContext, "user_message");
+      if (goalCapsule) this.messages.push(goalCapsule);
+      const normalizedDocuments = normalizeMessageDocuments(documents);
+      if (!String(text || "").trim() && !normalizeUserImageInputs(images).length && !normalizedDocuments.length) {
+        this.messages.length = messageCheckpoint;
+        throw new Error(t("agent.emptyRequest"));
+      }
+      const documentCapsule = this._buildDocumentCapsuleMessage(normalizedDocuments, clientMessageId);
+      if (documentCapsule) this.messages.push(documentCapsule);
+      const userMsg: AgentMessage = {
+        ...this._markUserMessage(this._buildUserMessage(text, images, clientMessageId, normalizedDocuments)),
+        _accepting: true,
+      };
+      this.messages.push(userMsg);
+      await this._persistConversation({
+        rethrow: true,
+        retryOnce: true,
+        deliveryMessageId: clientMessageId,
+      }).catch(error => {
+        this.messages.length = messageCheckpoint;
+        throw error;
+      });
+      delete userMsg._accepting;
+      this._assertActiveLease();
+      traceMessageDelivery(this._trace, {
+        phase: "agent.accepted",
+        session: this.sessionId,
+        message: clientMessageId,
+      });
+      this._emitUserMessageAccepted(userMsg);
+      void Promise.resolve().then(() => onAccepted?.(userMsg)).catch(error => this._trace(`agent accepted hook failed: ${error?.message || error}`));
 
-    await this._runWithLifecycle([], { clientMessageId });
+      await this._runWithLifecycle([], { clientMessageId });
+    } finally {
+      if (this._unstartedPrompt === unstartedPrompt) this._unstartedPrompt = null;
+    }
   }
 
   async editUserMessageAndRerun({ clientMessageId = "", text = "", images = [], documents = [], context = null, onReplaced = null }: {clientMessageId?: string; text?: string; images?: unknown[]; documents?: unknown[]; context?: DynamicContext | null; onReplaced?: ((replacement: {conversation: unknown; message: AgentMessage; targetIndex: number}) => unknown) | null} = {}) {
@@ -1063,6 +1080,7 @@ export class Agent {
       this._lastContextUsageSnapshot = null;
       this._currentRunId = runId;
       started = true;
+      this._unstartedPrompt = null;
       this._emit({ type: "agent_start", runId,
         ...(clientMessageId ? { clientMessageId, eventSeq: ++this._timelineSeq } : {}),
       });

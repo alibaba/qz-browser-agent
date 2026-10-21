@@ -302,9 +302,9 @@ export async function testSessionNavigationSingleReveal() {
   const record = createSessionRecord([], [{ type: "assistant", content: "已加载" }]);
   const storage = {
     local: {
-      async get(key) {
-        if (String(key).startsWith("_session_")) return { [key]: record };
-        return { [key]: {} };
+      async get(keys) {
+        return Object.fromEntries((Array.isArray(keys) ? keys : [keys])
+          .filter(key => key === "_session_session-1").map(key => [key, record]));
       },
     },
   };

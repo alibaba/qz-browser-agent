@@ -309,7 +309,7 @@ vm.runInNewContext(`
   async function getSessionTranscriptRuntime(_sessionId, _conversation) {
     return [];
   }
-  async function saveSessionRecordRuntime(payload) {
+async function commitSessionRecordRuntime(payload) {
     globalThis.savedRecords.push(payload);
     return { saved: true, sessionId: payload.sessionId };
   }

@@ -96,6 +96,7 @@
   "backend.session.editRole": "Die bearbeitete Anfrage muss eine Nutzernachricht sein.",
   "backend.session.historicalToolInterrupted": "Ein früherer Tool-Aufruf blieb unvollständig und wurde als unterbrochen markiert.",
   "backend.status.runFailed": "Ausführung fehlgeschlagen",
+  "backend.status.runInterrupted": "Die Ausführung wurde unterbrochen. Der gespeicherte Chat wurde wiederhergestellt. Sende eine Nachricht, um fortzufahren.",
   "backend.session.failedToolIncomplete": "Die Ausführung ist vor Abschluss des Tool-Aufrufs fehlgeschlagen.",
   "backend.session.interruptedToolIncomplete": "Die Ausführung wurde unterbrochen, bevor das Tool ein vollständiges Ergebnis lieferte.",
   "backend.session.argumentsIncomplete": "Das Modell hat die Tool-Argumente nicht fertig erzeugt; das Tool wurde nicht ausgeführt.",

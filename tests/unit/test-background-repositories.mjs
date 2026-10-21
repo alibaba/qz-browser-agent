@@ -19,6 +19,7 @@ await sessionMetadataUpdatesAreAtomic();
 await runtimeCheckpointsArePerSessionAndCoalesced();
 await runtimeDeleteWinsOverPendingWrites();
 await staleConversationLeaseCannotWrite();
+await staleRecordLeaseCannotOverwriteAuthoritativeWrite();
 await sessionQueuesRecoverAfterStorageFailures();
 await deletedSessionsRejectLateWritesAndRecoverCleanup();
 await concurrentCreateThenDeleteKeepsTombstone();
@@ -90,6 +91,48 @@ async function staleConversationLeaseCannotWrite() {
   );
   assert.equal((await repository.readActiveConversation("s1")).messages.at(-1).content, "before");
   assert.throws(() => repository.clearActiveConversation("s1", lease), StaleSessionLeaseError);
+}
+
+async function staleRecordLeaseCannotOverwriteAuthoritativeWrite() {
+  for (const stage of ["queued", "reading"]) {
+    const base = createMemoryStorage();
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    let pauseRead = false;
+    const storage = {
+      ...base,
+      async get(keys) {
+        if (pauseRead) {
+          pauseRead = false;
+          entered.resolve();
+          await release.promise;
+        }
+        return base.get(keys);
+      },
+    };
+    const repository = createSessionRepository({ storage });
+    let active = true;
+    const lease = { sessionId: "s1", isActive: () => active };
+    const seed = createSessionRecord(null, [{ type: "assistant", content: "seed" }]);
+    const stale = createSessionRecord(null, [{ type: "assistant", content: "stale" }]);
+    const authoritative = createSessionRecord(null, [{ type: "assistant", content: "authoritative" }]);
+    await repository.writeRecord("s1", seed, lease);
+    pauseRead = true;
+    const blocker = stage === "queued" ? repository.writeRecord("s1", seed) : null;
+    if (blocker) await entered.promise;
+    const pending = repository.writeRecord("s1", stale, lease);
+    const rejected = assert.rejects(pending, StaleSessionLeaseError);
+    await entered.promise;
+    active = false;
+    const replacement = repository.writeRecord("s1", authoritative);
+    release.resolve();
+    await Promise.all([blocker, rejected, replacement]);
+
+    assert.deepEqual(await repository.readRecord("s1"), authoritative, stage);
+    assert.equal(base.writes.some(write =>
+      write.patch?._session_s1?.transcript?.[0]?.content === "stale"), false, stage);
+    assert.throws(() => repository.writeRecord("s1", stale, lease), StaleSessionLeaseError);
+  }
 }
 
 async function sessionQueuesRecoverAfterStorageFailures() {
