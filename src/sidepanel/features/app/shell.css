@@ -1,4 +1,4 @@
-#app[data-consent-pending] { display: none; }
+#app[data-consent-pending] { display: none !important; }
 .data-consent { height: 100%; overflow-y: auto; line-height: 1.6; }
 .data-consent h1 { font-size: 17px; line-height: 1.3; font-weight: 600; }
 .data-consent p { margin: 0; }

@@ -13,6 +13,11 @@ test("consent blocks workspace initialization, survives reopening, and starts no
   page.on("request", request => requests.push(request.url()));
   await setup(page);
   await expect(page.locator("#app")).toHaveAttribute("inert", "");
+  // The panel body cannot scroll; the card must sit at the top without relying on focus scrolling.
+  expect(await page.evaluate(() => {
+    document.body.scrollTop = 0;
+    return [getComputedStyle(document.querySelector("#app")).display, document.querySelector(".data-consent").getBoundingClientRect().top];
+  })).toEqual(["none", 0]);
   expect(requests.some(value => /\/sidepanel\/app\.js/.test(value))).toBe(false);
   expect(await page.evaluate(() => window.__qzPostedMessages)).toEqual([]);
   await page.locator("[data-consent-accept]").click();
@@ -23,6 +28,36 @@ test("consent blocks workspace initialization, survives reopening, and starts no
   await page.reload();
   await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-booting");
   await expect(page.locator(".data-consent")).toHaveCount(0);
+});
+
+test("a stalled consent read reveals the startup notice", async ({ page }) => {
+  await page.clock.install();
+  await page.addInitScript(installBenchmarkChromeStub, { benchmark: false, dataConsent: false, uiLanguage: "en" });
+  await page.addInitScript(() => {
+    const local = chrome.storage.local;
+    const get = local.get.bind(local);
+    local.get = keys => {
+      if (keys !== "qz_data_consent") return get(keys);
+      window.__consentReadStalled = true;
+      return new Promise(() => {});
+    };
+  });
+  await page.goto(url);
+  await page.waitForFunction(() => window.__consentReadStalled === true);
+  await expect(page.locator("#app")).toHaveAttribute("data-workspace-booting", "");
+  await page.clock.runFor(6000);
+  await expect(page.locator("#workspace-boot-fallback")).toHaveText("qz is still starting. Wait a moment or reopen the side panel.");
+  await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-booting");
+  await expect(page.locator("#app")).toHaveCSS("visibility", "visible");
+});
+
+test("the startup timer stops while the consent card waits for the user", async ({ page }) => {
+  await page.clock.install();
+  await setup(page);
+  await page.clock.runFor(60_000);
+  await expect(page.locator(".data-consent")).toBeVisible();
+  await expect(page.locator("#workspace-boot-fallback")).toBeHidden();
+  await expect(page.locator("#app")).toHaveAttribute("data-workspace-booting", "");
 });
 
 test("save failure keeps the card open and supports retry", async ({ page }) => {
