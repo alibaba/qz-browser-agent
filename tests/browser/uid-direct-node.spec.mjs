@@ -504,6 +504,22 @@ test.describe("uid resolves the original node", () => {
     expect(hits.outer || 0).toBe(0);
   });
 
+  test("a list_images uid dies when the same url reloads", async () => {
+    const listed = await h.call("list_images", { selector: "#blob" });
+    expect(listed.code, JSON.stringify(listed)).toBeUndefined();
+    const image = listed.images.find(item => item.alt === "Blob picture");
+    expect(image?.target, JSON.stringify(listed)).toMatch(/^uid:/);
+    const before = await h.call("read_image", { target: image.target });
+    expect(before.code, JSON.stringify(before)).toBeUndefined();
+    const url = (await h.state()).url;
+    await h.page.reload({ waitUntil: "domcontentloaded" });
+    await expect.poll(async () => (await h.state()).ready).toBe("complete");
+    expect((await h.state()).url.split("#")[0]).toBe(url.split("#")[0]);
+    const after = await h.call("read_image", { target: image.target });
+    expect(after.code).toBe("STALE_ELEMENT_UID");
+    expect(after.code).not.toBe("STALE_ELEMENT_UID_PAGE_CHANGED");
+  });
+
   test("duplicate image ids stay readable", async () => {
     await h.page.evaluate(() => {
       const root = document.createElement("div");

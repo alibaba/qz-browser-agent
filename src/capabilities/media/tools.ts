@@ -15,7 +15,7 @@ type MediaHost = Pick<ToolExtensionAPI,
   | "sendCdp" | "withDebugger" | "getPageContext"> & Pick<ToolExtensionAPI["element"],
   "resolveSelectorTarget" | "resolveElementReference" | "makeSnapshotId" | "makeElementUid" | "registerElementRef"
   | "elementTargetForUid" | "elementTargetForSelector" | "elementTargetForRef" | "elementTargetGrammar"
-  | "getElementTargetDescription" | "callElement" | "bindBackendNodes"> & PageObservationHost & {
+  | "getElementTargetDescription" | "callElement" | "bindBackendNodes" | "readMainDocumentId"> & PageObservationHost & {
   queryDataRows?: typeof queryDataRows; updateDataTableMetadata?: typeof updateDataTableMetadata;
   upsertDataRows?: typeof upsertDataRows; saveImageAsset?: typeof saveImageAsset;
   now?(): number;
@@ -80,6 +80,7 @@ export function registerMediaTools({
     return result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : {};
   },
   bindBackendNodes = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 0) }),
+  readMainDocumentId = async () => "",
   getTabPageState,
   pageStateDelta,
   commitObservedPageNavigation,
@@ -352,6 +353,7 @@ registerTool({
       // A read-only tab cannot attach the debugger. Keep the images and resolve them by selector.
       if (code !== "SESSION_TAB_UNOWNED" && code !== "SESSION_TAB_FOREIGN") throw error;
     }
+    const documentId = await readMainDocumentId(target.tabId);
     const images = listed.map((item, rank) => {
         const uid = makeElementUid(snapshotId, rank + 1, "i");
         registerElementRef({
@@ -367,6 +369,7 @@ registerTool({
           imageIndex: item.index,
           backendNodeId: bound.ids[rank] || undefined,
           loaderId: bound.loaderId || undefined,
+          documentId: documentId || undefined,
           source: "list_images",
         });
         return imageDiscoveryResultItem(item, elementTargetForUid(uid));

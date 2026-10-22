@@ -271,13 +271,12 @@ runtime.registerElementRef({
   index: 0,
   loaderId: "loader-previous",
 });
-const contentBeforeStaleSelector = contentCalls.length;
-await assert.rejects(
-  runtime.callElement(5, await runtime.resolveElementReference(undefined, { target: "uid:t5.00000a.1" }, context), "inspectElement", {}, context),
-  error => error?.code === "STALE_ELEMENT_UID",
-  "a selector uid from a previous document must not run",
-);
-assert.equal(contentCalls.length, contentBeforeStaleSelector, "a stale selector uid must not reach the content script");
+const debuggerBeforeSelector = debuggerUses;
+const contentBeforeSelector = contentCalls.length;
+const selectorRead = await runtime.callElement(5, await runtime.resolveElementReference(undefined, { target: "uid:t5.00000a.1", readOnly: true }, context), "inspectElement", {}, context);
+assert.equal(selectorRead.ok, true);
+assert.equal(contentCalls.length, contentBeforeSelector + 1, "a selector uid keeps its content-script read");
+assert.equal(debuggerUses, debuggerBeforeSelector, "a stored loader id must not attach the debugger for a selector uid");
 
 let probedDocumentId = "doc-live";
 chrome.scripting = {

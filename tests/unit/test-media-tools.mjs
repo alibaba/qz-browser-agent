@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
 
 let tabPageUrl = "https://example.test/";
+let mainDocumentId = "";
 let browserZoom = 1;
 let browserZoomError = null;
 globalThis.chrome = {
   scripting: {
     async executeScript({ func, args }) {
       if (measurementUnavailable) throw new Error("Cannot inject into this page");
-      return [{ result: runInNewContext(`(${func})(...args)`, { args,
+      return [{ documentId: mainDocumentId, result: runInNewContext(`(${func})(...(args || []))`, { args: args || [],
         innerWidth: viewportState.clientWidth, innerHeight: viewportState.clientHeight,
         outerWidth: 412, outerHeight: 915, visualViewport: { scale: viewportState.scale },
       }) }];
@@ -1881,6 +1882,7 @@ registerMediaTools({
   getElementTargetDescription: () => "target description",
   callElement: fallbackElements.callElement,
   bindBackendNodes: fallbackElements.bindBackendNodes,
+  readMainDocumentId: fallbackElements.readMainDocumentId,
   async getTabPageState(tabId) { return { tabId, url: "https://example.test/", title: "Example" }; },
   pageStateDelta() { return { urlChanged: false, titleChanged: false }; },
   commitObservedPageNavigation() { return null; },
@@ -1929,6 +1931,21 @@ assert.equal(unownedRead.src, "https://example.test/b.png");
 assert.equal(unownedRead.code, undefined);
 assert.equal(fallbackContentCalls.filter(call => call.action === "readImageElement").at(-1).selector, "main > img.card:nth-of-type(2)");
 assert.equal(fallbackContentCalls.filter(call => call.action === "readImageElement").at(-1).index, 0);
+fallbackElements.registerElementRef({
+  uid: "t15.00000d.i1",
+  tabId: foreignTabId,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/",
+  selector: "main > img.card:nth-of-type(1)",
+  index: 0,
+  loaderId: "loader-from-list",
+});
+const selectorOnlyRead = await fallbackDefinitions.get("read_image").execute({
+  tabId: foreignTabId,
+  target: "uid:t15.00000d.i1",
+}, undefined, { sessionId: "session-a" });
+assert.equal(selectorOnlyRead.code, undefined, JSON.stringify(selectorOnlyRead));
+assert.equal(selectorOnlyRead.src, "https://example.test/a.png", "a selector-only uid on an unclaimed tab stays readable");
 const contentBeforeMutation = fallbackContentCalls.length;
 await assert.rejects(
   fallbackDefinitions.get("act_on_element").execute({
@@ -1972,3 +1989,15 @@ await assert.rejects(
   error => error?.code === "STALE_IMAGE_TARGET",
   "collection uses the same source check when a uid falls back to its selector",
 );
+mainDocumentId = "doc-live";
+const stamped = await fallbackDefinitions.get("list_images").execute({ tabId: 5 }, undefined, { sessionId: "session-a" });
+assert.equal(stamped.code, undefined, JSON.stringify(stamped));
+const liveImage = await fallbackDefinitions.get("read_image").execute({ target: stamped.images[0].target }, undefined, { sessionId: "session-a" });
+assert.equal(liveImage.code, undefined, JSON.stringify(liveImage));
+mainDocumentId = "doc-next";
+await assert.rejects(
+  fallbackDefinitions.get("read_image").execute({ target: stamped.images[0].target }, undefined, { sessionId: "session-a" }),
+  error => error?.code === "STALE_ELEMENT_UID",
+  "a list_images uid dies after the same url loads a new document",
+);
+mainDocumentId = "";

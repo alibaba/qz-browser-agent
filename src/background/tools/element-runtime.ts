@@ -414,7 +414,6 @@ async function useElement<T>(tabId: number | undefined, binding: ElementBinding,
   }
   const route = selectorRoute(binding);
   if (binding.uid && !route.selector) throw staleElement(binding.target || binding.uid);
-  if (binding.uid) await assertSelectorDocument(tabId, binding, context);
   const call: ElementCaller = async (action, params = {}) => {
     const requested = String(params.selector || "").trim();
     const selector = requested || route.selector;
@@ -427,18 +426,6 @@ async function useElement<T>(tabId: number | undefined, binding: ElementBinding,
 
 async function callElement(tabId: number | undefined, binding: ElementBinding, action: string, params: Record<string, unknown> = {}, context: ToolContext = {}) {
   return useElement(tabId, binding, context, call => call(action, params));
-}
-
-async function assertSelectorDocument(tabId: number | undefined, binding: ElementBinding, context: ToolContext) {
-  const expected = String(binding.ref?.loaderId || "");
-  if (!binding.uid || !expected) return;
-  const id = Number(binding.tabId || tabId);
-  if (!Number.isInteger(id) || id <= 0) throw staleElement(binding.target || binding.uid);
-  await withDebugger(id, async (_target, send) => {
-    const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
-    const loaderId = String(frame.loaderId || "");
-    if (loaderId && loaderId !== expected) throw staleElement(binding.uid || binding.target || "");
-  }, context);
 }
 
 /** Chrome's main-frame document id, without a navigation permission. Empty when the probe is unavailable. */
