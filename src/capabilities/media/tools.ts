@@ -710,13 +710,13 @@ registerTool({
       if (isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(errorCode(err)).startsWith("STALE_ELEMENT_UID"))) throw err;
       canvasResult = { error: errorMessage(err), code: errorCode(err) || "IMAGE_CANVAS_FAILED" };
     }
-    // Selector fallback must not return a different image than the one list_images registered.
-    if (!Number(ref.ref?.backendNodeId || 0)) {
-      assertSelectedImageSource({
-        target: ref.target || target,
-        expectedSrc: String(ref.ref?.imageSrc || "").trim(),
-      }, canvasResult?.currentSrc || canvasResult?.src || "");
-    }
+    // list_images records the source and binds a node afterward. The node can
+    // already be a replacement, so both the pixel read and the screenshot
+    // fallback compare the observed source before returning an image.
+    assertSelectedImageSource({
+      target: ref.target || target,
+      expectedSrc: String(ref.ref?.imageSrc || "").trim(),
+    }, canvasResult?.currentSrc || canvasResult?.src || "");
 
     if (canvasResult?.dataUrl) {
 	      return buildReadImageResult({

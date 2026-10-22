@@ -78,6 +78,7 @@ const imageMetadataWrites = [];
 const imageUpserts = [];
 let imageWriteError = null;
 let bindBackendNodesImpl = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 0) });
+let readImageDataUrl = "data:image/png;base64,aW1hZ2U=";
 let listedImages = [{
   index: 4,
   rank: 0,
@@ -171,7 +172,7 @@ const runtime = registerMediaTools({
     if (action === "readImageElement") {
       return {
         ...listedImages[0],
-        dataUrl: "data:image/png;base64,aW1hZ2U=",
+        ...(readImageDataUrl ? { dataUrl: readImageDataUrl } : {}),
         mimeType: "image/png",
         width: 800,
         height: 600,
@@ -1803,6 +1804,63 @@ imageWriteError = null;
 const recoveredScreenshot = await definitions.get("screenshot").execute({ tabId: 3, destination: "failed-screenshot" }, undefined, screenContext);
 assert.equal(recoveredScreenshot.saved, true, "the same screenshot path recovers after a persistence failure");
 assert.equal(recoveredScreenshot.totalRows, 1);
+
+const savedListedImages = listedImages;
+const savedBind = bindBackendNodesImpl;
+const savedReadImageDataUrl = readImageDataUrl;
+try {
+  bindBackendNodesImpl = async (_tabId, selectors = []) => ({ loaderId: "loader-images", ids: selectors.map(() => 77) });
+  listedImages = [{
+    index: 4,
+    rank: 0,
+    selector: "#gallery > img.hero",
+    src: "https://example.test/hero-a.png",
+    currentSrc: "https://example.test/hero-a.png",
+    alt: "Hero",
+    title: "",
+    naturalWidth: 800,
+    naturalHeight: 600,
+    visible: true,
+  }];
+  const bound = await definitions.get("list_images").execute({ tabId: 6 }, undefined, { sessionId: "session-a" });
+  assert.equal(bound.images[0].target, "uid:t6_snapshot.i1");
+  assert.equal(elementRefs.get("t6_snapshot.i1").backendNodeId, 77);
+  assert.equal(elementRefs.get("t6_snapshot.i1").imageSrc, "https://example.test/hero-a.png");
+  const sameImage = await definitions.get("read_image").execute({ target: bound.images[0].target }, undefined, { sessionId: "session-a" });
+  assert.equal(sameImage.src, "https://example.test/hero-a.png");
+  assert.match(sameImage._image, /^data:image\/png;base64,/, "an unchanged node-backed image stays readable");
+
+  listedImages = [{ ...listedImages[0], src: "https://example.test/hero-b.png", currentSrc: "https://example.test/hero-b.png" }];
+  const capturesBeforeReplaced = cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length;
+  await assert.rejects(
+    definitions.get("read_image").execute({ target: bound.images[0].target }, undefined, { sessionId: "session-a" }),
+    error => error?.code === "STALE_IMAGE_TARGET"
+      && error?.details?.expectedSrc === "https://example.test/hero-a.png"
+      && error?.details?.currentSrc === "https://example.test/hero-b.png",
+    "a node-backed read must reject a replaced image instead of returning its pixels",
+  );
+  readImageDataUrl = "";
+  await assert.rejects(
+    definitions.get("read_image").execute({ target: bound.images[0].target }, undefined, { sessionId: "session-a" }),
+    error => error?.code === "STALE_IMAGE_TARGET",
+    "a node-backed screenshot fallback must reject a replaced image",
+  );
+  assert.equal(
+    cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length,
+    capturesBeforeReplaced,
+    "a replaced node-backed image must not fall through to an element screenshot",
+  );
+
+  listedImages = [{ ...listedImages[0], src: "https://example.test/hero-a.png", currentSrc: "https://example.test/hero-a.png" }];
+  const fallbackImage = await definitions.get("read_image").execute({ target: bound.images[0].target }, undefined, { sessionId: "session-a" });
+  assert.equal(fallbackImage.code, undefined, JSON.stringify(fallbackImage));
+  assert.match(fallbackImage.method, /^element_screenshot_fallback:/, "a matching node-backed image still uses the screenshot fallback when canvas pixels are unavailable");
+  assert.match(fallbackImage._image, /^data:image\//);
+} finally {
+  listedImages = savedListedImages;
+  bindBackendNodesImpl = savedBind;
+  readImageDataUrl = savedReadImageDataUrl;
+}
 
 console.log("media screenshot boundary tests passed");
 

@@ -445,6 +445,23 @@ test.describe("uid resolves the original node", () => {
     expect(rightPixel.b).toBeLessThan(40);
   });
 
+  test("a list_images uid does not read a replaced image", async () => {
+    await paint(h.page, "#blob", "#00ff00");
+    const listed = await h.call("list_images", { selector: "#blob" });
+    expect(listed.code, JSON.stringify(listed)).toBeUndefined();
+    const image = listed.images.find(item => item.alt === "Blob picture");
+    expect(image?.target, JSON.stringify(listed)).toMatch(/^uid:/);
+    const before = await h.call("read_image", { target: image.target });
+    expect(before.code, JSON.stringify(before)).toBeUndefined();
+    const beforePixel = await sample(h.page, before.dataUrl || before._image);
+    expect(beforePixel.g).toBeGreaterThan(200);
+    expect(beforePixel.r).toBeLessThan(40);
+    await paint(h.page, "#blob", "#ff0000");
+    const after = await h.call("read_image", { target: image.target });
+    expect(after.code, JSON.stringify(after)).toBe("STALE_IMAGE_TARGET");
+    expect(after._image || after.dataUrl).toBeFalsy();
+  });
+
   test("closed-shadow focus, date fill, and rich-text child readback keep the existing editors", async () => {
     const snapshot = (await tree(h)).snapshot;
     const shadow = targets(snapshot, "Shadow field")[0];

@@ -366,6 +366,9 @@ function assertImageCandidateTargetContract() {
   assert.match(tools, /matched\.length !== 1[\s\S]*IMAGE_TARGET_NOT_SINGLE/, "target collection should require exactly one image");
   assert.match(tools, /function assertSelectedImageSource[\s\S]*currentSrc === expectedSrc[\s\S]*STALE_IMAGE_TARGET/, "target collection should reject changed image identity");
   assert.match(tools, /assertSelectedImageSource\(candidate, canvasResult\.currentSrc \|\| canvasResult\.src\)/, "collection should recheck image identity after the page read");
+  const readBlock = toolBlock("read_image");
+  assert.match(readBlock, /assertSelectedImageSource\(\{[\s\S]*expectedSrc: String\(ref\.ref\?\.imageSrc/, "read_image should verify the listed image source before returning pixels");
+  assert.doesNotMatch(readBlock, /if\s*\(\s*!Number\(ref\.ref\?\.backendNodeId/, "a backend node id must not skip the listed image source check");
   assert.match(contentScript, /let rawIndex = 0;/, "content script should track raw image indexes");
   assert.match(contentScript, /const candidateIndex = rawIndex\+\+;/, "raw image index should advance before filters");
   assert.match(contentScript, /index: candidateIndex,\n\s+rank: images\.length,/, "list_images should expose raw index and filtered rank");
