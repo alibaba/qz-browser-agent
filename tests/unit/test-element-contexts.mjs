@@ -168,3 +168,96 @@ test("failure after action dispatch never initializes or replays the action", as
   assert.equal(h.initialized, 0);
   assert.equal(h.actions, 1);
 });
+
+test("detaching a child session drops only that session's isolated contexts", async () => {
+  const tabId = nextTab++;
+  const commands = [];
+  let reportSess = true;
+  const emitContext = (sessionId, id, frameId) => events.forEach(listener => listener(
+    sessionId ? { tabId, sessionId } : { tabId },
+    "Runtime.executionContextCreated",
+    { context: { id, origin: "chrome-extension://current-extension", auxData: { type: "isolated", frameId } } },
+  ));
+  const send = async (method, params = {}) => {
+    commands.push({ method, params, sessionId: "" });
+    if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main", loaderId: "document-1" } } };
+    if (method === "Target.setAutoAttach") {
+      for (const [sessionId, targetId] of [["sess", "oopif-target"], ["kept", "side-target"]]) {
+        events.forEach(listener => listener({ tabId }, "Target.attachedToTarget", {
+          sessionId, targetInfo: { type: "iframe", targetId, parentFrameId: "main" },
+        }));
+      }
+      return {};
+    }
+    if (method === "Runtime.enable") {
+      emitContext("", 7, "main");
+      return {};
+    }
+    if (method === "Runtime.evaluate") return { result: { value: { extensionId: "current-extension", bridge: true } } };
+    if (method === "DOM.resolveNode") return { object: { objectId: "node" } };
+    if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true } } };
+    if (method === "Runtime.releaseObjectGroup") return {};
+    throw new Error(`Unexpected CDP method ${method}`);
+  };
+  send.tabId = tabId;
+  send.connectionId = 4;
+  send.inSession = sessionId => async (method, params = {}) => {
+    commands.push({ method, params, sessionId });
+    if (method === "Page.getFrameTree") {
+      const frame = sessionId === "kept"
+        ? { id: "side", loaderId: "side-loader" }
+        : { id: "oopif", loaderId: "oopif-loader" };
+      return { frameTree: { frame } };
+    }
+    if (method === "Runtime.enable") {
+      if (sessionId === "sess" && reportSess) emitContext("sess", 9, "oopif");
+      if (sessionId === "kept") emitContext("kept", 11, "side");
+      return {};
+    }
+    if (method === "Runtime.evaluate") return { result: { value: { extensionId: "current-extension", bridge: true } } };
+    if (method === "DOM.resolveNode") return { object: { objectId: `${sessionId}-node` } };
+    if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true } } };
+    if (method === "Runtime.releaseObjectGroup") return {};
+    throw new Error(`Unexpected child CDP method ${method}`);
+  };
+  const runtime = createElementRuntime({
+    ToolExecutionError,
+    getToolRuntimeDependencies: () => ({}),
+    makeSessionTabTargetError: code => new ToolExecutionError(code, code),
+    assertTabAllowed: async () => {},
+    sendToContent: async () => { throw new Error("UID must not use CSS fallback"); },
+    initializeContentScript: async () => {},
+    async withDebugger(_tabId, callback) { return callback({ tabId }, send); },
+  });
+  const call = (frameId, loaderId) => runtime.callElement(tabId, {
+    tabId,
+    uid: frameId,
+    ref: { backendNodeId: 3, loaderId, ...(frameId === "main" ? {} : { frameId }) },
+  }, "inspectElement");
+  assert.equal((await call("main", "document-1")).ok, true);
+  assert.equal((await call("oopif", "oopif-loader")).ok, true);
+  assert.equal((await call("side", "side-loader")).ok, true);
+
+  events.forEach(listener => listener({ tabId }, "Target.detachedFromTarget", { sessionId: "sess" }));
+  events.forEach(listener => listener({ tabId }, "Target.attachedToTarget", {
+    sessionId: "sess",
+    targetInfo: { type: "iframe", targetId: "oopif-target", parentFrameId: "main" },
+  }));
+  reportSess = false;
+
+  commands.length = 0;
+  assert.equal((await call("main", "document-1")).ok, true);
+  assert.equal(commands.some(item => item.method === "Runtime.enable"), false, "the main frame context stays");
+
+  commands.length = 0;
+  assert.equal((await call("side", "side-loader")).ok, true);
+  assert.equal(commands.some(item => item.method === "Runtime.enable"), false, "another child session's context stays");
+
+  commands.length = 0;
+  await assert.rejects(call("oopif", "oopif-loader"), error => error?.code === "CONTENT_SCRIPT_NOT_READY");
+  assert.ok(
+    commands.some(item => item.sessionId === "sess" && item.method === "Runtime.enable"),
+    "the detached session discovers contexts again",
+  );
+  assert.equal(commands.some(item => item.method === "Runtime.disable"), false);
+});

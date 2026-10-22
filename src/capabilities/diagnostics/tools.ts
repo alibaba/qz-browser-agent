@@ -63,7 +63,7 @@ const DEFAULT_NETWORK_LIMIT = 200;
 const DEFAULT_BODY_LIMIT = 120000;
 
 chrome.debugger?.onEvent?.addListener((source, method, params) => {
-  if (source.tabId == null || !method.startsWith("Network.")) return;
+  if (source.sessionId || source.tabId == null || !method.startsWith("Network.")) return;
   const monitor = networkMonitors.get(source.tabId);
   if (!monitor?.enabled) return;
   handleNetworkEvent(monitor, method, params as NetworkEvent);
@@ -73,7 +73,7 @@ const consoleMonitors = new Map<number, ConsoleMonitor>();
 const DEFAULT_CONSOLE_LIMIT = 200;
 
 chrome.debugger?.onEvent?.addListener((source, method, params) => {
-  if (source.tabId == null || !method.startsWith("Runtime.")) return;
+  if (source.sessionId || source.tabId == null || !method.startsWith("Runtime.")) return;
   const monitor = consoleMonitors.get(source.tabId);
   if (!monitor?.enabled) return;
   handleConsoleEvent(monitor, method, params as ConsoleEvent);

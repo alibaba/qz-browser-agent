@@ -40,7 +40,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-10-22-fill-root";
+  const QZ_CONTENT_VERSION = "2026-10-22-iframe-frame";
   const imageSourceIdentities = new WeakMap<HTMLImageElement, { source: string; identity: string }>();
   const imageSourceScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let imageSourceSequence = 0;
@@ -3004,8 +3004,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     }
     const saved = token ? fillRoots.get(token) : undefined;
     if ((!element || !element.isConnected) && saved?.isConnected) element = saved;
-    const view = element?.ownerDocument?.defaultView;
-    if (!element || !view || view.top !== view) return toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {});
+    // This script accepts elements in its own document, including a direct child frame it was injected into.
+    if (!element || element.ownerDocument !== document) return toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {});
     if (payload?.editingHost && element instanceof HTMLElement && element.isContentEditable) {
       const root = getContentEditableRoot(element);
       if (root.isConnected) {

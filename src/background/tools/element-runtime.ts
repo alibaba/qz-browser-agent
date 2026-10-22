@@ -1,10 +1,12 @@
 import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js';
+import type { CdpCommand } from '../../sdk/background/browser.js';
 import type { GetToolRuntimeDependencies } from '../../sdk/background/services.js';
 import type { createCdpRuntime } from './cdp-runtime.js';
+import { openChildFrame } from './child-frames.js';
 export interface ElementReference {
   uid?: string; selector?: string; tabId?: number; sessionId?: string; pageUrl?: string;
   index?: number; imageSrc?: string; imageIndex?: number;   backendNodeId?: number; role?: string; name?: string; createdAt?: number;
-  loaderId?: string; documentId?: string;
+  loaderId?: string; documentId?: string; frameId?: string;
   [field: string]: unknown;
 }
 interface ElementRuntimeHost {
@@ -23,18 +25,49 @@ import { getLanguage } from "../../shared/i18n/index.js";
 import { t } from "./messages.js";
 
 const OBJECT_GROUP = "qz-uid";
+// One table per tab while Runtime stays enabled. A same-process frame is keyed
+// by its CDP frame id. A cross-process frame is keyed by session id plus frame id.
+// Detach of a child session drops that session's keys.
 const isolatedByTab = new Map<number, Map<string, Set<number>>>();
-function noteExecutionContext(source: { tabId?: number } | undefined, method: string, params: unknown) {
+function contextKey(sessionId: string, frameId: string) {
+  return sessionId ? `session:${sessionId}\n${frameId}` : frameId;
+}
+function scopedContextKeys(map: Map<string, Set<number>>, sessionId: string) {
+  const prefix = sessionId ? `session:${sessionId}\n` : "";
+  return [...map.keys()].filter(key => sessionId ? key.startsWith(prefix) : !key.startsWith("session:"));
+}
+function noteExecutionContext(source: { tabId?: number; sessionId?: string } | undefined, method: string, params: unknown) {
   const tabId = Number(source?.tabId);
+  const sessionId = String(source?.sessionId || "");
   if (!Number.isInteger(tabId) || tabId <= 0) return;
-  if (method === "Runtime.executionContextsCleared") { isolatedByTab.delete(tabId); return; }
+  const current = () => isolatedByTab.get(tabId);
+  if (method === "Target.detachedFromTarget") {
+    const map = current();
+    if (!map) return;
+    const detached = String(record(params).sessionId || sessionId);
+    if (!detached) return;
+    for (const key of scopedContextKeys(map, detached)) map.delete(key);
+    if (!map.size) isolatedByTab.delete(tabId);
+    return;
+  }
+  if (method === "Runtime.executionContextsCleared") {
+    const map = current();
+    if (!map) return;
+    for (const key of scopedContextKeys(map, sessionId)) map.delete(key);
+    if (!map.size) isolatedByTab.delete(tabId);
+    return;
+  }
   if (method === "Runtime.executionContextDestroyed") {
     const id = Number(record(params).executionContextId);
-    const frames = isolatedByTab.get(tabId);
-    if (frames) for (const [frameId, candidates] of frames) {
+    const map = current();
+    if (!map) return;
+    for (const key of scopedContextKeys(map, sessionId)) {
+      const candidates = map.get(key);
+      if (!candidates) continue;
       candidates.delete(id);
-      if (!candidates.size) frames.delete(frameId);
+      if (!candidates.size) map.delete(key);
     }
+    if (!map.size) isolatedByTab.delete(tabId);
     return;
   }
   if (method !== "Runtime.executionContextCreated") return;
@@ -43,18 +76,19 @@ function noteExecutionContext(source: { tabId?: number } | undefined, method: st
   if (context.origin !== `chrome-extension://${chrome.runtime?.id || ""}` || aux.type !== "isolated") return;
   const id = Number(context.id), frameId = String(aux.frameId || "");
   if (!Number.isInteger(id) || id <= 0 || !frameId) return;
-  const frames = isolatedByTab.get(tabId) || new Map<string, Set<number>>();
-  const candidates = frames.get(frameId) || new Set<number>();
+  const map = current() || new Map<string, Set<number>>();
+  const key = contextKey(sessionId, frameId);
+  const candidates = map.get(key) || new Set<number>();
   candidates.add(id);
-  frames.set(frameId, candidates);
-  isolatedByTab.set(tabId, frames);
+  map.set(key, candidates);
+  isolatedByTab.set(tabId, map);
 }
 globalThis.chrome?.debugger?.onEvent?.addListener((source, method, params) => noteExecutionContext(source, method, params));
 globalThis.chrome?.debugger?.onDetach?.addListener(source => {
   const tabId = Number(source?.tabId);
-  if (Number.isInteger(tabId)) isolatedByTab.delete(tabId);
+  if (!Number.isInteger(tabId)) return;
+  isolatedByTab.delete(tabId);
 });
-type CdpSend = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 type ElementCaller = (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
 /** Owns stable element references and page/tab/session validation. */
@@ -371,7 +405,7 @@ async function bindBackendNodes(tabId: number, selectors: string[], context: Too
   }
 }
 
-async function describeSelectors(send: CdpSend, selectors: string[]) {
+async function describeSelectors(send: CdpCommand, selectors: string[]) {
   const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
   const root = record(await send("DOM.getDocument", { depth: 0, pierce: true }));
   const documentNodeId = Number(record(root.root).nodeId || 0);
@@ -446,28 +480,48 @@ async function readMainDocumentId(tabId: number) {
   }
 }
 
-async function withElement<T>(tabId: number | undefined, binding: { tabId?: number; uid?: string; target?: string; ref?: ElementReference }, context: ToolContext, run: (send: CdpSend, call: ElementCaller) => Promise<T>) {
+async function withElement<T>(tabId: number | undefined, binding: { tabId?: number; uid?: string; target?: string; ref?: ElementReference }, context: ToolContext, run: (send: CdpCommand, call: ElementCaller) => Promise<T>) {
   const id = Number(binding.tabId || tabId);
   if (!Number.isInteger(id) || id <= 0) throw new ToolExecutionError("MISSING_TAB_ID", "Element target has no usable tabId", { target: binding.target || "" });
   const objectGroup = `${OBJECT_GROUP}-${id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   return withDebugger(id, async (_target, send) => {
-    const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
-    const loaderId = String(frame.loaderId || "");
-    if (binding.ref?.loaderId && loaderId && binding.ref.loaderId !== loaderId) throw staleElement(binding.uid || binding.target || "");
-    const contextId = await contentContextId(id, send, String(frame.id || ""));
-    // Selection may initialize Content while a navigation replaces the document.
-    const current = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
-    if (current.id !== frame.id || current.loaderId !== frame.loaderId) throw staleElement(binding.uid || binding.target || "");
-    const objectId = await objectFromBackend(send, binding, objectGroup, contextId);
+    const requestedFrameId = String(binding.ref?.frameId || "");
+    let nodeSend: CdpCommand = send;
+    let cdpFrameId = "";
+    let sessionId = "";
+    let loaderId = "";
+    if (requestedFrameId) {
+      const opened = await openChildFrame(send, requestedFrameId);
+      if (!opened) throw staleElement(binding.uid || binding.target || "");
+      if (binding.ref?.loaderId && opened.loaderId && binding.ref.loaderId !== opened.loaderId) throw staleElement(binding.uid || binding.target || "");
+      nodeSend = opened.send;
+      cdpFrameId = opened.id;
+      sessionId = opened.sessionId;
+      loaderId = opened.loaderId;
+    } else {
+      const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
+      cdpFrameId = String(frame.id || "");
+      loaderId = String(frame.loaderId || "");
+      if (binding.ref?.loaderId && loaderId && binding.ref.loaderId !== loaderId) throw staleElement(binding.uid || binding.target || "");
+    }
+    const contextId = await contentContextId(id, nodeSend, cdpFrameId, sessionId);
+    if (requestedFrameId) {
+      if ((await frameLoaderId(nodeSend, cdpFrameId)) !== loaderId) throw staleElement(binding.uid || binding.target || "");
+    } else {
+      // Selection may initialize Content while a navigation replaces the document.
+      const current = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
+      if (current.id !== cdpFrameId || current.loaderId !== loaderId) throw staleElement(binding.uid || binding.target || "");
+    }
+    const objectId = await objectFromBackend(nodeSend, binding, objectGroup, contextId);
     try {
-      return await run(send, (action, params = {}) => invokeBound(send, objectId, action, params, objectGroup));
+      return await run(nodeSend, (action, params = {}) => invokeBound(nodeSend, objectId, action, params, objectGroup));
     } finally {
-      try { await send("Runtime.releaseObjectGroup", { objectGroup }); } catch { /* The node may already be gone. */ }
+      try { await nodeSend("Runtime.releaseObjectGroup", { objectGroup }); } catch { /* The node may already be gone. */ }
     }
   }, context);
 }
 
-async function objectFromBackend(send: CdpSend, binding: { target?: string; ref?: ElementReference }, objectGroup: string, contextId: number) {
+async function objectFromBackend(send: CdpCommand, binding: { target?: string; ref?: ElementReference }, objectGroup: string, contextId: number) {
   const backendNodeId = Number(binding.ref?.backendNodeId || 0);
   if (!backendNodeId) throw staleElement(binding.target || "");
   try {
@@ -481,9 +535,32 @@ async function objectFromBackend(send: CdpSend, binding: { target?: string; ref?
   }
 }
 
-async function contentContextId(tabId: number, send: CdpSend, frameId: string) {
+function isolatedContexts(tabId: number, sessionId: string) {
+  const map = isolatedByTab.get(tabId);
+  if (!map) return undefined;
+  return { get: (frameId: string) => map.get(contextKey(sessionId, frameId)) };
+}
+
+async function frameLoaderId(send: CdpCommand, frameId: string) {
+  let tree: unknown;
+  try { tree = await send("Page.getFrameTree"); }
+  catch (error) {
+    if (isCdpFallbackForbiddenError(error)) throw error;
+    return "";
+  }
+  const root = record(record(tree).frameTree);
+  const main = record(root.frame);
+  if (String(main.id || "") === frameId) return String(main.loaderId || "");
+  for (const entry of Array.isArray(root.childFrames) ? root.childFrames : []) {
+    const frame = record(record(entry).frame);
+    if (String(frame.id || "") === frameId) return String(frame.loaderId || "");
+  }
+  return "";
+}
+
+async function contentContextId(tabId: number, send: CdpCommand, frameId: string, sessionId = "") {
   const select = async () => {
-    const candidates = isolatedByTab.get(tabId)?.get(frameId);
+    const candidates = isolatedContexts(tabId, sessionId)?.get(frameId);
     for (const contextId of [...(candidates || [])]) {
       try {
         const result = record(await send("Runtime.evaluate", {
@@ -497,7 +574,7 @@ async function contentContextId(tabId: number, send: CdpSend, frameId: string) {
         const value = record(record(result.result).value);
         const selected = !result.exceptionDetails && Boolean(chrome.runtime.id)
           && value.extensionId === chrome.runtime.id && value.bridge === true
-          && isolatedByTab.get(tabId)?.get(frameId) === candidates && candidates?.has(contextId);
+          && isolatedContexts(tabId, sessionId)?.get(frameId) === candidates && candidates?.has(contextId);
         if (selected) return contextId;
       } catch (error) {
         if (isCdpFallbackForbiddenError(error) || !/Cannot find context|Execution context (?:was destroyed|is not available)/i.test(String(error))) throw error;
@@ -511,11 +588,11 @@ async function contentContextId(tabId: number, send: CdpSend, frameId: string) {
   const discover = async () => {
     await send("Runtime.enable");
   };
-  if (!isolatedByTab.get(tabId)?.get(frameId)?.size) await discover();
+  if (!isolatedContexts(tabId, sessionId)?.get(frameId)?.size) await discover();
   let id = await select();
   if (id) return id;
-  // A responding ping can belong to Content without the node bridge. Initialize
-  // once, then validate again; no action has been dispatched on this path.
+  // The reported worlds have no bridge. Initialize Content once, then validate
+  // again; no action has been dispatched on this path.
   await initializeContentScript(tabId);
   await discover();
   id = await select();
@@ -523,7 +600,7 @@ async function contentContextId(tabId: number, send: CdpSend, frameId: string) {
   return id;
 }
 
-async function invokeBound(send: CdpSend, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string) {
+async function invokeBound(send: CdpCommand, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string) {
   const remote = record(await send("Runtime.callFunctionOn", {
     objectId, objectGroup, awaitPromise: true, returnByValue: true,
     functionDeclaration: "function(payload){return globalThis.__qzInvoke(this,payload)}",

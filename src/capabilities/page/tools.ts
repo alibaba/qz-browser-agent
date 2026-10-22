@@ -3,7 +3,7 @@ import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import { isElementReply, type ElementReply } from "#sdk/shared/browser";
 import type { SecurityGuardrails } from "#sdk/shared/security";
-import type { ElementTarget, PageState, PreparedNavigation } from "#sdk/background/browser";
+import type { CdpCommand, ElementTarget, PageState, PreparedNavigation } from "#sdk/background/browser";
 import type { ToolContext } from "#sdk/background";
 export type { PageState, PreparedNavigation, PageNavigationHost } from "#sdk/background/browser";
 type PageElementHost = Pick<ToolExtensionAPI,
@@ -13,8 +13,16 @@ type PageElementHost = Pick<ToolExtensionAPI,
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
-import { armPageInputReceipt, ensurePageSurface, isCdpFallbackForbiddenError, readPageInputReceipt } from "#sdk/background/browser";
+import { armPageInputReceipt, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, readPageInputReceipt } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
+
+/** Iframe content scripts report iframe-local points. Shift them by the iframe content origin only at dispatch. */
+async function framedPagePoint(send: CdpCommand, point: { x: number; y: number }, frameId: string) {
+  if (!frameId) return point;
+  const origin = await frameContentOrigin(send, frameId);
+  if (!origin) throw new Error("The iframe content origin is unavailable");
+  return { x: point.x + origin.x, y: point.y + origin.y };
+}
 
 /** Registers page reading, element inspection/action, and scrolling tools. */
 export function registerPageElementTools({
@@ -270,6 +278,7 @@ registerTool({
     return perform();
     async function perform() {
     if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, selector, action });
+    const frameId = String(ref.ref?.frameId || "");
 
     const inspected = await sendToContent(tabId, "inspectElement", { selector, index }, bound);
     if (inspected.error) return withElementActionHelp(inspected, normalizedAction);
@@ -374,7 +383,7 @@ registerTool({
           const refreshed = await sendToContent(tabId, "inspectElement", { selector: pointSelector, index: pointIndex }, sameTarget ? bound : undefined);
           if (!refreshed.error && clickPointReady(refreshed)) current = refreshed;
           if (!clickPointReady(current)) return;
-          const point = current.clickablePoint;
+          const point = await framedPagePoint(send, current.clickablePoint, frameId);
           touchInput = getPageContext(tabId).pageMode === "mobile";
           const receiptId = await armPageInputReceipt(tabId);
           if (touchInput) { await touch(send, point, { signal: _signal }); }
@@ -522,7 +531,7 @@ registerTool({
         const clickTarget = !current.disabled && isElementReply(current.element) ? current.element : current;
         if (!clickPointReady(clickTarget)) return clickNotReadyResult({ target: resolvedTarget, selector, index,
           inspection: clickTarget, originalInspection: current, resolved: null });
-        const point = clickTarget.clickablePoint;
+        const point = await framedPagePoint(send, clickTarget.clickablePoint, frameId);
         const receiptId = await armPageInputReceipt(tabId);
         if (getPageContext(tabId).pageMode === "mobile") {
           await touch(send, point, { signal: _signal });
@@ -568,8 +577,9 @@ registerTool({
           await withDebugger(tabId, async (_target, send) => {
             await ensurePageSurface(tabId, send);
             const refreshed = await sendToContent(tabId, "inspectElement", { selector, index }, bound);
-            const point = !refreshed.error && clickPointReady(refreshed) ? refreshed.clickablePoint : inspected.clickablePoint;
-            if (!point) return;
+            const localPoint = !refreshed.error && clickPointReady(refreshed) ? refreshed.clickablePoint : inspected.clickablePoint;
+            if (!localPoint) return;
+            const point = await framedPagePoint(send, localPoint, frameId);
             const receiptId = await armPageInputReceipt(tabId);
             await send("Input.dispatchMouseEvent", {
               type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1,

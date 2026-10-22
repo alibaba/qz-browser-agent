@@ -76,23 +76,26 @@ import { callMcpServerTool, inspectMcpServer } from "../mcp/mcp-client.js";
 
 // ---------------------------------------------------------------------------
 // Content script messaging
+// One injection covers every frame. Messages stay on the main frame; without
+// a frame id, Chrome accepts whichever frame answers first.
 // ---------------------------------------------------------------------------
 
 async function ensureContentScript(tabId: number, force = false) {
   if (!force) {
     try {
-      const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }));
+      const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }));
       if (response?.ok === true) return;
     } catch(_e) {
       // Inject the content script when it is missing.
     }
   }
   await chrome.scripting.executeScript({
-    target: { tabId },
+    target: { tabId, allFrames: true },
     world: "ISOLATED",
     files: ["content/article-extractor.js", "content/content-script.js"],
+    injectImmediately: true,
   });
-  const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }));
+  const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }));
   if (response?.ok !== true) {
     throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", {
       tabId,
@@ -121,7 +124,7 @@ export async function sendToContent(tabId: number | undefined, action: string, p
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
   await ensureContentScript(tabId);
   try {
-    const response = await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action, ...params });
+    const response = await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action, ...params }, { frameId: 0 });
     if (response == null) {
       throw new ToolExecutionError("EMPTY_CONTENT_RESPONSE", `Content script returned empty response for ${action}`, {
         action,

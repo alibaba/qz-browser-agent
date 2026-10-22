@@ -87,8 +87,12 @@ globalThis.chrome = {
     async captureVisibleTab() {
       return "data:image/jpeg;base64,c2NyZWVuc2hvdA==";
     },
-    async sendMessage(tabId, message = {}) {
-      state.sendMessages.push({ tabId: Number(tabId), message: { ...message } });
+    async sendMessage(tabId, message = {}, options = {}) {
+      state.sendMessages.push({
+        tabId: Number(tabId),
+        message: { ...message },
+        frameId: Number.isInteger(options.frameId) ? options.frameId : null,
+      });
       if (message.action === "ping") return { ok: true };
       if (message.action === "readArticle") {
         const tab = state.tabs.find(item => Number(item.id) === Number(tabId));
@@ -385,6 +389,7 @@ assert.deepEqual(
   [[1, "ping"], [1, "readArticle"]],
   "owned working tab should be the only page messaging target",
 );
+assert.ok(state.sendMessages.every(item => item.frameId === 0), "page messages stay on the main frame");
 assert.deepEqual(state.queryCalls, [], "owned working tab path should not query active browser tab");
 
 resetCalls();
@@ -528,5 +533,31 @@ await assertRejectsWithCode(
   tools.executeTool("run_skill_script", { skill: "demo", script: "scripts/demo.js", tabId: 2, timeout: 0 }, null, sessionA()),
   "SESSION_TAB_FOREIGN",
 );
+
+resetCalls();
+const frameRuns = [];
+const sendMessage = chrome.tabs.sendMessage;
+chrome.tabs.sendMessage = async (tabId, message = {}, options = {}) => {
+  const frameId = Number.isInteger(options.frameId) ? options.frameId : null;
+  state.sendMessages.push({ tabId: Number(tabId), message: { ...message }, frameId });
+  if (message.action === "ping") return { ok: true };
+  // Child frames also have the content script. An unscoped message would run there.
+  if (frameId !== 0) {
+    frameRuns.push("child");
+    return { ok: true, frame: "child", selector: message.selector || "" };
+  }
+  frameRuns.push("main");
+  return { ok: true, frame: "main", selector: message.selector || "", action: message.action };
+};
+try {
+  const inspected = await toolsModule.sendToContent(1, "inspectElement", { selector: "button.hit", index: 0 });
+  assert.equal(inspected.frame, "main");
+  assert.equal(inspected.selector, "button.hit");
+  assert.deepEqual(frameRuns, ["main"], "a css target runs in the main frame when child frames also have the script");
+  assert.ok(state.sendMessages.every(item => item.frameId === 0));
+  assert.equal(state.sendMessages.some(item => item.message.selector === "button.hit"), true);
+} finally {
+  chrome.tabs.sendMessage = sendMessage;
+}
 
 console.log("session tab targeting behavior tests passed");

@@ -23,7 +23,7 @@ const tools = read("src/background/tools/runtime.js");
 const serviceWorker = read("src/background/service-worker.js");
 const platformCommands = read("src/background/services/platform-commands.js");
 const sidepanelTransport = read("src/background/transports/sidepanel.js");
-assert.match(content, /QZ_CONTENT_VERSION = "2026-10-22-fill-root"/);
+assert.match(content, /QZ_CONTENT_VERSION = "2026-10-22-iframe-frame"/);
 const contentScripts = manifest.content_scripts?.find(entry => entry.js?.includes("content/content-script.js"))?.js;
 assert.deepEqual(contentScripts, ["content/article-extractor.js", "content/content-script.js"], "manifest needs only self-contained first-party entry points");
 assert.match(tools, /files:\s*\["content\/article-extractor\.js", "content\/content-script\.js"\]/);

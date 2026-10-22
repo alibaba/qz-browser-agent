@@ -59,7 +59,7 @@ const html = `<!doctype html><meta charset="utf-8"><title>Direct node</title>
     shadowButton.textContent = "Open shadow";
     shadowButton.addEventListener("click", () => { window.hits.open = (window.hits.open || 0) + 1; });
     open.append(shadowButton);
-    document.querySelector("#frame").srcdoc = "<!doctype html><button id='inside-frame'>Inside frame</button>";
+    document.querySelector("#frame").srcdoc = "<!doctype html><button id='inside-frame' type='button' onclick='window.clicks=(window.clicks||0)+1'>Inside frame</button>";
   </script>`;
 
 async function createHarness({ reloadFixture = false, secondary = false } = {}) {
@@ -644,17 +644,19 @@ test.describe("uid resolves the original node", () => {
     expect((await h.state()).hits.stay || 0).toBe(0);
   });
 
-  test("a child frame is not operated through the top-document content script", async () => {
+  test("a direct child frame element is clicked through its uid", async () => {
+    test.setTimeout(120000);
     await h.page.locator("#frame").waitFor();
     await expect.poll(async () => h.page.frameLocator("#frame").locator("button").count()).toBe(1);
-    const snapshot = (await tree(h)).snapshot;
-    const inside = targets(snapshot, "Inside frame")[0];
-    if (inside) {
-      const rejected = await h.call("act_on_element", { target: inside, action: "click" });
-      expect(rejected.code, JSON.stringify(rejected)).toBe("STALE_ELEMENT_UID");
-    } else {
-      expect(snapshot).toContain('Iframe "Child frame"');
-    }
+    let inside = "";
+    await expect.poll(async () => {
+      inside = targets((await tree(h)).snapshot, "Inside frame")[0] || "";
+      return inside;
+    }, { timeout: 20000 }).not.toBe("");
+    const clicked = await h.call("act_on_element", { target: inside, action: "click" });
+    expect(clicked, JSON.stringify(clicked)).not.toHaveProperty("code");
+    expect(clicked.inputDelivered).toBe(true);
+    expect(await h.page.evaluate(() => document.querySelector("#frame").contentWindow.clicks)).toBe(1);
   });
 
   test("cancellation does not change the control", async () => {

@@ -1,7 +1,15 @@
 import type { ToolContext } from "../background.js";
 import type { ElementReference } from "../../background/tools/element-runtime.js";
 export type { ElementReference } from "../../background/tools/element-runtime.js";
-export type CdpCommand = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+export interface CdpCommand {
+  (method: string, params?: Record<string, unknown>): Promise<unknown>;
+  /** Flattened child debugger session. Test doubles that only drive the page target omit it. */
+  inSession?(sessionId: string): CdpCommand;
+  /** Owning page tab. Present on commands from the debugger runtime. */
+  tabId?: number;
+  /** Changes when the page debugger reconnects. */
+  connectionId?: number;
+}
 type CdpOperation<T> = (target: chrome.debugger.Debuggee, send: CdpCommand) => T | Promise<T>;
 /** Run identity is checked by the host before accessing a debugger lease. */
 export interface BrowserDebugger {
@@ -44,3 +52,4 @@ export type { PageObservationHost, Screenshot, ScreenshotOptions } from "../../b
 export { elementPageFunction } from "../../background/tools/page-scripts.js";
 export { armPageInputReceipt, ensurePageSurface, readPageInputReceipt } from "../../background/tools/page-surface.js";
 export { isRunScriptInnerTargetArgs, resolveRunScriptTargetTabId } from "../../background/tools/script-policy.js";
+export { directChildFrames, openChildFrame, frameContentOrigin } from "../../background/tools/child-frames.js";

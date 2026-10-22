@@ -23,7 +23,7 @@ function createHarness() {
     async attach(target, version) { calls.push(["attach", target.tabId, version]); },
     async detach(target) { calls.push(["detach", target.tabId]); },
     async sendCommand(target, method, params) {
-      calls.push(["command", target.tabId, method, params]);
+      calls.push(["command", target.tabId, method, params, target.sessionId || ""]);
       return await commandHandler(target, method, params);
     },
   };
@@ -276,7 +276,7 @@ assert.deepEqual(commandRaceCalls, [
   assert(f.calls.some(call => call[2] === "Input.dispatchTouchEvent" && call[3].type === "touchCancel"),
     "retaining a stopped run's connection must release any held finger");
   assert.deepEqual(f.calls.filter(call => call[0] === "command" && call[2].endsWith(".disable")).map(call => call[2]),
-    ["Network.disable", "Runtime.disable", "Page.disable"], "idle emulation does not keep event domains enabled");
+    ["Network.disable", "Page.disable"], "idle emulation stops network and page events and leaves Runtime enabled");
   finishOld({ stale: true });
   await assert.rejects(lateResult, { code: "CDP_RUN_RELEASED" });
   await assert.rejects(oldSend("Input.dispatchMouseEvent"), { code: "CDP_RUN_RELEASED" });
@@ -396,6 +396,20 @@ for (const scenario of ["closed-or-foreign", "delete-during-authorization", "can
   await assert.rejects(oldSend("Page.enable"), { code: "CDP_RUN_RELEASED" });
   assert.notEqual(f.runtime.getDebuggerConnectionId(53), null, "run completion during recovery keeps emulation");
   await f.runtime.releaseSession(runA.sessionId);
+}
+
+{
+  const f = createHarness();
+  f.activateRun(runA);
+  await f.runtime.withDebugger(7, async (_target, send) => {
+    await send("Page.getFrameTree");
+    await send.inSession("child-session")("Accessibility.getFullAXTree", { depth: 1 });
+  }, runA);
+  const frames = f.calls.filter(call => call[2] === "Page.getFrameTree");
+  const trees = f.calls.filter(call => call[2] === "Accessibility.getFullAXTree");
+  assert.equal(frames.at(-1)[4], "");
+  assert.equal(trees.at(-1)[4], "child-session");
+  assert.equal(trees.at(-1)[1], 7);
 }
 
 console.log("CDP run/tab lifecycle tests passed");

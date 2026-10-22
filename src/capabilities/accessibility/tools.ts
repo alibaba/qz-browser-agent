@@ -1,6 +1,7 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
+import { directChildFrames, type CdpCommand } from "#sdk/background/browser";
 import { isPageOverview, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
 type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
@@ -12,10 +13,11 @@ interface AxNode {
   nodeId: string; parentId?: string; childIds?: string[]; backendDOMNodeId?: number; ignored?: boolean;
   role?: AxValue; name?: AxValue; description?: AxValue; value?: AxValue;
   properties?: { name?: string; value?: AxValue }[];
+  /** Set only for nodes grafted from a direct child document. Chrome's own AX frameId is a different field. */
+  documentFrameId?: string; documentLoaderId?: string;
 }
 interface SnapshotContext { tabId: number; snapshotId: string; sessionId?: string; pageUrl?: string; documentId?: string }
 interface ActionLocator { selector: string; index: number }
-type CdpSend = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 
 /** Registers the compact accessibility-tree snapshot tool. */
 export function registerAccessibilityTools({
@@ -61,7 +63,7 @@ type DisplayNode = {
   omitted?: number; suppressName?: boolean; unavailable?: boolean; placeholder?: string; inputType?: string;
   accept?: string; multiple?: boolean; selectedFileCount?: number;
 } & Partial<CompactNode>;
-function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, limit, sessionId = "", pageUrl = "", documentId = "", rootBackendNodeId = 0, maxDepth = Infinity, loaderId = "", actions = [] }: SnapshotContext & { limit: number; rootBackendNodeId?: number; maxDepth?: number; loaderId?: string; actions?: ActionAnchor[] }) {
+function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, limit, sessionId = "", pageUrl = "", documentId = "", rootBackendNodeId = 0, rootFrameId = "", maxDepth = Infinity, loaderId = "", actions = [] }: SnapshotContext & { limit: number; rootBackendNodeId?: number; rootFrameId?: string; maxDepth?: number; loaderId?: string; actions?: ActionAnchor[] }) {
   const nodeMap = new Map<string, AxNode>();
   for (const node of rawNodes || []) {
     if (node?.nodeId) nodeMap.set(node.nodeId, node);
@@ -71,7 +73,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
   let roots = defaultRoots;
   let rootFound = true;
   if (rootBackendNodeId) {
-    const requestedRoot = [...nodeMap.values()].find(node => Number(node?.backendDOMNodeId || 0) === Number(rootBackendNodeId));
+    const requestedRoot = [...nodeMap.values()].find(node => Number(node?.backendDOMNodeId || 0) === Number(rootBackendNodeId) && String(node.documentFrameId || "") === String(rootFrameId || ""));
     roots = requestedRoot ? [requestedRoot] : [];
     rootFound = !!requestedRoot;
   }
@@ -146,14 +148,16 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
     const omitted = omittedDescendantCount(semanticNode, includedNodes);
     if (omitted) item.omitted = omitted;
     displayNodes.push(item);
+    const frameId = String(compact.documentFrameId || "");
     if (!semanticNode.unavailable) registerElementRef({
       uid,
       tabId,
       sessionId,
       pageUrl,
       backendNodeId: item.backendNodeId,
-      loaderId: loaderId || undefined,
+      loaderId: (frameId ? String(compact.documentLoaderId || "") : loaderId) || undefined,
       documentId: documentId || undefined,
+      ...(frameId ? { frameId } : {}),
       selector: semanticNode.locator?.selector,
       index: semanticNode.locator?.index,
       role: item.role,
@@ -184,7 +188,10 @@ function placeActions(actions: ActionAnchor[], semanticNodes: SemanticNode[], se
   const byBackend = new Map<number, SemanticNode>();
   for (const node of semanticNodes) {
     const id = Number(node.compact.backendNodeId || 0);
-    if (id > 0 && !byBackend.has(id)) byBackend.set(id, node);
+    if (id <= 0) continue;
+    const existing = byBackend.get(id);
+    // Backend ids restart in a child document. A parent action keeps the parent node.
+    if (!existing || (existing.compact.documentFrameId && !node.compact.documentFrameId)) byBackend.set(id, node);
   }
   const used = new Set<SemanticNode>();
   const required = new Set<SemanticNode>();
@@ -239,6 +246,8 @@ function insertSynthetic(anchor: ActionAnchor, byBackend: Map<number, SemanticNo
       description: "",
       value: "",
       url: "",
+      documentFrameId: "",
+      documentLoaderId: "",
       flags: [],
     },
     depth: 0,
@@ -411,6 +420,8 @@ function compactAxNode(node: AxNode) {
     description: cleanAxValue(node.description?.value),
     value: cleanAxValue(node.value?.value),
     url: cleanAxValue(props.url),
+    documentFrameId: String(node.documentFrameId || ""),
+    documentLoaderId: String(node.documentLoaderId || ""),
     flags: ["focused", "disabled", "expanded", "checked", "selected", "editable", "readonly", "required"]
       .map(key => formatAxFlag(key, props[key]))
       .filter(Boolean),
@@ -549,7 +560,7 @@ function sameUrlPrefix(a: string, b: string) {
   return left === right || left.startsWith(right) || right.startsWith(left);
 }
 
-async function actionAnchors(send: CdpSend, actions: Action[], ids: number[]) {
+async function actionAnchors(send: CdpCommand, actions: Action[], ids: number[]) {
   const anchors: ActionAnchor[] = [];
   for (let index = 0; index < actions.length; index += 1) {
     const backendNodeId = Number(ids[index] || 0);
@@ -579,7 +590,7 @@ async function actionAnchors(send: CdpSend, actions: Action[], ids: number[]) {
   return anchors;
 }
 
-async function describeNode(send: CdpSend, params: Record<string, unknown>) {
+async function describeNode(send: CdpCommand, params: Record<string, unknown>) {
   try {
     return record(await send("DOM.describeNode", params));
   } catch {
@@ -589,6 +600,52 @@ async function describeNode(send: CdpSend, params: Record<string, unknown>) {
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+/** Graft one direct child document under its iframe. A frame that echoes the main tree, or has no owner, is left out. */
+async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth: number): Promise<AxNode[]> {
+  try {
+    const frames = await directChildFrames(send);
+    if (!frames.length) return nodes;
+    const combined = nodes.map(node => ({ ...node, childIds: node.childIds ? [...node.childIds] : undefined }));
+    const mainIds = new Set(combined.map(node => node.nodeId).filter(Boolean));
+    for (const frame of frames) {
+      try {
+        const params = frame.sessionId ? { depth } : { frameId: frame.id, depth };
+        const result = await frame.send("Accessibility.getFullAXTree", params);
+        const fetched = result && typeof result === "object" && "nodes" in result && Array.isArray((result as { nodes?: unknown }).nodes)
+          ? (result as { nodes: AxNode[] }).nodes : [];
+        // Child sessions number their own node ids, so those ids are not an echo of the page tree.
+        const echoed = !frame.sessionId && fetched.some(node => node?.nodeId && mainIds.has(node.nodeId));
+        if (!fetched.length || echoed) continue;
+        const owner = record(await send("DOM.getFrameOwner", { frameId: frame.id }));
+        const backendNodeId = Number(owner.backendNodeId || 0);
+        if (!backendNodeId) continue;
+        const ownerNode = combined.find(node => !node.documentFrameId && Number(node.backendDOMNodeId || 0) === backendNodeId);
+        if (!ownerNode?.nodeId) continue;
+        const present = new Set(fetched.map(node => node?.nodeId).filter(Boolean));
+        const prefixed = fetched.filter(node => node?.nodeId).map(node => {
+          const parentInFrame = Boolean(node.parentId && present.has(node.parentId));
+          return {
+            ...node,
+            nodeId: `frame:${frame.id}:${node.nodeId}`,
+            parentId: parentInFrame ? `frame:${frame.id}:${node.parentId}` : ownerNode.nodeId,
+            childIds: (node.childIds || []).filter(id => present.has(id)).map(id => `frame:${frame.id}:${id}`),
+            documentFrameId: frame.id,
+            documentLoaderId: frame.loaderId,
+          };
+        });
+        const rootIds = prefixed.filter(node => node.parentId === ownerNode.nodeId).map(node => node.nodeId);
+        ownerNode.childIds = [...(ownerNode.childIds || []), ...rootIds];
+        combined.push(...prefixed);
+      } catch {
+        // One child frame must not drop the rest of the snapshot.
+      }
+    }
+    return combined;
+  } catch {
+    return nodes;
+  }
 }
 
 registerTool({
@@ -670,8 +727,10 @@ registerTool({
       const fetchDepth = rootBackendNodeId ? 40 : axDepth;
       const result = await send("Accessibility.getFullAXTree", { depth: fetchDepth });
       const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
-      return buildAccessibilitySnapshot(nodes, {
-        tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId, rootBackendNodeId, maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,
+      const withFrames = await embedChildFrameNodes(send, nodes, fetchDepth);
+      return buildAccessibilitySnapshot(withFrames, {
+        tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,
+        rootBackendNodeId, rootFrameId: String(rootRef?.ref?.frameId || ""), maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,
       });
     }, context);
     return {

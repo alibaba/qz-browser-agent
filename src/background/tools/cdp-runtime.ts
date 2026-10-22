@@ -1,4 +1,6 @@
 import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js';
+import type { CdpCommand } from '../../sdk/background/browser.js';
+export type { CdpCommand };
 interface CdpOwner { key: string; kind: 'run' | 'temporary' | 'session'; sessionId: string; runId: string }
 interface CdpState {
   tabId: number; target: chrome.debugger.Debuggee; ownerKey: string; ownerKind: CdpOwner['kind'];
@@ -15,7 +17,7 @@ interface DebuggerApi {
   onDetach?: { addListener(listener: (source: chrome.debugger.Debuggee, reason: string) => void): void };
   attach(target: chrome.debugger.Debuggee, version: string): Promise<void>;
   detach(target: chrome.debugger.Debuggee): Promise<void>;
-  sendCommand(target: chrome.debugger.Debuggee, method: string, params?: object): Promise<unknown>;
+  sendCommand(target: chrome.debugger.DebuggerSession, method: string, params?: object): Promise<unknown>;
 }
 interface RunAccess { sessionId: string; runId: string; context: ToolContext }
 interface CdpHost {
@@ -26,7 +28,6 @@ interface CdpHost {
   authorizeRunTab?: ((access: RunAccess & { tabId: number }) => Promise<unknown>) | null;
   debuggerApi?: DebuggerApi;
 }
-export type CdpCommand = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 type CdpOperation<T> = (target: chrome.debugger.Debuggee, send: CdpCommand) => T | Promise<T>;
 /** Physical connections may outlive a run; permission to send commands never does. */
 export function createCdpRuntime({
@@ -260,10 +261,7 @@ export function createCdpRuntime({
     const state = await ensureDebugger(tabId, context);
     const check = commandAccess(state, context);
     check();
-    const result = await fn(
-      state.target,
-      (method, params = {}) => sendForState(state, method, params, check),
-    );
+    const result = await fn(state.target, bindSend(state, check));
     check();
     return result;
   }
@@ -282,10 +280,7 @@ export function createCdpRuntime({
     };
     const state = await ensureForOwner(tabId, owner);
     try {
-      return await fn(
-        state.target,
-        (method, params = {}) => sendForState(state, method, params),
-      );
+      return await fn(state.target, bindSend(state, () => {}));
     } finally {
       await detachState(state);
     }
@@ -305,14 +300,14 @@ export function createCdpRuntime({
       if (state.retained && (state.attached || state.recoveryPromise) && !state.releasing) {
         state.ownerKey = `session:${sid}`;
         state.ownerKind = "session";
-        // Keep emulation, not ongoing event collection. The next borrower waits
-        // for this reset so a late disable cannot undo its newly enabled domains.
+        // Keep emulation and Runtime. Network and Page collection stops. Runtime
+        // stays enabled so the next borrower does not replay console calls.
         state.idlePromise = Promise.resolve(state.recoveryPromise).then(async () => {
           if (!state.attached || state.releasing) return;
           // The stopped run can no longer send its own cleanup commands. Release
           // any held finger before lending this retained connection to another run.
           await debuggerApi.sendCommand(state.target, "Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] }).catch(() => {});
-          await Promise.all(["Network.disable", "Runtime.disable", "Page.disable"].map(method =>
+          await Promise.all(["Network.disable", "Page.disable"].map(method =>
             debuggerApi.sendCommand(state.target, method).catch(() => {})));
         });
         cleanup.push(state.idlePromise);
@@ -369,7 +364,7 @@ export function createCdpRuntime({
         check();
         if (!state.attached || state.connectionId !== connection) throw runReleasedError(state.tabId, state.sessionId, state.runId);
       };
-      await restore((method, params = {}) => sendForState(state, method, params, checkConnection));
+      await restore(bindSend(state, checkConnection));
       checkConnection();
     } catch {
       // One bounded attempt. Never fight a user detach, reload a submitted form,
@@ -452,11 +447,20 @@ export function createCdpRuntime({
     };
   }
 
-  async function sendForState(state: CdpState, method: string, params: Record<string, unknown> = {}, check = () => {}) {
+  function bindSend(state: CdpState, check: () => void, sessionId = ""): CdpCommand {
+    const send = ((method: string, params: Record<string, unknown> = {}) => sendForState(state, method, params, check, sessionId)) as CdpCommand;
+    send.inSession = (childSessionId: string) => bindSend(state, check, String(childSessionId || ""));
+    send.tabId = state.tabId;
+    send.connectionId = state.connectionId;
+    return send;
+  }
+
+  async function sendForState(state: CdpState, method: string, params: Record<string, unknown> = {}, check = () => {}, sessionId = "") {
     assertStateActive(state);
     check();
     try {
-      const result = await debuggerApi.sendCommand(state.target, method, params);
+      const target = sessionId ? { ...state.target, sessionId } : state.target;
+      const result = await debuggerApi.sendCommand(target, method, params);
       assertStateActive(state);
       check();
       return result;

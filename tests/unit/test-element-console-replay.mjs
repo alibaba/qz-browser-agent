@@ -58,10 +58,11 @@ function session(tabId, contexts) {
   let runtimeEnabled = false;
   const buffer = [];
   const commands = [];
+  const childFrames = [];
   const emit = (method, params) => listeners.forEach(listener => listener({ tabId }, method, params));
   const send = async (method, params = {}) => {
     commands.push(method);
-    if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main", loaderId: "document-1" } } };
+    if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main", loaderId: "document-1" }, childFrames } };
     if (method === "Runtime.disable") {
       runtimeEnabled = false;
       return {};
@@ -87,7 +88,7 @@ function session(tabId, contexts) {
     buffer.push({ method, params });
     emit(method, params);
   };
-  return { commands, contexts, emit, send, remember, enabled: () => runtimeEnabled };
+  return { commands, contexts, emit, send, remember, childFrames, enabled: () => runtimeEnabled };
 }
 
 function publicContext(context) {
@@ -104,7 +105,17 @@ function isolated(id, bridge) {
   };
 }
 
-function runtimeFor(tabId, page) {
+function childContext(id, frameId, bridge) {
+  return {
+    id,
+    origin: "chrome-extension://extension-id",
+    auxData: { type: "isolated", frameId },
+    extensionId: "extension-id",
+    bridge,
+  };
+}
+
+function runtimeFor(tabId, page, binding = {}) {
   let initialized = 0;
   const runtime = createElementRuntime({
     ToolExecutionError,
@@ -121,7 +132,9 @@ function runtimeFor(tabId, page) {
   return {
     get initialized() { return initialized; },
     call: () => runtime.callElement(tabId, {
-      tabId, uid: "original", ref: { backendNodeId: 44, loaderId: "document-1" },
+      tabId,
+      uid: binding.uid || "original",
+      ref: binding.ref || { backendNodeId: 44, loaderId: "document-1" },
     }, "inspectElement"),
   };
 }
@@ -181,6 +194,59 @@ test("a context created while Runtime is enabled resolves without toggling the d
   assert.equal(runtime.initialized, 1);
   const after = await definitions.get("read_console_messages").execute({ tabId }, null, run);
   assert.deepEqual(counts(after), { "warning:kept": 1 });
+  assert.deepEqual(counts(before), counts(after));
+  assert.equal(page.commands.includes("Runtime.disable"), false);
+});
+
+const childBinding = {
+  uid: "child-uid",
+  ref: { backendNodeId: 44, loaderId: "child-loader", frameId: "child" },
+};
+
+test("resolving a child-frame uid does not replay console messages", async () => {
+  const tabId = nextTab++;
+  const contexts = [isolated(7, true), childContext(8, "child", true)];
+  const page = session(tabId, contexts);
+  page.childFrames.push({ frame: { id: "child", parentId: "main", loaderId: "child-loader" } });
+  sessions.set(tabId, page);
+  await definitions.get("read_console_messages").execute({ tabId, reset: true }, null, run);
+  page.remember("Runtime.consoleAPICalled", {
+    type: "log", args: [{ type: "string", value: "child-once" }], timestamp: 30,
+  });
+  const before = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  const runtime = runtimeFor(tabId, page, childBinding);
+  assert.equal((await runtime.call()).ok, true);
+  assert.equal(runtime.initialized, 0);
+  const after = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  assert.deepEqual(counts(after), { "log:child-once": 1 });
+  assert.deepEqual(counts(before), counts(after), "a child-frame uid must not record cached console calls again");
+  assert.equal(after.totalBuffered, before.totalBuffered);
+  assert.equal(page.commands.includes("Runtime.disable"), false);
+});
+
+test("a child-frame context created while Runtime is enabled does not replay console messages", async () => {
+  const tabId = nextTab++;
+  const contexts = [isolated(7, true)];
+  const page = session(tabId, contexts);
+  page.childFrames.push({ frame: { id: "child", parentId: "main", loaderId: "child-loader" } });
+  sessions.set(tabId, page);
+  await definitions.get("read_console_messages").execute({ tabId, reset: true }, null, run);
+  page.remember("Runtime.consoleAPICalled", {
+    type: "log", args: [{ type: "string", value: "kept-child" }], timestamp: 40,
+  });
+  const before = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  const runtime = runtimeFor(tabId, {
+    ...page,
+    initialize() {
+      const context = childContext(8, "child", true);
+      contexts.push(context);
+      if (page.enabled()) page.emit("Runtime.executionContextCreated", { context: publicContext(context) });
+    },
+  }, childBinding);
+  assert.equal((await runtime.call()).ok, true);
+  assert.equal(runtime.initialized, 1);
+  const after = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  assert.deepEqual(counts(after), { "log:kept-child": 1 });
   assert.deepEqual(counts(before), counts(after));
   assert.equal(page.commands.includes("Runtime.disable"), false);
 });
