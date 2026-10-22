@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
 
 let tabPageUrl = "https://example.test/";
+let browserZoom = 1;
+let browserZoomError = null;
 globalThis.chrome = {
   scripting: {
     async executeScript({ func, args }) {
@@ -14,7 +16,7 @@ globalThis.chrome = {
   },
   tabs: {
     async get(tabId) { return { id: tabId, windowId: 2, url: tabPageUrl, title: "Example", width: viewportState.clientWidth, height: viewportState.clientHeight }; },
-    async getZoom() { return 1; },
+    async getZoom() { if (browserZoomError) throw browserZoomError; return browserZoom; },
     async query() { return [{ id: 9, windowId: 2, active: true }]; },
     async update(tabId, update) { updates.push([tabId, update]); return { id: tabId, ...update }; },
     async captureVisibleTab() { return "data:image/jpeg;base64,dmlzaWJsZQ=="; },
@@ -147,6 +149,9 @@ const runtime = registerMediaTools({
   },
   makeSessionTabTargetError(code, details) { return new ToolExecutionError(code, code, details); },
   async sendToContent(_tabId, action) {
+    if (action === "getElementScreenshotBounds") {
+      return { selector: "#zoom-image", bounds: { x: 1200.5, y: 1400.25, width: 160, height: 120 } };
+    }
     if (action === "listImageElements") {
       return {
         ok: true,
@@ -247,6 +252,50 @@ assert.equal(cdpShot.dataUrl, "data:image/jpeg;base64,Y2Rw");
 assert.equal(cdpShot.cssWidth, 1000);
 assert.equal(cdpShot.cssHeight, 800);
 assert.equal(cdpCalls[0][1], "Page.captureScreenshot");
+
+try {
+  const clipFor = async () => {
+    const image = await runtime.captureElementScreenshot(3, { selector: "#zoom-image" }, { format: "png" });
+    assert.equal(image.sourceWidth, viewportState.clientWidth, "source width describes the decoded image, not the DIP clip");
+    assert.equal(image.sourceHeight, viewportState.clientHeight, "source height describes the decoded image, not the DIP clip");
+    return cdpCalls.findLast(([, method]) => method === "Page.captureScreenshot")[2].clip;
+  };
+  browserZoom = 1.25;
+  onCdpCall = ({ method }) => method === "Page.getLayoutMetrics" ? {
+    cssVisualViewport: { ...viewportState, zoom: 0.75 },
+    cssContentSize: { width: 1300, height: 1500 },
+  } : undefined;
+  browserZoomError = new Error("The metrics zoom should avoid a second zoom read");
+  assert.deepEqual(await clipFor(), { x: 900, y: 1050, width: 75, height: 75, scale: 1 },
+    "clip document coordinates and CSS content edges before converting zoomed pixels");
+
+  browserZoomError = null;
+  onCdpCall = ({ method }) => method === "Page.getLayoutMetrics" ? {
+    visualViewport: { ...viewportState, scale: 2 }, contentSize: { width: 1000, height: 1000 },
+  } : undefined;
+  assert.deepEqual(await clipFor(), { x: 1500, y: 1750, width: 201, height: 151, scale: 1 },
+    "missing CSS metrics use the tab zoom without clipping against legacy physical content sizes");
+
+  onCdpCall = ({ method }) => {
+    if (method === "Page.getLayoutMetrics") throw new Error("Layout metrics unavailable");
+  };
+  assert.deepEqual(await clipFor(), { x: 1500, y: 1750, width: 201, height: 151, scale: 1 },
+    "a recoverable metrics failure still reads the real tab zoom");
+  const capturesBeforeFailure = cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length;
+  browserZoomError = new Error("Tab closed before reading zoom");
+  await assert.rejects(clipFor(), /Tab closed before reading zoom/);
+  browserZoomError = null;
+  onCdpCall = ({ method }) => {
+    if (method === "Page.getLayoutMetrics") throw new ToolExecutionError("OPERATION_ABORTED", "aborted");
+  };
+  await assert.rejects(clipFor(), { code: "OPERATION_ABORTED" });
+  assert.equal(cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length, capturesBeforeFailure,
+    "unknown zoom or cancellation must not capture an incorrectly positioned image");
+} finally {
+  browserZoom = 1;
+  browserZoomError = null;
+  onCdpCall = null;
+}
 
 const delayedResizeContext = { sessionId: "delayed-debugger-infobar", runId: "run", source: "run_script" };
 const resizeTimers = [];

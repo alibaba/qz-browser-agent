@@ -30,7 +30,7 @@ interface ImageMetadata extends Fields {
 interface ImageReadOptions { sourceMode?: string; tabId?: number; maxWidth?: number; maxHeight?: number; maxBytes?: number; format?: ImageFormat; quality?: number; signal?: AbortSignal; context?: ToolContext; detail?: string }
 type ImageSizeOptions = Omit<ImageNormalizeOptions, "decode">;
 type ImageData = NormalizedImage;
-type LayoutMetrics = { pageX: number; pageY: number; scale: number; contentWidth: number; contentHeight: number };
+type LayoutMetrics = { pageX: number; pageY: number; scale: number; zoom: number; contentWidth: number; contentHeight: number };
 interface BoundsInfo { method: string; bounds: unknown; selector?: string; visible?: unknown; matched?: unknown; viewport?: unknown; rect?: unknown }
 type ScreenshotRef = Pick<ElementReference, "uid" | "selector" | "index"> & { target?: string; ref?: ElementReference | null };
 interface ElementScreenshot extends Screenshot { target?: string; selector?: string; clip?: Fields; clipped?: boolean; bounds?: unknown; layoutMetrics?: LayoutMetrics | null }
@@ -1723,8 +1723,8 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
     resized: resized || normalized.resized,
     width: normalized.width || outputWidth,
     height: normalized.height || outputHeight,
-    sourceWidth: clip.width,
-    sourceHeight: clip.height,
+    sourceWidth: normalized.sourceWidth,
+    sourceHeight: normalized.sourceHeight,
     bounds: boundsInfo.bounds,
     layoutMetrics,
   };
@@ -1787,20 +1787,25 @@ async function getElementScreenshotBoundsFromCdp(tabId: number, backendNodeId: n
 }
 
 async function getScreenshotLayoutMetrics(tabId: number, context: ToolContext = {}) {
+  let metrics: Fields = {};
   try {
-    const metrics = record(await sendCdp(tabId, "Page.getLayoutMetrics", {}, context));
-    const visual = record(metrics.cssVisualViewport || metrics.visualViewport);
-    const content = record(metrics.cssContentSize || metrics.contentSize);
-    return {
-      pageX: toFiniteNumber(visual.pageX, 0),
-      pageY: toFiniteNumber(visual.pageY, 0),
-      scale: toFiniteNumber(visual.scale, 1) || 1,
-      contentWidth: toFiniteNumber(content.width, 0),
-      contentHeight: toFiniteNumber(content.height, 0),
-    };
-  } catch(_err) {
-    return null;
+    metrics = record(await sendCdp(tabId, "Page.getLayoutMetrics", {}, context));
+  } catch(error) {
+    if (isCdpFallbackForbiddenError(error)) throw error;
   }
+  const visual = record(metrics.cssVisualViewport);
+  // Legacy contentSize uses physical pixels, so it cannot clamp CSS bounds.
+  const content = record(metrics.cssContentSize);
+  const metricZoom = toFiniteNumber(visual.zoom, 0);
+  const zoom = metricZoom > 0 ? metricZoom : await chrome.tabs.getZoom(tabId);
+  return {
+    pageX: toFiniteNumber(visual.pageX, 0),
+    pageY: toFiniteNumber(visual.pageY, 0),
+    scale: toFiniteNumber(visual.scale, 1) || 1,
+    zoom,
+    contentWidth: toFiniteNumber(content.width, 0),
+    contentHeight: toFiniteNumber(content.height, 0),
+  };
 }
 
 function normalizeRuntimeBounds(bounds: unknown) {
@@ -1853,18 +1858,25 @@ function buildScreenshotClip(bounds: unknown, { padding = 0, maxWidth = IMAGE_MA
   const availableHeight = contentHeight > 0 ? Math.max(1, contentHeight - y) : Infinity;
   const width = Math.max(1, Math.min(wantedWidth, availableWidth));
   const height = Math.max(1, Math.min(wantedHeight, availableHeight));
-  const scale = Math.min(1, maxW / width, maxH / height);
+  // Element bounds are CSS pixels; CDP screenshot clips are DIP. Convert once,
+  // after CSS padding/clipping, and round the edges outwards to retain the box.
+  const zoom = layoutMetrics?.zoom || 1;
+  const clipX = Math.floor(x * zoom);
+  const clipY = Math.floor(y * zoom);
+  const clipWidth = Math.ceil((x + width) * zoom) - clipX;
+  const clipHeight = Math.ceil((y + height) * zoom) - clipY;
+  const scale = Math.min(1, maxW / clipWidth, maxH / clipHeight);
   return {
     clip: {
-      x: Math.floor(x),
-      y: Math.floor(y),
-      width: Math.ceil(width),
-      height: Math.ceil(height),
+      x: clipX,
+      y: clipY,
+      width: clipWidth,
+      height: clipHeight,
       scale,
     },
     clipped: width < wantedWidth || height < wantedHeight,
-    outputWidth: Math.max(1, Math.round(width * scale)),
-    outputHeight: Math.max(1, Math.round(height * scale)),
+    outputWidth: Math.max(1, Math.round(clipWidth * scale)),
+    outputHeight: Math.max(1, Math.round(clipHeight * scale)),
     resized: scale < 1,
   };
 }

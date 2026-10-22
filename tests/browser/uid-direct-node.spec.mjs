@@ -272,6 +272,78 @@ async function sample(page, dataUrl) {
   }, dataUrl);
 }
 
+test("element screenshots and image fallbacks preserve their pixels at browser zoom after scrolling", async () => {
+  test.setTimeout(120000);
+  // A different port without CORS makes the DOM canvas unreadable, as on public image CDNs.
+  const imageServer = createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "image/svg+xml" });
+    response.end(`<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120">
+      <path fill="red" d="M0 0h80v60H0z"/><path fill="lime" d="M80 0h80v60H80z"/>
+      <path fill="blue" d="M0 60h80v60H0z"/><path fill="yellow" d="M80 60h80v60H80z"/>
+    </svg>`);
+  });
+  await new Promise(resolve => imageServer.listen(0, "127.0.0.1", resolve));
+  let h;
+  try {
+    h = await createHarness();
+    await h.page.setContent(`<!doctype html><style>
+      body { margin: 0; width: 4000px; height: 4000px; background: magenta }
+      img { position: absolute; left: 420px; top: 320px; width: 160px; height: 120px }
+    </style><img id="zoom-image" alt="Zoom quadrants" src="http://127.0.0.1:${imageServer.address().port}/quadrants.svg">`);
+    await h.page.locator("#zoom-image").evaluate(image => image.decode());
+    const listed = await h.call("list_images", {});
+    const uid = listed.images?.find(image => image.alt === "Zoom quadrants")?.target;
+    expect(uid, JSON.stringify(listed)).toMatch(/^uid:/);
+    for (const zoom of [0.75, 1, 1.25]) {
+      await h.worker.evaluate(zoom => chrome.tabs.setZoom(elementHarness.tabId(), zoom), zoom);
+      for (const scrolled of [false, true]) {
+        const geometry = await h.page.evaluate(async scrolled => {
+          const image = document.querySelector("#zoom-image");
+          image.style.left = scrolled ? "1000px" : "420px";
+          image.style.top = scrolled ? "1200px" : "320px";
+          window.scrollTo(scrolled ? 700 : 0, scrolled ? 900 : 0);
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          return { scrollX, scrollY, dpr: devicePixelRatio };
+        }, scrolled);
+        expect(geometry.scrollX).toBe(scrolled ? 700 : 0);
+        expect(geometry.scrollY).toBe(scrolled ? 900 : 0);
+        for (const target of [uid, "css:#zoom-image"]) {
+          for (const name of ["screenshot", "read_image"]) {
+            const padding = name === "screenshot" ? 8 : 0;
+            const shot = await h.call(name, { target, format: "png", ...(padding ? { padding, destination: "zoom_screenshots" } : {}) });
+            const diagnostic = JSON.stringify({ zoom, scrolled, target, name, ...shot, _image: undefined, dataUrl: undefined });
+            expect(shot, diagnostic).not.toHaveProperty("error");
+            if (name === "read_image") expect(shot.method, diagnostic).toContain("element_screenshot_fallback:");
+            const pixels = await h.page.evaluate(async dataUrl => {
+              const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+              const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), context = canvas.getContext("2d");
+              context.drawImage(bitmap, 0, 0);
+              bitmap.close();
+              return {
+                width: canvas.width, height: canvas.height,
+                corner: [...context.getImageData(0, 0, 1, 1).data],
+                colors: [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]].map(([x, y]) =>
+                  [...context.getImageData(Math.floor(canvas.width * x), Math.floor(canvas.height * y), 1, 1).data]),
+              };
+            }, shot._image || shot.dataUrl);
+            expect(pixels.colors, diagnostic).toEqual([[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 0, 255]]);
+            if (padding) expect(pixels.corner, diagnostic).toEqual([255, 0, 255, 255]);
+            expect(pixels.width, diagnostic).toBe(Math.round((160 + padding * 2) * geometry.dpr));
+            expect(pixels.height, diagnostic).toBe(Math.round((120 + padding * 2) * geometry.dpr));
+            if (padding) expect(shot.image, diagnostic).toMatchObject({
+              width: pixels.width, height: pixels.height, naturalWidth: pixels.width, naturalHeight: pixels.height,
+            });
+          }
+        }
+      }
+    }
+  } finally {
+    await h?.close();
+    imageServer.closeAllConnections?.();
+    await new Promise(resolve => imageServer.close(resolve));
+  }
+});
+
 test.describe("uid resolves the original node", () => {
   test.describe.configure({ mode: "serial", timeout: 180000 });
   let h;

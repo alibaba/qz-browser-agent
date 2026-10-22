@@ -261,6 +261,10 @@ operation at a time and releases the bitmap on completion, failure, or cancellat
 live in `src/dom/`; SVG conversion runs in offscreen and retains the original dimensions in its
 result.
 
+Element screenshots keep bounds and padding in CSS pixels, then convert the capture rectangle
+to CDP's device-independent pixels using the current page zoom. UID and CSS targets, including
+image-read screenshot fallbacks, share this conversion without changing the user's zoom.
+
 The model gateway limits cumulative image bytes to 48 MiB and the final adapter request to 64 MiB.
 Over-budget requests return an explicit terminal error. Remote image references first pass through a
 safety-checked image-reading tool. The [asset store](../src/shared/asset-store.ts) defaults to 2000
