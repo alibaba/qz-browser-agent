@@ -83,6 +83,8 @@
   "backend.toolError.NO_NORMAL_BROWSER_WINDOW.message": "Откройте обычное окно Chrome и повторите попытку.",
   "backend.toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": "Цель публикации Git недоступна",
   "backend.toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": "Некорректный двоичный ресурс для публикации Git",
+  "backend.toolError.INPUT_NOT_DELIVERED.label": "Ввод не доставлен",
+  "backend.toolError.INPUT_NOT_DELIVERED.message": "Страница не получила этот щелчок. Дождитесь завершения вёрстки вкладки и повторите попытку.",
   "backend.toolError.STALE_ELEMENT_UID.label": "Ссылка на элемент устарела",
   "backend.toolError.STALE_ELEMENT_UID.message": "Целевой элемент устарел или не существует. Получите структуру страницы заново.",
   "backend.toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": "Страница изменилась; ссылка на элемент устарела",

@@ -320,3 +320,88 @@ for (const mode of ["desktop", "mobile"]) {
     } finally { await h.close(); }
   });
 }
+
+test("httpbin pizza radios check through the wrapped label", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    await h.page.setContent(`<!doctype html><title>pizza</title>
+      <form method="post" action="/post">
+        <fieldset>
+          <legend> Pizza Size </legend>
+          <p><label> <input type=radio name=size value="small"> Small </label></p>
+          <p><label> <input type=radio name=size value="medium"> Medium </label></p>
+          <p><label> <input type=radio name=size value="large"> Large </label></p>
+        </fieldset>
+        <fieldset>
+          <legend> Pizza Toppings </legend>
+          <p><label> <input type=checkbox name="topping" value="bacon"> Bacon </label></p>
+          <p><label> <input type=checkbox name="topping" value="onion"> Onion </label></p>
+        </fieldset>
+      </form>`);
+    const call = (target, action) => h.worker.evaluate(
+      ({ target, action }) => elementHarness.call("act_on_element", { target, action }),
+      { target, action },
+    );
+    const large = await call('css:input[name="size"][value="large"]', "check");
+    const checks = await h.page.evaluate(() => Object.fromEntries([...document.querySelectorAll("input")].map(el => [el.value || el.name, el.checked])));
+    expect(large, JSON.stringify({ large, checks })).toMatchObject({ checked: true, changed: true, method: "cdp" });
+    expect(checks).toMatchObject({ small: false, medium: false, large: true });
+    const label = await call("css:fieldset:nth-of-type(1) > p:nth-of-type(2) > label", "click");
+    const afterLabel = await h.page.evaluate(() => Object.fromEntries([...document.querySelectorAll('input[type=radio]')].map(el => [el.value, el.checked])));
+    expect(label, JSON.stringify({ label, afterLabel })).not.toHaveProperty("error");
+    expect(afterLabel).toMatchObject({ small: false, medium: true, large: false });
+    const bacon = await call('css:input[name="topping"][value="bacon"]', "check");
+    expect(bacon, JSON.stringify(bacon)).toMatchObject({ checked: true, changed: true, inputDelivered: true });
+    const opened = await h.worker.evaluate((url) => elementHarness.call("open_tab", { url }), h.page.url());
+    expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
+    const shot = await h.worker.evaluate((tabId) => elementHarness.call("screenshot", { tabId, actionable: true }, "run_script"), opened.id);
+    expect(shot, JSON.stringify({ ...shot, _image: undefined })).not.toHaveProperty("error");
+    const acted = await h.worker.evaluate((tabId) => elementHarness.call("act_on_screen", {
+      tabId, action: "click", x: 20, y: 20, returnScreenshot: false,
+    }, "run_script"), opened.id);
+    expect(acted, JSON.stringify(acted)).not.toHaveProperty("code", "SCREENSHOT_CONTEXT_STALE");
+  } finally { await h.close(); }
+});
+
+test("a click that navigates is not reported as undelivered input", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    await h.worker.evaluate(() => {
+      const original = chrome.scripting.executeScript.bind(chrome.scripting);
+      globalThis.receiptReads = 0;
+      chrome.scripting.executeScript = async options => {
+        const source = String(options?.func || "");
+        if (!source.includes("__qzInputReceiptBound") || options.args?.[0] !== false) return original(options);
+        // A committed navigation leaves this read on a document that was never armed.
+        receiptReads += 1;
+        const root = globalThis;
+        const previousDocument = root.document;
+        const previousCount = root.__qzInputReceipt;
+        root.document = { addEventListener() {} };
+        delete root.__qzInputReceipt;
+        try { return [{ result: options.func(false) }]; }
+        finally {
+          if (previousDocument === undefined) delete root.document;
+          else root.document = previousDocument;
+          if (previousCount === undefined) delete root.__qzInputReceipt;
+          else root.__qzInputReceipt = previousCount;
+        }
+      };
+    });
+    for (const [id, html, url] of [
+      ["go", `<!doctype html><a id="go" href="/next" style="display:block;width:160px;height:40px">Next</a>`, "/next"],
+      ["send", `<!doctype html><form action="/sent" method="get"><button id="send" type="submit" style="width:160px;height:40px">Send</button></form>`, "/sent"],
+    ]) {
+      await h.page.setContent(html);
+      const result = await h.act(id, "click");
+      expect(result, JSON.stringify(result)).toMatchObject({
+        clickDispatched: true, inputDelivered: true, navigated: true,
+      });
+      expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+      await expect.poll(() => h.page.url()).toContain(url);
+    }
+    expect(await h.worker.evaluate(() => receiptReads)).toBe(2);
+  } finally { await h.close(); }
+});

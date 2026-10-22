@@ -83,6 +83,8 @@
   "backend.toolError.NO_NORMAL_BROWSER_WINDOW.message": "Ouvrez une fenêtre Chrome classique et réessayez.",
   "backend.toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": "Destination de publication Git indisponible",
   "backend.toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": "Ressource binaire invalide pour la publication Git",
+  "backend.toolError.INPUT_NOT_DELIVERED.label": "Saisie non remise",
+  "backend.toolError.INPUT_NOT_DELIVERED.message": "La page n’a pas reçu ce clic. Laissez l’onglet finir sa mise en page, puis réessayez.",
   "backend.toolError.STALE_ELEMENT_UID.label": "La référence de l’élément a expiré",
   "backend.toolError.STALE_ELEMENT_UID.message": "L’élément cible a expiré ou n’existe pas. Récupérez à nouveau la structure de la page.",
   "backend.toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": "La page a changé ; la référence de l’élément a expiré",

@@ -277,6 +277,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   NO_NORMAL_BROWSER_WINDOW: { label: "toolError.NO_NORMAL_BROWSER_WINDOW.label", message: "toolError.NO_NORMAL_BROWSER_WINDOW.message" },
   GIT_PUBLISH_TARGET_UNAVAILABLE: { label: "toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label" },
   GIT_PUBLISH_RESOURCE_BINARY_INVALID: { label: "toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label" },
+  INPUT_NOT_DELIVERED: { label: "toolError.INPUT_NOT_DELIVERED.label", message: "toolError.INPUT_NOT_DELIVERED.message" },
   STALE_ELEMENT_UID: { label: "toolError.STALE_ELEMENT_UID.label", message: "toolError.STALE_ELEMENT_UID.message" },
   STALE_ELEMENT_UID_PAGE_CHANGED: { label: "toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label", message: "toolError.STALE_ELEMENT_UID_PAGE_CHANGED.message" },
   STALE_IMAGE_TARGET: { label: "toolError.STALE_IMAGE_TARGET.label", message: "toolError.STALE_IMAGE_TARGET.message" },

@@ -61,5 +61,6 @@
   "page.elementFocusLost": "入力欄からフォーカスが外れました。送信キーは送られていません。ページを確認してから続けてください。",
   "page.elementNotCheckable": "対象はネイティブのチェックボックスまたはラジオボタンではありません。別の要素を選んでください。",
   "page.radioCannotBeUnchecked": "選択済みのラジオボタンはクリックして解除できません。同じグループの別の選択肢を選んでください。",
-  "page.elementCheckStateMismatch": "指定した選択状態になりませんでした。要素を確認してから続けてください。"
+  "page.elementCheckStateMismatch": "指定した選択状態になりませんでした。要素を確認してから続けてください。",
+  "page.inputNotDelivered": "入力が届きませんでした。ページはこのクリックを受け取っていません。タブのレイアウト完了後にもう一度試してください。"
 }

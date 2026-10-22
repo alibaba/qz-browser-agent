@@ -2,8 +2,7 @@ import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import type { ToolContext } from "#sdk/background";
-import type { ElementReference } from "#sdk/background/browser";
-import type { PageObservationHost, Screenshot, ScreenshotOptions } from "#sdk/background/browser";
+import { ensurePageSurface, type ElementReference, type PageObservationHost, type Screenshot, type ScreenshotOptions } from "#sdk/background/browser";
 import type { ImageAssetRecord } from "#sdk/shared/data";
 import { bytesToBase64 } from "#sdk/shared/format";
 import { normalizeImage, readImageInput, readImageResponse, parseImageDataUrlHeader, IMAGE_MAX_EDGE, IMAGE_INPUT_MAX_BYTES, compactImageSource, ImageLimitError } from "#sdk/shared/images";
@@ -1904,6 +1903,7 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
   recordScreenCaptureTrace("guardrails.started", tabId, context);
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "screenshot", source: "tab" });
   recordScreenCaptureTrace("guardrails.done", tabId, context, { elapsedMs: Date.now() - phaseStartedAt });
+  await ensurePageSurface(tabId, (method, params) => sendCdp(tabId, method, params || {}, context));
 
   try {
     const cssSize = await screenshotCssSize(tabId);

@@ -61,5 +61,6 @@
   "page.elementFocusLost": "Das Feld hat den Fokus verloren. Es wurde keine Taste zum Absenden gesendet. Prüfen Sie die Seite, bevor Sie fortfahren.",
   "page.elementNotCheckable": "Das Ziel ist kein natives Kontrollkästchen oder Optionsfeld. Wählen Sie ein anderes Element.",
   "page.radioCannotBeUnchecked": "Ein ausgewähltes Optionsfeld lässt sich nicht durch Anklicken abwählen. Wählen Sie eine andere Option in der Gruppe.",
-  "page.elementCheckStateMismatch": "Das Steuerelement hat nicht den angeforderten Auswahlzustand erreicht. Prüfen Sie es, bevor Sie fortfahren."
+  "page.elementCheckStateMismatch": "Das Steuerelement hat nicht den angeforderten Auswahlzustand erreicht. Prüfen Sie es, bevor Sie fortfahren.",
+  "page.inputNotDelivered": "Die Eingabe wurde nicht zugestellt. Die Seite hat diesen Klick nicht erhalten. Lassen Sie den Tab das Layout fertigstellen und versuchen Sie es erneut."
 }

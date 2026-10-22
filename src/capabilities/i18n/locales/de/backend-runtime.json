@@ -83,6 +83,8 @@
   "backend.toolError.NO_NORMAL_BROWSER_WINDOW.message": "Öffne ein normales Chrome-Fenster und versuche es erneut.",
   "backend.toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": "Git-Veröffentlichungsziel nicht verfügbar",
   "backend.toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": "Ungültige Binärressource für Git-Veröffentlichung",
+  "backend.toolError.INPUT_NOT_DELIVERED.label": "Eingabe nicht zugestellt",
+  "backend.toolError.INPUT_NOT_DELIVERED.message": "Die Seite hat diesen Klick nicht erhalten. Lassen Sie den Tab das Layout fertigstellen und versuchen Sie es erneut.",
   "backend.toolError.STALE_ELEMENT_UID.label": "Elementreferenz ist abgelaufen",
   "backend.toolError.STALE_ELEMENT_UID.message": "Das Zielelement ist abgelaufen oder nicht vorhanden. Rufe die Seitenstruktur erneut ab.",
   "backend.toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": "Seite geändert; Elementreferenz abgelaufen",

@@ -83,6 +83,8 @@
   "backend.toolError.NO_NORMAL_BROWSER_WINDOW.message": "सामान्य Chrome विंडो खोलकर फिर कोशिश करें।",
   "backend.toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": "Git पर पब्लिश करने का लक्ष्य उपलब्ध नहीं है",
   "backend.toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": "Git पर पब्लिश करने का बाइनरी संसाधन अमान्य है",
+  "backend.toolError.INPUT_NOT_DELIVERED.label": "इनपुट नहीं पहुँचा",
+  "backend.toolError.INPUT_NOT_DELIVERED.message": "पेज को यह क्लिक नहीं मिला। टैब का लेआउट पूरा होने दें, फिर दोबारा कोशिश करें।",
   "backend.toolError.STALE_ELEMENT_UID.label": "एलिमेंट का रेफ़रेंस पुराना हो गया",
   "backend.toolError.STALE_ELEMENT_UID.message": "लक्षित एलिमेंट पुराना हो गया है या मौजूद नहीं है। पेज की संरचना फिर लें।",
   "backend.toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": "पेज बदल गया; एलिमेंट का रेफ़रेंस पुराना है",

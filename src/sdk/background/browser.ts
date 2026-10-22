@@ -35,4 +35,5 @@ export { isCdpFallbackForbiddenError } from "../../background/tools/cdp-runtime.
 export type { PageNavigationHost, PageState, PreparedNavigation } from "../../background/tools/page-navigation.js";
 export type { PageObservationHost, Screenshot, ScreenshotOptions } from "../../background/tools/page-observation.js";
 export { elementPageFunction } from "../../background/tools/page-scripts.js";
+export { armPageInputReceipt, ensurePageSurface, readPageInputReceipt } from "../../background/tools/page-surface.js";
 export { isRunScriptInnerTargetArgs, resolveRunScriptTargetTabId } from "../../background/tools/script-policy.js";
