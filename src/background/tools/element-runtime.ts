@@ -14,6 +14,7 @@ interface ElementRuntimeHost {
   assertTabAllowed(tabId: number, details: Record<string, unknown>): Promise<unknown>;
   withDebugger: ReturnType<typeof createCdpRuntime>['withDebugger'];
   sendToContent(tabId: number | undefined, action: string, params?: Record<string, unknown>): Promise<unknown>;
+  initializeContentScript(tabId: number): Promise<void>;
 }
 import { isCdpFallbackForbiddenError } from "./cdp-runtime.js";
 import { isElementReply } from "../../shared/contracts/page-content.js";
@@ -22,7 +23,7 @@ import { getLanguage } from "../../shared/i18n/index.js";
 import { t } from "./messages.js";
 
 const OBJECT_GROUP = "qz-uid";
-const isolatedByTab = new Map<number, Map<string, number>>();
+const isolatedByTab = new Map<number, Map<string, Set<number>>>();
 function noteExecutionContext(source: { tabId?: number } | undefined, method: string, params: unknown) {
   const tabId = Number(source?.tabId);
   if (!Number.isInteger(tabId) || tabId <= 0) return;
@@ -30,15 +31,22 @@ function noteExecutionContext(source: { tabId?: number } | undefined, method: st
   if (method === "Runtime.executionContextDestroyed") {
     const id = Number(record(params).executionContextId);
     const frames = isolatedByTab.get(tabId);
-    if (frames) for (const [frameId, known] of frames) if (known === id) frames.delete(frameId);
+    if (frames) for (const [frameId, candidates] of frames) {
+      candidates.delete(id);
+      if (!candidates.size) frames.delete(frameId);
+    }
     return;
   }
   if (method !== "Runtime.executionContextCreated") return;
   const context = record(record(params).context);
   const aux = record(context.auxData);
   if (context.origin !== `chrome-extension://${chrome.runtime?.id || ""}` || aux.type !== "isolated") return;
-  const frames = isolatedByTab.get(tabId) || new Map<string, number>();
-  frames.set(String(aux.frameId || ""), Number(context.id));
+  const id = Number(context.id), frameId = String(aux.frameId || "");
+  if (!Number.isInteger(id) || id <= 0 || !frameId) return;
+  const frames = isolatedByTab.get(tabId) || new Map<string, Set<number>>();
+  const candidates = frames.get(frameId) || new Set<number>();
+  candidates.add(id);
+  frames.set(frameId, candidates);
   isolatedByTab.set(tabId, frames);
 }
 globalThis.chrome?.debugger?.onEvent?.addListener((source, method, params) => noteExecutionContext(source, method, params));
@@ -57,6 +65,7 @@ export function createElementRuntime({
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   withDebugger,
   sendToContent,
+  initializeContentScript,
 }: ElementRuntimeHost) {
 // ---------------------------------------------------------------------------
 // Page snapshot element refs
@@ -68,8 +77,8 @@ const ELEMENT_REF_MAX = 5000;
 const ELEMENT_TARGET_GRAMMAR = 'target = "uid:" <element_uid> | "css:" <css_selector>';
 function getElementTargetExamples() {
 return [
-  "uid:t5493.00001.12",
-  "uid:t5493.00001.i3",
+  "uid:t5493.000001.12",
+  "uid:t5493.000001.i3",
   `css:button[aria-label="${t("nextPageSelector")}"]`,
   'css:a[href*="page=2"]',
   'css:input[name="q"]',
@@ -84,8 +93,6 @@ return t("elementReference", {
 });
 
 }
-
-const snapshotSerial = new Map<number, number>();
 
 function taskTabIds(context: ToolContext = {}) {
   const sessionId = String(context.sessionId || "").trim();
@@ -117,9 +124,9 @@ function makeSnapshotId(tabId: number, context: ToolContext = {}) {
   const peers = taskTabIds(context);
   const ids = peers.includes(id) ? peers : [...peers, id];
   const suffix = uniqueTabSuffix(id, ids);
-  const next = (snapshotSerial.get(id) || 0) + 1;
-  snapshotSerial.set(id, next);
-  return `t${suffix}.${next.toString(36).padStart(5, "0")}`;
+  // Milliseconds modulo 36^6. The id comes from the clock, so a worker restart does not reuse a recent snapshot.
+  const serial = (Date.now() % (36 ** 6)).toString(36).padStart(6, "0");
+  return `t${suffix}.${serial}`;
 }
 
 function makeElementUid(snapshotId: string, seq: number, mark = "") {
@@ -212,7 +219,7 @@ async function resolveSelectorTarget(tabId: number | undefined, selector = "", i
   return { tabId: ref.tabId, selector: ref.selector, index: ref.index, target: ref.target, uid: ref.uid, ref: ref.ref };
 }
 
-async function resolveElementReference(tabId: number | undefined, { target = "", index = 0, allowBackendOnly = false } = {}, context: ToolContext = {}) {
+async function resolveElementReference(tabId: number | undefined, { target = "", index = 0, allowBackendOnly = false, readOnly = false } = {}, context: ToolContext = {}) {
   void allowBackendOnly;
   const normalized = parseElementTarget(target);
   const requestedUid = normalizeElementUid(normalized.uid);
@@ -238,10 +245,15 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       { target: elementTargetForUid(requestedUid) },
     );
   }
+  const selectorFallback = !Number(ref.backendNodeId || 0) && Boolean(String(ref.selector || "").trim());
   const suffix = (/^t(\d+)\./.exec(requestedUid) || [])[1] || "";
   if (suffix) {
     const listed = taskTabIds(context);
-    const candidates = listed.length ? listed : [Number(ref.tabId)];
+    // A read-only selector uid may name a tab this session does not own. Check that
+    // suffix against the registered tab alone so it cannot collide with an owned tab.
+    const candidates = readOnly === true && selectorFallback
+      ? [Number(ref.tabId)]
+      : (listed.length ? listed : [Number(ref.tabId)]);
     const matched = matchTabSuffix(suffix, candidates);
     if (matched == null) {
       throw new ToolExecutionError(
@@ -282,6 +294,8 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       sessionId: currentSessionId,
       tabId: resolvedTabId,
       source: "element_uid_reference",
+      // Selector fallback is a content-script read. Node-backed uids keep the ownership check.
+      readOnly: readOnly === true && selectorFallback,
     });
     if (!resolved?.ok) {
       throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {
@@ -318,9 +332,10 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     });
   }
   await assertTabAllowedBySecurityGuardrails(resolvedTabId, { tool: "element_target", source: "uid_target" });
+  const backendNodeId = Number(ref.backendNodeId || 0);
   return {
     tabId: resolvedTabId,
-    selector: "",
+    selector: backendNodeId ? "" : String(ref.selector || "").trim(),
     index: requestedSelector ? index : Number(ref.index || 0),
     uid: requestedUid,
     target: elementTargetForUid(requestedUid),
@@ -332,7 +347,7 @@ function normalizeElementUid(uid: unknown) {
   const value = String(uid || "").trim();
   if (!value) return "";
   if (elementRefRegistry.has(value)) return value;
-  const match = value.match(/\bt\d+\.[0-9a-z]{5,}\.[0-9a-z]*\d+\b/i);
+  const match = value.match(/\bt\d+\.[0-9a-z]{6}\.[0-9a-z]*\d+\b/i);
   return match ? match[0] : value;
 }
 
@@ -368,11 +383,21 @@ async function describeSelectors(send: CdpSend, selectors: string[]) {
 }
 
 async function callElement(tabId: number | undefined, binding: { tabId?: number; selector?: string; index?: number; uid?: string; target?: string; ref?: ElementReference }, action: string, params: Record<string, unknown> = {}, context: ToolContext = {}) {
-  if (!binding.uid) {
-    const index = Number.isInteger(binding.index) && Number(binding.index) >= 0 ? Number(binding.index) : 0;
-    return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector: binding.selector || "", index }), action);
+  const backendNodeId = Number(binding.ref?.backendNodeId || 0);
+  if (binding.uid && backendNodeId) {
+    return withElement(tabId, binding, context, (_send, call) => call(action, params));
   }
-  return withElement(tabId, binding, context, (_send, call) => call(action, params));
+  // No backend node: use the selector saved with the uid. A css target already carries its selector.
+  const selector = binding.uid
+    ? String(binding.selector || binding.ref?.selector || "").trim()
+    : String(binding.selector || "");
+  if (binding.uid && !selector) throw staleElement(binding.target || binding.uid);
+  const explicitIndex = Number(binding.index);
+  const storedIndex = Number(binding.ref?.index);
+  const index = Number.isInteger(explicitIndex) && explicitIndex >= 0
+    ? explicitIndex
+    : Number.isInteger(storedIndex) && storedIndex >= 0 ? storedIndex : 0;
+  return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector, index }), action);
 }
 
 async function withElement<T>(tabId: number | undefined, binding: { tabId?: number; uid?: string; target?: string; ref?: ElementReference }, context: ToolContext, run: (send: CdpSend, call: ElementCaller) => Promise<T>) {
@@ -380,9 +405,14 @@ async function withElement<T>(tabId: number | undefined, binding: { tabId?: numb
   if (!Number.isInteger(id) || id <= 0) throw new ToolExecutionError("MISSING_TAB_ID", "Element target has no usable tabId", { target: binding.target || "" });
   const objectGroup = `${OBJECT_GROUP}-${id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   return withDebugger(id, async (_target, send) => {
-    const loaderId = String(record(record(record(await send("Page.getFrameTree")).frameTree).frame).loaderId || "");
+    const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
+    const loaderId = String(frame.loaderId || "");
     if (binding.ref?.loaderId && loaderId && binding.ref.loaderId !== loaderId) throw staleElement(binding.uid || binding.target || "");
-    const objectId = await objectFromBackend(id, send, binding, objectGroup);
+    const contextId = await contentContextId(id, send, String(frame.id || ""));
+    // Selection may initialize Content while a navigation replaces the document.
+    const current = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
+    if (current.id !== frame.id || current.loaderId !== frame.loaderId) throw staleElement(binding.uid || binding.target || "");
+    const objectId = await objectFromBackend(send, binding, objectGroup, contextId);
     try {
       return await run(send, (action, params = {}) => invokeBound(send, objectId, action, params, objectGroup));
     } finally {
@@ -391,10 +421,9 @@ async function withElement<T>(tabId: number | undefined, binding: { tabId?: numb
   }, context);
 }
 
-async function objectFromBackend(tabId: number, send: CdpSend, binding: { target?: string; ref?: ElementReference }, objectGroup: string) {
+async function objectFromBackend(send: CdpSend, binding: { target?: string; ref?: ElementReference }, objectGroup: string, contextId: number) {
   const backendNodeId = Number(binding.ref?.backendNodeId || 0);
   if (!backendNodeId) throw staleElement(binding.target || "");
-  const contextId = await contentContextId(tabId, send);
   try {
     const resolved = record(await send("DOM.resolveNode", { backendNodeId, executionContextId: contextId, objectGroup }));
     const objectId = String(record(resolved.object).objectId || "");
@@ -406,19 +435,43 @@ async function objectFromBackend(tabId: number, send: CdpSend, binding: { target
   }
 }
 
-async function contentContextId(tabId: number, send: CdpSend) {
-  const main = String(record(record(record(await send("Page.getFrameTree")).frameTree).frame).id || "");
-  const known = () => {
-    const frames = isolatedByTab.get(tabId);
-    if (!frames?.size) return 0;
-    if (main && frames.has(main)) return Number(frames.get(main));
-    return frames.size === 1 ? Number([...frames.values()][0]) : 0;
+async function contentContextId(tabId: number, send: CdpSend, frameId: string) {
+  const select = async () => {
+    const candidates = isolatedByTab.get(tabId)?.get(frameId);
+    for (const contextId of [...(candidates || [])]) {
+      try {
+        const result = record(await send("Runtime.evaluate", {
+          contextId, returnByValue: true,
+          expression: `(() => {
+            let extensionId = "";
+            try { extensionId = globalThis.chrome?.runtime?.id || ""; } catch {}
+            return { extensionId, bridge: typeof globalThis.__qzInvoke === "function" };
+          })()`,
+        }));
+        const value = record(record(result.result).value);
+        const selected = !result.exceptionDetails && Boolean(chrome.runtime.id)
+          && value.extensionId === chrome.runtime.id && value.bridge === true
+          && isolatedByTab.get(tabId)?.get(frameId) === candidates && candidates?.has(contextId);
+        if (selected) return contextId;
+      } catch (error) {
+        if (isCdpFallbackForbiddenError(error) || !/Cannot find context|Execution context (?:was destroyed|is not available)/i.test(String(error))) throw error;
+      }
+    }
+    return 0;
   };
-  if (!known()) {
+  const discover = async () => {
     try { await send("Runtime.disable"); } catch (err) { if (isCdpFallbackForbiddenError(err)) throw err; }
+    isolatedByTab.delete(tabId);
     await send("Runtime.enable");
-  }
-  const id = known();
+  };
+  if (!isolatedByTab.get(tabId)?.get(frameId)?.size) await discover();
+  let id = await select();
+  if (id) return id;
+  // A responding ping can belong to Content without the node bridge. Initialize
+  // once, then validate again; no action has been dispatched on this path.
+  await initializeContentScript(tabId);
+  await discover();
+  id = await select();
   if (!id) throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabId });
   return id;
 }

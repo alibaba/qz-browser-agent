@@ -78,12 +78,14 @@ import { callMcpServerTool, inspectMcpServer } from "../mcp/mcp-client.js";
 // Content script messaging
 // ---------------------------------------------------------------------------
 
-async function ensureContentScript(tabId: number) {
-  try {
-    const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }));
-    if (response?.ok === true) return;
-  } catch(_e) {
-    // Inject the content script when it is missing.
+async function ensureContentScript(tabId: number, force = false) {
+  if (!force) {
+    try {
+      const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }));
+      if (response?.ok === true) return;
+    } catch(_e) {
+      // Inject the content script when it is missing.
+    }
   }
   await chrome.scripting.executeScript({
     target: { tabId },
@@ -1330,6 +1332,10 @@ const elementRuntime = createElementRuntime({
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   withDebugger,
   sendToContent,
+  initializeContentScript: async tabId => {
+    await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action: "initialize" });
+    await ensureContentScript(tabId, true);
+  },
 });
 const { isUidElementTarget } = elementRuntime;
 

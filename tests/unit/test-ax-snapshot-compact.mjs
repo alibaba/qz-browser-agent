@@ -266,9 +266,34 @@ const clicks = kept.snapshot.split("\n").filter(item => item.includes("Click me"
 assert.equal(clicks.length, 1);
 assert.match(clicks[0], /generic "Click me"/);
 
+const sameName = await run({
+  overview: {
+    title: "Search", url: "https://example.com/forms/post",
+    actions: [{ selector: "#search", role: "button", text: "Search" }],
+  },
+  bound: { loaderId: "loader", ids: [999] },
+  nodes: [
+    ax({ id: "root", children: ["heading"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "heading", parent: "root", backend: 2, role: "heading", name: "Search" }),
+  ],
+});
+const headingLine = line(sameName.snapshot, "heading");
+const buttonLine = line(sameName.snapshot, "button");
+assert.match(headingLine, /"Search"/);
+assert.doesNotMatch(headingLine, /\bbutton\b/);
+assert.match(buttonLine, /button "Search"/);
+const headingTarget = headingLine.match(/target=(uid:\S+)/)?.[1];
+const buttonTarget = buttonLine.match(/target=(uid:\S+)/)?.[1];
+const resolvedHeading = await element.resolveElementReference(8, { target: headingTarget }, context);
+const resolvedButton = await element.resolveElementReference(8, { target: buttonTarget }, context);
+assert.equal(resolvedHeading.ref.role, "heading");
+assert.equal(resolvedHeading.ref.backendNodeId, 2, "a same-named heading must not absorb the action");
+assert.equal(resolvedButton.ref.role, "button");
+assert.equal(resolvedButton.ref.backendNodeId, 999);
+
 const treeTarget = budget.snapshot.match(/target=(uid:\S+)/)?.[1];
 const resolvedTree = await element.resolveElementReference(8, { target: treeTarget }, context);
 assert.equal(resolvedTree.uid, treeTarget.slice(4));
-assert.match(resolvedTree.uid, /^t8\.[0-9a-z]{5,}\.\d+$/);
+assert.match(resolvedTree.uid, /^t8\.[0-9a-z]{6}\.\d+$/);
 
 console.log("ax snapshot compact tests passed");

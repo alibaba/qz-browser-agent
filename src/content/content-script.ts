@@ -28,8 +28,10 @@ interface PickerState {
   hoverTimer: number; renderedTarget: Element | null; focusRect: PickerRect | null; immediateUpdate: boolean;
   raf: number; motionRaf: number; timer: number; listeners: [string, EventListener, boolean | AddEventListenerOptions][];
 }
+type ContentMessageListener = Parameters<typeof chrome.runtime.onMessage.addListener>[0];
 interface ContentGlobals {
   __QZ_CONTENT_VERSION?: string; __QZ_CONTENT_READY?: boolean; QingzhouArticleExtractor?: ArticleExtractor;
+  __QZ_CONTENT_MESSAGE_LISTENER?: ContentMessageListener;
   __qzInvoke?: (node: Node | null, payload: ContentRequest) => Promise<unknown>;
 }
 const host = globalThis as typeof globalThis & ContentGlobals;
@@ -51,13 +53,13 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   let elementPickerGeneration = 0;
   let elementPickerStarting = false;
   // Skip duplicate injection of this version; a new version refreshes styles and handlers.
-  if (host.__QZ_CONTENT_VERSION === QZ_CONTENT_VERSION) return;
+  if (host.__QZ_CONTENT_VERSION === QZ_CONTENT_VERSION && typeof host.__qzInvoke === "function") return;
   host.__QZ_CONTENT_READY = true;
   host.__QZ_CONTENT_VERSION = QZ_CONTENT_VERSION;
 
   // Content actions share one reply channel; asynchronous handlers must keep it open.
 
-  chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
+  const onMessage: ContentMessageListener = (raw: unknown, _sender, sendResponse) => {
     const msg = (raw && typeof raw === "object" ? raw : {}) as ContentRequest;
     const handler = handlers[msg.action];
     if (!handler) {
@@ -78,7 +80,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       )));
 
     return true; // Keep sendResponse available for the asynchronous handler.
-  });
+  };
+  // Reinitialization replaces the old message owner before accepting new actions.
+  if (host.__QZ_CONTENT_MESSAGE_LISTENER) chrome.runtime.onMessage.removeListener(host.__QZ_CONTENT_MESSAGE_LISTENER);
+  chrome.runtime.onMessage.addListener(onMessage);
+  host.__QZ_CONTENT_MESSAGE_LISTENER = onMessage;
 
   // Handlers
 
@@ -2963,6 +2969,10 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   host.__qzInvoke = async (node, payload) => {
     const token = String(payload?.fillToken || "");
     let element = elementFromNode(node);
+    // RootWebArea resolves to the Document. Overview reads from the page element.
+    if (!element && payload?.action === "pageOverview" && node instanceof Document) {
+      element = node.body || node.documentElement;
+    }
     const saved = token ? fillRoots.get(token) : undefined;
     if ((!element || !element.isConnected) && saved?.isConnected) element = saved;
     const view = element?.ownerDocument?.defaultView;

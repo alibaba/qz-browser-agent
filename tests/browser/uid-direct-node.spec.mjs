@@ -34,6 +34,11 @@ const html = `<!doctype html><meta charset="utf-8"><title>Direct node</title>
   <iframe id="frame" title="Child frame"></iframe>
   <script>
     window.hits = {};
+    window.edits = { pick: { input: 0, change: 0 }, when: { input: 0, change: 0 } };
+    for (const type of ["input", "change"]) document.addEventListener(type, event => {
+      const counts = window.edits[event.target.id];
+      if (counts) counts[type]++;
+    });
     window.submits = 0;
     window.enters = 0;
     for (const id of ["save", "dup-a", "dup-b", "swap", "stay", "reconnect", "inside"]) {
@@ -57,7 +62,7 @@ const html = `<!doctype html><meta charset="utf-8"><title>Direct node</title>
     document.querySelector("#frame").srcdoc = "<!doctype html><button id='inside-frame'>Inside frame</button>";
   </script>`;
 
-async function createHarness() {
+async function createHarness({ reloadFixture = false, secondary = false } = {}) {
   const server = createServer((_req, res) => { res.writeHead(200, { "Content-Type": "text/html" }); res.end(html); });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const directory = await mkdtemp(join(tmpdir(), "qingzhou-direct-node-"));
@@ -76,15 +81,33 @@ async function createHarness() {
     await writeFile(join(extension, "element-test-worker.js"), `import "./${manifest.background.service_worker}";
       import * as tools from "./background/tools/runtime.js"; globalThis.elementTestTools = tools;`);
     manifest.background.service_worker = "element-test-worker.js";
+    const contentPath = join(extension, "content/content-script.js");
+    const currentContent = reloadFixture ? await readFile(contentPath, "utf8") : "";
+    if (reloadFixture) {
+      // A prior Content contract can answer ping without exposing the node bridge.
+      manifest.version = "0.0.1";
+      await writeFile(contentPath, `${currentContent}\n;globalThis.__qzInvoke = undefined;`);
+    }
     await writeFile(manifestPath, JSON.stringify(manifest));
+    const extensions = [extension];
+    if (secondary) {
+      const sibling = join(directory, "idle-extension");
+      await cp(await ensureTestExtension(), sibling, { recursive: true });
+      const siblingManifest = JSON.parse(await readFile(join(sibling, "manifest.json"), "utf8"));
+      delete siblingManifest.key; // A separate installation, enabled without a task.
+      await writeFile(join(sibling, "manifest.json"), JSON.stringify(siblingManifest));
+      extensions.push(sibling);
+    }
     browser = await chromium.launchPersistentContext(join(directory, "profile"), {
       headless: true, executablePath: chromium.executablePath(), ignoreDefaultArgs: ["--disable-extensions", "--hide-scrollbars"],
-      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, "--no-proxy-server",
+      args: [`--disable-extensions-except=${extensions.join(",")}`, `--load-extension=${extensions.join(",")}`, "--no-proxy-server",
+        ...(reloadFixture ? ["--enable-unsafe-extension-debugging"] : []),
         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"],
     });
-    const worker = browser.serviceWorkers()[0] || await browser.waitForEvent("serviceworker");
-    await worker.evaluate(() => {
-      let tabId;
+    const primaryWorker = worker => worker.url().endsWith("/element-test-worker.js");
+    let worker = browser.serviceWorkers().find(primaryWorker) || await browser.waitForEvent("serviceworker", { predicate: primaryWorker });
+    const initializeWorker = tabId => worker.evaluate(initialTabId => {
+      let tabId = initialTabId;
       const context = { sessionId: "direct-node", runId: "run", runProfile: { platform: { os: "linux" } } };
       const runtime = elementTestTools.createToolRuntime({
         windowTarget: { resolveForNewTab: async () => (await chrome.windows.getAll())[0].id },
@@ -102,8 +125,16 @@ async function createHarness() {
         debuggerAttaches += 1;
         return attach(target, version);
       };
+      let injections = 0;
+      const execute = chrome.scripting.executeScript.bind(chrome.scripting);
+      chrome.scripting.executeScript = args => {
+        if (args.files?.includes("content/content-script.js")) injections++;
+        return execute(args);
+      };
       globalThis.elementHarness = {
         attaches: () => debuggerAttaches,
+        injections: () => injections,
+        tabId: () => tabId,
         async call(name, args, signal) {
           try { return await runtime.execute(name, { tabId, ...args }, signal, { ...context, workingTabId: tabId, source: "run_script" }); }
           catch (error) { return { error: error.message, code: error.code, details: error.details }; }
@@ -117,6 +148,7 @@ async function createHarness() {
             ready: document.readyState,
             url: location.href,
             hits: window.hits,
+            edits: window.edits,
             submits: window.submits,
             enters: window.enters,
             rich: document.querySelector("#rich")?.innerText || "",
@@ -127,7 +159,8 @@ async function createHarness() {
           }) }))[0].result;
         },
       };
-    });
+    }, tabId);
+    await initializeWorker();
     const call = (name, args, signal) => worker.evaluate(
       ({ name, args, aborted }) => {
         const controller = new AbortController();
@@ -145,6 +178,47 @@ async function createHarness() {
       call, state, close, page, worker,
       attaches: () => worker.evaluate(() => elementHarness.attaches()),
       detach: () => worker.evaluate(() => elementHarness.detach()),
+      async reload(version) {
+        const tabId = await worker.evaluate(() => elementHarness.tabId());
+        manifest.version = version;
+        await writeFile(manifestPath, JSON.stringify(manifest));
+        await writeFile(contentPath, currentContent);
+        const nextWorker = browser.waitForEvent("serviceworker", { predicate: primaryWorker, timeout: 15000 });
+        // Reload the unpacked installation through Chrome while keeping web pages alive.
+        const cdp = await browser.browser().newBrowserCDPSession();
+        try { await cdp.send("Extensions.loadUnpacked", { path: extension }); }
+        finally { await cdp.detach(); }
+        worker = await nextWorker;
+        await initializeWorker(tabId);
+      },
+      async contexts() {
+        return worker.evaluate(async () => {
+          const target = { tabId: elementHarness.tabId() }, contexts = [];
+          const listener = (source, method, params) => {
+            if (source.tabId === target.tabId && method === "Runtime.executionContextCreated") contexts.push(params.context);
+          };
+          chrome.debugger.onEvent.addListener(listener);
+          try {
+            await chrome.debugger.sendCommand(target, "Runtime.disable");
+            await chrome.debugger.sendCommand(target, "Runtime.enable");
+            return await Promise.all(contexts.filter(context => context.origin.startsWith("chrome-extension://")).map(async context => {
+              const result = await chrome.debugger.sendCommand(target, "Runtime.evaluate", {
+                contextId: context.id, returnByValue: true,
+                expression: "({ extensionId: chrome.runtime?.id || '', bridge: typeof globalThis.__qzInvoke === 'function' })",
+              });
+              return { contextId: context.id, origin: context.origin, ...result.result.value };
+            }));
+          } finally { chrome.debugger.onEvent.removeListener(listener); }
+        });
+      },
+      async removeBridge() {
+        return worker.evaluate(async () => {
+          const tabId = elementHarness.tabId();
+          await chrome.scripting.executeScript({ target: { tabId }, func: () => { delete globalThis.__qzInvoke; } });
+          return { ping: await chrome.tabs.sendMessage(tabId, { action: "ping" }), injections: elementHarness.injections() };
+        });
+      },
+      injections: () => worker.evaluate(() => elementHarness.injections()),
     };
   } catch (error) {
     await close();
@@ -220,6 +294,15 @@ test.describe("uid resolves the original node", () => {
     expect(selected.code, JSON.stringify(selected)).toBeUndefined();
     expect((await h.state()).pick).toBe("two");
     expect(await h.attaches()).toBe(before);
+  });
+
+  test("the root uid expands the accessibility tree", async () => {
+    const snapshot = (await tree(h)).snapshot;
+    const rootUid = targets(snapshot, "RootWebArea")[0];
+    expect(rootUid, snapshot).toBeTruthy();
+    const expanded = await h.call("get_ax_tree", { root: rootUid });
+    expect(expanded.code, JSON.stringify(expanded)).not.toBe("STALE_ELEMENT_UID");
+    expect(expanded.rootFound, JSON.stringify(expanded)).toBe(true);
   });
 
   test("a text-node uid operates on the owning element", async () => {
@@ -373,4 +456,58 @@ test.describe("uid resolves the original node", () => {
     expect(cancelled.code).toBe("OPERATION_ABORTED");
     expect((await h.state()).plain).toBe(before);
   });
+});
+
+async function expectSingleCssEdits(h, step) {
+  const before = (await h.state()).edits;
+  const value = step % 2 ? "one" : "two";
+  const date = `2026-10-${step % 2 ? "21" : "22"}`;
+  expect(await h.call("act_on_element", { target: "css:#pick", action: "select", value })).not.toHaveProperty("code");
+  expect(await h.call("act_on_element", { target: "css:#when", action: "fill", value: date })).not.toHaveProperty("code");
+  const after = await h.state();
+  expect(after.pick).toBe(value);
+  expect(after.when).toBe(date);
+  for (const id of ["pick", "when"]) {
+    expect(after.edits[id]).toEqual({ input: before[id].input + 1, change: before[id].change + 1 });
+  }
+}
+
+for (const secondary of [false, true]) test(`UID survives Content upgrade and reload without refreshing the page (idle sibling: ${secondary})`, async () => {
+  test.setTimeout(180000);
+  const h = await createHarness({ reloadFixture: true, secondary });
+  try {
+    const origin = await h.page.evaluate(() => performance.timeOrigin);
+    await paint(h.page, "#blob", "#00ff00");
+    let clicks = 0;
+    for (const version of ["0.0.2", "0.0.2"]) {
+      await h.reload(version);
+      expect(await h.page.evaluate(() => performance.timeOrigin)).toBe(origin);
+      const snapshot = (await tree(h)).snapshot;
+      const target = targets(snapshot, "button", "Save text")[0];
+      const contexts = await h.contexts();
+      expect(contexts.some(context => !context.extensionId), JSON.stringify(contexts)).toBe(true);
+      expect(contexts.some(context => context.extensionId && context.bridge), JSON.stringify(contexts)).toBe(true);
+      expect(new Set(contexts.map(context => context.origin)).size).toBe(secondary ? 2 : 1);
+      // The second reload must exclude an invalidated context even though its old bridge remains.
+      if (clicks) expect(contexts.some(context => !context.extensionId && context.bridge), JSON.stringify(contexts)).toBe(true);
+      expect(await h.call("inspect_element", { target })).not.toHaveProperty("code");
+      expect(await h.call("act_on_element", { target, action: "click" })).not.toHaveProperty("code");
+      expect((await h.state()).hits.save).toBe(++clicks);
+      const images = await h.call("list_images", {});
+      const image = images.images.find(item => item.alt === "Blob picture");
+      const read = await h.call("read_image", { target: image.target });
+      expect(read.code, JSON.stringify(read)).toBeUndefined();
+      expect((await sample(h.page, read.dataUrl || read._image)).g).toBeGreaterThan(200);
+      expect(await h.call("inspect_element", { target: "css:#save" })).not.toHaveProperty("code");
+      await expectSingleCssEdits(h, clicks);
+      for (let recovery = 0; recovery < 2; recovery++) {
+        const missing = await h.removeBridge();
+        expect(missing.ping.ok).toBe(true);
+        expect(await h.call("act_on_element", { target, action: "click" })).not.toHaveProperty("code");
+        expect((await h.state()).hits.save).toBe(++clicks);
+        expect(await h.injections()).toBe(missing.injections + 1);
+        await expectSingleCssEdits(h, clicks);
+      }
+    }
+  } finally { await h.close(); }
 });

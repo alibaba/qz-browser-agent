@@ -343,7 +343,15 @@ registerTool({
     if (result?.error) return result;
     const snapshotId = makeSnapshotId(target.tabId, context);
     const listed = (result.images || []).slice(0, clampNumber(limit, 1, 1000, 100));
-    const bound = await bindBackendNodes(target.tabId, listed.map(item => String(item.selector || "")), context);
+    const selectors = listed.map(item => String(item.selector || ""));
+    let bound = { loaderId: "", ids: selectors.map(() => 0) };
+    try {
+      bound = await bindBackendNodes(target.tabId, selectors, context);
+    } catch (error) {
+      const code = errorCode(error);
+      // A read-only tab cannot attach the debugger. Keep the images and resolve them by selector.
+      if (code !== "SESSION_TAB_UNOWNED" && code !== "SESSION_TAB_FOREIGN") throw error;
+    }
     const images = listed.map((item, rank) => {
         const uid = makeElementUid(snapshotId, rank + 1, "i");
         registerElementRef({
@@ -689,7 +697,7 @@ registerTool({
       return await readImageUrlAsResult(url, { detail, maxBytes, maxWidth, maxHeight, format, quality, signal });
     }
 
-    const ref = await resolveElementReference(tabId, { target, index, allowBackendOnly: true }, context);
+    const ref = await resolveElementReference(tabId, { target, index, allowBackendOnly: true, readOnly: true }, context);
     let canvasResult: ImageMetadata;
     try {
       canvasResult = imageMetadata(await callElement(ref.tabId!, ref, "readImageElement", {
@@ -698,6 +706,13 @@ registerTool({
     } catch (err) {
       if (isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(errorCode(err)).startsWith("STALE_ELEMENT_UID"))) throw err;
       canvasResult = { error: errorMessage(err), code: errorCode(err) || "IMAGE_CANVAS_FAILED" };
+    }
+    // Selector fallback must not return a different image than the one list_images registered.
+    if (!Number(ref.ref?.backendNodeId || 0)) {
+      assertSelectedImageSource({
+        target: ref.target || target,
+        expectedSrc: String(ref.ref?.imageSrc || "").trim(),
+      }, canvasResult?.currentSrc || canvasResult?.src || "");
     }
 
     if (canvasResult?.dataUrl) {

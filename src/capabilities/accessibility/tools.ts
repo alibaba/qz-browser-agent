@@ -183,7 +183,8 @@ function placeActions(actions: ActionAnchor[], semanticNodes: SemanticNode[], se
   for (const anchor of actions) {
     const backendNodeId = Number(anchor.backendNodeId || 0);
     let node = backendNodeId ? byBackend.get(backendNodeId) : undefined;
-    if (!node) node = findBestSemanticNode(anchor.action, semanticNodes, used) || undefined;
+    // A real backend id that the shallow tree omitted must not attach to a same-named node.
+    if (!node && !backendNodeId) node = findBestSemanticNode(anchor.action, semanticNodes, used) || undefined;
     if (!node) node = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots);
     if (!node) continue;
     used.add(node);

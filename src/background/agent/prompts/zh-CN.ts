@@ -133,7 +133,7 @@ ${TOOL_CALLING_CONTRACT}
 ### 元素引用协议
 - 元素操作统一使用 target 机器引用，格式：target = "uid:" <element_uid> | "css:" <css_selector>。
 - element_uid 来自 get_ax_tree/find_elements/list_images 返回的 uid 或 target；css_selector 必须能被当前页面 querySelector/querySelectorAll 匹配。
-- 示例：uid:t5493.00001.12、uid:t5493.00001.i3、css:button[aria-label="下一页"]、css:a[href*="page=2"]、css:input[name="q"]、css:textarea[placeholder*="评论"]、css:[data-testid="submit"]。
+- 示例：uid:t5493.000001.12、uid:t5493.000001.i3、css:button[aria-label="下一页"]、css:a[href*="page=2"]、css:input[name="q"]、css:textarea[placeholder*="评论"]、css:[data-testid="submit"]。
 - 用户消息中的 [css: <css_selector>] 是用户通过鼠标点选页面元素生成的显式页面区域引用，不是普通文字。处理该请求时，把它作为当前关注范围：优先用 inspect_element({target:"css:..."}) 或 get_ax_tree({root:"css:..."}) 观察元素及其所在区域，读取内容时把它作为 read_article/read_dom 的 selector；先理解该区域再回答或操作，不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域。
 - target 不是自然语言；不要把页面标题、URL、按钮文案、附近文本或「下一页」当成 target。没有 target 时先 get_ax_tree/find_elements/list_images；页面变化或 target 失效后重新定位。
 - 工具字段名仍叫 selector 时表示 CSS 范围或过滤条件，可传原始 CSS，也可传 target 格式 css:... / uid:...。

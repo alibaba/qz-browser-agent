@@ -74,6 +74,7 @@ const storedImageRows = new Map();
 const imageMetadataWrites = [];
 const imageUpserts = [];
 let imageWriteError = null;
+let bindBackendNodesImpl = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 0) });
 let listedImages = [{
   index: 4,
   rank: 0,
@@ -186,6 +187,7 @@ const runtime = registerMediaTools({
   elementTargetForRef(ref) { return ref?.target || ""; },
   elementTargetGrammar: "target grammar",
   getElementTargetDescription: () => "target description",
+  bindBackendNodes(tabId, selectors) { return bindBackendNodesImpl(tabId, selectors); },
   async getTabPageState(tabId) { return { tabId, url: tabPageUrl, title: "Example" }; },
   pageStateDelta(before, after) {
     return {
@@ -1531,6 +1533,22 @@ assert.deepEqual(listed.images[0].context, {
 });
 assert.equal(elementRefs.get("t3_snapshot.i1").imageSrc, "https://example.test/hero-a.png");
 assert.equal(elementRefs.get("t3_snapshot.i1").imageIndex, 4);
+const previousBind = bindBackendNodesImpl;
+try {
+  bindBackendNodesImpl = async () => { throw new ToolExecutionError("SESSION_TAB_FOREIGN", "foreign"); };
+  const foreignListed = await definitions.get("list_images").execute({ tabId: 3 }, undefined, { sessionId: "session-a" });
+  assert.equal(foreignListed.count, listedImages.length);
+  assert.equal(foreignListed.images.length, 1);
+  assert.equal(foreignListed.images[0].src, "https://example.test/hero-a.png");
+  assert.equal(elementRefs.get("t3_snapshot.i1").backendNodeId, undefined);
+  bindBackendNodesImpl = async () => { throw new ToolExecutionError("SECURITY_GUARDRAIL_BLOCKED", "blocked"); };
+  await assert.rejects(
+    definitions.get("list_images").execute({ tabId: 3 }, undefined, { sessionId: "session-a" }),
+    error => error?.code === "SECURITY_GUARDRAIL_BLOCKED",
+  );
+} finally {
+  bindBackendNodesImpl = previousBind;
+}
 const inspected = await definitions.get("read_image").execute({ target: listed.images[0].target }, undefined, { sessionId: "session-a" });
 assert.equal(inspected.target, listed.images[0].target);
 assert.match(inspected.note, /满足时在切换页面上下文前把这个 target 交给 collect_images/);
@@ -1737,3 +1755,171 @@ assert.equal(recoveredScreenshot.saved, true, "the same screenshot path recovers
 assert.equal(recoveredScreenshot.totalRows, 1);
 
 console.log("media screenshot boundary tests passed");
+
+const { createElementRuntime } = await import("../../src/background/tools/element-runtime.js");
+const fallbackImages = [
+  { index: 0, rank: 0, selector: "main > img.card:nth-of-type(1)", src: "https://example.test/a.png", currentSrc: "https://example.test/a.png", alt: "A", title: "", naturalWidth: 10, naturalHeight: 10, visible: true },
+  { index: 1, rank: 1, selector: "main > img.card:nth-of-type(2)", src: "https://example.test/b.png", currentSrc: "https://example.test/b.png", alt: "B", title: "", naturalWidth: 10, naturalHeight: 10, visible: true },
+];
+let liveFallbackImages = fallbackImages.map(item => ({ ...item }));
+let fallbackForeign = true;
+let sessionOwnedTabIds = [5];
+const foreignTabId = 15;
+const fallbackContentCalls = [];
+async function fallbackContent(_tabId, action, params = {}) {
+  fallbackContentCalls.push({ action, selector: params.selector, index: params.index });
+  const selector = String(params.selector || "");
+  const scoped = selector ? liveFallbackImages.filter(item => item.selector === selector) : liveFallbackImages;
+  if (action === "listImageElements") {
+    return {
+      ok: true,
+      count: scoped.length,
+      scanned: liveFallbackImages.length,
+      pageUrl: "https://example.test/",
+      pageTitle: "Example",
+      images: scoped.map(item => ({ ...item })),
+    };
+  }
+  if (action === "readImageElement") {
+    const image = scoped[Number(params.index) || 0];
+    if (!image) return { ok: false, code: "ELEMENT_NOT_FOUND", error: "missing", selector };
+    return {
+      ok: true,
+      ...image,
+      dataUrl: "data:image/png;base64,aW1hZ2U=",
+      mimeType: "image/png",
+      width: 10,
+      height: 10,
+      method: "canvas",
+    };
+  }
+  return { ok: true };
+}
+const fallbackElements = createElementRuntime({
+  ToolExecutionError,
+  getToolRuntimeDependencies() {
+    return { sessions: {
+      listOwnedTabIds: () => sessionOwnedTabIds,
+      async resolveTargetTab(input) {
+        if (!fallbackForeign) return { ok: true, ownedByCurrentTask: true };
+        if (input?.readOnly) return { ok: true, readOnlyAccess: true, ownedByCurrentTask: false };
+        return { ok: false, code: "SESSION_TAB_FOREIGN", reason: "tab_owned_by_another_session" };
+      },
+    } };
+  },
+  makeSessionTabTargetError(code, details) { return new ToolExecutionError(code, code, details); },
+  async assertTabAllowed() {},
+  async withDebugger() { throw new ToolExecutionError("SESSION_TAB_UNOWNED", "unowned"); },
+  sendToContent: fallbackContent,
+});
+const fallbackDefinitions = new Map();
+registerMediaTools({
+  getPageContext: () => ({ pageMode: "desktop" }),
+  registerTool({ name, execute }) { fallbackDefinitions.set(name, { execute }); },
+  ToolExecutionError,
+  getToolRuntimeDependencies() { return {}; },
+  makeSessionTabTargetError(code, details) { return new ToolExecutionError(code, code, details); },
+  sendToContent: fallbackContent,
+  resolveSelectorTarget: fallbackElements.resolveSelectorTarget,
+  resolveElementReference: fallbackElements.resolveElementReference,
+  makeSnapshotId: fallbackElements.makeSnapshotId,
+  makeElementUid: fallbackElements.makeElementUid,
+  registerElementRef: fallbackElements.registerElementRef,
+  elementTargetForUid: fallbackElements.elementTargetForUid,
+  elementTargetForSelector: fallbackElements.elementTargetForSelector,
+  elementTargetForRef: fallbackElements.elementTargetForRef,
+  elementTargetGrammar: "target grammar",
+  getElementTargetDescription: () => "target description",
+  callElement: fallbackElements.callElement,
+  bindBackendNodes: fallbackElements.bindBackendNodes,
+  async getTabPageState(tabId) { return { tabId, url: "https://example.test/", title: "Example" }; },
+  pageStateDelta() { return { urlChanged: false, titleChanged: false }; },
+  commitObservedPageNavigation() { return null; },
+  async getSecurityGuardrails() { return { rules: [] }; },
+  async assertTabAllowed() {},
+  assertUrlAllowed() {},
+  clampNumber(value, min, max, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(min, Math.min(max, Math.floor(number))) : fallback;
+  },
+  async sendCdp() { return {}; },
+  async withDebugger() { throw new ToolExecutionError("SESSION_TAB_UNOWNED", "unowned"); },
+});
+const { registerPageElementTools } = await import("../../src/capabilities/page/tools.js");
+registerPageElementTools({
+  registerTool({ name, execute }) { fallbackDefinitions.set(name, { execute }); },
+  ToolExecutionError,
+  sendToContent: fallbackContent,
+  resolveSelectorTarget: fallbackElements.resolveSelectorTarget,
+  resolveElementReference: fallbackElements.resolveElementReference,
+  withElement: fallbackElements.withElement,
+  addElementTargetsToFindResult: fallbackElements.addElementTargetsToFindResult,
+  elementTargetForRef: fallbackElements.elementTargetForRef,
+  elementTargetForSelector: fallbackElements.elementTargetForSelector,
+  elementTargetGrammar: fallbackElements.elementTargetGrammar,
+  getElementTargetDescription: fallbackElements.getElementTargetDescription,
+  async getTabPageState(tabId) { return { tabId, url: "https://example.test/", title: "Example" }; },
+  pageStateDelta() { return { urlChanged: false, titleChanged: false }; },
+  async prepareKnownPageNavigation() { return null; },
+  commitObservedPageNavigation() { return null; },
+  clickPointReady: () => false,
+  clickNotReadyResult: () => ({ error: "no point", code: "CLICK_POINT_OUT_OF_VIEWPORT" }),
+  async sendCdp() { return {}; },
+  async withDebugger() { throw new ToolExecutionError("SESSION_TAB_UNOWNED", "unowned"); },
+  getPageContext: () => ({ pageMode: "desktop" }),
+});
+const unownedListed = await fallbackDefinitions.get("list_images").execute({ tabId: foreignTabId }, undefined, { sessionId: "session-a" });
+assert.equal(unownedListed.images.length, 2);
+assert.match(unownedListed.images[1].target, /^uid:/);
+assert.equal(unownedListed.images[1].tabId, undefined, "image candidates keep the existing target fields");
+const unownedRead = await fallbackDefinitions.get("read_image").execute({
+  tabId: foreignTabId,
+  target: unownedListed.images[1].target,
+}, undefined, { sessionId: "session-a" });
+assert.equal(unownedRead.src, "https://example.test/b.png");
+assert.equal(unownedRead.code, undefined);
+assert.equal(fallbackContentCalls.filter(call => call.action === "readImageElement").at(-1).selector, "main > img.card:nth-of-type(2)");
+assert.equal(fallbackContentCalls.filter(call => call.action === "readImageElement").at(-1).index, 0);
+const contentBeforeMutation = fallbackContentCalls.length;
+await assert.rejects(
+  fallbackDefinitions.get("act_on_element").execute({
+    tabId: foreignTabId,
+    target: unownedListed.images[1].target,
+    action: "click",
+  }, undefined, { sessionId: "session-a" }),
+  error => error?.code === "STALE_ELEMENT_UID",
+  "a non-readonly action on an unowned selector uid is rejected",
+);
+assert.equal(fallbackContentCalls.length, contentBeforeMutation, "rejection happens before any content-script call");
+fallbackElements.registerElementRef({
+  uid: "t15.00000b.i9",
+  tabId: foreignTabId,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/",
+  selector: "main > img.card:nth-of-type(2)",
+  index: 0,
+  imageSrc: "https://example.test/b.png",
+  backendNodeId: 44,
+});
+await assert.rejects(
+  fallbackDefinitions.get("read_image").execute({ tabId: foreignTabId, target: "uid:t15.00000b.i9" }, undefined, { sessionId: "session-a" }),
+  error => error?.code === "STALE_ELEMENT_UID",
+  "a node-backed uid on a tab this session does not own stays rejected",
+);
+liveFallbackImages[1] = { ...liveFallbackImages[1], src: "https://example.test/changed.png", currentSrc: "https://example.test/changed.png" };
+await assert.rejects(
+  fallbackDefinitions.get("read_image").execute({ tabId: foreignTabId, target: unownedListed.images[1].target }, undefined, { sessionId: "session-a" }),
+  error => error?.code === "STALE_IMAGE_TARGET",
+  "selector fallback must reject an image whose source changed after listing",
+);
+sessionOwnedTabIds = [5, foreignTabId];
+fallbackForeign = false;
+await assert.rejects(
+  fallbackDefinitions.get("collect_images").execute({
+    table: "fallback-images",
+    tabId: foreignTabId,
+    targets: [unownedListed.images[1].target],
+  }, undefined, { sessionId: "session-a" }),
+  error => error?.code === "STALE_IMAGE_TARGET",
+  "collection uses the same source check when a uid falls back to its selector",
+);

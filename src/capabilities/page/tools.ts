@@ -227,7 +227,7 @@ registerTool({
           examples: [
             { target: "css:input[name=\"q\"]", action: "fill", value: t("searchTerms") },
             { target: "css:input[name=\"q\"]", action: "press", key: "Enter" },
-            { target: "uid:t5493.00001.12", action: "click" },
+            { target: "uid:t5493.000001.12", action: "click" },
           ],
         },
       };

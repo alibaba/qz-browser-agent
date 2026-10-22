@@ -131,7 +131,7 @@ ${TOOL_CALLING_CONTRACT}
 ### Element references
 - Element actions use machine references in target: target = "uid:" <element_uid> | "css:" <css_selector>.
 - element_uid comes from the uid or target returned by get_ax_tree/find_elements/list_images. css_selector must match through querySelector/querySelectorAll on the current page.
-- Examples: uid:t5493.00001.12, uid:t5493.00001.i3, css:button[aria-label="Next page"], css:a[href*="page=2"], css:input[name="q"], css:textarea[placeholder*="Comment"], css:[data-testid="submit"].
+- Examples: uid:t5493.000001.12, uid:t5493.000001.i3, css:button[aria-label="Next page"], css:a[href*="page=2"], css:input[name="q"], css:textarea[placeholder*="Comment"], css:[data-testid="submit"].
 - A [css: <css_selector>] reference in a user message identifies a page region explicitly selected with the mouse; it is not ordinary prose. Treat it as the focus of the request: inspect the element and its surrounding region with inspect_element({target:"css:..."}) or get_ax_tree({root:"css:..."}), and use it as the selector for read_article/read_dom. Understand that region before answering or acting. Do not infer its meaning from the selector string alone or shift attention to unrelated parts of the page without reason.
 - target is not natural language. Do not use a page title, URL, button label, nearby text, or "Next page" as a target. If none is available, call get_ax_tree/find_elements/list_images first; locate it again after page changes or an invalid target.
 - Fields named selector specify a CSS scope or filter. They accept raw CSS or a target in css:... / uid:... format.
