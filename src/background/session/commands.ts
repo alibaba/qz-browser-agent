@@ -91,13 +91,17 @@ import {
   appendSessionExchangeImportCapsule,
   createSessionExchangePayload,
   hashSessionExchangeContent,
-  hasSessionExchangeImportCapsule,
   normalizeSessionExchangePayload,
   settleImportedTranscript,
 } from "../../shared/session/session-exchange.js";
 import { mergeSessionListSummary } from "../../shared/session/session-list-summary.js";
 import { isActiveSessionRuntimeStatus } from "../../shared/session/session-runtime-status.js";
 import { normalizeParentSessionId, ROOT_SESSION_ID } from "../../shared/session/session-store.js";
+import {
+  groupSessionsByImportIdentity,
+  sessionImportDedupEntryFromRecord,
+  type SessionImportDedupEntry,
+} from "./import-dedup-index.js";
 import { compareBeijingDateTimeDesc, nowBeijingDateTime } from "../../shared/time-utils.js";
 import { localizeToolFailurePayload } from "../../shared/tools/tool-error-localization.js";
 import { assertMessageDocumentOwnership } from "../../shared/documents/document-attachments.js";
@@ -602,33 +606,56 @@ async function importSessionExchangeRuntime(value: unknown, { sourceWindowId = n
 async function findReusableImportedSession(sourceSessionId: string, contentHash: string) {
   const sourceId = String(sourceSessionId || "").trim();
   const sessions = Object.values(await getSessions());
+  const indexed = groupSessionsByImportIdentity(sessions);
   if (sourceId) {
-    const tagged = latestSession(sessions.filter(session => String(session.exchangeSourceSessionId || "") === sourceId));
+    const tagged = latestSession(indexed.bySourceId.get(sourceId) || []);
     if (tagged) return tagged;
   }
-  const hashed = latestSession(sessions.filter(session => String(session.exchangeContentHash || "") === contentHash));
+  const hashed = latestSession(indexed.byContentHash.get(contentHash) || []);
   if (hashed) return hashed;
 
   // Copies imported before the source id was stored still carry the import capsule.
   // The session that was exported does not, so the first import keeps its own id.
-  const legacy = [];
-  for (const session of sessions) {
-    if (session.exchangeContentHash || session.exchangeSourceSessionId) continue;
-    let conversation: unknown = null;
-    try {
-      conversation = readSessionRecord(await sessionRepository.readRecord(session.id)).conversation;
-    } catch {
+  return findLegacyImportedSession(indexed.unmarked, contentHash);
+}
+
+async function findLegacyImportedSession(unmarked: SessionMetadata[], contentHash: string) {
+  if (!unmarked.length) return null;
+  let entries: Record<string, SessionImportDedupEntry | null> | null = null;
+  try {
+    entries = await sessionRepository.readImportDedupEntries(unmarked.map(session => session.id));
+  } catch (error) {
+    console.warn("[轻舟] import dedup index update failed", error);
+  }
+  const legacy: SessionMetadata[] = [];
+  const discovered: Record<string, SessionImportDedupEntry> = {};
+  for (const session of unmarked) {
+    const cached = entries?.[session.id] ?? null;
+    if (cached) {
+      if (cached.contentHash === contentHash) legacy.push(session);
       continue;
     }
-    if (!hasSessionExchangeImportCapsule(conversation)) continue;
+    const observation = await observeUnmarkedImportSession(session);
+    if (!observation) continue;
+    discovered[session.id] = observation;
+    if (observation.contentHash === contentHash) legacy.push(session);
+  }
+  if (Object.keys(discovered).length) {
     try {
-      if (await hashSessionExchangeContent(conversation) !== contentHash) continue;
-    } catch {
-      continue;
+      await sessionRepository.rememberImportDedupEntries(discovered);
+    } catch (error) {
+      console.warn("[轻舟] import dedup index update failed", error);
     }
-    legacy.push(session);
   }
   return latestSession(legacy);
+}
+
+async function observeUnmarkedImportSession(session: SessionMetadata) {
+  try {
+    return await sessionImportDedupEntryFromRecord(await sessionRepository.readRecord(session.id));
+  } catch {
+    return null;
+  }
 }
 
 async function rememberImportedExchangeIdentity(sessionId: string, sourceSessionId: string, contentHash: string) {

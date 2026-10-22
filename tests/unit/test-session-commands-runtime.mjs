@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createMemoryStorage } from "../support/memory-storage.mjs";
 import { buildSessionTitleMessages } from "../../src/background/agent/prompts.js";
+import { sessionImportDedupKey } from "../../src/background/session/import-dedup-index.js";
 import { createSessionCommands } from "../../src/background/session/commands.js";
 import { createMcpRuntime } from "../../src/background/mcp/mcp-runtime.js";
 import { createSessionRepository } from "../../src/background/session/repository.js";
@@ -16,6 +17,7 @@ import {
 import {
   appendSessionExchangeImportCapsule,
   createSessionExchangePayload,
+  hashSessionExchangeContent,
   settleImportedTranscript,
 } from "../../src/shared/session/session-exchange.js";
 import { ROOT_SESSION_ID } from "../../src/shared/session/session-store.js";
@@ -36,6 +38,8 @@ await steeringQueueFlow();
 await compactContextCommandFlow();
 await recordExchangeAndFallbackFlow();
 await repeatedSessionExchangeImportReusesExisting();
+await importDedupIndexAvoidsRepeatSessionReads();
+await importDedupIdentityPriorityStaysOnTheIndex();
 await rejectedRecordWritePreservesTranscript();
 await resetPersistsEmptyConversationAndDisplay();
 await lateUiSavePreservesStreamingCurrentTurn();
@@ -1444,6 +1448,193 @@ async function repeatedSessionExchangeImportReusesExisting() {
   assert.equal(Object.keys(await fresh.repository.listMetadata()).length, 2);
 }
 
+async function importDedupIndexAvoidsRepeatSessionReads() {
+  const storage = createMemoryStorage();
+  let reads = 0;
+  const fixture = createFixture({
+    storage,
+    wrapRepository: repository => ({
+      ...repository,
+      async readRecord(sessionId) {
+        reads += 1;
+        return repository.readRecord(sessionId);
+      },
+    }),
+  });
+  const legacyConversation = serializeConversation([{ role: "user", content: "西湖和灵隐" }]);
+  const legacyPayload = createSessionExchangePayload({
+    session: { id: "origin-hangzhou", title: "杭州三日游" },
+    conversation: legacyConversation,
+    transcript: transcriptFromConversation(legacyConversation),
+    exportedAt: "2026-07-12 12:00:00",
+  });
+  const legacy = await fixture.commands.createSessionMetadataRuntime({ title: "杭州三日游" });
+  await fixture.commands.saveSessionRecordRuntime({
+    sessionId: legacy.session.id,
+    conversation: appendSessionExchangeImportCapsule(legacyPayload.session.conversation),
+    transcript: transcriptFromConversation(legacyConversation),
+  });
+  for (let index = 0; index < 12; index += 1) {
+    const note = serializeConversation([{ role: "user", content: `普通笔记 ${index}` }]);
+    const session = await fixture.commands.createSessionMetadataRuntime({ title: `笔记 ${index}` });
+    await fixture.commands.saveSessionRecordRuntime({
+      sessionId: session.session.id,
+      conversation: note,
+      transcript: transcriptFromConversation(note),
+    });
+  }
+
+  reads = 0;
+  const missed = await fixture.commands.importSessionExchangeRuntime(createSessionExchangePayload({
+    session: { id: "other-origin", title: "别的会话" },
+    conversation: serializeConversation([{ role: "user", content: "完全不同" }]),
+    transcript: [],
+    exportedAt: "2026-07-12 12:00:01",
+  }));
+  assert.notEqual(missed.session.id, legacy.session.id);
+  assert.equal(reads, 12, "a miss reads only sessions that are not in the import index");
+
+  reads = 0;
+  const missedAgain = await fixture.commands.importSessionExchangeRuntime(createSessionExchangePayload({
+    session: { id: "another-origin", title: "再一份" },
+    conversation: serializeConversation([{ role: "user", content: "另一份不存在的正文" }]),
+    transcript: [],
+    exportedAt: "2026-07-12 12:00:02",
+  }));
+  assert.notEqual(missedAgain.session.id, missed.session.id);
+  assert.equal(reads, 0, "an indexed miss does not read session records");
+
+  const changedConversation = serializeConversation([{ role: "user", content: "改过的西湖" }]);
+  await fixture.commands.saveSessionRecordRuntime({
+    sessionId: legacy.session.id,
+    conversation: appendSessionExchangeImportCapsule(changedConversation),
+    transcript: transcriptFromConversation(changedConversation),
+  });
+  reads = 0;
+  const oldImport = await fixture.commands.importSessionExchangeRuntime(legacyPayload);
+  assert.notEqual(oldImport.session.id, legacy.session.id, "an edited legacy copy no longer matches the old export");
+  assert.equal(reads, 0, "saving the edited copy updates the content index");
+  reads = 0;
+  const changedImport = await fixture.commands.importSessionExchangeRuntime(createSessionExchangePayload({
+    session: { id: "changed-origin", title: "改过" },
+    conversation: changedConversation,
+    transcript: [],
+    exportedAt: "2026-07-12 12:00:03",
+  }));
+  assert.equal(changedImport.session.id, legacy.session.id, "the edited legacy copy matches its new content");
+  assert.equal(reads, 0);
+
+  const corruptConversation = serializeConversation([{ role: "user", content: "索引损坏后仍能对上" }]);
+  const corruptPayload = createSessionExchangePayload({
+    session: { id: "corrupt-origin", title: "损坏" },
+    conversation: corruptConversation,
+    transcript: transcriptFromConversation(corruptConversation),
+  });
+  const corrupt = await fixture.commands.createSessionMetadataRuntime({ title: "损坏" });
+  await fixture.commands.saveSessionRecordRuntime({
+    sessionId: corrupt.session.id,
+    conversation: appendSessionExchangeImportCapsule(corruptPayload.session.conversation),
+    transcript: transcriptFromConversation(corruptConversation),
+  });
+  await storage.set({
+    [sessionImportDedupKey(corrupt.session.id)]: { schemaVersion: 99, contentHash: null },
+  });
+  reads = 0;
+  const repaired = await fixture.commands.importSessionExchangeRuntime(corruptPayload);
+  assert.equal(repaired.session.id, corrupt.session.id, "an unreadable index entry falls back to the saved conversation");
+  assert.equal(reads, 1);
+
+  const deletedConversation = serializeConversation([{ role: "user", content: "只存在于已删除副本" }]);
+  const deletedPayload = createSessionExchangePayload({
+    session: { id: "deleted-origin", title: "已删除" },
+    conversation: deletedConversation,
+    transcript: transcriptFromConversation(deletedConversation),
+  });
+  const reusedId = "reused-import-id";
+  await fixture.repository.createMetadata({ id: reusedId, title: "旧副本" });
+  await fixture.commands.saveSessionRecordRuntime({
+    sessionId: reusedId,
+    conversation: appendSessionExchangeImportCapsule(deletedPayload.session.conversation),
+    transcript: transcriptFromConversation(deletedConversation),
+  });
+  assert.equal(storage.snapshot()[sessionImportDedupKey(reusedId)].schemaVersion, 1);
+  await fixture.repository.deleteSession(reusedId);
+  assert.equal(storage.snapshot()[sessionImportDedupKey(reusedId)], undefined, "deleting a session drops its import index entry");
+  await fixture.repository.createMetadata({ id: reusedId, title: "新会话" });
+  const freshConversation = serializeConversation([{ role: "user", content: "普通新会话" }]);
+  await fixture.commands.saveSessionRecordRuntime({
+    sessionId: reusedId,
+    conversation: freshConversation,
+    transcript: transcriptFromConversation(freshConversation),
+  });
+  const notReused = await fixture.commands.importSessionExchangeRuntime(deletedPayload);
+  assert.notEqual(notReused.session.id, reusedId, "a recreated session does not inherit the deleted copy's content hash");
+}
+
+async function importDedupIdentityPriorityStaysOnTheIndex() {
+  const fixture = createFixture();
+  const olderConversation = serializeConversation([{ role: "user", content: "旧正文" }]);
+  const newerConversation = serializeConversation([{ role: "user", content: "新正文" }]);
+  const older = await fixture.commands.importSessionExchangeRuntime(createSessionExchangePayload({
+    session: { id: "alpha", title: "旧" },
+    conversation: olderConversation,
+    transcript: [],
+    exportedAt: "2026-07-12 12:00:00",
+  }));
+  const newer = await fixture.commands.importSessionExchangeRuntime(createSessionExchangePayload({
+    session: { id: "beta", title: "新" },
+    conversation: newerConversation,
+    transcript: [],
+    exportedAt: "2026-07-12 12:00:01",
+  }));
+  const sourceWins = await fixture.commands.importSessionExchangeRuntime(createSessionExchangePayload({
+    session: { id: "alpha", title: "旧标题改了" },
+    conversation: newerConversation,
+    transcript: [],
+    exportedAt: "2026-07-12 12:00:02",
+  }));
+  assert.equal(sourceWins.session.id, older.session.id, "a recorded source id wins over another session's newer content");
+  assert.equal(Object.keys(await fixture.repository.listMetadata()).length, 2);
+
+  await fixture.repository.patchMetadata(newer.session.id, current => ({
+    ...current,
+    exchangeSourceSessionId: "shared-source",
+    updatedAt: "2026-07-12 12:00:01",
+  }));
+  await fixture.repository.patchMetadata(older.session.id, current => ({
+    ...current,
+    exchangeSourceSessionId: "shared-source",
+    updatedAt: "2026-07-12 12:00:00",
+  }));
+  const newestSource = await fixture.commands.importSessionExchangeRuntime(createSessionExchangePayload({
+    session: { id: "shared-source", title: "任意" },
+    conversation: serializeConversation([{ role: "user", content: "都不是" }]),
+    transcript: [],
+  }));
+  assert.equal(newestSource.session.id, newer.session.id, "the same source id still resolves to the newest session");
+
+  const hashedPayload = createSessionExchangePayload({
+    session: { id: "", title: "只看正文" },
+    conversation: olderConversation,
+    transcript: [],
+  });
+  const hash = await hashSessionExchangeContent(hashedPayload.session.conversation);
+  const left = await fixture.commands.createSessionMetadataRuntime({ title: "哈希甲" });
+  const right = await fixture.commands.createSessionMetadataRuntime({ title: "哈希乙" });
+  await fixture.repository.patchMetadata(left.session.id, current => ({
+    ...current,
+    exchangeContentHash: hash,
+    updatedAt: "2026-07-12 12:00:03",
+  }));
+  await fixture.repository.patchMetadata(right.session.id, current => ({
+    ...current,
+    exchangeContentHash: hash,
+    updatedAt: "2026-07-12 12:00:04",
+  }));
+  const hashed = await fixture.commands.importSessionExchangeRuntime(hashedPayload);
+  assert.equal(hashed.session.id, right.session.id, "without a source id, the newest content hash wins");
+}
+
 async function atomicRuntimeInputSnapshots() {
   for (const route of ["live-state", "inactive-state", "snapshot", "send"]) {
     for (const transition of ["new-wait", "resolved-wait", "new-run", "revoked-agent"]) {
@@ -1908,7 +2099,7 @@ async function serializedSessionDraftMutations() {
 }
 
 function createFixture(options = {}) {
-  const baseRepository = createSessionRepository({ storage: createMemoryStorage() });
+  const baseRepository = createSessionRepository({ storage: options.storage || createMemoryStorage() });
   const repository = options.wrapRepository?.(baseRepository) || baseRepository;
   const runtimes = new Map();
   const transcripts = new Map();
