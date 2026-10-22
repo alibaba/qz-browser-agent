@@ -9,6 +9,7 @@ import { chromium } from "playwright";
 import { buildExtension } from "../../scripts/build-extension.mjs";
 import { comparePixels } from "../benchmarks/conversation-render/compare-revisions.mjs";
 import { createRevisionFixtureAdapter } from "./revision-fixture.mjs";
+import { skipWithoutImageMagick } from "../support/imagemagick.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const args = process.argv.slice(2);
@@ -17,6 +18,7 @@ const suites = option("--suites", "core,plugin,states,export").split(",");
 const output = resolve(option("--output", `tests/results/renderer-migration-${Date.now()}`));
 const commit = execFileSync("git", ["rev-parse", "--verify", `${option("--baseline", "01dbe268")}^{commit}`], { encoding: "utf8", cwd: root }).trim();
 if (existsSync(output)) throw new Error(`Refusing to overwrite audit evidence: ${output}`);
+skipWithoutImageMagick("tool timeline revision comparison");
 mkdirSync(output, { recursive: true });
 const save = (path, value) => writeFileSync(join(output, path), `${JSON.stringify(value, null, 2)}\n`);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");

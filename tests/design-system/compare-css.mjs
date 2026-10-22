@@ -8,6 +8,7 @@ import { chromium } from "playwright";
 import { installBenchmarkChromeStub } from "../browser/benchmark-chrome-stub.mjs";
 import { prepareBenchmarkAssets } from "../support/benchmark-assets.mjs";
 import { fixtureDirectories, createComparisonServer, stableCapture, compareCaptures } from "./comparison.mjs";
+import { skipWithoutImageMagick } from "../support/imagemagick.mjs";
 
 // Separate application roots preserve each revision's real DOM and compiled modules.
 // With --fixture-dir both sides use the same app, retaining the CSS-only audit mode.
@@ -24,6 +25,7 @@ for (const key of ["reference-dir", "candidate-dir", "output"]) {
   if (!values[key]) throw new Error(`Missing --${key}; see docs/benchmarks.md#compare-css-and-markup`);
 }
 const fixtureDirs = fixtureDirectories(values);
+skipWithoutImageMagick("CSS and markup comparison");
 for (const [side, directory] of Object.entries(fixtureDirs)) {
   const build = JSON.parse(readFileSync(join(directory, ".qingzhou-build.json"), "utf8"));
   if (build.mode !== "development") throw new Error(`${side} fixture requires a development build with individual modules`);
