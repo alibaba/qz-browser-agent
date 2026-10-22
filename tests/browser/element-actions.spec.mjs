@@ -391,20 +391,16 @@ test("a click that navigates is not reported as undelivered input", async () => 
       globalThis.receiptReads = 0;
       chrome.scripting.executeScript = async options => {
         const source = String(options?.func || "");
-        if (!source.includes("__qzInputReceiptBound") || options.args?.[0] !== false) return original(options);
+        if (!source.includes("__qzInputReceipts") || options.args?.[1] !== false) return original(options);
         // A committed navigation leaves this read on a document that was never armed.
         receiptReads += 1;
         const root = globalThis;
         const previousDocument = root.document;
-        const previousCount = root.__qzInputReceipt;
         root.document = { addEventListener() {} };
-        delete root.__qzInputReceipt;
-        try { return [{ result: options.func(false) }]; }
+        try { return [{ result: options.func(options.args[0], false) }]; }
         finally {
           if (previousDocument === undefined) delete root.document;
           else root.document = previousDocument;
-          if (previousCount === undefined) delete root.__qzInputReceipt;
-          else root.__qzInputReceipt = previousCount;
         }
       };
     });
@@ -421,5 +417,119 @@ test("a click that navigates is not reported as undelivered input", async () => 
       await expect.poll(() => h.page.url()).toContain(url);
     }
     expect(await h.worker.evaluate(() => receiptReads)).toBe(2);
+  } finally { await h.close(); }
+});
+
+const clickFrameDocument = `<!doctype html><style>html,body{margin:0;height:100%}button{width:100%;height:100%;margin:0}</style>
+  <button id="inner" type="button">Inside</button>
+  <script>window.clicks=0;document.querySelector("#inner").addEventListener("click",()=>{window.clicks+=1});</script>`;
+const keyFrameDocument = `<!doctype html><style>html,body{margin:0}input{width:100%;height:48px;margin:0;box-sizing:border-box}</style>
+  <input id="keys">
+  <script>window.keys=[];document.querySelector("#keys").addEventListener("keydown",event=>{window.keys.push(event.key)});</script>`;
+
+async function installFrames(page, frames) {
+  await page.setContent("<!doctype html><title>frames</title><body></body>");
+  await page.evaluate(specs => {
+    for (const spec of specs) {
+      const frame = document.createElement("iframe");
+      frame.id = spec.id;
+      frame.name = spec.name;
+      frame.setAttribute("style", "width:220px;height:48px;border:0;display:block;margin:0");
+      if (spec.src) frame.src = spec.src;
+      else frame.srcdoc = spec.html;
+      document.body.append(frame);
+    }
+  }, frames);
+}
+
+async function waitForFrameControl(page, name, selector) {
+  await expect.poll(async () => {
+    const frame = page.frame({ name });
+    if (!frame) return 0;
+    return frame.evaluate(target => document.querySelector(target)?.getBoundingClientRect().width || 0, selector).catch(() => 0);
+  }, { timeout: 15000 }).toBeGreaterThan(20);
+}
+
+test("an iframe click lands once and its key still arrives", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  const cross = createServer((request, response) => {
+    response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    response.end(request.url?.includes("key") ? keyFrameDocument : clickFrameDocument);
+  });
+  try {
+    await new Promise(resolve => cross.listen(0, "127.0.0.1", resolve));
+    const port = cross.address().port;
+    await installFrames(h.page, [
+      { id: "frame", name: "same-click", html: clickFrameDocument },
+      { id: "keyframe", name: "same-key", html: keyFrameDocument },
+      { id: "xoframe", name: "cross-click", src: `http://127.0.0.1:${port}/click` },
+      { id: "xokey", name: "cross-key", src: `http://127.0.0.1:${port}/key` },
+    ]);
+    for (const [name, selector] of [["same-click", "button"], ["same-key", "input"], ["cross-click", "button"], ["cross-key", "input"]]) {
+      await waitForFrameControl(h.page, name, selector);
+    }
+    for (const [id, name] of [["frame", "same-click"], ["xoframe", "cross-click"]]) {
+      const result = await h.act(id, "click");
+      const clicks = await h.page.frame({ name }).evaluate(() => window.clicks);
+      expect(result, JSON.stringify({ result, clicks })).toMatchObject({ clickDispatched: true, inputDelivered: true });
+      expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+      expect(clicks).toBe(1);
+    }
+    for (const [id, name] of [["keyframe", "same-key"], ["xokey", "cross-key"]]) {
+      const result = await h.act(id, "press", { key: "a" });
+      const keys = await h.page.frame({ name }).evaluate(() => window.keys);
+      expect(result, JSON.stringify({ result, keys })).toMatchObject({ pressed: true, inputDelivered: true });
+      expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+      expect(keys).toContain("a");
+    }
+  } finally {
+    cross.closeAllConnections?.();
+    await new Promise(resolve => cross.close(resolve));
+    await h.close();
+  }
+});
+
+test("a confirmed miss is one click and an unknown receipt still presses", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    await h.page.setContent(`<!doctype html><button id="once" type="button" style="width:160px;height:40px">Once</button>
+      <input id="keys" style="width:160px;height:40px">
+      <script>
+        window.clicks = 0; window.keys = [];
+        document.querySelector("#once").addEventListener("click", () => { window.clicks += 1; });
+        document.querySelector("#keys").addEventListener("keydown", event => { window.keys.push(event.key); });
+      </script>`);
+    await h.worker.evaluate(() => {
+      const original = chrome.scripting.executeScript.bind(chrome.scripting);
+      globalThis.receiptMode = "zero";
+      chrome.scripting.executeScript = async options => {
+        const source = String(options?.func || "");
+        if (source.includes("__qzInputReceipts") && options.args?.[1] === false) {
+          const real = await original(options);
+          const result = receiptMode === "zero" ? 0 : null;
+          return real.map(frame => ({ ...frame, result }));
+        }
+        return original(options);
+      };
+    });
+    const missed = await h.act("once", "click");
+    expect(missed, JSON.stringify(missed)).toMatchObject({
+      code: "INPUT_NOT_DELIVERED", clickDispatched: true, inputDelivered: false,
+    });
+    expect(await h.page.evaluate(() => window.clicks)).toBe(1);
+    const skipped = await h.act("keys", "press", { key: "a" });
+    expect(skipped, JSON.stringify(skipped)).toMatchObject({ code: "INPUT_NOT_DELIVERED", clickDispatched: true });
+    expect(await h.page.evaluate(() => window.keys)).toEqual([]);
+
+    await h.worker.evaluate(() => { receiptMode = "unknown"; });
+    const clicked = await h.act("once", "click");
+    expect(clicked, JSON.stringify(clicked)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+    expect(clicked).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+    expect(await h.page.evaluate(() => window.clicks)).toBe(2);
+    const pressed = await h.act("keys", "press", { key: "a" });
+    expect(pressed, JSON.stringify(pressed)).toMatchObject({ pressed: true, inputDelivered: true });
+    expect(await h.page.evaluate(() => window.keys)).toContain("a");
   } finally { await h.close(); }
 });

@@ -49,12 +49,14 @@ function inputNotDelivered(details: Record<string, unknown>) {
     ...details,
     error: t("inputNotDelivered"),
     code: "INPUT_NOT_DELIVERED",
-    clickDispatched: false,
+    clickDispatched: true,
     inputDelivered: false,
   };
 }
-async function inputWasDelivered(tabId: number) {
-  const count = await readPageInputReceipt(tabId);
+async function inputWasDelivered(tabId: number, receiptId = "") {
+  // An unreadable receipt is not evidence the input missed the page.
+  if (!receiptId) return true;
+  const count = await readPageInputReceipt(tabId, receiptId);
   return count == null || count > 0;
 }
 function scopedSelector(binding: ElementTarget, fallback = "body") {
@@ -366,7 +368,7 @@ registerTool({
           if (!clickPointReady(current)) return;
           const point = current.clickablePoint;
           touchInput = getPageContext(tabId).pageMode === "mobile";
-          await armPageInputReceipt(tabId);
+          const receiptId = await armPageInputReceipt(tabId);
           if (touchInput) { await touch(send, point, { signal: _signal }); }
           else {
             await send("Input.dispatchMouseEvent", {
@@ -376,7 +378,7 @@ registerTool({
               type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1,
             });
           }
-          delivered = await inputWasDelivered(tabId);
+          delivered = await inputWasDelivered(tabId, receiptId);
         }, context);
         if (!clickPointReady(current)) {
           return clickNotReadyResult({
@@ -513,7 +515,7 @@ registerTool({
         if (!clickPointReady(clickTarget)) return clickNotReadyResult({ target: resolvedTarget, selector, index,
           inspection: clickTarget, originalInspection: current, resolved: null });
         const point = clickTarget.clickablePoint;
-        await armPageInputReceipt(tabId);
+        const receiptId = await armPageInputReceipt(tabId);
         if (getPageContext(tabId).pageMode === "mobile") {
           await touch(send, point, { signal: _signal });
         } else {
@@ -531,7 +533,7 @@ registerTool({
           }
         }
         assertActive();
-        if (!await inputWasDelivered(tabId)) return inputNotDelivered(identity);
+        if (!await inputWasDelivered(tabId, receiptId)) return inputNotDelivered(identity);
         const actual = await sendToContent(tabId, "readElementActionState", { selector, index }, bound);
         assertActive();
         if (actual.error) return withElementActionHelp(actual, normalizedAction);
@@ -560,14 +562,14 @@ registerTool({
             const refreshed = await sendToContent(tabId, "inspectElement", { selector, index }, bound);
             const point = !refreshed.error && clickPointReady(refreshed) ? refreshed.clickablePoint : inspected.clickablePoint;
             if (!point) return;
-            await armPageInputReceipt(tabId);
+            const receiptId = await armPageInputReceipt(tabId);
             await send("Input.dispatchMouseEvent", {
               type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1,
             });
             await send("Input.dispatchMouseEvent", {
               type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1,
             });
-            delivered = await inputWasDelivered(tabId);
+            delivered = await inputWasDelivered(tabId, receiptId);
           }, context);
           if (!delivered) return inputNotDelivered({ action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey });
         }
