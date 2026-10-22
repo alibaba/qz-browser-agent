@@ -40,7 +40,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-10-22-direct-node";
+  const QZ_CONTENT_VERSION = "2026-10-22-fill-root";
   const imageSourceIdentities = new WeakMap<HTMLImageElement, { source: string; identity: string }>();
   const imageSourceScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let imageSourceSequence = 0;
@@ -2976,9 +2976,27 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     });
   }
 
+  const FILL_ROOT_LIMIT = 8;
   const fillRoots = new Map<string, Element>();
+  function rememberFillRoot(token: string, root: Element) {
+    if (!token || !root.isConnected) return;
+    for (const [key, element] of fillRoots) {
+      if (!element.isConnected) fillRoots.delete(key);
+    }
+    fillRoots.delete(token);
+    fillRoots.set(token, root);
+    while (fillRoots.size > FILL_ROOT_LIMIT) {
+      const oldest = fillRoots.keys().next().value;
+      if (oldest === undefined) break;
+      fillRoots.delete(oldest);
+    }
+  }
   host.__qzInvoke = async (node, payload) => {
     const token = String(payload?.fillToken || "");
+    if (payload?.action === "releaseFillRoot") {
+      if (token) fillRoots.delete(token);
+      return { ok: true };
+    }
     let element = elementFromNode(node);
     // RootWebArea resolves to the Document. Overview reads from the page element.
     if (!element && payload?.action === "pageOverview" && node instanceof Document) {
@@ -2992,7 +3010,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const root = getContentEditableRoot(element);
       if (root.isConnected) {
         element = root;
-        if (token) fillRoots.set(token, root);
+        rememberFillRoot(token, root);
       }
     }
     const handler = handlers[payload?.action];

@@ -256,7 +256,15 @@ registerTool({
     if (ref.uid) {
       return useElement(tabId, ref, context, async call => {
         bound = (actionName, params = {}) => call(actionName, normalizedAction === "fill" ? { ...params, editingHost: true, fillToken } : params);
-        try { return await perform(); } finally { bound = undefined; }
+        try {
+          return await perform();
+        } finally {
+          if (fillToken && Number(ref.ref?.backendNodeId || 0) > 0) {
+            try { await call("releaseFillRoot", { fillToken }); }
+            catch { /* A missed release must not change the fill result. */ }
+          }
+          bound = undefined;
+        }
       });
     }
     return perform();
