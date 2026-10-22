@@ -288,12 +288,13 @@ function visibleName(node: SemanticNode | null): string {
   return name;
 }
 
-function shouldDropText(node: SemanticNode, shown: Set<string>) {
+function shouldDropText(node: SemanticNode, parentName: string) {
   const role = String(node.compact.role || "").toLowerCase();
   if (!PURE_TEXT_ROLES.has(role) || node.actionNode || hasOwnValueOrFlags(node)) return false;
   if (role === "inlinetextbox") return true;
   const name = node.compact.name || "";
-  return !name || shown.has(name);
+  // Sibling text may repeat. Drop a pure text node only when it is empty or copies its parent.
+  return !name || name === parentName;
 }
 
 function shiftDepth(node: SemanticNode, depth: number) {
@@ -302,9 +303,7 @@ function shiftDepth(node: SemanticNode, depth: number) {
 }
 
 function pruneLevel(nodes: SemanticNode[], parent: SemanticNode | null) {
-  const shown = new Set<string>();
   const parentName = visibleName(parent);
-  if (parentName) shown.add(parentName);
   const pending = nodes.map(node => ({ node, pruned: false }));
   const kept: SemanticNode[] = [];
   while (pending.length) {
@@ -317,7 +316,7 @@ function pruneLevel(nodes: SemanticNode[], parent: SemanticNode | null) {
       node.children = pruneLevel(node.children, node);
       item.pruned = true;
     }
-    if (shouldDropText(node, shown)) {
+    if (shouldDropText(node, parentName)) {
       const depth = node.depth;
       for (const child of [...node.children].reverse()) {
         shiftDepth(child, depth);
@@ -325,8 +324,6 @@ function pruneLevel(nodes: SemanticNode[], parent: SemanticNode | null) {
       }
       continue;
     }
-    const name = visibleName(node);
-    if (name) shown.add(name);
     kept.push(node);
   }
   return kept;

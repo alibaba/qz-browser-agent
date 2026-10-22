@@ -7,6 +7,8 @@ import { expect, test } from "./fixtures.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
 
 const sections = Array.from({ length: 40 }, (_value, index) => `<h2>Section ${index + 1}</h2>`).join("");
+const repeatedHtml = `<!doctype html><meta charset="utf-8"><title>Repeated values</title>
+  <p>Price: <span>100</span>; Stock: <span>100</span></p><p>Score: <b>10</b> / <b>10</b></p>`;
 const html = `<!doctype html><meta charset="utf-8"><title>Compact snapshot</title>
   <style>body { margin: 12px; font: 16px sans-serif } button, input, a, div { display: block; margin: 8px 0 } #clicky { width: 120px; height: 28px }</style>
   <h1>Overview</h1>
@@ -23,7 +25,12 @@ const html = `<!doctype html><meta charset="utf-8"><title>Compact snapshot</titl
   </script>`;
 
 async function createHarness() {
-  const server = createServer((_req, res) => { res.writeHead(200, { "Content-Type": "text/html" }); res.end(html); });
+  const server = createServer((req, res) => {
+    const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
+    const body = pathname === "/repeated-text" ? repeatedHtml : html;
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(body);
+  });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const directory = await mkdtemp(join(tmpdir(), "qingzhou-ax-compact-"));
   let browser;
@@ -81,7 +88,7 @@ async function createHarness() {
     const opened = await call("open_tab", { url: `http://127.0.0.1:${server.address().port}/` });
     expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
     await expect.poll(async () => { try { return (await state()).ready; } catch { return "loading"; } }).toBe("complete");
-    return { call, state, close };
+    return { call, state, close, baseURL: `http://127.0.0.1:${server.address().port}` };
   } catch (error) {
     await close();
     throw error;
@@ -137,5 +144,17 @@ test.describe("compact accessibility snapshot", () => {
     const extra = await h.call("act_on_element", { target: clicky, action: "click" });
     expect(extra, JSON.stringify(extra)).not.toHaveProperty("code");
     expect((await h.state()).hits.clicky).toBe(1);
+  });
+
+  test("keeps same-named sibling StaticText for repeated values", async () => {
+    const opened = await h.call("open_tab", { url: `${h.baseURL}/repeated-text` });
+    expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
+    await expect.poll(async () => { try { return (await h.state()).ready; } catch { return "loading"; } }).toBe("complete");
+    const result = await h.call("get_ax_tree", {});
+    expect(result.code, JSON.stringify(result)).toBeUndefined();
+    expect(result.outlineTruncated, result.snapshot).toBe(false);
+    expect(result.snapshot).not.toContain("InlineTextBox");
+    const texts = result.snapshot.split("\n").filter(item => item.includes("StaticText")).map(item => item.match(/StaticText "([^"]*)"/)?.[1]);
+    expect(texts, result.snapshot).toEqual(["Price:", "100", "; Stock:", "100", "Score:", "10", "/", "10"]);
   });
 });

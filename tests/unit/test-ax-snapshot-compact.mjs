@@ -168,10 +168,35 @@ const names = await run({
 });
 assert.match(line(names.snapshot, "button"), /"Save"/);
 const noteLines = names.snapshot.split("\n").filter(item => item.includes("StaticText"));
-assert.equal(noteLines.length, 1);
+assert.equal(noteLines.length, 2, "same-named sibling StaticText stays");
 assert.match(noteLines[0], /"Note"/);
+assert.match(noteLines[1], /"Note"/);
 assert.equal(names.snapshot.includes("InlineTextBox"), false);
-assert.equal(names.returnedNodeCount, 2);
+assert.equal(names.returnedNodeCount, 3);
+
+const repeatedValues = await run({
+  overview: { title: "Repeated values", url: "https://example.com/forms/post", actions: [] },
+  nodes: [
+    ax({ id: "root", children: ["price", "score"], backend: 1, role: "RootWebArea", name: "Repeated values" }),
+    ax({ id: "price", parent: "root", children: ["priceLabel", "priceValue", "stockLabel", "stockValue"], backend: 2, role: "paragraph", name: "Price: 100; Stock: 100" }),
+    ax({ id: "priceLabel", parent: "price", backend: 3, role: "StaticText", name: "Price:" }),
+    ax({ id: "priceValue", parent: "price", children: ["priceInline"], backend: 4, role: "StaticText", name: "100" }),
+    ax({ id: "priceInline", parent: "priceValue", backend: 5, role: "InlineTextBox", name: "100" }),
+    ax({ id: "stockLabel", parent: "price", backend: 6, role: "StaticText", name: "; Stock:" }),
+    ax({ id: "stockValue", parent: "price", children: ["stockInline"], backend: 7, role: "StaticText", name: "100" }),
+    ax({ id: "stockInline", parent: "stockValue", backend: 8, role: "InlineTextBox", name: "100" }),
+    ax({ id: "score", parent: "root", children: ["scoreLabel", "scoreNum", "scoreSlash", "scoreDen"], backend: 9, role: "paragraph", name: "Score: 10 / 10" }),
+    ax({ id: "scoreLabel", parent: "score", backend: 10, role: "StaticText", name: "Score:" }),
+    ax({ id: "scoreNum", parent: "score", backend: 11, role: "StaticText", name: "10" }),
+    ax({ id: "scoreSlash", parent: "score", backend: 12, role: "StaticText", name: "/" }),
+    ax({ id: "scoreDen", parent: "score", children: ["scoreDenInline"], backend: 13, role: "StaticText", name: "10" }),
+    ax({ id: "scoreDenInline", parent: "scoreDen", backend: 14, role: "InlineTextBox", name: "10" }),
+  ],
+});
+const repeatedText = repeatedValues.snapshot.split("\n").filter(item => item.includes("StaticText")).map(item => item.match(/StaticText "([^"]*)"/)?.[1]);
+assert.deepEqual(repeatedText, ["Price:", "100", "; Stock:", "100", "Score:", "10", "/", "10"]);
+assert.equal(repeatedValues.snapshot.includes("InlineTextBox"), false);
+assert.equal(repeatedValues.outlineTruncated, false);
 
 const distinct = await run({
   overview: { title: "Distinct", url: "https://example.com/forms/post", actions: [] },
