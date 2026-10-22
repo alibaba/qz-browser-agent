@@ -172,7 +172,8 @@ function assertAxTreeCompactContract() {
   assert.match(block, /canvases: compactAxCanvasesForModel/, "get_ax_tree should compact canvas summaries before returning to the model");
   assert.doesNotMatch(block, /nodes: ax\.nodes/, "get_ax_tree should not return the full node array");
   assert.match(tools, /function backendNodeIdForSelector\(tabId, selector, context = \{\}\)/, "css roots should be convertible to backend nodes within the current run");
-  assert.match(tools, /return await withDebugger\(tabId, async \(_target, send\) => \{[\s\S]*send\("DOM\.querySelector"[\s\S]*send\("DOM\.describeNode"/, "css root backend lookup should stay inside one run-owned CDP connection");
+  assert.match(tools, /return await withDebugger\(tabId, async \(_target, send\) => describeSelectors\(send, selectors\)/, "css root backend lookup should stay inside one run-owned CDP connection");
+  assert.match(tools, /send\("DOM\.querySelectorAll"[\s\S]*nodeIds\.length === 1[\s\S]*send\("DOM\.describeNode"/, "a non-unique selector must not bind the first node");
   assert.match(tools, /function buildAccessibilitySnapshot\(rawNodes, \{[\s\S]*rootBackendNodeId = 0/, "AX snapshot should support subtree roots");
   assert.match(tools, /function selectSemanticNodesByBreadth\(roots, limit\)/, "AX snapshot limit should use BFS budget selection");
   assert.match(tools, /selectSemanticNodesByBreadth\(semanticRoots, limit\)/, "AX snapshot should apply BFS selection before rendering");

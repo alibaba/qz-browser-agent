@@ -296,8 +296,6 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   TOOL_INTERRUPTED: { label: "toolError.TOOL_INTERRUPTED.label", message: "toolError.TOOL_INTERRUPTED.message" },
   TOOL_NOT_EXECUTED: { label: "toolError.TOOL_NOT_EXECUTED.label", message: "toolError.TOOL_NOT_EXECUTED.message" },
   TOOL_TIMEOUT: { label: "toolError.TOOL_TIMEOUT.label" },
-  UID_SELECTOR_UNAVAILABLE: { label: "toolError.UID_SELECTOR_UNAVAILABLE.label", message: "toolError.UID_SELECTOR_UNAVAILABLE.message" },
-  UID_SELECTOR_UNAVAILABLE_FOR_DOM_IMAGE_READ: { label: "toolError.UID_SELECTOR_UNAVAILABLE_FOR_DOM_IMAGE_READ.label", message: "toolError.UID_SELECTOR_UNAVAILABLE_FOR_DOM_IMAGE_READ.message" },
   UNKNOWN_TOOL: { label: "toolError.UNKNOWN_TOOL.label" },
   UNKNOWN_PLUGIN_TOOL: { label: "toolError.UNKNOWN_PLUGIN_TOOL.label" },
   UNSUPPORTED_ELEMENT_ACTION: { label: "toolError.UNSUPPORTED_ELEMENT_ACTION.label" },

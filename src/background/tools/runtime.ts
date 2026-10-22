@@ -1329,6 +1329,7 @@ const elementRuntime = createElementRuntime({
   makeSessionTabTargetError,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   withDebugger,
+  sendToContent,
 });
 const { isUidElementTarget } = elementRuntime;
 

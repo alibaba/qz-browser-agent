@@ -26,6 +26,12 @@ export interface ElementAccess {
   resolveElementReference(tabId: number | undefined, options?: { target?: string; index?: number; allowBackendOnly?: boolean }, context?: ToolContext): Promise<ElementTarget & { index: number }>;
   addElementTargetsToFindResult(value: unknown): unknown;
   backendNodeIdForSelector(tabId: number, selector: string, context?: ToolContext): Promise<number>;
+  bindBackendNodes(tabId: number, selectors: string[], context?: ToolContext): Promise<{ loaderId: string; ids: number[] }>;
+  callElement(tabId: number | undefined, binding: ElementTarget, action: string, params?: Record<string, unknown>, context?: ToolContext): Promise<Record<string, unknown>>;
+  withElement<T>(tabId: number | undefined, binding: ElementTarget, context: ToolContext, run: (
+    send: CdpCommand,
+    call: (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>,
+  ) => Promise<T>): Promise<T>;
 }
 export { ensureOffscreenDocument } from "../../background/services/offscreen-document.js";
 export { createCdpKeyboard, primaryModifierForContext } from "../../background/tools/cdp-keyboard.js";

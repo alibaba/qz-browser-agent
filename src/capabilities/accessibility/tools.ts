@@ -6,7 +6,7 @@ type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
   | "sendToContent" | "withDebugger"> & Pick<ToolExtensionAPI["element"],
   "makeSnapshotId" | "elementTargetForUid" | "registerElementRef" | "resolveElementReference"
-  | "backendNodeIdForSelector" | "elementTargetGrammar">;
+  | "backendNodeIdForSelector" | "bindBackendNodes" | "callElement" | "elementTargetGrammar">;
 interface AxValue { value?: unknown }
 interface AxNode {
   nodeId: string; parentId?: string; childIds?: string[]; backendDOMNodeId?: number; ignored?: boolean;
@@ -25,6 +25,8 @@ export function registerAccessibilityTools({
   registerElementRef,
   resolveElementReference,
   backendNodeIdForSelector,
+  bindBackendNodes = async (_tabId: number, selectors: string[] = []) => ({ loaderId: "", ids: selectors.map(() => 0) }),
+  callElement,
   makeSessionTabTargetError,
   sendToContent,
   withDebugger,
@@ -33,7 +35,7 @@ export function registerAccessibilityTools({
 type CompactNode = ReturnType<typeof compactAxNode>;
 interface SemanticNode { compact: CompactNode; depth: number; parent: SemanticNode | null; children: SemanticNode[] }
 type DisplayNode = { uid: string; target: string; depth: number; nodeId: string; parentUid?: string; truncated?: boolean } & Partial<CompactNode>;
-function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, limit, sessionId = "", pageUrl = "", rootBackendNodeId = 0, maxDepth = Infinity }: SnapshotContext & { limit: number; rootBackendNodeId?: number; maxDepth?: number }) {
+function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, limit, sessionId = "", pageUrl = "", rootBackendNodeId = 0, maxDepth = Infinity, loaderId = "" }: SnapshotContext & { limit: number; rootBackendNodeId?: number; maxDepth?: number; loaderId?: string }) {
   const nodeMap = new Map<string, AxNode>();
   for (const node of rawNodes || []) {
     if (node?.nodeId) nodeMap.set(node.nodeId, node);
@@ -112,6 +114,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
       sessionId,
       pageUrl,
       backendNodeId: item.backendNodeId,
+      loaderId: loaderId || undefined,
       role: item.role,
       name: item.name,
       url: item.url,
@@ -216,7 +219,7 @@ function truncateInline(value: unknown, max: number) {
   return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
 }
 
-function attachSnapshotRefsToActions(actions: Action[], nodes: DisplayNode[], { tabId, snapshotId, sessionId = "", pageUrl = "" }: SnapshotContext) {
+function attachSnapshotRefsToActions(actions: Action[], nodes: DisplayNode[], { tabId, snapshotId, sessionId = "", pageUrl = "" }: SnapshotContext, backendNodeIds: number[] = [], loaderId = "") {
   const candidates = Array.isArray(nodes) ? nodes : [];
   const used = new Set<string>();
   return (Array.isArray(actions) ? actions : []).map((action, index) => {
@@ -224,18 +227,12 @@ function attachSnapshotRefsToActions(actions: Action[], nodes: DisplayNode[], { 
     const uid = matched?.uid || `${snapshotId}_a${index}`;
     used.add(uid);
     const next = { ...action, uid, target: elementTargetForUid(uid) };
+    const backendNodeId = Number(matched?.backendNodeId || backendNodeIds[index] || 0);
     registerElementRef({
-      uid,
-      tabId,
-      sessionId,
-      pageUrl,
-      selector: next.selector,
-      index: 0,
-      backendNodeId: matched?.backendNodeId,
-      role: next.role || matched?.role,
-      name: next.name || next.text || matched?.name,
-      url: next.href || matched?.url,
-      snapshotId,
+      uid, tabId, sessionId, pageUrl, selector: next.selector, index: 0,
+      backendNodeId: backendNodeId || undefined, loaderId: loaderId || undefined,
+      role: next.role || matched?.role, name: next.name || next.text || matched?.name,
+      url: next.href || matched?.url, snapshotId,
     });
     return next;
   });
@@ -387,9 +384,10 @@ registerTool({
     let resolvedRoot = requestedRoot;
     let overviewSelector = "body";
     let rootBackendNodeId = 0;
+    let rootRef: Awaited<ReturnType<typeof resolveElementReference>> | null = null;
 
     if (requestedRoot !== "root") {
-      const rootRef = await resolveElementReference(tabId, { target: requestedRoot, allowBackendOnly: true }, context);
+      rootRef = await resolveElementReference(tabId, { target: requestedRoot, allowBackendOnly: true }, context);
       targetTabId = rootRef.tabId;
       resolvedRoot = rootRef.target || requestedRoot;
       overviewSelector = rootRef.selector || "";
@@ -416,13 +414,13 @@ registerTool({
     snapshotId = makeSnapshotId(targetTabId);
     let overview: PageOverview;
     try {
-      const result = await sendToContent(targetTabId, "pageOverview", {
-        limit: actionMax,
-        selector: overviewSelector || "body",
-      });
+      const result = rootRef?.uid
+        ? await callElement(targetTabId, rootRef, "pageOverview", { limit: actionMax }, context)
+        : await sendToContent(targetTabId, "pageOverview", { limit: actionMax, selector: overviewSelector || "body" });
       if (!isPageOverview(result)) throw new ToolExecutionError("PAGE_OVERVIEW_FAILED", t("pageOverviewResponseIsInvalid"));
       overview = result;
     } catch (err) {
+      if (err instanceof ToolExecutionError && String(err.code).startsWith("STALE_ELEMENT_UID")) throw err;
       overview = {
         error: err instanceof Error ? err.message : String(err),
         code: err instanceof ToolExecutionError ? err.code : "PAGE_OVERVIEW_FAILED",
@@ -431,26 +429,20 @@ registerTool({
 
     const pageUrl = String(overview?.url || "").trim();
     const ax = await withDebugger(targetTabId, async (_target, send) => {
+      const actionList = overview?.actions || [];
+      const bound = await bindBackendNodes(targetTabId, actionList.map(action => String(action?.selector || "")), context);
       const fetchDepth = rootBackendNodeId ? 40 : axDepth;
       const result = await send("Accessibility.getFullAXTree", { depth: fetchDepth });
       const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
-      return buildAccessibilitySnapshot(nodes, {
-        tabId: targetTabId!,
-        snapshotId,
-        limit: snapshotLimit,
-        sessionId,
-        pageUrl,
-        rootBackendNodeId,
-        maxDepth: axDepth,
+      const built = buildAccessibilitySnapshot(nodes, {
+        tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, rootBackendNodeId, maxDepth: axDepth, loaderId: bound.loaderId,
       });
+      return {
+        ...built,
+        actions: attachSnapshotRefsToActions(actionList, built.nodes, { tabId: targetTabId, snapshotId, sessionId, pageUrl }, bound.ids, bound.loaderId),
+      };
     }, context);
-
-    const actions = attachSnapshotRefsToActions(overview?.actions || [], ax.nodes, {
-      tabId: targetTabId,
-      snapshotId,
-      sessionId,
-      pageUrl,
-    });
+    const actions = ax.actions;
     return {
       tabId: targetTabId,
       title: overview?.title,

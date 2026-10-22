@@ -15,7 +15,7 @@ interface ElementSummary extends PageAction {
   rect: { x: number; y: number; w: number; h: number }; clickablePoint: PagePoint | null;
 }
 interface ContentRequest {
-  action: string; selector?: string; source?: string; offset?: number; limit?: number;
+  action: string; selector?: string; editingHost?: boolean; fillToken?: string; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
   index?: number; block?: ScrollLogicalPosition; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
@@ -30,6 +30,7 @@ interface PickerState {
 }
 interface ContentGlobals {
   __QZ_CONTENT_VERSION?: string; __QZ_CONTENT_READY?: boolean; QingzhouArticleExtractor?: ArticleExtractor;
+  __qzInvoke?: (node: Node | null, payload: ContentRequest) => Promise<unknown>;
 }
 const host = globalThis as typeof globalThis & ContentGlobals;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -37,7 +38,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-09-23-image-capture-identity";
+  const QZ_CONTENT_VERSION = "2026-10-22-direct-node";
   const imageSourceIdentities = new WeakMap<HTMLImageElement, { source: string; identity: string }>();
   const imageSourceScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let imageSourceSequence = 0;
@@ -753,6 +754,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function queryAll(selector: unknown) {
+    if (selector instanceof Element) {
+      return selector.isConnected
+        ? { elements: [selector] }
+        : { error: toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {}), elements: [] as Element[] };
+    }
     if (typeof selector !== "string" || !selector.trim()) {
       return {
         error: toolError("MISSING_SELECTOR", "selector is required", { selector }),
@@ -780,7 +786,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   function queryElement(selector: unknown, index: number) {
     const query = queryAll(selector);
     if (query.error) return { ...query.error, interactable: getInteractableElements() };
-    const element = query.elements[index];
+    const element = selector instanceof Element ? query.elements[0] : query.elements[index];
     if (!element) {
       return {
         ...toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
@@ -887,7 +893,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   async function readImageElement({ selector, index = 0, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE, format = "png", quality = 0.88 }: Partial<ContentRequest>) {
     const query = queryAll(selector);
     if (query.error) return query.error;
-    const matched = query.elements[Math.max(0, Math.floor(Number(index) || 0))];
+    const requested: unknown = selector;
+    const matched = requested instanceof Element ? query.elements[0] : query.elements[Math.max(0, Math.floor(Number(index) || 0))];
     if (!matched) {
       return toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
         selector,
@@ -1959,7 +1966,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         || (target.isContentEditable && !hasLineBreaks(value)) ? "text" : "content";
       target.scrollIntoView({ behavior: "instant", block: "center" });
       target.focus({ preventScroll: true });
-      if (!target.isConnected || document.activeElement !== target) {
+      if (!target.isConnected || !elementHasFocus(target)) {
         return toolError("ELEMENT_FOCUS_FAILED", "Element could not receive focus", getElementSummary(target));
       }
       if (fillMode === "text") {
@@ -1968,7 +1975,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         } else if (!selectEditableContents(target)) {
           return toolError("ELEMENT_SELECTION_FAILED", "Element contents could not be selected", getElementSummary(target));
         }
-        if (!target.isConnected || document.activeElement !== target) {
+        if (!target.isConnected || !elementHasFocus(target)) {
           return toolError("ELEMENT_FOCUS_FAILED", "Element lost focus while selecting its contents", getElementSummary(target));
         }
       }
@@ -1993,7 +2000,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return {
         ...getElementSummary(el),
         value: getElementValue(el, true),
-        focused: document.activeElement === el,
+        focused: elementHasFocus(el),
         checked: "checked" in el ? !!el.checked : undefined,
       };
     },
@@ -2518,12 +2525,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function getElementInspection(el: Element, meta: object = {}) {
     const summary = getElementSummary(el);
+    const extra = { ...(meta as Record<string, unknown>) };
+    if (extra.selector instanceof Element) delete extra.selector;
     return {
       ...summary,
-      ...meta,
+      ...extra,
       attrs: getElementAttrs(el),
       state: {
-        focused: document.activeElement === el,
+        focused: elementHasFocus(el),
         inViewport: isInViewport(el),
         clickablePointInViewport: pointInViewport(summary.clickablePoint),
         obscuredAtCenter: isObscuredAtCenter(el),
@@ -2777,6 +2786,24 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return parent.textContent?.trim().replace(/\s+/g, " ").slice(0, 300) || "";
   }
 
+  function elementHasFocus(el: Element) {
+    let current: Node | null = el;
+    for (let depth = 0; current && depth < 8; depth += 1) {
+      const root = current.getRootNode();
+      if (!(root instanceof Document || root instanceof ShadowRoot)) return false;
+      if (root.activeElement === el) return true;
+      if (!(root instanceof ShadowRoot)) return false;
+      current = root.host;
+    }
+    return false;
+  }
+
+  function elementFromNode(node: Node | null) {
+    if (!node || !node.isConnected) return null;
+    if (node instanceof Element) return node;
+    return node.nodeType === Node.TEXT_NODE ? node.parentElement : null;
+  }
+
   function isVisible(el: Element) {
     const rect = el.getBoundingClientRect();
     const style = getComputedStyle(el);
@@ -2922,5 +2949,27 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return item;
     });
   }
+
+  const fillRoots = new Map<string, Element>();
+  host.__qzInvoke = async (node, payload) => {
+    const token = String(payload?.fillToken || "");
+    let element = elementFromNode(node);
+    const saved = token ? fillRoots.get(token) : undefined;
+    if ((!element || !element.isConnected) && saved?.isConnected) element = saved;
+    const view = element?.ownerDocument?.defaultView;
+    if (!element || !view || view.top !== view) return toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {});
+    if (payload?.editingHost && element instanceof HTMLElement && element.isContentEditable) {
+      const root = getContentEditableRoot(element);
+      if (root.isConnected) {
+        element = root;
+        if (token) fillRoots.set(token, root);
+      }
+    }
+    const handler = handlers[payload?.action];
+    if (!handler) return toolError("UNKNOWN_ACTION", `Unknown content action: ${payload?.action}`, { action: payload?.action });
+    const result = await handler({ ...payload, selector: element } as unknown as ContentRequest);
+    const encoded = JSON.stringify(result, (_key, value) => value instanceof Node ? "" : value);
+    return encoded === undefined ? {} : JSON.parse(encoded);
+  };
 
 })();
