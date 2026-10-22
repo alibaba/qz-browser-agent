@@ -13,7 +13,7 @@ type MediaHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "getToolRuntimeDependencies" | "makeSessionTabTargetError"
   | "sendToContent" | "assertTabAllowed" | "assertUrlAllowed" | "clampNumber"
   | "sendCdp" | "withDebugger" | "getPageContext"> & Pick<ToolExtensionAPI["element"],
-  "resolveSelectorTarget" | "resolveElementReference" | "makeSnapshotId" | "registerElementRef"
+  "resolveSelectorTarget" | "resolveElementReference" | "makeSnapshotId" | "makeElementUid" | "registerElementRef"
   | "elementTargetForUid" | "elementTargetForSelector" | "elementTargetForRef" | "elementTargetGrammar"
   | "getElementTargetDescription" | "callElement" | "bindBackendNodes"> & PageObservationHost & {
   queryDataRows?: typeof queryDataRows; updateDataTableMetadata?: typeof updateDataTableMetadata;
@@ -68,6 +68,7 @@ export function registerMediaTools({
   resolveSelectorTarget,
   resolveElementReference,
   makeSnapshotId,
+  makeElementUid = (snapshotId: string, seq: number, mark = "") => `${snapshotId}.${mark}${seq}`,
   registerElementRef,
   elementTargetForUid,
   elementTargetForSelector,
@@ -340,11 +341,11 @@ registerTool({
       ? imageMetadata(await callElement(target.tabId, target, "listImageElements", { minWidth, minHeight, visibleOnly, limit }, context))
       : await sendToContent(target.tabId, "listImageElements", { selector: target.selector, minWidth, minHeight, visibleOnly, limit });
     if (result?.error) return result;
-    const snapshotId = makeSnapshotId(target.tabId);
+    const snapshotId = makeSnapshotId(target.tabId, context);
     const listed = (result.images || []).slice(0, clampNumber(limit, 1, 1000, 100));
     const bound = await bindBackendNodes(target.tabId, listed.map(item => String(item.selector || "")), context);
     const images = listed.map((item, rank) => {
-        const uid = `${snapshotId}_img_${rank + 1}`;
+        const uid = makeElementUid(snapshotId, rank + 1, "i");
         registerElementRef({
           uid,
           tabId: target.tabId,

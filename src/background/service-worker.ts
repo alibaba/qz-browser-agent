@@ -92,6 +92,7 @@ import {
 } from "./session/id.js";
 import {
   createSessionTabs,
+  getOwnedTabIds,
 } from "./session/tabs.js";
 import {
   createAgentBrowserContext,
@@ -704,6 +705,9 @@ toolRuntime = createToolRuntime({
     updateWorkingTab: sessionTabs.updateWorkingTab,
     clearWorkingTab: sessionTabs.clearWorkingTab,
     resolveTargetTab: sessionTabs.resolveTargetTab,
+    listOwnedTabIds(sessionId: string) {
+      return getOwnedTabIds(sessionCommands.getSessionRuntimeState(sessionId));
+    },
     isRunCurrent: sessionSupervisor.isRunCurrent,
     updateGoal: sessionCommands.updateSessionGoal,
     stopSession: sessionCommands.stopSessionRuntime,

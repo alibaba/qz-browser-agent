@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 let currentUrl = "https://example.test/page#one";
+let ownedTabs = [5];
 const listeners = new Set();
 const commands = [];
 const contentCalls = [];
@@ -28,7 +29,7 @@ class ToolExecutionError extends Error {
 const runtime = createElementRuntime({
   ToolExecutionError,
   getToolRuntimeDependencies() {
-    return { sessions: { async resolveTargetTab() { return { ok: true }; } } };
+    return { sessions: { async resolveTargetTab() { return { ok: true }; }, listOwnedTabIds: () => ownedTabs } };
   },
   makeSessionTabTargetError(code, details = {}) { return new ToolExecutionError(code, code, details); },
   async assertTabAllowed() {},
@@ -75,7 +76,7 @@ const runtime = createElementRuntime({
 
 const context = { sessionId: "session-a", runId: "run" };
 runtime.registerElementRef({
-  uid: "t5_ax_1",
+  uid: "t5.00001.1",
   tabId: 5,
   sessionId: "session-a",
   pageUrl: "https://example.test/page",
@@ -84,7 +85,7 @@ runtime.registerElementRef({
   loaderId: "loader-live",
 });
 
-const resolved = await runtime.resolveElementReference(undefined, { target: "uid:t5_ax_1" }, context);
+const resolved = await runtime.resolveElementReference(undefined, { target: "uid:t5.00001.1" }, context);
 assert.equal(resolved.selector, "");
 assert.equal(commands.length, 0, "resolving a uid must not query or generate a selector");
 assert.equal(runtime.selectorFromBackendNode, undefined);
@@ -115,7 +116,7 @@ assert.ok(commands.some(command => command.method === "Runtime.releaseObjectGrou
 assert.equal(commands.some(command => command.method === "DOM.querySelector"), false);
 
 runtime.registerElementRef({
-  uid: "t5_ax_old",
+  uid: "t5.00002.1",
   tabId: 5,
   sessionId: "session-a",
   pageUrl: "https://example.test/page",
@@ -124,7 +125,7 @@ runtime.registerElementRef({
 });
 const beforeStale = commands.length;
 await assert.rejects(
-  runtime.callElement(5, { tabId: 5, uid: "t5_ax_old", target: "uid:t5_ax_old", ref: { backendNodeId: 41, loaderId: "loader-previous" } }, "inspectElement", {}, context),
+  runtime.callElement(5, { tabId: 5, uid: "t5.00002.1", target: "uid:t5.00002.1", ref: { backendNodeId: 41, loaderId: "loader-previous" } }, "inspectElement", {}, context),
   error => error?.code === "STALE_ELEMENT_UID",
 );
 assert.equal(commands.slice(beforeStale).some(command => command.method === "DOM.resolveNode"), false, "a replaced document must not be rematched");
@@ -132,5 +133,69 @@ assert.equal(commands.slice(beforeStale).some(command => command.method === "DOM
 const bound = await runtime.bindBackendNodes(5, ["button.dup", "#only"], context);
 assert.equal(bound.loaderId, "loader-live");
 assert.deepEqual(bound.ids, [0, 44], "a selector that matches two nodes must not bind the first");
+
+ownedTabs = [5493, 15493];
+assert.match(runtime.makeSnapshotId(5493, context), /^t5493\.[0-9a-z]{5}$/);
+assert.match(runtime.makeSnapshotId(15493, context), /^t15493\.[0-9a-z]{5}$/);
+ownedTabs = [955493525, 1855493525];
+assert.match(runtime.makeSnapshotId(955493525, context), /^t955493525\./, "a suffix shared through the last 8 digits keeps the whole shorter id");
+assert.match(runtime.makeSnapshotId(1855493525, context), /^t855493525\./);
+ownedTabs = [5];
+const snapshotId = runtime.makeSnapshotId(5, context);
+assert.match(snapshotId, /^t5\.[0-9a-z]{5}$/);
+const imageUid = runtime.makeElementUid(snapshotId, 1, "i");
+assert.equal(imageUid, `${snapshotId}.i1`);
+runtime.registerElementRef({
+  uid: imageUid,
+  tabId: 5,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/page",
+  backendNodeId: 41,
+  loaderId: "loader-live",
+});
+const imageRef = await runtime.resolveElementReference(undefined, { target: `uid:${imageUid}` }, context);
+assert.equal(imageRef.uid, imageUid);
+assert.equal(imageRef.ref.backendNodeId, 41);
+
+runtime.registerElementRef({
+  uid: "t9999.00001.1",
+  tabId: 5,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/page",
+  backendNodeId: 41,
+});
+await assert.rejects(
+  runtime.resolveElementReference(undefined, { target: "uid:t9999.00001.1" }, context),
+  error => error?.code === "STALE_ELEMENT_UID" && /tab suffix/.test(error.message),
+);
+await assert.rejects(
+  runtime.resolveElementReference(undefined, { target: "uid:t955493525_mvidb4l5_12" }, context),
+  error => error?.code === "STALE_ELEMENT_UID",
+);
+runtime.registerElementRef({
+  uid: "t9.00001.1",
+  tabId: 5,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/page",
+  backendNodeId: 41,
+});
+ownedTabs = [5, 9];
+await assert.rejects(
+  runtime.resolveElementReference(undefined, { target: "uid:t9.00001.1" }, context),
+  error => error?.code === "ELEMENT_UID_TAB_MISMATCH",
+);
+ownedTabs = [5];
+await assert.rejects(
+  runtime.resolveElementReference(9, { target: "uid:t5.00001.1" }, context),
+  error => error?.code === "ELEMENT_UID_TAB_MISMATCH",
+);
+currentUrl = "https://example.test/other";
+await assert.rejects(
+  runtime.resolveElementReference(undefined, { target: "uid:t5.00001.1" }, context),
+  error => error?.code === "STALE_ELEMENT_UID_PAGE_CHANGED",
+);
+currentUrl = "https://example.test/page#one";
+const fresh = await runtime.resolveElementReference(undefined, { target: "uid:t5.00001.1" }, context);
+assert.equal(fresh.tabId, 5);
 
 console.log("element runtime ownership tests passed");

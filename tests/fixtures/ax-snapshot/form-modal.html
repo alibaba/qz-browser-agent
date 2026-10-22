@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Edit record</title>
+<style>
+  body { font: 16px/1.4 sans-serif; margin: 16px }
+  dialog { border: 1px solid #222; padding: 16px }
+  label, button, a, div { display: block; margin: 8px 0 }
+  #ghost { width: 120px; height: 28px }
+</style>
+<dialog open>
+  <h2>Save</h2>
+  <form>
+    <label>Title <input name="title" placeholder="Record title" value="Quarterly notes"></label>
+    <label>Notes <textarea name="notes">Shared notes</textarea></label>
+    <label><input type="checkbox" name="publish"> Publish</label>
+    <button type="button" id="save-a">Save</button>
+    <button type="button" id="save-b">Save</button>
+    <button type="button" disabled>Archive</button>
+  </form>
+</dialog>
+<div id="ghost" onclick="">Quick add</div>
+<p><a href="/records/next">Next record</a> <a href="https://example.com/docs">Documentation</a></p>
+<label>Attachment <input type="file" name="file" accept=".png,image/*" multiple></label>

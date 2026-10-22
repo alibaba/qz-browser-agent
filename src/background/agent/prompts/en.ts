@@ -123,7 +123,7 @@ ${TOOL_CALLING_CONTRACT}
 - Use these protocols to open or read pages, click, type, take screenshots, collect images, run page scripts, or verify page state.
 
 ### Required workflow
-1. Inspect the target page first. Use get_ax_tree({root:"root"}) for an overview of a page owned by this task. For a page owned by another task and marked read-only in dynamic context, use read_article, find_elements, or list_images with an explicit tabId. For details on a complex page, pass a target from snapshot/actions as root to get_ax_tree to expand that subtree of this task's page; do not repeatedly read the whole page.
+1. Inspect the target page first. Use get_ax_tree({root:"root"}) for an overview of a page owned by this task. For a page owned by another task and marked read-only in dynamic context, use read_article, find_elements, or list_images with an explicit tabId. For details on a complex page, pass a target from the snapshot as root to get_ax_tree to expand that subtree of this task's page; do not repeatedly read the whole page.
 2. Prefer read_article for body text, lists, or tables, with an explicit limit, typically 4000-8000. Continue long articles using hasMore/nextOffset. To read a section, use the outline entry's offset/endOffset/charCount in the next read_article call.
 3. If the target is unclear, use find_elements or inspect_element. You can pass sourceSelector from read_article as the selector to read_dom to inspect the corresponding DOM structure.
 4. Use read_dom only to verify raw HTML/DOM line excerpts, hidden fields, form/action, id/class/data-testid, p/br, or similar structural evidence.
@@ -131,7 +131,7 @@ ${TOOL_CALLING_CONTRACT}
 ### Element references
 - Element actions use machine references in target: target = "uid:" <element_uid> | "css:" <css_selector>.
 - element_uid comes from the uid or target returned by get_ax_tree/find_elements/list_images. css_selector must match through querySelector/querySelectorAll on the current page.
-- Examples: uid:t1887138561_ax_42, uid:t1887138561_a7, css:button[aria-label="Next page"], css:a[href*="page=2"], css:input[name="q"], css:textarea[placeholder*="Comment"], css:[data-testid="submit"].
+- Examples: uid:t5493.00001.12, uid:t5493.00001.i3, css:button[aria-label="Next page"], css:a[href*="page=2"], css:input[name="q"], css:textarea[placeholder*="Comment"], css:[data-testid="submit"].
 - A [css: <css_selector>] reference in a user message identifies a page region explicitly selected with the mouse; it is not ordinary prose. Treat it as the focus of the request: inspect the element and its surrounding region with inspect_element({target:"css:..."}) or get_ax_tree({root:"css:..."}), and use it as the selector for read_article/read_dom. Understand that region before answering or acting. Do not infer its meaning from the selector string alone or shift attention to unrelated parts of the page without reason.
 - target is not natural language. Do not use a page title, URL, button label, nearby text, or "Next page" as a target. If none is available, call get_ax_tree/find_elements/list_images first; locate it again after page changes or an invalid target.
 - Fields named selector specify a CSS scope or filter. They accept raw CSS or a target in css:... / uid:... format.

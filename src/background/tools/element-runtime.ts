@@ -68,8 +68,8 @@ const ELEMENT_REF_MAX = 5000;
 const ELEMENT_TARGET_GRAMMAR = 'target = "uid:" <element_uid> | "css:" <css_selector>';
 function getElementTargetExamples() {
 return [
-  "uid:t1887138561_ax_42",
-  "uid:t1887138561_a7",
+  "uid:t5493.00001.12",
+  "uid:t5493.00001.i3",
   `css:button[aria-label="${t("nextPageSelector")}"]`,
   'css:a[href*="page=2"]',
   'css:input[name="q"]',
@@ -85,8 +85,45 @@ return t("elementReference", {
 
 }
 
-function makeSnapshotId(tabId: number) {
-  return `t${tabId}_${Date.now().toString(36)}`;
+const snapshotSerial = new Map<number, number>();
+
+function taskTabIds(context: ToolContext = {}) {
+  const sessionId = String(context.sessionId || "").trim();
+  const sessions = getToolRuntimeDependencies(context).sessions;
+  if (!sessionId || typeof sessions?.listOwnedTabIds !== "function") return [];
+  const listed = sessions.listOwnedTabIds(sessionId);
+  return Array.isArray(listed) ? listed.map(Number).filter(id => Number.isInteger(id) && id > 0) : [];
+}
+
+function matchTabSuffix(suffix: string, tabIds: readonly number[]) {
+  const matches = tabIds.filter(id => String(id).endsWith(suffix));
+  if (matches.length === 1) return matches[0];
+  const exact = matches.filter(id => String(id) === suffix);
+  return exact.length === 1 ? exact[0] : null;
+}
+
+function uniqueTabSuffix(tabId: number, peerTabIds: readonly number[]) {
+  const self = String(tabId);
+  const ids = [...new Set([tabId, ...peerTabIds].map(Number))].filter(id => Number.isInteger(id) && id > 0);
+  for (let length = Math.min(4, self.length); length <= self.length; length += 1) {
+    const suffix = self.slice(-length);
+    if (matchTabSuffix(suffix, ids) === tabId) return suffix;
+  }
+  return self;
+}
+
+function makeSnapshotId(tabId: number, context: ToolContext = {}) {
+  const id = Number(tabId);
+  const peers = taskTabIds(context);
+  const ids = peers.includes(id) ? peers : [...peers, id];
+  const suffix = uniqueTabSuffix(id, ids);
+  const next = (snapshotSerial.get(id) || 0) + 1;
+  snapshotSerial.set(id, next);
+  return `t${suffix}.${next.toString(36).padStart(5, "0")}`;
+}
+
+function makeElementUid(snapshotId: string, seq: number, mark = "") {
+  return `${snapshotId}.${mark}${seq}`;
 }
 
 function registerElementRef(ref: ElementReference) {
@@ -201,6 +238,26 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       { target: elementTargetForUid(requestedUid) },
     );
   }
+  const suffix = (/^t(\d+)\./.exec(requestedUid) || [])[1] || "";
+  if (suffix) {
+    const listed = taskTabIds(context);
+    const candidates = listed.length ? listed : [Number(ref.tabId)];
+    const matched = matchTabSuffix(suffix, candidates);
+    if (matched == null) {
+      throw new ToolExecutionError(
+        "STALE_ELEMENT_UID",
+        `Element target is stale or unknown: uid:${requestedUid}. Its tab suffix does not match a tab owned by this task. Take a fresh get_ax_tree snapshot, then retry.`,
+        { target: elementTargetForUid(requestedUid) },
+      );
+    }
+    if (Number(matched) !== Number(ref.tabId)) {
+      throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", `Element target belongs to tab ${ref.tabId}, not tab ${matched}`, {
+        target: elementTargetForUid(requestedUid),
+        tabId: matched,
+        refTabId: ref.tabId,
+      });
+    }
+  }
 
   const currentSessionId = String(context.sessionId || "").trim();
   const refSessionId = String(ref.sessionId || "").trim();
@@ -275,7 +332,7 @@ function normalizeElementUid(uid: unknown) {
   const value = String(uid || "").trim();
   if (!value) return "";
   if (elementRefRegistry.has(value)) return value;
-  const match = value.match(/\bt\d+_[a-z0-9]+_\d+\b/i);
+  const match = value.match(/\bt\d+\.[0-9a-z]{5,}\.[0-9a-z]*\d+\b/i);
   return match ? match[0] : value;
 }
 
@@ -404,6 +461,7 @@ function samePageUrl(a: unknown, b: unknown) {
     elementTargetGrammar: ELEMENT_TARGET_GRAMMAR,
     getElementTargetDescription,
     makeSnapshotId,
+    makeElementUid,
     registerElementRef,
     elementTargetForUid,
     elementTargetForSelector,

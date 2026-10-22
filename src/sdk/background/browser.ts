@@ -16,7 +16,8 @@ export interface ElementTarget {
 export interface ElementAccess {
   readonly elementTargetGrammar: string;
   getElementTargetDescription(): string;
-  makeSnapshotId(tabId: number): string;
+  makeSnapshotId(tabId: number, context?: ToolContext): string;
+  makeElementUid(snapshotId: string, seq: number, mark?: string): string;
   registerElementRef(ref: ElementReference): void;
   elementTargetForUid(uid: unknown): string;
   elementTargetForSelector(selector: unknown): string;

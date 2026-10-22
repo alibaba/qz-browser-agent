@@ -6,6 +6,7 @@ type Data = Record<string, unknown>;
 interface TreeLine { depth: number; text: unknown; meta: unknown; index?: number; hasChildren?: boolean }
 
 export function createTreeRenderer() {
+let indentUnit = 2;
 
 function render(parent: HTMLElement, args: Data, value: unknown, options: { title?: string; appendDetails?(parent: HTMLElement, result: Data): void } = {}) {
   if (!value || typeof value !== "object") return false;
@@ -46,6 +47,7 @@ function formatPageTreeStats(result: Data = {}) {
 }
 
 function buildTreeLines(result: Data): TreeLine[] {
+  indentUnit = 2;
   const display = record(result._display);
   if (Array.isArray(display.tree) && display.tree.length) {
     const lines: TreeLine[] = [];
@@ -66,7 +68,9 @@ function buildTreeLines(result: Data): TreeLine[] {
     }));
   }
   const outline = result.snapshot || result.outline || result.tree || result.text || result.html || "";
-  return String(outline || "")
+  const outlineText = String(outline || "");
+  if (/\btarget=uid:t\d+\./.test(outlineText)) indentUnit = 1;
+  return outlineText
     .split("\n")
     .map(line => line.trimEnd())
     .filter(Boolean)
@@ -104,7 +108,7 @@ function treeLineFromSnapshotText(line: unknown): TreeLine {
     .replace(/\s#\d+\s*$/g, "")
     .trim();
   return {
-    depth: Math.min(8, Math.floor((raw.match(/^\s*/)?.[0].length || 0) / 2)),
+    depth: Math.min(16, Math.floor((raw.match(/^\s*/)?.[0].length || 0) / indentUnit)),
     text: text || targetMatch?.[1] || "node",
     meta,
   };

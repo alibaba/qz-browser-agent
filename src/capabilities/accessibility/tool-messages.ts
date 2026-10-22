@@ -4,8 +4,8 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model-facing documentation stays with the tool contribution, outside the UI catalog. */
 const messages = defineMessages("accessibility-tools", {
   getAxTreeDescription: {
-    "zh-CN": "获取当前任务所拥有页面的语义快照。返回类似 Chrome DevTools MCP 的紧凑 snapshot 文本：每行带 target、role、name、url；同时返回 actions(target/role/type/name/text/value/placeholder/href/state/rect)，文件输入还会带 accept/multiple/selectedFileCount。默认还返回当前范围内尺寸较大的可见 canvases(name/rect/inViewport/bitmapSize)，小型 Canvas 会忽略；这里的 rect 是页面 CSS 位置提示，视觉操作坐标必须以 screenshot({actionable:true}) 返回的原始图片为准。root=\"root\" 查看整页；root 传 uid:/css: target 时展开该元素子树。limit 使用 BFS 分配节点预算以覆盖更多同层分支，输出仍保持树形顺序；节点行尾的 (truncated) 表示该节点在当前 depth 内还有子树因 limit 未展示。理解页面后，优先把 actions 或 snapshot 中的 target 原样传给 act_on_element/inspect_element/screenshot/read_image；需要精确 CSS 定位时再用 find_elements/inspect_element。{targetGrammar}。",
-    en: "Get a semantic snapshot of a page owned by the current task. Returns compact snapshot text similar to Chrome DevTools MCP: each line includes target, role, name, and url. Also returns actions(target/role/type/name/text/value/placeholder/href/state/rect), with accept/multiple/selectedFileCount for file inputs. By default, includes larger visible canvases(name/rect/inViewport/bitmapSize) in the current scope and omits small canvases. These rect values are CSS page-position hints; visual action coordinates must come from the original image returned by screenshot({actionable:true}). Use root=\"root\" for the whole page, or a uid:/css: target to expand an element subtree. limit allocates the node budget breadth-first to cover more sibling branches, while output retains tree order. A trailing (truncated) means a node has descendants within depth that were omitted because of limit. Once you understand the page, pass targets from actions or snapshot unchanged to act_on_element/inspect_element/screenshot/read_image. Use find_elements/inspect_element when precise CSS targeting is needed. {targetGrammar}.",
+    "zh-CN": "获取当前任务所拥有页面的语义快照。返回类似 Chrome DevTools MCP 的紧凑 snapshot 文本，每行一个节点，包含 target、role、name、url 等字段。root=\"root\" 查看整页；改传 uid:/css: target 时只展开该元素的子树。limit 使用 BFS 分配节点预算，优先覆盖更多同层分支，输出仍按树形顺序排列；节点行尾的 (truncated, N more) 表示其下还有 N 行未展开。还会返回 root 范围内尺寸较大的可见 canvases(name/rect/inViewport/bitmapSize)，忽略小型 Canvas；其中 rect 只是页面 CSS 位置提示，视觉操作坐标必须以 screenshot({actionable:true}) 返回的原始图片为准。理解页面后，优先把行中的 target（形如 uid:...）原样传给 act_on_element（click、fill 等）、inspect_element、screenshot 或 read_image；需要精确的 CSS 定位时再用 find_elements/inspect_element。{targetGrammar}。",
+    en: "Get a semantic snapshot of a page owned by the current task. Returns compact snapshot text similar to Chrome DevTools MCP, one node per line, with fields such as target, role, name, and url. Use root=\"root\" for the whole page, or pass a uid:/css: target to expand only that element's subtree. limit allocates the node budget breadth-first to cover more sibling branches first, while output stays in tree order; a trailing (truncated, N more) means N more lines under that node were not expanded. Also returns larger visible canvases(name/rect/inViewport/bitmapSize) within the root scope and ignores small canvases; rect is only a CSS page-position hint, and visual action coordinates must come from the original image returned by screenshot({actionable:true}). Once you understand the page, pass a line's target (such as uid:...) unchanged to act_on_element (click, fill, etc.), inspect_element, screenshot, or read_image; use find_elements/inspect_element when precise CSS targeting is needed. {targetGrammar}.",
   },
   getAxTreeTabId: {
     "zh-CN": "当前任务拥有的目标标签页 ID；省略时使用当前任务工作标签页。",
@@ -20,8 +20,8 @@ const messages = defineMessages("accessibility-tools", {
     en: "AX tree depth. Default: 16; range: 1–40.",
   },
   getAxTreeLimit: {
-    "zh-CN": "snapshot 最多返回节点行数，默认 120，范围 20-300；按 BFS 分配预算，输出仍为树形顺序，截断分支标记 (truncated)",
-    en: "Maximum number of snapshot node lines. Default: 120; range: 20–300. Allocates the budget breadth-first, retains tree order, and marks omitted branches with (truncated).",
+    "zh-CN": "snapshot 最多返回节点行数，默认 120，范围 20-300。",
+    en: "Maximum snapshot node lines. Default: 120; range: 20–300.",
   },
   getAxTreeActionsLimit: {
     "zh-CN": "可操作元素最多返回数量，默认 40，范围 5-80",

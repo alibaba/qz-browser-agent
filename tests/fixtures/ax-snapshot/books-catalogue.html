@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Catalogue</title>
+<style>
+  body { font: 16px/1.4 sans-serif; margin: 0 }
+  nav, main { padding: 12px 20px }
+  nav a { margin-right: 10px }
+  li { margin: 6px 0 }
+</style>
+<nav aria-label="Breadcrumb">
+  <a href="/">Home</a>
+  <a href="/catalogue/page-2.html">Books</a>
+  <a href="/catalogue/mystery_3/index.html">Mystery</a>
+</nav>
+<main>
+  <h1>Mystery</h1>
+  <p>Page 2 of the mystery catalogue, with filters and a long enough list to exercise the snapshot.</p>
+  <form>
+    <label>Sort <select name="sort" aria-label="Sort"><option>Price</option><option>Name</option><option>Rating</option></select></label>
+    <label><input type="checkbox" name="stock" checked> In stock only</label>
+    <button>Apply</button>
+  </form>
+  <ol>
+    <li><a href="/catalogue/the-silent-patient_1/index.html">The Silent Patient</a> <span>£19.99</span> <button>Add</button></li>
+    <li><a href="/catalogue/gone-girl_2/index.html">Gone Girl</a> <span>£18.50</span> <button>Add</button></li>
+    <li><a href="/catalogue/the-girl-on-the-train_3/index.html">The Girl on the Train</a> <span>£16.20</span> <button>Add</button></li>
+    <li><a href="/catalogue/big-little-lies_4/index.html">Big Little Lies</a> <span>£15.10</span> <button>Add</button></li>
+    <li><a href="/catalogue/in-the-woods_5/index.html">In the Woods</a> <span>£14.40</span> <button>Add</button></li>
+    <li><a href="/catalogue/the-secret-history_6/index.html">The Secret History</a> <span>£21.00</span> <button>Add</button></li>
+    <li><a href="/catalogue/and-then-there-were-none_7/index.html">And Then There Were None</a> <span>£12.75</span> <button>Add</button></li>
+    <li><a href="/catalogue/the-moonstone_8/index.html">The Moonstone</a> <span>£11.30</span> <button>Add</button></li>
+    <li><a href="/catalogue/rebecca_9/index.html">Rebecca</a> <span>£13.25</span> <button>Add</button></li>
+    <li><a href="/catalogue/the-hound_10/index.html">The Hound of the Baskervilles</a> <span>£10.99</span> <button>Add</button></li>
+    <li><a href="/catalogue/gorky-park_11/index.html">Gorky Park</a> <span>£9.80</span> <button>Add</button></li>
+    <li><a href="/catalogue/the-daughter_12/index.html">The Daughter</a> <span>£17.40</span> <button>Add</button></li>
+  </ol>
+  <p>
+    <a href="/catalogue/page-1.html">previous</a>
+    <a href="/catalogue/page-3.html">next</a>
+    <a href="https://example.com/mystery">About this genre</a>
+  </p>
+</main>

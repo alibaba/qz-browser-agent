@@ -1512,7 +1512,7 @@ assert.equal(collectImagesSchema.properties.urls.items.type, "string");
 assert.equal(readImageSchema.properties.target.type, "string");
 assert.equal(readImageSchema.properties.url.type, "string");
 assert.equal(listed.images.length, 1);
-assert.equal(listed.images[0].target, "uid:t3_snapshot_img_1");
+assert.equal(listed.images[0].target, "uid:t3_snapshot.i1");
 assert.equal(listed.images[0].src, "https://example.test/hero-a.png");
 assert.equal(listed.images[0].currentSrc, undefined, "discovery should not duplicate the effective URL");
 assert.equal(listed.images[0].srcset, undefined, "discovery should not expose raw srcset");
@@ -1529,8 +1529,8 @@ assert.deepEqual(listed.images[0].context, {
   nearbyText: "Research profile · Taken during the CMU years",
   linkUrl: "https://example.test/profile",
 });
-assert.equal(elementRefs.get("t3_snapshot_img_1").imageSrc, "https://example.test/hero-a.png");
-assert.equal(elementRefs.get("t3_snapshot_img_1").imageIndex, 4);
+assert.equal(elementRefs.get("t3_snapshot.i1").imageSrc, "https://example.test/hero-a.png");
+assert.equal(elementRefs.get("t3_snapshot.i1").imageIndex, 4);
 const inspected = await definitions.get("read_image").execute({ target: listed.images[0].target }, undefined, { sessionId: "session-a" });
 assert.equal(inspected.target, listed.images[0].target);
 assert.match(inspected.note, /满足时在切换页面上下文前把这个 target 交给 collect_images/);
@@ -1568,7 +1568,7 @@ assert.ok(embeddedCandidate.context.nearbyText.length <= 400);
 assert.ok(embeddedCandidate.context.linkUrl.length <= 2048);
 assert.equal(embeddedCandidate.context.privateField, undefined, "candidate context must use an allowlisted projection");
 assert.ok(JSON.stringify(embeddedCandidate).length < 5000, "a large embedded image must produce a bounded discovery result");
-assert.equal(elementRefs.get("t4_snapshot_img_1").imageSrc, embeddedSource, "the full source must remain bound internally for target validation");
+assert.equal(elementRefs.get("t4_snapshot.i1").imageSrc, embeddedSource, "the full source must remain bound internally for target validation");
 
 listedImages = [{
   index: 4,

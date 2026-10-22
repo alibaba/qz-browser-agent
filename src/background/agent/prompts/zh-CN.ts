@@ -125,7 +125,7 @@ ${TOOL_CALLING_CONTRACT}
 - 需要打开网页、读页面、点击、输入、截图、采集图片、执行页面脚本或验证页面状态时使用。
 
 ### 必须流程
-1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({root:"root"}) 总览；属于其他任务且动态上下文标为可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabId。复杂页面需要局部细节时，把 snapshot/actions 中的 target 作为 root 传给 get_ax_tree 展开当前任务页面的子树，不要反复全页读取。
+1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({root:"root"}) 总览；属于其他任务且动态上下文标为可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabId。复杂页面需要局部细节时，把 snapshot 中的 target 作为 root 传给 get_ax_tree 展开当前任务页面的子树，不要反复全页读取。
 2. 读正文、列表或表格优先 read_article，并显式传 limit，建议 4000-8000。长文按 hasMore/nextOffset 继续分页读取。要读某一章节时，使用 outline 条目的 offset/endOffset/charCount 再调用 read_article。
 3. 目标不明确时用 find_elements 或 inspect_element。read_article 返回的 sourceSelector 可作为 read_dom 的 selector 读取对应 DOM 结构。
 4. read_dom 只用于验证原始 HTML/DOM 行号片段、隐藏字段、form/action、id/class/data-testid、p/br 等结构证据。
@@ -133,7 +133,7 @@ ${TOOL_CALLING_CONTRACT}
 ### 元素引用协议
 - 元素操作统一使用 target 机器引用，格式：target = "uid:" <element_uid> | "css:" <css_selector>。
 - element_uid 来自 get_ax_tree/find_elements/list_images 返回的 uid 或 target；css_selector 必须能被当前页面 querySelector/querySelectorAll 匹配。
-- 示例：uid:t1887138561_ax_42、uid:t1887138561_a7、css:button[aria-label="下一页"]、css:a[href*="page=2"]、css:input[name="q"]、css:textarea[placeholder*="评论"]、css:[data-testid="submit"]。
+- 示例：uid:t5493.00001.12、uid:t5493.00001.i3、css:button[aria-label="下一页"]、css:a[href*="page=2"]、css:input[name="q"]、css:textarea[placeholder*="评论"]、css:[data-testid="submit"]。
 - 用户消息中的 [css: <css_selector>] 是用户通过鼠标点选页面元素生成的显式页面区域引用，不是普通文字。处理该请求时，把它作为当前关注范围：优先用 inspect_element({target:"css:..."}) 或 get_ax_tree({root:"css:..."}) 观察元素及其所在区域，读取内容时把它作为 read_article/read_dom 的 selector；先理解该区域再回答或操作，不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域。
 - target 不是自然语言；不要把页面标题、URL、按钮文案、附近文本或「下一页」当成 target。没有 target 时先 get_ax_tree/find_elements/list_images；页面变化或 target 失效后重新定位。
 - 工具字段名仍叫 selector 时表示 CSS 范围或过滤条件，可传原始 CSS，也可传 target 格式 css:... / uid:...。
