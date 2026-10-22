@@ -116,6 +116,7 @@ export function installBenchmarkChromeStub(options = {}) {
                 sessionId: message.sessionId,
                 status: "idle",
                 runtime: { sessionId: message.sessionId, status: "idle", running: false },
+                ...clone(options.stateResponse || {}),
               });
               if (stateResponseDelayMs) setTimeout(respond, stateResponseDelayMs);
               else queueMicrotask(respond);

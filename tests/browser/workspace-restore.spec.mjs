@@ -137,6 +137,47 @@ test("hydrates the restored chat session before revealing it", async ({ page }) 
   ))).toBe(false);
 });
 
+for (const status of ["aborted", "interrupted"]) {
+  for (const stateFirst of [true, false]) {
+    test(`restores history when ${status} state arrives ${stateFirst ? "before" : "after"} storage, without sending a message`, async ({ page }) => {
+      await page.goto("/__test_health");
+      await page.evaluate(() => localStorage.clear());
+      const sessionId = `restored-${status}`;
+      const runId = "saved-run";
+      const stateResponse = { type: "state", sessionId, status, runtime: { sessionId, runId, status, running: false } };
+      const transcript = [
+        { type: "user", text: "查找演出照片", runId },
+        { type: "thinking", text: "查看图片来源", runId, spanId: "thinking-1", streaming: true },
+        { type: "assistant", content: "找到相关图片，正在核对。", runId, spanId: "answer-1", streaming: true },
+      ];
+      if (status === "aborted") transcript.push({ type: "run-status", status, runId });
+      await page.addInitScript(installBenchmarkChromeStub, {
+        benchmark: false, windowId: WINDOW_ID, localGetDelayMs: 10,
+        respondToStateWithoutRequestId: stateFirst,
+        stateResponse,
+        sessionStorage: { [VIEW_KEY]: { v: 1, page: "chat", sessionId } },
+        localStorage: await storedSessionFixture(page, {
+          session: { id: sessionId, title: "恢复取消的对话" },
+          conversation: [{ role: "user", content: transcript[0].text }], transcript,
+        }),
+      });
+
+      for (let opening = 0; opening < 2; opening++) {
+        await page.goto(SIDEPANEL_URL, { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-booting");
+        if (!stateFirst) await page.evaluate(event => window.__qzEmitPortMessage(event), stateResponse);
+        await expect(page.locator("#messages")).toContainText(transcript[0].text);
+        await expect(page.locator("#messages")).toContainText(transcript[2].content);
+        await expect(page.locator("#messages .msg-thinking-group")).toHaveCount(1);
+        await expect(page.locator("#messages .thinking-group-summary-running")).toHaveCount(0);
+        await expect(page.locator("#messages .msg-run-status")).toHaveCount(1);
+        await expect(page.locator("#messages .msg-run-status")).toContainText(status === "aborted" ? "已取消" : "已中断");
+        expect(await page.evaluate(() => window.__qzPostedMessages.some(message => message.type === "prompt"))).toBe(false);
+      }
+    });
+  }
+}
+
 test("a failed page restore returns to the empty Chat workspace", async ({ page, browserDiagnostics }) => {
   await page.goto("/__test_health");
   await page.evaluate(() => localStorage.clear());

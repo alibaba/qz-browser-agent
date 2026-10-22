@@ -57,6 +57,33 @@ function fixture({ current = "visible", listen, reconcile = false } = {}) {
 const event = (type, sessionId = "visible", fields = {}) => ({ type, sessionId, runId: "new", ...fields });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test("terminal status alone does not mark stored history as loaded", () => {
+  for (const status of ["aborted", "interrupted"]) {
+    const state = createSessionState();
+    state.applyEvent(event("state", "visible", { runtime: { status, runId: "new" } }));
+    assert.equal(state.getTranscript("visible").at(-1).status, status);
+    assert.equal(state.hasTranscript("visible"), false, "a status pill is not a hydrated history");
+    state.replaceTranscript("visible", [{ type: "user", text: "saved question" }]);
+    state.applyEvent(event("state", "visible", { runtime: { status, runId: "new" } }));
+    assert.equal(state.hasTranscript("visible"), true, "later status updates retain the loaded history");
+    assert.equal(state.getTranscript("visible")[0].text, "saved question");
+  }
+});
+
+test("explicit empty histories and live messages remain initialized", () => {
+  for (const first of [
+    event("messages", "visible", { transcript: [] }),
+    event("transcript_replace", "visible", { transcript: [] }),
+    event("reset"),
+    event("message_start", "visible", { message: { role: "user", content: "new message" } }),
+  ]) {
+    const state = createSessionState();
+    state.applyEvent(first);
+    state.applyEvent(event("state", "visible", { status: "aborted" }));
+    assert.equal(state.hasTranscript("visible"), true, `${first.type} must block stale storage seeding`);
+  }
+});
+
 for (const statusFields of [{ status: "interrupted" }, { runtime: { status: "interrupted" } }]) {
   test(`equivalent interrupted state recovers nonempty history with throttled read-only snapshots (${Object.keys(statusFields)[0]})`, async t => {
     t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10_000 });
