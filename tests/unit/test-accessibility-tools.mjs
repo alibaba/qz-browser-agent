@@ -24,6 +24,7 @@ registerAccessibilityTools({
   registerElementRef: ref => refs.push(ref),
   resolveElementReference: async () => ({ tabId: 8, target: "css:button", selector: "button", index: 0 }),
   backendNodeIdForSelector: async () => 2,
+  bindBackendNodes: async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 2) }),
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),
   sendToContent: async () => input,
   withDebugger: async (id, fn, context) => {

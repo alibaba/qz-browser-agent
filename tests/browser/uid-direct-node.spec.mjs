@@ -465,6 +465,110 @@ test.describe("uid resolves the original node", () => {
     expect((await h.state()).rich).toContain("replaced rich");
   });
 
+  test("a shadow subtree button is not bound to the outer button with the same id", async () => {
+    await h.page.evaluate(() => {
+      const outer = document.createElement("button");
+      outer.id = "shadow-save";
+      outer.textContent = "Outer save";
+      outer.addEventListener("click", () => { window.hits.outer = (window.hits.outer || 0) + 1; });
+      const host = document.createElement("div");
+      host.id = "shadow-panel-host";
+      const root = host.attachShadow({ mode: "open" });
+      const region = document.createElement("div");
+      region.setAttribute("role", "region");
+      region.setAttribute("aria-label", "Panel");
+      const inner = document.createElement("button");
+      inner.id = "shadow-save";
+      inner.textContent = "Inner save";
+      inner.addEventListener("click", () => { window.hits.inner = (window.hits.inner || 0) + 1; });
+      region.append(inner);
+      root.append(region);
+      document.body.append(outer, host);
+    });
+    const page = await h.call("get_ax_tree", {});
+    expect(page.code, JSON.stringify(page)).toBeUndefined();
+    const region = targets(page.snapshot, "region", "Panel")[0];
+    expect(region, page.snapshot).toBeTruthy();
+    const sub = await h.call("get_ax_tree", { root: region });
+    expect(sub.code, JSON.stringify(sub)).toBeUndefined();
+    const buttons = targets(sub.snapshot, "button", "Inner save");
+    expect(buttons, sub.snapshot).toHaveLength(1);
+    const clicked = await h.call("act_on_element", { target: buttons[0], action: "click" });
+    expect(clicked.code, JSON.stringify(clicked)).toBeUndefined();
+    const inspected = await h.call("inspect_element", { target: buttons[0] });
+    expect(inspected.code, JSON.stringify(inspected)).toBeUndefined();
+    expect(inspected.text, JSON.stringify(inspected)).toContain("Inner save");
+    expect(inspected.text).not.toContain("Outer save");
+    const hits = (await h.state()).hits;
+    expect(hits.inner).toBe(1);
+    expect(hits.outer || 0).toBe(0);
+  });
+
+  test("duplicate image ids stay readable", async () => {
+    await h.page.evaluate(() => {
+      const root = document.createElement("div");
+      root.id = "dup-pics";
+      const pixel = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+      for (const alt of ["First pic", "Second pic"]) {
+        const image = document.createElement("img");
+        image.id = "pic";
+        image.alt = alt;
+        image.width = 40;
+        image.height = 40;
+        image.src = pixel;
+        image.addEventListener("click", () => {
+          const key = alt === "First pic" ? "pic1" : "pic2";
+          window.hits[key] = (window.hits[key] || 0) + 1;
+        });
+        root.append(image);
+      }
+      document.body.append(root);
+    });
+    const listed = await h.call("list_images", { selector: "#dup-pics" });
+    expect(listed.code, JSON.stringify(listed)).toBeUndefined();
+    const images = listed.images.filter(item => item.alt === "First pic" || item.alt === "Second pic");
+    expect(images.map(item => item.alt).sort()).toEqual(["First pic", "Second pic"]);
+    for (const image of images) {
+      const inspected = await h.call("inspect_element", { target: image.target });
+      expect(inspected.code, JSON.stringify(inspected)).not.toBe("STALE_ELEMENT_UID");
+      expect(inspected.tag, JSON.stringify(inspected)).toBe("img");
+      expect(inspected.name || inspected.attrs?.alt).toBe(image.alt);
+      const clicked = await h.call("act_on_element", { target: image.target, action: "click" });
+      expect(clicked.code, JSON.stringify(clicked)).not.toBe("STALE_ELEMENT_UID");
+    }
+    const hits = (await h.state()).hits;
+    expect(hits.pic1).toBe(1);
+    expect(hits.pic2).toBe(1);
+  });
+
+  test("a shallow snapshot clicks each duplicate-id button", async () => {
+    await h.page.evaluate(() => {
+      const root = document.createElement("div");
+      root.id = "deep-dups";
+      root.innerHTML = `
+        <section><div><p><button id="same" class="same">Alpha</button></p></div></section>
+        <section><div><p><button id="same" class="same">Beta</button></p></div></section>`;
+      document.body.append(root);
+      const [alpha, beta] = root.querySelectorAll("button");
+      alpha.addEventListener("click", () => { window.hits.alpha = (window.hits.alpha || 0) + 1; });
+      beta.addEventListener("click", () => { window.hits.beta = (window.hits.beta || 0) + 1; });
+    });
+    const snapshot = await h.call("get_ax_tree", { depth: 1, limit: 8 });
+    expect(snapshot.code, JSON.stringify(snapshot)).toBeUndefined();
+    const alpha = targets(snapshot.snapshot, "button", "Alpha")[0];
+    const beta = targets(snapshot.snapshot, "button", "Beta")[0];
+    expect(alpha, snapshot.snapshot).toBeTruthy();
+    expect(beta, snapshot.snapshot).toBeTruthy();
+    expect(alpha).not.toBe(beta);
+    const first = await h.call("act_on_element", { target: alpha, action: "click" });
+    const second = await h.call("act_on_element", { target: beta, action: "click" });
+    expect(first, JSON.stringify(first)).not.toHaveProperty("code");
+    expect(second, JSON.stringify(second)).not.toHaveProperty("code");
+    const hits = (await h.state()).hits;
+    expect(hits.alpha).toBe(1);
+    expect(hits.beta).toBe(1);
+  });
+
   test("css index defaults to the first match and an explicit index hits its own element", async () => {
     const first = await h.call("act_on_element", { target: "css:button.dup", action: "click" });
     const second = await h.call("act_on_element", { target: "css:button.dup", index: 1, action: "click" });

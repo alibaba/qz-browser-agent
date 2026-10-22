@@ -2907,8 +2907,12 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     let current: Element | null = el;
     while (current && current !== document.documentElement) {
       if (current.id) {
-        parts.unshift(`#${cssEscapeIdent(current.id)}`);
-        break; // A unique id completes the selector.
+        const idSelector = `#${cssEscapeIdent(current.id)}`;
+        // A repeated id does not identify the element. Keep walking a unique path.
+        if (current.ownerDocument.querySelectorAll(idSelector).length === 1) {
+          parts.unshift(idSelector);
+          break; // A unique id completes the selector.
+        }
       }
       let tag = current.tagName.toLowerCase();
       const parent: Element | null = current.parentElement;
@@ -2927,7 +2931,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       parts.unshift(tag);
       current = parent;
     }
-    return parts.join(' > ');
+    const selector = parts.join(" > ");
+    if (!selector) return "";
+    try {
+      const matches = el.ownerDocument.querySelectorAll(selector);
+      return matches.length === 1 && matches[0] === el ? selector : "";
+    } catch {
+      return "";
+    }
   }
 
   function cssEscapeIdent(value: unknown) {

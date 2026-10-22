@@ -37,6 +37,7 @@ registerAccessibilityTools({
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),
   sendToContent: async () => scenario.overview,
   callElement: async () => scenario.overview,
+  readMainDocumentId: element.readMainDocumentId,
   withDebugger: async (_id, fn) => fn({}, async (method, params = {}) => {
     if (method === "Accessibility.getFullAXTree") return { nodes: scenario.nodes };
     if (method === "DOM.describeNode") return scenario.describe(params);
@@ -315,6 +316,69 @@ assert.equal(resolvedHeading.ref.role, "heading");
 assert.equal(resolvedHeading.ref.backendNodeId, 2, "a same-named heading must not absorb the action");
 assert.equal(resolvedButton.ref.role, "button");
 assert.equal(resolvedButton.ref.backendNodeId, 999);
+
+const selectorOnly = await run({
+  overview: {
+    title: "Selector", url: "https://example.com/forms/post",
+    actions: [{ selector: "main > button.only", role: "button", text: "Search" }],
+  },
+  bound: { loaderId: "loader", ids: [0] },
+  nodes: [
+    ax({ id: "root", children: ["heading"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "heading", parent: "root", backend: 2, role: "heading", name: "Search" }),
+  ],
+});
+assert.doesNotMatch(line(selectorOnly.snapshot, "heading"), /\bbutton\b/);
+const selectorButton = line(selectorOnly.snapshot, "button");
+assert.match(selectorButton, /button "Search"/);
+const selectorTarget = selectorButton.match(/target=(uid:\S+)/)?.[1];
+const resolvedSelector = await element.resolveElementReference(8, { target: selectorTarget }, context);
+assert.equal(resolvedSelector.selector, "main > button.only", "an unbound action keeps its selector");
+assert.equal(resolvedSelector.index, 0);
+assert.equal(Number(resolvedSelector.ref.backendNodeId || 0), 0);
+
+const indexed = await run({
+  overview: {
+    title: "Indexed", url: "https://example.com/forms/post",
+    actions: [{ selector: "button.dup", index: 1, role: "button", text: "Second" }],
+  },
+  bound: { loaderId: "loader", ids: [0] },
+  nodes: [ax({ id: "root", backend: 1, role: "RootWebArea", name: "Page" })],
+});
+const indexedTarget = line(indexed.snapshot, "Second").match(/target=(uid:\S+)/)?.[1];
+const resolvedIndexed = await element.resolveElementReference(8, { target: indexedTarget }, context);
+assert.equal(resolvedIndexed.selector, "button.dup");
+assert.equal(resolvedIndexed.index, 1);
+
+const missingAction = await run({
+  overview: {
+    title: "Missing", url: "https://example.com/forms/post",
+    actions: [{ role: "button", text: "Ghost" }],
+  },
+  bound: { loaderId: "loader", ids: [0] },
+  nodes: [ax({ id: "root", backend: 1, role: "RootWebArea", name: "Page" })],
+});
+const ghost = line(missingAction.snapshot, "Ghost");
+assert.match(ghost, /button/);
+assert.match(ghost, /"Ghost"/);
+assert.doesNotMatch(ghost, /target=/);
+
+chrome.scripting = { async executeScript() { return [{ documentId: "doc-live" }]; } };
+const stamped = await run({
+  overview: {
+    title: "Document", url: "https://example.com/forms/post",
+    actions: [{ selector: "#save", role: "button", text: "Save" }],
+  },
+  bound: { loaderId: "loader", ids: [4] },
+  nodes: [
+    ax({ id: "root", children: ["save"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "save", parent: "root", backend: 4, role: "button", name: "Save" }),
+  ],
+});
+const stampedTarget = line(stamped.snapshot, "Save").match(/target=(uid:\S+)/)?.[1];
+const resolvedStamped = await element.resolveElementReference(8, { target: stampedTarget }, context);
+assert.equal(resolvedStamped.ref.documentId, "doc-live");
+delete chrome.scripting;
 
 const treeTarget = budget.snapshot.match(/target=(uid:\S+)/)?.[1];
 const resolvedTree = await element.resolveElementReference(8, { target: treeTarget }, context);

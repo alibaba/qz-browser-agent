@@ -6,14 +6,15 @@ type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
   | "sendToContent" | "withDebugger"> & Pick<ToolExtensionAPI["element"],
   "makeSnapshotId" | "makeElementUid" | "elementTargetForUid" | "registerElementRef" | "resolveElementReference"
-  | "backendNodeIdForSelector" | "bindBackendNodes" | "callElement" | "elementTargetGrammar">;
+  | "backendNodeIdForSelector" | "bindBackendNodes" | "callElement" | "readMainDocumentId" | "elementTargetGrammar">;
 interface AxValue { value?: unknown }
 interface AxNode {
   nodeId: string; parentId?: string; childIds?: string[]; backendDOMNodeId?: number; ignored?: boolean;
   role?: AxValue; name?: AxValue; description?: AxValue; value?: AxValue;
   properties?: { name?: string; value?: AxValue }[];
 }
-interface SnapshotContext { tabId: number; snapshotId: string; sessionId?: string; pageUrl?: string }
+interface SnapshotContext { tabId: number; snapshotId: string; sessionId?: string; pageUrl?: string; documentId?: string }
+interface ActionLocator { selector: string; index: number }
 type CdpSend = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 
 /** Registers the compact accessibility-tree snapshot tool. */
@@ -29,6 +30,7 @@ export function registerAccessibilityTools({
   backendNodeIdForSelector,
   bindBackendNodes = async (_tabId: number, selectors: string[] = []) => ({ loaderId: "", ids: selectors.map(() => 0) }),
   callElement,
+  readMainDocumentId = async () => "",
   makeSessionTabTargetError,
   sendToContent,
   withDebugger,
@@ -41,6 +43,8 @@ interface SemanticNode {
   parent: SemanticNode | null;
   children: SemanticNode[];
   actionNode?: boolean;
+  locator?: ActionLocator | null;
+  unavailable?: boolean;
   placeholder?: string;
   inputType?: string;
   accept?: string;
@@ -54,10 +58,10 @@ interface ActionAnchor {
 }
 type DisplayNode = {
   uid: string; target: string; depth: number; nodeId: string; parentUid?: string;
-  omitted?: number; suppressName?: boolean; placeholder?: string; inputType?: string;
+  omitted?: number; suppressName?: boolean; unavailable?: boolean; placeholder?: string; inputType?: string;
   accept?: string; multiple?: boolean; selectedFileCount?: number;
 } & Partial<CompactNode>;
-function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, limit, sessionId = "", pageUrl = "", rootBackendNodeId = 0, maxDepth = Infinity, loaderId = "", actions = [] }: SnapshotContext & { limit: number; rootBackendNodeId?: number; maxDepth?: number; loaderId?: string; actions?: ActionAnchor[] }) {
+function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, limit, sessionId = "", pageUrl = "", documentId = "", rootBackendNodeId = 0, maxDepth = Infinity, loaderId = "", actions = [] }: SnapshotContext & { limit: number; rootBackendNodeId?: number; maxDepth?: number; loaderId?: string; actions?: ActionAnchor[] }) {
   const nodeMap = new Map<string, AxNode>();
   for (const node of rawNodes || []) {
     if (node?.nodeId) nodeMap.set(node.nodeId, node);
@@ -116,13 +120,14 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
   const emitDisplayNode = (semanticNode: SemanticNode, parentUid: string | null): void => {
     if (!includedNodes.has(semanticNode)) return;
     const compact = semanticNode.compact;
-    const uid = makeElementUid(snapshotId, counter++);
+    const uid = semanticNode.unavailable ? "" : makeElementUid(snapshotId, counter++);
     const item: DisplayNode = {
       uid,
-      target: elementTargetForUid(uid),
+      target: semanticNode.unavailable ? "" : elementTargetForUid(uid),
       depth: semanticNode.depth,
       nodeId: compact.nodeId,
     };
+    if (semanticNode.unavailable) item.unavailable = true;
     if (parentUid) item.parentUid = parentUid;
     if (compact.backendNodeId) item.backendNodeId = compact.backendNodeId;
     if (compact.role) item.role = compact.role;
@@ -141,13 +146,16 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
     const omitted = omittedDescendantCount(semanticNode, includedNodes);
     if (omitted) item.omitted = omitted;
     displayNodes.push(item);
-    registerElementRef({
+    if (!semanticNode.unavailable) registerElementRef({
       uid,
       tabId,
       sessionId,
       pageUrl,
       backendNodeId: item.backendNodeId,
       loaderId: loaderId || undefined,
+      documentId: documentId || undefined,
+      selector: semanticNode.locator?.selector,
+      index: semanticNode.locator?.index,
       role: item.role,
       name: item.name,
       url: item.url,
@@ -182,13 +190,26 @@ function placeActions(actions: ActionAnchor[], semanticNodes: SemanticNode[], se
   const required = new Set<SemanticNode>();
   for (const anchor of actions) {
     const backendNodeId = Number(anchor.backendNodeId || 0);
+    const locator = actionLocator(anchor.action);
     let node = backendNodeId ? byBackend.get(backendNodeId) : undefined;
-    // A real backend id that the shallow tree omitted must not attach to a same-named node.
-    if (!node && !backendNodeId) node = findBestSemanticNode(anchor.action, semanticNodes, used) || undefined;
-    if (!node) node = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots);
-    if (!node) continue;
+    // A real backend id, or a selector that identifies the element, must not attach to a same-named node.
+    if (!node && !backendNodeId && !locator) node = findBestSemanticNode(anchor.action, semanticNodes, used) || undefined;
+    if (!node && (backendNodeId || locator)) node = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots);
+    if (!node) {
+      const missing = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots);
+      if (!missing) continue;
+      missing.unavailable = true;
+      mergeAction(missing, anchor.action);
+      let current: SemanticNode | null = missing;
+      while (current) {
+        required.add(current);
+        current = current.parent;
+      }
+      continue;
+    }
     used.add(node);
     node.actionNode = true;
+    if (locator) node.locator = locator;
     mergeAction(node, anchor.action);
     let current: SemanticNode | null = node;
     while (current) {
@@ -273,6 +294,14 @@ function mergeAction(node: SemanticNode, action: Action) {
 
 function hasFlag(flags: string[], key: string) {
   return flags.some(flag => flag === key || flag.startsWith(`${key}=`) || (key === "checked" && (flag === "unchecked" || flag.startsWith("checked="))));
+}
+
+function actionLocator(action: Action): ActionLocator | null {
+  const selector = String(action?.selector || "").trim();
+  if (!selector) return null;
+  const index = Number(Reflect.get(action, "index"));
+  // A confirmed selector has one match. An ambiguous selector is omitted before it reaches here.
+  return { selector, index: Number.isInteger(index) && index >= 0 ? index : 0 };
 }
 
 const PURE_TEXT_ROLES = new Set(["statictext", "inlinetextbox", "linebreak"]);
@@ -423,7 +452,7 @@ function shouldKeepAxNode(node: CompactNode, depth: number) {
 }
 
 function formatSnapshotLine(node: DisplayNode) {
-  const target = node.target || elementTargetForUid(node.uid);
+  const target = node.unavailable ? "" : (node.target || elementTargetForUid(node.uid));
   const attrs = target ? [`target=${target}`] : [];
   if (node.role) attrs.push(node.role);
   if (node.name && !node.suppressName) attrs.push(`"${truncateInline(node.name, 90)}"`);
@@ -634,6 +663,7 @@ registerTool({
     }
 
     const pageUrl = String(overview?.url || "").trim();
+    const documentId = await readMainDocumentId(targetTabId);
     const ax = await withDebugger(targetTabId, async (_target, send) => {
       const actionList = overview?.actions || [];
       const bound = await bindBackendNodes(targetTabId, actionList.map(action => String(action?.selector || "")), context);
@@ -642,7 +672,7 @@ registerTool({
       const result = await send("Accessibility.getFullAXTree", { depth: fetchDepth });
       const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
       return buildAccessibilitySnapshot(nodes, {
-        tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, rootBackendNodeId, maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,
+        tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId, rootBackendNodeId, maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,
       });
     }, context);
     return {
