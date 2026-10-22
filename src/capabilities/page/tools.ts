@@ -11,7 +11,7 @@ type PageElementHost = Pick<ToolExtensionAPI,
   | "clickNotReadyResult" | "sendCdp" | "withDebugger" | "getPageContext" | "getTabPageState" | "pageStateDelta"
   | "prepareKnownPageNavigation" | "commitObservedPageNavigation"> & Pick<ToolExtensionAPI["element"],
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
-  | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "withElement">;
+  | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
 import { armPageInputReceipt, ensurePageSurface, isCdpFallbackForbiddenError, readPageInputReceipt } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
@@ -23,7 +23,7 @@ export function registerPageElementTools({
   sendToContent: sendContent,
   resolveSelectorTarget,
   resolveElementReference,
-  withElement,
+  useElement,
   addElementTargetsToFindResult,
   elementTargetForRef,
   elementTargetForSelector,
@@ -57,9 +57,18 @@ async function inputWasDelivered(tabId: number) {
   const count = await readPageInputReceipt(tabId);
   return count == null || count > 0;
 }
+function scopedSelector(binding: ElementTarget, fallback = "body") {
+  const selector = String(binding.selector || "").trim();
+  // A uid with no selector must not widen into the whole page.
+  if (binding.uid) return selector;
+  return selector || fallback;
+}
+function rethrowStaleElement(err: unknown): void {
+  if (err instanceof ToolExecutionError && String(err.code || "").startsWith("STALE_ELEMENT_UID")) throw err;
+}
 function readBound<T>(binding: ElementTarget, context: ToolContext, fn: (call?: (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>) => Promise<T>) {
   if (!binding.uid) return fn();
-  return withElement(binding.tabId, binding, context, (_send, call) => fn(call));
+  return useElement(binding.tabId, binding, context, call => fn(call));
 }
 async function observeElementNavigation(tabId: number, pageBefore: PageState, prepared: PreparedNavigation | null, guardrails: SecurityGuardrails) {
   await new Promise(resolve => setTimeout(resolve, 180));
@@ -122,7 +131,7 @@ registerTool({
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, offset = 1, limit = 200, selector = "body" }, _signal, context = {}) => {
     const target = await resolveSelectorTarget(tabId, selector, 0, context);
-    return readBound(target, context, call => sendToContent(target.tabId, "readDom", { offset, limit, selector: target.selector || "body" }, call));
+    return readBound(target, context, call => sendToContent(target.tabId, "readDom", { offset, limit, selector: scopedSelector(target) }, call));
   },
 });
 
@@ -148,7 +157,7 @@ registerTool({
   execute: async ({ tabId, pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], limit = 20, includeHidden = false }, _signal, context = {}) => {
     const target = await resolveSelectorTarget(tabId, selector, 0, context);
     const result = await readBound(target, context, call => sendToContent(target.tabId, "findElements", {
-      pattern, flags, selector: target.selector || "body", roles, tags, types, limit, includeHidden,
+      pattern, flags, selector: scopedSelector(target), roles, tags, types, limit, includeHidden,
     }, call));
     return addElementTargetsToFindResult(result);
   },
@@ -243,7 +252,7 @@ registerTool({
     let bound: ((action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>) | undefined;
     const fillToken = ref.uid && normalizedAction === "fill" ? `${ref.uid}:${Date.now().toString(36)}` : "";
     if (ref.uid) {
-      return withElement(tabId, ref, context, async (_send, call) => {
+      return useElement(tabId, ref, context, async call => {
         bound = (actionName, params = {}) => call(actionName, normalizedAction === "fill" ? { ...params, editingHost: true, fillToken } : params);
         try { return await perform(); } finally { bound = undefined; }
       });
@@ -401,6 +410,7 @@ registerTool({
           originalElement: current !== inspected ? inspected : undefined,
         };
       } catch (err) {
+        rethrowStaleElement(err);
         if (touchInput || isCdpFallbackForbiddenError(err)) throw err;
         const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound);
         const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails);
@@ -564,6 +574,7 @@ registerTool({
         await keyboard.press(tabId, preparedKey, context);
         return { action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey, pressed: true, method: "cdp", inputDelivered: true, element: inspected };
       } catch (err) {
+        rethrowStaleElement(err);
         if (isCdpFallbackForbiddenError(err)) throw err;
         const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: "press", value, key: pressedKey, submit }, bound);
         return { ...fallback, target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, method: fallback.error ? "content_failed" : "content_fallback", cdpError: err instanceof Error ? err.message : String(err), element: fallback.element || inspected };

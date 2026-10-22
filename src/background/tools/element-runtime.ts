@@ -3,8 +3,8 @@ import type { GetToolRuntimeDependencies } from '../../sdk/background/services.j
 import type { createCdpRuntime } from './cdp-runtime.js';
 export interface ElementReference {
   uid?: string; selector?: string; tabId?: number; sessionId?: string; pageUrl?: string;
-  index?: number; imageSrc?: string; imageIndex?: number; backendNodeId?: number; role?: string; name?: string; createdAt?: number;
-  loaderId?: string;
+  index?: number; imageSrc?: string; imageIndex?: number;   backendNodeId?: number; role?: string; name?: string; createdAt?: number;
+  loaderId?: string; documentId?: string;
   [field: string]: unknown;
 }
 interface ElementRuntimeHost {
@@ -332,6 +332,12 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     });
   }
   await assertTabAllowedBySecurityGuardrails(resolvedTabId, { tool: "element_target", source: "uid_target" });
+  const storedDocumentId = String(ref.documentId || "");
+  if (storedDocumentId) {
+    const currentDocumentId = await readMainDocumentId(resolvedTabId);
+    // A missing probe is not evidence the document changed. A new id on the same URL is.
+    if (currentDocumentId && currentDocumentId !== storedDocumentId) throw staleElement(requestedUid);
+  }
   const backendNodeId = Number(ref.backendNodeId || 0);
   return {
     tabId: resolvedTabId,
@@ -382,22 +388,75 @@ async function describeSelectors(send: CdpSend, selectors: string[]) {
   return { loaderId: String(frame.loaderId || ""), ids };
 }
 
-async function callElement(tabId: number | undefined, binding: { tabId?: number; selector?: string; index?: number; uid?: string; target?: string; ref?: ElementReference }, action: string, params: Record<string, unknown> = {}, context: ToolContext = {}) {
-  const backendNodeId = Number(binding.ref?.backendNodeId || 0);
-  if (binding.uid && backendNodeId) {
-    return withElement(tabId, binding, context, (_send, call) => call(action, params));
-  }
-  // No backend node: use the selector saved with the uid. A css target already carries its selector.
+type ElementBinding = { tabId?: number; selector?: string; index?: number; uid?: string; target?: string; ref?: ElementReference };
+
+function hasBackendNode(binding: ElementBinding) {
+  return Number(binding.ref?.backendNodeId || 0) > 0;
+}
+
+function selectorRoute(binding: ElementBinding) {
+  // A uid keeps the selector stored with it. A css target already carries its own selector.
   const selector = binding.uid
     ? String(binding.selector || binding.ref?.selector || "").trim()
     : String(binding.selector || "");
-  if (binding.uid && !selector) throw staleElement(binding.target || binding.uid);
   const explicitIndex = Number(binding.index);
   const storedIndex = Number(binding.ref?.index);
   const index = Number.isInteger(explicitIndex) && explicitIndex >= 0
     ? explicitIndex
     : Number.isInteger(storedIndex) && storedIndex >= 0 ? storedIndex : 0;
-  return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector, index }), action);
+  return { selector, index };
+}
+
+/** One decision for every uid: the bound node, its selector, or an explicit stale target. */
+async function useElement<T>(tabId: number | undefined, binding: ElementBinding, context: ToolContext, run: (call: ElementCaller) => Promise<T>) {
+  if (binding.uid && hasBackendNode(binding)) {
+    return withElement(tabId, binding, context, (_send, call) => run(call));
+  }
+  const route = selectorRoute(binding);
+  if (binding.uid && !route.selector) throw staleElement(binding.target || binding.uid);
+  if (binding.uid) await assertSelectorDocument(tabId, binding, context);
+  const call: ElementCaller = async (action, params = {}) => {
+    const requested = String(params.selector || "").trim();
+    const selector = requested || route.selector;
+    const requestedIndex = Number(params.index);
+    const index = Number.isInteger(requestedIndex) && requestedIndex >= 0 ? requestedIndex : route.index;
+    return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector, index }), action);
+  };
+  return run(call);
+}
+
+async function callElement(tabId: number | undefined, binding: ElementBinding, action: string, params: Record<string, unknown> = {}, context: ToolContext = {}) {
+  return useElement(tabId, binding, context, call => call(action, params));
+}
+
+async function assertSelectorDocument(tabId: number | undefined, binding: ElementBinding, context: ToolContext) {
+  const expected = String(binding.ref?.loaderId || "");
+  if (!binding.uid || !expected) return;
+  const id = Number(binding.tabId || tabId);
+  if (!Number.isInteger(id) || id <= 0) throw staleElement(binding.target || binding.uid);
+  await withDebugger(id, async (_target, send) => {
+    const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
+    const loaderId = String(frame.loaderId || "");
+    if (loaderId && loaderId !== expected) throw staleElement(binding.uid || binding.target || "");
+  }, context);
+}
+
+/** Chrome's main-frame document id, without a navigation permission. Empty when the probe is unavailable. */
+async function readMainDocumentId(tabId: number) {
+  const id = Number(tabId);
+  if (!Number.isInteger(id) || id <= 0) return "";
+  try {
+    const scripting = chrome.scripting;
+    if (!scripting?.executeScript) return "";
+    const [result] = await scripting.executeScript({
+      target: { tabId: id, frameIds: [0] },
+      injectImmediately: true,
+      func: () => null,
+    });
+    return String(result?.documentId || "");
+  } catch {
+    return "";
+  }
 }
 
 async function withElement<T>(tabId: number | undefined, binding: { tabId?: number; uid?: string; target?: string; ref?: ElementReference }, context: ToolContext, run: (send: CdpSend, call: ElementCaller) => Promise<T>) {
@@ -527,6 +586,8 @@ function samePageUrl(a: unknown, b: unknown) {
     bindBackendNodes,
     callElement,
     withElement,
+    useElement,
+    readMainDocumentId,
   });
 }
 

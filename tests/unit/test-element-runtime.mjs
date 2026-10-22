@@ -243,6 +243,66 @@ await assert.rejects(
   "a uid with neither a backend node nor a selector is stale",
 );
 
+runtime.registerElementRef({
+  uid: "t5.000009.1",
+  tabId: 5,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/page",
+  selector: "button.primary",
+  backendNodeId: 41,
+  loaderId: "loader-previous",
+});
+const contentBeforeReplacedNode = contentCalls.length;
+const commandsBeforeReplacedNode = commands.length;
+await assert.rejects(
+  runtime.callElement(5, await runtime.resolveElementReference(undefined, { target: "uid:t5.000009.1" }, context), "inspectElement", {}, context),
+  error => error?.code === "STALE_ELEMENT_UID",
+  "a replaced node must not fall back to the selector of its replacement",
+);
+assert.equal(contentCalls.length, contentBeforeReplacedNode);
+assert.equal(commands.slice(commandsBeforeReplacedNode).some(command => command.method === "DOM.resolveNode"), false);
+
+runtime.registerElementRef({
+  uid: "t5.00000a.1",
+  tabId: 5,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/page",
+  selector: "button.replacement",
+  index: 0,
+  loaderId: "loader-previous",
+});
+const contentBeforeStaleSelector = contentCalls.length;
+await assert.rejects(
+  runtime.callElement(5, await runtime.resolveElementReference(undefined, { target: "uid:t5.00000a.1" }, context), "inspectElement", {}, context),
+  error => error?.code === "STALE_ELEMENT_UID",
+  "a selector uid from a previous document must not run",
+);
+assert.equal(contentCalls.length, contentBeforeStaleSelector, "a stale selector uid must not reach the content script");
+
+let probedDocumentId = "doc-live";
+chrome.scripting = {
+  async executeScript() { return [{ documentId: probedDocumentId }]; },
+};
+runtime.registerElementRef({
+  uid: "t5.00000b.1",
+  tabId: 5,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/page",
+  selector: "button.primary",
+  backendNodeId: 41,
+  loaderId: "loader-live",
+  documentId: "doc-previous",
+});
+await assert.rejects(
+  runtime.resolveElementReference(undefined, { target: "uid:t5.00000b.1" }, context),
+  error => error?.code === "STALE_ELEMENT_UID",
+  "the same url with a new document invalidates the old uid",
+);
+probedDocumentId = "doc-previous";
+const sameDocument = await runtime.resolveElementReference(undefined, { target: "uid:t5.00000b.1" }, context);
+assert.equal(sameDocument.uid, "t5.00000b.1");
+delete chrome.scripting;
+
 ownedTabs = [5];
 runtime.registerElementRef({
   uid: "t15.000005.1",

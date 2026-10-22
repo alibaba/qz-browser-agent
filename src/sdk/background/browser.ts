@@ -29,6 +29,10 @@ export interface ElementAccess {
   backendNodeIdForSelector(tabId: number, selector: string, context?: ToolContext): Promise<number>;
   bindBackendNodes(tabId: number, selectors: string[], context?: ToolContext): Promise<{ loaderId: string; ids: number[] }>;
   callElement(tabId: number | undefined, binding: ElementTarget, action: string, params?: Record<string, unknown>, context?: ToolContext): Promise<Record<string, unknown>>;
+  useElement<T>(tabId: number | undefined, binding: ElementTarget, context: ToolContext, run: (
+    call: (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>,
+  ) => Promise<T>): Promise<T>;
+  readMainDocumentId(tabId: number): Promise<string>;
   withElement<T>(tabId: number | undefined, binding: ElementTarget, context: ToolContext, run: (
     send: CdpCommand,
     call: (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>,
