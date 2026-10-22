@@ -2019,7 +2019,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         const inspection = getElementInspection(candidate);
         const point = inspection.clickablePoint;
         if (!inspection.visible || inspection.disabled || !pointInViewport(point) || inspection.state.obscuredAtCenter) continue;
-        let hit = point && document.elementFromPoint(point.x, point.y);
+        let hit = point && elementAtPoint(candidate, point.x, point.y);
         if (!hit || (hit !== candidate && !candidate.contains(hit))) continue;
         // Label activation excludes nested links and other independent controls.
         while (hit && hit !== candidate && hit !== el) {
@@ -2820,12 +2820,21 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return point.x >= 0 && point.y >= 0 && point.x <= window.innerWidth && point.y <= window.innerHeight;
   }
 
+  // document.elementFromPoint stops at a shadow host. The element's own root,
+  // including a closed root reached from the element, returns the inner hit and
+  // still returns a light-DOM node when that node is the one on top.
+  function elementAtPoint(el: Element, x: number, y: number) {
+    const root = el.getRootNode();
+    const scope = root instanceof Document || root instanceof ShadowRoot ? root : document;
+    return scope.elementFromPoint(x, y);
+  }
+
   function isObscuredAtCenter(el: Element) {
     const rect = el.getBoundingClientRect();
     if (!rect.width || !rect.height) return false;
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
-    const top = document.elementFromPoint(x, y);
+    const top = elementAtPoint(el, x, y);
     return !!top && top !== el && !el.contains(top);
   }
 
