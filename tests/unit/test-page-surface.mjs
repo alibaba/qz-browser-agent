@@ -37,10 +37,12 @@ test("a replaced document is not counted as a missed click", async () => {
     const page = installPage();
     await armPageInputReceipt(7);
     assert.equal(await readPageInputReceipt(7), 0);
-    page.listeners[0]({ isTrusted: false });
+    const pointerdown = page.listeners.find(item => item.type === "pointerdown");
+    assert.equal(pointerdown.capture, true);
+    pointerdown.listener({ isTrusted: false });
     assert.equal(await readPageInputReceipt(7), 0);
-    page.listeners[0]({ isTrusted: true });
-    assert.equal(await readPageInputReceipt(7), 1);
+    pointerdown.listener({ isTrusted: true });
+    assert.ok(await readPageInputReceipt(7) > 0);
 
     const next = installPage();
     assert.equal(await readPageInputReceipt(7), null);
@@ -49,15 +51,17 @@ test("a replaced document is not counted as a missed click", async () => {
     runInPage = null;
     delete globalThis.document;
     delete globalThis.__qzInputReceipt;
+    delete globalThis.addEventListener;
   }
 });
 
 function installPage() {
   const listeners = [];
-  const document = {
-    addEventListener(_type, listener) { listeners.push(listener); },
-  };
+  const document = {};
   globalThis.document = document;
+  globalThis.addEventListener = (type, listener, capture) => {
+    listeners.push({ type, listener, capture });
+  };
   delete globalThis.__qzInputReceipt;
   return { document, listeners };
 }

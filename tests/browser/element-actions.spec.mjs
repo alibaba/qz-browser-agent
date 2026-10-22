@@ -364,6 +364,24 @@ test("httpbin pizza radios check through the wrapped label", async () => {
   } finally { await h.close(); }
 });
 
+test("a click cancelled at pointerdown still counts as delivered", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    await h.page.setContent(`<!doctype html><button id="once" type="button" style="width:160px;height:40px">Once</button>
+      <script>
+        window.clicks = 0;
+        const button = document.querySelector("#once");
+        button.addEventListener("pointerdown", event => event.preventDefault());
+        button.addEventListener("click", () => { window.clicks += 1; });
+      </script>`);
+    const result = await h.act("once", "click");
+    expect(result, JSON.stringify(result)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+    expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+    expect(await h.page.evaluate(() => window.clicks)).toBe(1);
+  } finally { await h.close(); }
+});
+
 test("a click that navigates is not reported as undelivered input", async () => {
   test.setTimeout(120_000);
   const h = await createHarness("desktop");

@@ -52,9 +52,9 @@ async function receipt(tabId: number, arm: boolean) {
       func: (shouldArm: boolean) => {
         const root = globalThis as unknown as {
           __qzInputReceipt?: number;
+          addEventListener: (type: string, listener: (event: { isTrusted: boolean }) => void, capture: boolean) => void;
           document: {
             __qzInputReceiptBound?: boolean;
-            addEventListener: (type: string, listener: (event: { isTrusted: boolean }) => void, capture: boolean) => void;
           };
         };
         const doc = root.document;
@@ -65,7 +65,8 @@ async function receipt(tabId: number, arm: boolean) {
           const count = (event: { isTrusted: boolean }) => {
             if (event.isTrusted) root.__qzInputReceipt = (root.__qzInputReceipt || 0) + 1;
           };
-          for (const type of ["mousedown", "touchstart"]) doc.addEventListener(type, count, true);
+          // pointerdown preventDefault suppresses mousedown; the click still runs.
+          for (const type of ["pointerdown", "mousedown", "touchstart", "click"]) root.addEventListener(type, count, true);
         }
         if (shouldArm) root.__qzInputReceipt = 0;
         return root.__qzInputReceipt || 0;
