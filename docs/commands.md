@@ -10,6 +10,7 @@ versions in the lockfile. Build, test, and benchmark commands accept `--help`.
 | `npm run typecheck` | Check TypeScript without a production build |
 | `npm test` | Run unit, contract, service, and browser tests |
 | `npm run verify` | Run type checking, all automated test suites, and coverage checks |
+| `npm run verify:quick` | Run type checking and all automated test suites, omitting coverage gates |
 | `npm run benchmark` | Measure conversation rendering; arguments select other benchmarks |
 | `npm run docs` | Generate the API reference at `dist/docs/api.md` |
 | `npm run doctor` | Check the local tools, dependencies, and test browser |
@@ -66,10 +67,11 @@ filters unit filenames or suite commands. `--list` shows what would run. `browse
 Playwright, Python page smoke tests, and Data Grid tests; `playwright` runs only Playwright and
 accepts its own options.
 
-Before submitting code changes, run `npm run verify` for the automated suites, type checks, and
-coverage gates. For documentation changes, check commands, links, and examples. For narrower
-coverage checks, use `npm test -- unit --coverage`. On a busy machine, `npm test -- --all --jobs 1`
-runs suites sequentially.
+Before submitting ordinary code changes, run `npm run verify:quick` and set
+`QINGZHOU_PLAYWRIGHT_WORKERS` to the available core count (`$(nproc)` on Linux). Run `npm run verify`
+for packaging, releases, and coverage gates. For documentation changes, check commands, links, and
+examples. For narrower coverage checks, use `npm test -- unit --coverage`. On a busy machine,
+`npm test -- --all --jobs 1` runs suites sequentially.
 
 Reports go to `tests/results/`. Use `npm test -- report` to open the Playwright report, or `npm test
 -- behavior --journey H03,A07` to run the tests linked to those entries in the [behavior

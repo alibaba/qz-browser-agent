@@ -29,9 +29,9 @@ npm run verify
 | `visual` | Tool timelines and conversation streaming |
 
 `npm test` selects `unit contracts services browser`; `--all` also selects E2E, release and visual.
-`verify` adds type checking and coverage gates. `--list` prints the selected commands. `--match`
-filters unit filenames or suite commands; the `playwright` entry accepts Playwright options
-directly.
+`verify:quick` adds type checking to `--all` and omits coverage gates. `verify` adds those gates.
+`--list` prints the selected commands. `--match` filters unit filenames or suite commands; the
+`playwright` entry accepts Playwright options directly.
 
 For the standalone CLI package, run `npm test -- services --match node` and
 `npm test -- release --match npm-package`. The package check uses the public npm registry to

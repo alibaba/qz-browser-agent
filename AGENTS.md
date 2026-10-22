@@ -111,6 +111,13 @@ loads the compiled extension from `dist/extension/`.
 - Keep names, commands, examples, and links consistent across guides. Link to SDK types and generated
   API docs for interface signatures. Preserve upstream license text verbatim.
 
+## Development principles
+
+- Concise but not crude: prefer the smallest complete implementation that can be justified.
+- Thorough but not verbose: no drive-by refactors, no parallel alternate implementations, and no
+  scope creep.
+- User experience first: minimize the steps an end user needs to complete a task.
+
 ## Workflow
 
 1. Read the relevant guide and check `git status --short` before editing.
@@ -120,16 +127,53 @@ loads the compiled extension from `dist/extension/`.
    in a shared tree and preserve other contributors' changes.
 4. Add tests proportional to risk and type-check TypeScript. State, concurrency, persistence, and
    cross-context messages require failure and recovery coverage.
-5. Run focused checks first, then the required wider suites. Review the final status and diff.
-6. Stage, commit, push, publish, or change tags only when the user requests it. Use reversible Git
-   operations and preserve unrelated work.
+5. Run the fast loop in [Commands and validation](#commands-and-validation). Focused checks satisfy
+   the minimum-verification table during iteration. Finish an ordinary coding task, including
+   cloud-agent work, with `npm run verify:quick` and `QINGZHOU_PLAYWRIGHT_WORKERS` set to the
+   available core count. Reserve full `npm run verify` for packaging, releases, or when the user
+   asks for coverage gates. Review the final status and diff.
+6. Stage, commit, and push only when the task requires it or the user requests it. Publish or change
+   tags only when the user requests it. Use reversible Git operations and preserve unrelated work.
+   Author, trailer, and pull-request limits are in [Git and commits](#git-and-commits).
+
+## Git and commits
+
+- Keep AI tools and assistant brands out of the author and committer name and email, including Cursor, Copilot, Claude, and ChatGPT.
+- Leave `Co-authored-by` trailers, Cursor signatures, and Cursor trailers out of commits.
+- Force-push only when the user explicitly asks.
+- Open a pull request only when the user explicitly asks. Pushing the working branch is enough.
+- Stage, commit, and push only when the task requires it or the user requests it.
 
 ## Commands and validation
 
 [Commands](docs/commands.md) covers setup and selectors; [tests](tests/README.md) covers fixtures
-and coverage. Prefer existing suite/scenario selectors. `npm run verify` runs all unattended suites
-and coverage gates. Live-provider tests require an explicit `npm test -- live <scenario>`
-invocation, a task requiring real-provider behavior, and effects isolated from user Sessions.
+and coverage. Prefer existing suite/scenario selectors. Live-provider tests require an explicit
+`npm test -- live <scenario>` invocation, a task requiring real-provider behavior, and effects
+isolated from user Sessions.
+
+During implementation, never run full `npm run verify` on every change. Use this fast loop:
+
+1. `npm run typecheck`
+2. `npm test -- unit --match <area>` for the touched units
+3. `npm test -- playwright <spec files>` for the affected browser specs. `--match` filters unit
+   paths or suite command labels when a spec file list is the wrong selector.
+
+The table below is the minimum bar for the change. Focused checks from that table satisfy it during
+iteration, including the E2E, release, visual, or service rows when the change calls for them.
+
+At the end of an ordinary coding task, including cloud-agent work, run `npm run verify:quick`.
+That script is `npm run typecheck && npm test -- --all` and omits `--coverage`. Set
+`QINGZHOU_PLAYWRIGHT_WORKERS` to the available core count (`$(nproc)` on Linux) for that run and
+for any full browser run. The default worker count is `ceil(availableParallelism() / 3)`, capped
+at 4. An explicit value is clamped to 1-16.
+
+Reserve `npm run verify` for packaging, releases, and an explicit request for coverage gates. It
+runs the same type check and suites with `--coverage`.
+
+The runner stops at the first failing command. When a known baseline failure would stop the run
+before later suites finish, run each unfinished suite on its own (`npm test -- e2e`,
+`npm test -- release`, `npm test -- visual`). Skip suites that already passed. Do not repeat a
+suite that failed for the same failure.
 
 | Change | Minimum verification |
 | --- | --- |
