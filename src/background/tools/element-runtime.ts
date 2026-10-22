@@ -505,9 +505,10 @@ async function contentContextId(tabId: number, send: CdpSend, frameId: string) {
     }
     return 0;
   };
+  // Leave Runtime enabled and keep the contexts already reported. A fresh
+  // enable reports contexts only when the domain was off, and that transition
+  // replays cached console calls into read_console_messages.
   const discover = async () => {
-    try { await send("Runtime.disable"); } catch (err) { if (isCdpFallbackForbiddenError(err)) throw err; }
-    isolatedByTab.delete(tabId);
     await send("Runtime.enable");
   };
   if (!isolatedByTab.get(tabId)?.get(frameId)?.size) await discover();

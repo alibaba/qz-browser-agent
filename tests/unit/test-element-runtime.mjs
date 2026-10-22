@@ -401,4 +401,5 @@ try {
   Date.now = realNow;
 }
 
+assert.equal(commands.some(command => command.method === "Runtime.disable"), false, "uid resolution must leave Runtime enabled");
 console.log("element runtime ownership tests passed");

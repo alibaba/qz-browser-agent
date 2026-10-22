@@ -90,6 +90,7 @@ test("reload candidates are selected by live identity and bridge, independent of
     }
     assert.equal(h.actions, 3);
     assert.equal(h.initialized, 0);
+    assert.equal(h.commands.some(item => item.method === "Runtime.disable"), false);
     assert.ok(h.commands.filter(item => item.method === "Runtime.evaluate")
       .every(item => ![200, 201, 202].includes(item.params.contextId)));
     h.detach();
@@ -118,6 +119,7 @@ for (const reset of ["destroy", "clear", "detach"]) test(`${reset} removes cache
   h.commands.length = 0;
   assert.equal((await h.call()).contextId, 8);
   assert.deepEqual(h.commands.filter(item => item.method === "Runtime.evaluate").map(item => item.params.contextId), [8]);
+  assert.equal(h.commands.some(item => item.method === "Runtime.disable"), false);
 });
 
 test("a responding Content without a bridge is initialized once and validated before resolving the node", async () => {
@@ -125,6 +127,7 @@ test("a responding Content without a bridge is initialized once and validated be
   assert.equal((await h.call("actOnElement")).contextId, 8);
   assert.equal(h.initialized, 1);
   assert.equal(h.actions, 1);
+  assert.equal(h.commands.some(item => item.method === "Runtime.disable"), false);
   const resolve = h.commands.findIndex(item => item.method === "DOM.resolveNode");
   assert.ok(h.commands.slice(0, resolve).some(item => item.method === "Runtime.evaluate" && item.params.contextId === 8));
 });
