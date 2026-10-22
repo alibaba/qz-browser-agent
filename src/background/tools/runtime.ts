@@ -845,7 +845,9 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
   if (!tabId) return;
   // A uid has no explicit tabId, so a read-only look at an unclaimed tab never
   // sets _readOnlyTabAccess. That look must not become the working tab.
-  if (resolvePageAccess(definition, args) === "readOnly" && !sessionOwnsTab(sessions, sessionId, tabId)) return;
+  if ((isUidElementTarget(args?.target) || isUidElementTarget(args?.selector))
+    && resolvePageAccess(definition, args) === "readOnly"
+    && !elementRuntime.taskTabIds(context).includes(tabId)) return;
 
   let tab = null;
   try {
@@ -877,14 +879,6 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
     createdTab: role === "created",
     claim: role === "claim",
   });
-}
-
-function sessionOwnsTab(sessions: { listOwnedTabIds?(sessionId: string): readonly number[] } | null | undefined, sessionId: string, tabId: number) {
-  // Fixtures that cannot list ownership keep the previous update.
-  if (typeof sessions?.listOwnedTabIds !== "function") return true;
-  const listed = sessions.listOwnedTabIds(sessionId);
-  if (!Array.isArray(listed)) return true;
-  return listed.map(Number).includes(tabId);
 }
 
 function inferWorkingTabId(definition: RuntimeTool, args: Fields = {}, result: unknown = {}) {

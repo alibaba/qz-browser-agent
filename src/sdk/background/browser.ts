@@ -33,10 +33,6 @@ export interface ElementAccess {
     call: (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>,
   ) => Promise<T>): Promise<T>;
   readMainDocumentId(tabId: number): Promise<string>;
-  withElement<T>(tabId: number | undefined, binding: ElementTarget, context: ToolContext, run: (
-    send: CdpCommand,
-    call: (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>,
-  ) => Promise<T>): Promise<T>;
 }
 export { ensureOffscreenDocument } from "../../background/services/offscreen-document.js";
 export { createCdpKeyboard, primaryModifierForContext } from "../../background/tools/cdp-keyboard.js";

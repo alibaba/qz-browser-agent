@@ -196,11 +196,10 @@ function placeActions(actions: ActionAnchor[], semanticNodes: SemanticNode[], se
     if (!node && !backendNodeId && !locator) node = findBestSemanticNode(anchor.action, semanticNodes, used) || undefined;
     if (!node && (backendNodeId || locator)) node = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots);
     if (!node) {
-      const missing = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots);
-      if (!missing) continue;
-      missing.unavailable = true;
-      mergeAction(missing, anchor.action);
-      let current: SemanticNode | null = missing;
+      node = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots);
+      node.unavailable = true;
+      mergeAction(node, anchor.action);
+      let current: SemanticNode | null = node;
       while (current) {
         required.add(current);
         current = current.parent;

@@ -1903,7 +1903,7 @@ registerPageElementTools({
   sendToContent: fallbackContent,
   resolveSelectorTarget: fallbackElements.resolveSelectorTarget,
   resolveElementReference: fallbackElements.resolveElementReference,
-  withElement: fallbackElements.withElement,
+  useElement: fallbackElements.useElement,
   addElementTargetsToFindResult: fallbackElements.addElementTargetsToFindResult,
   elementTargetForRef: fallbackElements.elementTargetForRef,
   elementTargetForSelector: fallbackElements.elementTargetForSelector,

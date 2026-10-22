@@ -572,9 +572,9 @@ function samePageUrl(a: unknown, b: unknown) {
     backendNodeIdForSelector,
     bindBackendNodes,
     callElement,
-    withElement,
     useElement,
     readMainDocumentId,
+    taskTabIds,
   });
 }
 
