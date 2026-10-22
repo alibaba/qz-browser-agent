@@ -13,6 +13,11 @@ import {
   serializeConversation,
   transcriptFromConversation,
 } from "../../src/shared/session/session-codec.js";
+import {
+  appendSessionExchangeImportCapsule,
+  createSessionExchangePayload,
+  settleImportedTranscript,
+} from "../../src/shared/session/session-exchange.js";
 import { ROOT_SESSION_ID } from "../../src/shared/session/session-store.js";
 
 await creationRunAndHistoryFlow();
@@ -30,6 +35,7 @@ await queuedFollowUpAttachmentDeletionFlow();
 await steeringQueueFlow();
 await compactContextCommandFlow();
 await recordExchangeAndFallbackFlow();
+await repeatedSessionExchangeImportReusesExisting();
 await rejectedRecordWritePreservesTranscript();
 await resetPersistsEmptyConversationAndDisplay();
 await lateUiSavePreservesStreamingCurrentTurn();
@@ -1281,6 +1287,16 @@ async function recordExchangeAndFallbackFlow() {
   }]);
   assert.equal(fixture.runtimes.get(imported.session.id).workingUrl, "https://example.test/live");
   assert.equal(fixture.runtimes.get(imported.session.id).ownedTabIds.length, 3);
+  const sessionsAfterFirst = Object.keys(await fixture.repository.listMetadata()).sort();
+  const again = await fixture.commands.importSessionExchangeRuntime(exportedWithTabs, { sourceWindowId: 17 });
+  assert.equal(again.imported, true);
+  assert.equal(again.session.id, imported.session.id, "importing the same export opens the existing session");
+  assert.equal(again.ownedTabsRestore, null);
+  assert.deepEqual(Object.keys(await fixture.repository.listMetadata()).sort(), sessionsAfterFirst);
+  assert.equal(fixture.ownedTabsRestoreCalls.length, 1, "a repeated import must not open the workspace tabs again");
+  const marked = await fixture.repository.getMetadata(imported.session.id);
+  assert.equal(marked.exchangeSourceSessionId, session.id);
+  assert.match(marked.exchangeContentHash, /^[0-9a-f]{64}$/u);
 
   const tabLookupFailure = createFixture({
     getSessionOwnedTabContexts: async () => {
@@ -1343,6 +1359,89 @@ async function recordExchangeAndFallbackFlow() {
     saved: false,
     reason: "missing_session_id",
   });
+}
+
+async function repeatedSessionExchangeImportReusesExisting() {
+  const fixture = createFixture();
+  const conversation = serializeConversation([{ role: "user", content: "西湖和灵隐" }]);
+  const payload = createSessionExchangePayload({
+    session: { id: "origin-hangzhou", title: "杭州三日游" },
+    conversation,
+    transcript: transcriptFromConversation(conversation),
+    exportedAt: "2026-07-12 12:00:00",
+  });
+  const { session: original } = await fixture.commands.createSessionMetadataRuntime({ title: "杭州三日游" });
+  await fixture.commands.saveSessionRecordRuntime({
+    sessionId: original.id,
+    conversation,
+    transcript: transcriptFromConversation(conversation),
+  });
+  const legacyIds = [];
+  for (const updatedAt of ["2026-07-12 12:00:00", "2026-07-12 12:00:01", "2026-07-12 12:00:02"]) {
+    const created = await fixture.commands.createSessionMetadataRuntime({ title: "杭州三日游" });
+    await fixture.commands.saveSessionRecordRuntime({
+      sessionId: created.session.id,
+      conversation: appendSessionExchangeImportCapsule(payload.session.conversation),
+      transcript: settleImportedTranscript(payload.session.transcript),
+    });
+    await fixture.repository.patchMetadata(created.session.id, current => ({
+      ...current,
+      updatedAt,
+      listSummary: { ...current.listSummary, updatedAt },
+    }));
+    legacyIds.push(created.session.id);
+  }
+  const before = Object.keys(await fixture.repository.listMetadata()).sort();
+  const reused = await fixture.commands.importSessionExchangeRuntime(payload);
+  assert.equal(reused.imported, true);
+  assert.equal(reused.session.id, legacyIds[2], "an unmarked imported copy is chosen by content, newest first");
+  assert.notEqual(reused.session.id, original.id, "the exported session itself is not an imported copy");
+  assert.deepEqual(Object.keys(await fixture.repository.listMetadata()).sort(), before);
+  const repeated = await fixture.commands.importSessionExchangeRuntime(payload);
+  assert.equal(repeated.session.id, legacyIds[2]);
+  assert.equal((await fixture.repository.getMetadata(legacyIds[2])).exchangeSourceSessionId, "origin-hangzhou");
+  assert.deepEqual(Object.keys(await fixture.repository.listMetadata()).sort(), before);
+
+  const fresh = createFixture();
+  const anonymous = createSessionExchangePayload({
+    session: { id: "", title: "无编号" },
+    conversation: serializeConversation([{ role: "user", content: "同一份正文" }]),
+    transcript: [],
+    exportedAt: "2026-07-12 12:00:00",
+  });
+  const firstAnonymous = await fresh.commands.importSessionExchangeRuntime(anonymous);
+  const secondAnonymous = await fresh.commands.importSessionExchangeRuntime({
+    ...anonymous,
+    source: { sessionId: "", parentSessionId: "" },
+  });
+  assert.equal(secondAnonymous.session.id, firstAnonymous.session.id);
+  assert.equal(Object.keys(await fresh.repository.listMetadata()).length, 1);
+  const sameContentOtherSource = createSessionExchangePayload({
+    session: { id: "other-source", title: "另一份标题" },
+    conversation: serializeConversation([{ role: "user", content: "同一份正文" }]),
+    transcript: [],
+    exportedAt: "2026-07-12 12:00:00",
+  });
+  const collapsed = await fresh.commands.importSessionExchangeRuntime(sameContentOtherSource);
+  assert.equal(collapsed.session.id, firstAnonymous.session.id, "matching content reuses the imported session when its source id was not recorded");
+  assert.equal(Object.keys(await fresh.repository.listMetadata()).length, 1);
+  const different = createSessionExchangePayload({
+    session: { id: "different-source", title: "另一份会话" },
+    conversation: serializeConversation([{ role: "user", content: "不同的正文" }]),
+    transcript: [],
+    exportedAt: "2026-07-12 12:00:00",
+  });
+  const created = await fresh.commands.importSessionExchangeRuntime(different);
+  assert.notEqual(created.session.id, firstAnonymous.session.id);
+  assert.equal(Object.keys(await fresh.repository.listMetadata()).length, 2);
+  const sameSource = await fresh.commands.importSessionExchangeRuntime(createSessionExchangePayload({
+    session: { id: "different-source", title: "改过的标题" },
+    conversation: serializeConversation([{ role: "user", content: "改过的正文" }]),
+    transcript: [],
+    exportedAt: "2026-07-12 12:00:00",
+  }));
+  assert.equal(sameSource.session.id, created.session.id, "a recorded source id wins over changed content");
+  assert.equal(Object.keys(await fresh.repository.listMetadata()).length, 2);
 }
 
 async function atomicRuntimeInputSnapshots() {

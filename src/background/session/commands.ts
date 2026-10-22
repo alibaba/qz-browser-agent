@@ -90,6 +90,8 @@ import {
 import {
   appendSessionExchangeImportCapsule,
   createSessionExchangePayload,
+  hashSessionExchangeContent,
+  hasSessionExchangeImportCapsule,
   normalizeSessionExchangePayload,
   settleImportedTranscript,
 } from "../../shared/session/session-exchange.js";
@@ -488,6 +490,19 @@ async function exportSessionExchangeRuntime(sessionId: string) {
 async function importSessionExchangeRuntime(value: unknown, { sourceWindowId = null }: { sourceWindowId?: number | null } = {}) {
   await sessionRuntimeReady;
   const payload = normalizeSessionExchangePayload(value);
+  const contentHash = await hashSessionExchangeContent(payload.session.conversation);
+  const existing = await findReusableImportedSession(payload.source.sessionId, contentHash);
+  if (existing) {
+    await rememberImportedExchangeIdentity(existing.id, payload.source.sessionId, contentHash);
+    const session = (await getSessions())[existing.id] || existing;
+    return {
+      imported: true,
+      session,
+      dependencies: payload.dependencies,
+      ownedTabsRestore: null,
+    };
+  }
+
   const session = await createStoredSession({
     title: payload.session.title,
     firstMessage: "",
@@ -562,6 +577,7 @@ async function importSessionExchangeRuntime(value: unknown, { sourceWindowId = n
     }
   }
 
+  await rememberImportedExchangeIdentity(session.id, payload.source.sessionId, contentHash);
   const importedSessions = await getSessions();
   const imported = importedSessions[session.id] || null;
   if (!imported) {
@@ -581,6 +597,55 @@ async function importSessionExchangeRuntime(value: unknown, { sourceWindowId = n
     dependencies: payload.dependencies,
     ownedTabsRestore,
   };
+}
+
+async function findReusableImportedSession(sourceSessionId: string, contentHash: string) {
+  const sourceId = String(sourceSessionId || "").trim();
+  const sessions = Object.values(await getSessions());
+  if (sourceId) {
+    const tagged = latestSession(sessions.filter(session => String(session.exchangeSourceSessionId || "") === sourceId));
+    if (tagged) return tagged;
+  }
+  const hashed = latestSession(sessions.filter(session => String(session.exchangeContentHash || "") === contentHash));
+  if (hashed) return hashed;
+
+  // Copies imported before the source id was stored still carry the import capsule.
+  // The session that was exported does not, so the first import keeps its own id.
+  const legacy = [];
+  for (const session of sessions) {
+    if (session.exchangeContentHash || session.exchangeSourceSessionId) continue;
+    let conversation: unknown = null;
+    try {
+      conversation = readSessionRecord(await sessionRepository.readRecord(session.id)).conversation;
+    } catch {
+      continue;
+    }
+    if (!hasSessionExchangeImportCapsule(conversation)) continue;
+    try {
+      if (await hashSessionExchangeContent(conversation) !== contentHash) continue;
+    } catch {
+      continue;
+    }
+    legacy.push(session);
+  }
+  return latestSession(legacy);
+}
+
+async function rememberImportedExchangeIdentity(sessionId: string, sourceSessionId: string, contentHash: string) {
+  const sourceId = String(sourceSessionId || "").trim();
+  await sessionRepository.patchMetadata(sessionId, current => ({
+    ...current,
+    exchangeContentHash: contentHash,
+    ...(sourceId ? { exchangeSourceSessionId: sourceId } : {}),
+  }));
+}
+
+function latestSession(sessions: SessionMetadata[]) {
+  return [...sessions].sort((left, right) => {
+    const byTime = compareBeijingDateTimeDesc(left.updatedAt, right.updatedAt);
+    if (byTime) return byTime;
+    return String(right.id).localeCompare(String(left.id));
+  })[0] || null;
 }
 
 async function startSessionAgentTask({

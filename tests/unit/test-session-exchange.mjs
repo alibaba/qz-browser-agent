@@ -507,7 +507,7 @@ function assertSourceContracts() {
   assert.match(sessionExportBridge, /document\.getElementById\(QINGZHOU_SESSION_EXCHANGE_SCRIPT_ID\)/u);
   assert.match(sessionExportBridge, /type: "session_export_import_request"/u);
   assert.match(sessionExportBridge, /location\.protocol === "file:"/u);
-  assert.match(sessionExportBridge, /location\.protocol === "file:" \|\| location\.origin === "null"[\s\S]*?\? "\*"/u);
+  assert.match(sessionExportBridge, /const targetOrigin = location\.protocol === "file:" \|\| location\.origin === "null"\s*\?\s*"\*"\s*:\s*location\.origin;/u);
   assert.doesNotMatch(sessionExportBridge, /event\.data\?\.payload/u);
   assert.doesNotMatch(contentScript, /session_export_import_request/u);
   assert.match(sidepanelJs, /openImageLightbox\(previewImage\.dataset\.fullSrc \|\| previewImage\.currentSrc \|\| previewImage\.src/u);

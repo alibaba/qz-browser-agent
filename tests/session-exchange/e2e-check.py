@@ -25,6 +25,8 @@ SCREENSHOT_PATH = Path("/tmp/qingzhou-session-export-smoke.png")
 NIGHT_SCREENSHOT_PATH = Path("/tmp/qingzhou-session-export-smoke-night.png")
 MOBILE_SCREENSHOT_PATH = Path("/tmp/qingzhou-session-export-smoke-mobile.png")
 BRIDGE_SCREENSHOT_PATH = Path("/tmp/qingzhou-session-export-import-cta.png")
+PAGES_ALLOWED_SCREENSHOT_PATH = Path("/tmp/qingzhou-pages-import-allowed.png")
+PAGES_DENIED_SCREENSHOT_PATH = Path("/tmp/qingzhou-pages-import-denied.png")
 OWNED_TAB_URLS = [
     "https://workspace.example.test/search?q=42",
     "https://workspace.example.test/project/42#resume",
@@ -106,6 +108,107 @@ def serve_export_html(html):
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def open_routed_export(context, html):
+    page = context.new_page()
+    page.route(
+        "https://alibaba.github.io/**",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="text/html; charset=utf-8",
+            body=html,
+        ),
+    )
+    page.route(
+        "https://registry.npmmirror.com/**",
+        lambda route: route.fulfill(status=200, content_type="application/javascript", body=""),
+    )
+    return page
+
+
+def expected_import_label(page):
+    lang = (page.locator("html").get_attribute("lang") or "").lower()
+    if lang.startswith("zh"):
+        return "导入轻舟继续对话"
+    if lang.startswith("en"):
+        return "Continue in qz"
+    raise AssertionError(f"unexpected export language {lang!r}")
+
+
+def assert_allowlisted_https_page_offers_import(context, html):
+    allowed_url = "https://alibaba.github.io/qz-browser-agent/examples/travel/"
+    allowed = open_routed_export(context, html)
+    try:
+        allowed_errors = []
+        allowed.on("pageerror", lambda error: allowed_errors.append(str(error)))
+        allowed.on("console", lambda message: allowed_errors.append(message.text) if message.type == "error" else None)
+        allowed.goto(allowed_url, wait_until="domcontentloaded")
+        allowed.wait_for_selector("#qingzhou-session-cta[data-qingzhou-session-import]", timeout=10000)
+        assert allowed.locator("#qingzhou-session-cta").text_content() == expected_import_label(allowed)
+        allowed.screenshot(path=str(PAGES_ALLOWED_SCREENSHOT_PATH))
+        assert allowed_errors == [], json.dumps(allowed_errors, ensure_ascii=False)
+    finally:
+        allowed.close()
+
+
+def assert_unlisted_https_origin_hides_import(context, extension_page, html):
+    denied_url = "https://alibaba.github.io/other-repo/session.html"
+    denied = open_routed_export(context, html)
+    try:
+        denied_errors = []
+        denied.on("pageerror", lambda error: denied_errors.append(str(error)))
+        denied.on("console", lambda message: denied_errors.append(message.text) if message.type == "error" else None)
+        denied.goto(denied_url, wait_until="domcontentloaded")
+        denied.wait_for_selector("#qingzhou-session-cta", state="attached", timeout=10000)
+        observation = denied.evaluate(
+            """() => new Promise(resolve => {
+              let results = 0;
+              const onMessage = event => {
+                if (event.source !== window || event.data?.type !== "qingzhou:session-export:result") return;
+                results += 1;
+              };
+              window.addEventListener("message", onMessage);
+              window.postMessage({
+                type: "qingzhou:session-export:probe",
+                requestId: "allowlist-denied",
+              }, location.origin);
+              setTimeout(() => {
+                window.removeEventListener("message", onMessage);
+                const cta = document.getElementById("qingzhou-session-cta");
+                resolve({
+                  results,
+                  importable: Boolean(cta?.hasAttribute("data-qingzhou-session-import")),
+                  hidden: cta?.hidden === true,
+                  text: cta?.textContent || "",
+                });
+              }, 500);
+            })"""
+        )
+        bridge = extension_page.evaluate(
+            """async url => {
+              const tabs = await chrome.tabs.query({});
+              const tab = tabs.find(item => item.url === url);
+              if (!tab?.id) return { found: false, urls: tabs.map(item => item.url || "") };
+              const [injected] = await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                func: () => window.__QINGZHOU_SESSION_EXPORT_BRIDGE_VERSION || "",
+              });
+              return { found: true, version: injected?.result || "" };
+            }""",
+            denied_url,
+        )
+        assert bridge["found"], json.dumps(bridge, ensure_ascii=False)
+        assert bridge["version"], json.dumps(bridge, ensure_ascii=False)
+        assert observation["results"] == 0, observation
+        assert observation["importable"] is False, observation
+        assert observation["hidden"] is True, observation
+        assert observation["text"] == "", observation
+        assert denied.locator("#qingzhou-session-cta[data-qingzhou-session-import]").count() == 0
+        denied.screenshot(path=str(PAGES_DENIED_SCREENSHOT_PATH))
+        assert denied_errors == [], json.dumps(denied_errors, ensure_ascii=False)
+    finally:
+        denied.close()
 
 
 def run():
@@ -386,7 +489,7 @@ def run():
                 bridge.goto(bridge_url, wait_until="domcontentloaded")
                 bridge.wait_for_selector("#qingzhou-session-cta[data-qingzhou-session-import]", timeout=10000)
                 bridge_cta = bridge.locator("#qingzhou-session-cta")
-                assert bridge_cta.text_content() == "导入轻舟"
+                assert bridge_cta.text_content() == expected_import_label(bridge)
                 bridge.screenshot(path=str(BRIDGE_SCREENSHOT_PATH), full_page=True)
                 bridge_cta.click()
                 bridge.wait_for_function(
@@ -405,6 +508,9 @@ def run():
                 assert bridge_session and bridge_session["title"] == original_payload["session"]["title"]
                 assert bridge_errors == [], json.dumps(bridge_errors, ensure_ascii=False)
                 bridge.close()
+
+            assert_allowlisted_https_page_offers_import(context, html)
+            assert_unlisted_https_origin_hides_import(context, page, html)
 
             HTML_PATH.write_text(html, encoding="utf-8")
             exported = context.new_page()
@@ -459,7 +565,7 @@ def run():
             assert exported.locator("mjx-container").count() >= 1
 
             exported_cta = exported.locator("#qingzhou-session-cta")
-            assert exported_cta.text_content() == "导入轻舟"
+            assert exported_cta.text_content() == expected_import_label(exported)
             exported_cta.click()
             exported.wait_for_function(
                 "document.getElementById('qingzhou-session-cta')?.textContent === '已导入'",
@@ -561,7 +667,8 @@ def run():
             exported.screenshot(path=str(MOBILE_SCREENSHOT_PATH), full_page=True)
             print(
                 "session exchange extension e2e passed: "
-                f"{HTML_PATH} {SCREENSHOT_PATH} {NIGHT_SCREENSHOT_PATH} {MOBILE_SCREENSHOT_PATH} {BRIDGE_SCREENSHOT_PATH}"
+                f"{HTML_PATH} {SCREENSHOT_PATH} {NIGHT_SCREENSHOT_PATH} {MOBILE_SCREENSHOT_PATH} {BRIDGE_SCREENSHOT_PATH} "
+                f"{PAGES_ALLOWED_SCREENSHOT_PATH} {PAGES_DENIED_SCREENSHOT_PATH}"
             )
             return 0
         finally:

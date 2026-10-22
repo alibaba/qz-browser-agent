@@ -223,6 +223,53 @@ export function appendSessionExchangeImportCapsule(conversation: unknown, create
   return { ...normalized, entries };
 }
 
+export function hasSessionExchangeImportCapsule(input: unknown) {
+  if (!input || typeof input !== "object") return false;
+  if (Array.isArray(input)) return input.some(message => isSessionExchangeImportCapsule(message));
+  const conversation = asRecord(input);
+  if (Array.isArray(conversation.messages)) {
+    return conversation.messages.some(message => isSessionExchangeImportCapsule(message));
+  }
+  if (!Array.isArray(conversation.entries)) return false;
+  return conversation.entries.some(raw => {
+    const entry = asRecord(raw);
+    return isSessionExchangeImportCapsule(entry.message ?? entry);
+  });
+}
+
+/** Stable identity for an exported conversation, ignoring import capsules and entry ids. */
+export async function hashSessionExchangeContent(conversation: unknown) {
+  const encoded = new TextEncoder().encode(JSON.stringify(canonicalSessionExchangeMessages(conversation)));
+  const digest = await crypto.subtle.digest("SHA-256", encoded);
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function canonicalSessionExchangeMessages(conversation: unknown) {
+  const stripped = stripSessionExchangeImportCapsules(conversation);
+  const normalized = readSessionRecord(createSessionRecord(stripped, [])).conversation;
+  const entries = Array.isArray(normalized?.entries) ? normalized.entries : [];
+  return entries
+    .filter(entry => !isSessionExchangeImportCapsule(entry?.message))
+    .map(entry => {
+      const message = asRecord(entry?.message);
+      const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls.map(call => {
+        const toolCall = asRecord(call);
+        const fn = asRecord(toolCall.function);
+        return {
+          id: String(toolCall.id || ""),
+          name: String(fn.name || toolCall.name || ""),
+          arguments: fn.arguments ?? toolCall.arguments ?? null,
+        };
+      }) : [];
+      return {
+        role: String(message.role || ""),
+        content: message.content ?? null,
+        toolCalls,
+        toolCallId: String(message.tool_call_id || ""),
+      };
+    });
+}
+
 export function stripSessionExchangeImportCapsules(input: unknown): unknown {
   if (!input || typeof input !== "object") return input;
   if (Array.isArray(input)) {

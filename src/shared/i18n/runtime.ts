@@ -150,6 +150,10 @@ export function createLanguageRuntime(environment: () => LanguageEnvironment = (
     writes = operation.then(() => {}, () => {});
     return operation;
   }
+  async function ensureLanguage(language: string): Promise<void> {
+    try { await load(resolveLanguage(language)); }
+    catch { /* Authored text remains available when a catalog cannot be fetched. */ }
+  }
   function withLanguage<T>(language: string, callback: () => T): T {
     const previous = scopedLocale;
     scopedLocale = language;
@@ -195,7 +199,7 @@ export function createLanguageRuntime(environment: () => LanguageEnvironment = (
   }
   return Object.freeze({
     getLocale, getLanguage, getLanguagePreference: () => preference,
-    initializeLanguage, whenLanguageReady, readLanguagePreference, saveLanguagePreference, withLanguage, lookupMessage, isHistoricalLabel,
+    initializeLanguage, whenLanguageReady, readLanguagePreference, saveLanguagePreference, ensureLanguage, withLanguage, lookupMessage, isHistoricalLabel,
   });
 }
 

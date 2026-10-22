@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { serializeConversation } from "../../src/shared/session/session-codec.js";
 import { createSessionExchangePayload } from "../../src/shared/session/session-exchange.js";
 import { createConfigRuntime } from "../../src/background/services/config-runtime.js";
@@ -10,10 +11,12 @@ import {
 } from "../../src/background/services/chrome-notifications.js";
 import { createOffscreenKeepalive } from "../../src/background/services/offscreen-keepalive.js";
 import { createPlatformCommands } from "../../src/background/services/platform-commands.js";
+import { createBackgroundApi } from "../../src/background/background-api.js";
 import {
   createSessionExchangeBridge,
   isAllowedSessionExportSource,
 } from "../../src/background/services/session-exchange-bridge.js";
+import { createRuntimeMessageTransport } from "../../src/background/transports/runtime-message.js";
 import { createSidepanelChannel } from "../../src/background/transports/sidepanel-channel.js";
 import { createSidepanelEventRouter } from "../../src/sidepanel/features/app/sidepanel-event-router.js";
 
@@ -25,6 +28,7 @@ await notificationRevealEventsSelectTheRelatedSession();
 await llmRetryStatusUsesExistingTransportFacts();
 await offscreenKeepaliveIsSingleFlightAndRetryable();
 await sessionExchangeBridgeEnforcesSourceBoundariesAndDeliverySemantics();
+await sessionExchangeRevealOpensThePanelWithoutImporting();
 await platformCommandsRequireExplicitTabs();
 await sidepanelChannelOwnsPortsPendingDeliveryAndDynamicContext();
 
@@ -345,10 +349,13 @@ async function sessionExchangeBridgeEnforcesSourceBoundariesAndDeliverySemantics
   for (const url of [
     "file:///tmp/export.html",
     "http://localhost:8080/export",
+    "https://alibaba.github.io/qz-browser-agent/",
   ]) assert.equal(isAllowedSessionExportSource(url), true, url);
   for (const url of [
     "chrome-extension://id/export",
     "https://example.invalid/export",
+    "https://alibaba.github.io/other-repo/",
+    "http://alibaba.github.io/qz-browser-agent/",
     "bad url",
   ]) assert.equal(isAllowedSessionExportSource(url), false, url);
 
@@ -384,12 +391,137 @@ async function sessionExchangeBridgeEnforcesSourceBoundariesAndDeliverySemantics
   assert.equal(remembered.at(-1)?.event?.ownedTabsRestore?.failedCount, 1);
   assert.deepEqual(opened.at(-1), { windowId: 7 });
 
+  const focused = [];
+  const windowed = [];
+  const focusedBridge = createSessionExchangeBridge({
+    sidePanel: { open: async input => focused.push(input) },
+    importSessionExchange: async () => ({ session: { id: "existing", title: "杭州三日游" }, ownedTabsRestore: null }),
+    channel: {
+      hasPorts: () => true,
+      broadcast() { throw new Error("window delivery should not broadcast to every panel"); },
+      remember: (...args) => windowed.push(args),
+      sendToWindow: async () => false,
+    },
+    logger: { debug() {} },
+  });
+  await focusedBridge.importFromPage({ payload }, {
+    tab: { url: "http://127.0.0.1/export.html", id: 4, windowId: 7 },
+  });
+  assert.deepEqual(focused, [{ windowId: 7 }]);
+  assert.equal(windowed[0]?.[0], "session_export_import");
+  assert.equal(windowed[0]?.[1]?.sessionId, "existing");
+  assert.equal(windowed[0]?.[2], 15_000);
+  assert.deepEqual(windowed[0]?.[3], { windowId: 7 });
+
+  const rememberedBeforePages = remembered.length;
+  await assert.rejects(
+    () => bridge.importFromPage({ payload }, { tab: { url: "https://alibaba.github.io/other-repo/session.html", id: 12, windowId: 4 } }),
+    error => error?.code === "SESSION_EXPORT_SOURCE_NOT_ALLOWED",
+  );
+  assert.equal(remembered.length, rememberedBeforePages);
+  const pagesImported = await bridge.importFromPage({ payload }, {
+    tab: { url: "https://alibaba.github.io/qz-browser-agent/examples/travel/", id: 11, windowId: 4 },
+  });
+  assert.equal(pagesImported.session.id, "imported");
+  assert.deepEqual(opened.at(-1), { windowId: 4 });
+
   hasPorts = true;
   await bridge.importFromPage({ payload }, {
     tab: { url: "http://localhost:8080/export", id: 10, windowId: 8 },
   });
   assert.ok(broadcasts.some(event => event.type === "session_imported_from_export"));
   assert.equal(broadcasts.some(event => event.type === "skill_registry_update"), false);
+}
+
+async function sessionExchangeRevealOpensThePanelWithoutImporting() {
+  const content = readFileSync(new URL("../../src/content/session-export-bridge.ts", import.meta.url), "utf8");
+  const transportSource = readFileSync(new URL("../../src/background/transports/runtime-message.ts", import.meta.url), "utf8");
+  const workerSource = readFileSync(new URL("../../src/background/service-worker.ts", import.meta.url), "utf8");
+  const bridgeSource = readFileSync(new URL("../../src/background/services/session-exchange-bridge.ts", import.meta.url), "utf8");
+  const revealAt = content.indexOf("session_export_reveal_consent");
+  const workingAt = content.indexOf('status: "working"');
+  assert.ok(revealAt >= 0 && workingAt > revealAt, "consent check happens before the importing state");
+  assert.match(content, /needsConsent !== false/u);
+  assert.doesNotMatch(content, /Acceptance resolves this same click/u);
+  assert.match(transportSource, /type === "session_export_reveal_consent"/u);
+  assert.doesNotMatch(transportSource, /respondAsync\(\s*\(\) => call\("exchange\.revealForImport"/u);
+  assert.doesNotMatch(transportSource, /object\(value\)/u);
+  assert.match(workerSource, /"exchange\.revealForImport"/u);
+  assert.doesNotMatch(workerSource, /whenConsented:/u);
+  assert.doesNotMatch(workerSource, /importConsentPanelOpen/u);
+  assert.doesNotMatch(bridgeSource, /whenConsented|continueAfterConsent|panelOpen/u);
+
+  const opened = [];
+  const imported = [];
+  let accepted = false;
+  const bridge = createSessionExchangeBridge({
+    sidePanel: { open(input) { opened.push(input); return Promise.resolve(); } },
+    importSessionExchange: async payload => {
+      imported.push(payload);
+      return { session: { id: "imported", title: payload.session.title } };
+    },
+    channel: { hasPorts: () => false, broadcast() {}, remember() {} },
+    logger: { debug() {} },
+    consentAccepted: () => accepted,
+  });
+  const sender = { tab: { id: 3, windowId: 9, url: "http://127.0.0.1/export.html" } };
+  assert.deepEqual(bridge.revealForImport({}), { needsConsent: true });
+  assert.deepEqual(opened, []);
+  assert.deepEqual(bridge.revealForImport(sender), { needsConsent: true });
+  assert.deepEqual(opened, [{ windowId: 9 }]);
+  assert.equal(imported.length, 0);
+
+  const denied = Object.assign(new Error("consent"), { code: "DATA_CONSENT_REQUIRED" });
+  const api = createBackgroundApi({
+    exchange: {
+      revealForImport: bridge.revealForImport,
+      importFromPage() { imported.push("api"); },
+    },
+  }, path => {
+    if (path === "exchange.revealForImport") return;
+    if (!accepted) throw denied;
+  });
+  const transport = createRuntimeMessageTransport(api);
+  const first = dispatchSync(transport, { type: "session_export_reveal_consent" }, sender);
+  assert.equal(first.returned, false);
+  assert.deepEqual(first.response, { ok: true, needsConsent: true });
+  assert.deepEqual(opened, [{ windowId: 9 }, { windowId: 9 }]);
+  assert.equal(imported.length, 0);
+  const blocked = await new Promise(resolve => {
+    transport.listener({ type: "session_export_import_request" }, sender, resolve);
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.code, "DATA_CONSENT_REQUIRED");
+  assert.equal(imported.length, 0);
+
+  accepted = true;
+  assert.deepEqual(bridge.revealForImport(sender), { needsConsent: false });
+  const second = dispatchSync(transport, { type: "session_export_reveal_consent" }, sender);
+  assert.deepEqual(second.response, { ok: true, needsConsent: false });
+  assert.deepEqual(opened, [{ windowId: 9 }, { windowId: 9 }, { windowId: 9 }, { windowId: 9 }], "an accepted import click still opens the side panel on the gesture");
+  assert.equal(imported.length, 0);
+
+  const failClosedOpened = [];
+  const failClosed = createSessionExchangeBridge({
+    sidePanel: { open() { failClosedOpened.push(true); return Promise.resolve(); } },
+    importSessionExchange: async () => { throw new Error("must not import"); },
+    channel: { hasPorts: () => false, broadcast() {}, remember() {} },
+    logger: { debug() {} },
+  });
+  assert.deepEqual(failClosed.revealForImport(sender), { needsConsent: true });
+  assert.deepEqual(failClosedOpened, [true]);
+  assert.equal(typeof failClosed.revealForImport(sender).then, "undefined", "an unconsented click does not wait for later acceptance");
+}
+
+function dispatchSync(transport, message, sender) {
+  let response;
+  let sync = false;
+  const returned = transport.listener(message, sender, value => {
+    sync = true;
+    response = value;
+  });
+  assert.equal(sync, true, message.type);
+  return { returned, response };
 }
 
 async function platformCommandsRequireExplicitTabs() {
