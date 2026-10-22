@@ -45,6 +45,9 @@ const root = fileURLToPath(new URL("../..", import.meta.url));
 const navigation = navigationDocuments();
 
 globalThis.chrome = {
+  // Ordering and copy assertions in this file are written for the Chinese UI.
+  // Pin it here so a non-Chinese process locale cannot turn missing text into a false order failure.
+  i18n: { getUILanguage: () => "zh-CN" },
   storage: {
     local: {
       async get(key) {
