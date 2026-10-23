@@ -1,0 +1,63 @@
+/* Table layout for example transcripts. Loaded inside the shadow root after session-view.css.
+   Unlayered so these rules win over the export stylesheet's layered cell wrapping. */
+
+.example-table-scroll,
+.tool-data-table-wrap {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.example-table-scroll > table,
+.tool-data-table-wrap > table {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+}
+
+.example-table-scroll :is(th, td),
+.tool-data-table :is(th, td) {
+  min-width: 4em;
+  max-width: 22em;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+  hyphens: manual;
+}
+
+.example-table-scroll :is(th, td).example-cell-nowrap,
+.tool-data-table :is(th, td).example-cell-nowrap {
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+}
+
+/* The strip header sits outside this scroller, matching the side panel.
+   Expanded summaries stick to the top of the transcript, not over that header. */
+:host {
+  --chat-sticky-offset: 0px;
+}
+
+/* Chain wheel and touch scrolls through nested export panels, then the
+   transcript, then the page. Contain stops that chain at the panel edge. */
+#messages,
+#messages :is(
+  .tool-timeline-slot-body,
+  .tool-text-preview,
+  .tool-tree-body,
+  .tool-article-body,
+  .tool-dom-content-block,
+  .tool-file-content-block,
+  .tool-details-streaming,
+  .copyable-code-block,
+  .copyable-code-block pre,
+  .tool-data-table-wrap,
+  .example-table-scroll,
+  .thinking-group-body,
+  .tool-session-prompt-body
+) {
+  overscroll-behavior: auto;
+}

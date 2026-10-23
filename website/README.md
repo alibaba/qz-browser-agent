@@ -9,6 +9,7 @@ python3 -m http.server 4173 --bind 127.0.0.1 --directory website
 Open `http://127.0.0.1:4173/`. Use the language button to switch between English and Simplified
 Chinese on the same page. The initial language follows `?lang=en` or `?lang=zh-CN`, then a saved
 preference, then the browser language. Switching preserves the URL fragment and scroll position.
+Example detail pages are separate for each locale; their language button opens the other locale.
 
 No dependency installation or build is required. Edit `assets/translations.js` for the localized
 content and attributes. Keep the English fallback in `index.html` in sync with those translations;

@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en" data-example="hn-skill" data-site-root="../../" data-generated="qz-example" data-session="reuse" data-session-view="">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence." data-i18n-attributes="example-hn-skill-description">
+  <meta name="theme-color" content="#f7f7f5">
+  <link rel="canonical" href="https://alibaba.github.io/qz-browser-agent/examples/hn-skill-reuse/">
+  <link rel="alternate" hreflang="en" href="https://alibaba.github.io/qz-browser-agent/examples/en/hn-skill-reuse/">
+  <link rel="alternate" hreflang="zh-CN" href="https://alibaba.github.io/qz-browser-agent/examples/hn-skill-reuse/">
+  <link rel="alternate" hreflang="x-default" href="https://alibaba.github.io/qz-browser-agent/examples/hn-skill-reuse/">
+  <link rel="icon" type="image/png" href="../../assets/icon.png">
+  <link rel="stylesheet" href="../../assets/site.css">
+  <link rel="stylesheet" href="../../assets/examples.css">
+  <script src="../../examples/catalog.js"></script>
+  <script src="../../assets/site.js" type="module"></script>
+  <script src="../../assets/examples-render.js" type="module"></script>
+  <title>Turn Hacker News into a Skill — qz</title>
+</head>
+<body>
+<a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
+<header class="header wrap">
+  <a class="brand" href="../../" aria-label="qz — Home" data-i18n-attributes="home"><img src="../../assets/icon.png" width="32" height="32" alt=""><span>qz<span class="brand-caption"> / 轻舟</span></span></a>
+  <nav aria-label="Main navigation" data-i18n-attributes="nav"><a href="../../#overview" data-i18n="navOverview">Data</a><a href="../../#extend" data-i18n="navExtend">Skills</a><a href="../../#agents" data-i18n="navAgents">For agents</a><a href="https://github.com/alibaba/qz-browser-agent" class="nav-github">GitHub <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg></a></nav>
+  <div class="header-actions"><button class="language" type="button" hidden="" aria-label="Switch to 简体中文" data-example-locale="zh-CN" data-switch-href="../en/hn-skill-reuse/">中文</button><a class="button button-small" href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm" data-i18n="navStart">Install<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a></div>
+</header>
+<main id="main" class="example-page wrap">
+  <div class="example-stage">
+    <div class="example-lead">
+      <h1 data-i18n="example-hn-skill-title">Turn Hacker News into a Skill</h1>
+      <p class="example-summary" data-i18n="example-hn-skill-summary">Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.</p>
+      <ol class="example-steps"><li><a class="example-step" href="../hn-skill/"><span class="example-step-n">1</span><span class="example-step-label" data-i18n="example-hn-skill-first">Create the Skill</span></a></li><li><span class="example-step is-current" aria-current="step"><span class="example-step-n">2</span><span class="example-step-label" data-i18n="example-hn-skill-reuse">Reuse in one sentence</span></span></li></ol>
+      <div class="example-frame" style="aspect-ratio: 1464 / 890"><img class="example-poster" src="../../assets/examples/hn-skill-reuse-zh.webp" width="840" height="510" alt="Reusing the saved Skill in a new session to read Show HN" decoding="async" data-i18n-attributes="example-hn-skill-reuse-poster"><video class="example-video" muted autoplay loop playsinline preload="metadata" poster="../../assets/examples/hn-skill-reuse-zh.webp" width="1464" height="890" data-src="../../assets/examples/hn-skill-reuse-zh.mp4" aria-label="Reusing the saved Skill in a new session to read Show HN" data-i18n-attributes="example-hn-skill-reuse-poster"></video></div>
+    </div>
+    <div class="example-thread">
+      <div class="example-actions example-thread-bar">
+        <p class="example-session-title">查看Show HN榜单热帖</p>
+        <div class="example-thread-cta">
+          <button id="qingzhou-session-cta" class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" hidden type="button"></button>
+          <a class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" id="example-store" href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm" target="_blank" rel="noopener" data-i18n="exampleDownload">Import into qz to continue</a>
+        </div>
+      </div>
+      <div class="example-thread-body">
+        <qz-session-view><template shadowrootmode="open"><link rel="stylesheet" href="../../assets/examples/session-view.css"><link rel="stylesheet" href="../../assets/examples/session-view-overrides.css"><script type="application/json" id="qingzhou-export-messages">{"imagePreview":"图片预览","images":"图片","close":"关闭","importQingzhou":"导入轻舟","importing":"正在导入","imported":"已导入","retryImport":"重试导入","importFailedRetry":"导入失败，请重试"}</script><main id="messages"><div class="msg msg-user" data-client-message-id="cm_session_mvkggvzq_mgerer" data-transcript-type="user">
+    <div class="msg-user-row">
+      <div class="msg-content user-selectable">
+        <div class="user-text">帮我看下 Show HN 榜单最近热帖</div>
+        
+        
+      </div>
+    </div>
+  </div><div class="msg msg-thinking-group" data-chat-lane="summary" data-thinking-timeline-signature="3310863135" data-thinking-timeline-view-state-key="thinking:2026-10-23 12:14:25" data-active-thinking-key="2026-10-23 12:14:25" data-active-thinking-index="0" data-static-collapsed-lane="summary" data-static-expanded-lane="detail" data-transcript-type="thinking-group">
+    <button class="qz-chiphead thinking-group-summary " type="button" aria-expanded="false">
+      <span class="thinking-dot completed" aria-hidden="true"></span>
+      <span class="thinking-group-title">思考完成</span>
+      <span class="thinking-group-preview" data-preview="当前：1/1 · …Let me be efficient: list_tabs and open_tab. I'll open the Show HN page." data-running-preview="false">
+    <span class="thinking-group-preview-track">
+      <span class="thinking-group-preview-text" style="--thinking-preview-offset: 0px">当前：1/1 · …Let me be efficient: list_tabs and open_tab. I'll open the Show HN page.</span>
+    </span>
+  </span>
+      <span class="tool-caret thinking-caret">▸</span>
+    </button>
+    <div class="thinking-group-details hidden" data-auto-expanded="true" data-active-thinking-key="2026-10-23 12:14:25" data-active-thinking-index="0">
+      <div class="thinking-group-slot">
+    <div class="thinking-group-slot-head">
+      <div class="thinking-group-slot-title">
+        <b>最近思考</b>
+      </div>
+      
+    </div>
+    <pre class="thinking-group-body user-selectable" data-follow-tail="false" data-user-pinned="true">The user wants to see recent hot posts on Show HN. Let me open the page.
+
+I should check tabs first, then open https://news.ycombinator.com/show.
+
+Let me be efficient: list_tabs and open_tab.
+
+I'll open the Show HN page.</pre>
+  </div>
+    </div>
+  <template class="static-transcript-template" data-static-thinking-index="0">
+    <div class="thinking-group-slot-head">
+      <div class="thinking-group-slot-title">
+        <b>最近思考</b>
+      </div>
+      
+    </div>
+    <pre class="thinking-group-body user-selectable" data-follow-tail="false" data-user-pinned="true">The user wants to see recent hot posts on Show HN. Let me open the page.
+
+I should check tabs first, then open https://news.ycombinator.com/show.
+
+Let me be efficient: list_tabs and open_tab.
+
+I'll open the Show HN page.</pre>
+  </template></div><div class="msg msg-assistant" data-stream-trace-id="run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:llm:1" data-content="我先打开 Show HN 页面看看。" data-final-content="我先打开 Show HN 页面看看。" data-transcript-type="assistant"><div class="msg-content"><p>我先打开 Show HN 页面看看。</p>
+</div></div><div class="msg msg-thinking-group" data-chat-lane="summary" data-thinking-timeline-signature="2527176422" data-thinking-timeline-view-state-key="thinking:2026-10-23 12:14:29" data-active-thinking-key="2026-10-23 12:14:31" data-active-thinking-index="2" data-static-collapsed-lane="summary" data-static-expanded-lane="detail" data-transcript-type="thinking-group">
+    <button class="qz-chiphead thinking-group-summary " type="button" aria-expanded="false">
+      <span class="thinking-dot completed" aria-hidden="true"></span>
+      <span class="thinking-group-title">思考完成</span>
+      <span class="thinking-group-preview" data-preview="当前：3/3 · … Show HN list page and 3-4 key items. Let me build the table for top 10." data-running-preview="false">
+    <span class="thinking-group-preview-track">
+      <span class="thinking-group-preview-text" style="--thinking-preview-offset: 0px">当前：3/3 · … Show HN list page and 3-4 key items. Let me build the table for top 10.</span>
+    </span>
+  </span>
+      <span class="tool-caret thinking-caret">▸</span>
+    </button>
+    <div class="thinking-group-details hidden" data-auto-expanded="true" data-active-thinking-key="2026-10-23 12:14:31" data-active-thinking-index="2">
+      <div class="thinking-group-slot">
+    <div class="thinking-group-slot-head">
+      <div class="thinking-group-slot-title">
+        <b>最近思考</b>
+      </div>
+      
+    <div class="timeline-pager thinking-group-slot-nav" aria-label="切换思考过程">
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn thinking-group-nav-btn" type="button" data-thinking-nav-direction="-1" aria-label="上一段思考" title="上一段思考">‹</button>
+      <span>3/3</span>
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn thinking-group-nav-btn" type="button" data-thinking-nav-direction="1" aria-label="下一段思考" title="下一段思考" disabled="">›</button>
+    </div>
+  
+    </div>
+    <pre class="thinking-group-body user-selectable" data-follow-tail="false" data-user-pinned="true">The Show HN page default ordering is not by score — it's by time? Actually Show HN page shows newest-ish ordered. Rank 1 has 94 points 13 hours ago, rank 2 has 2 points 1 hour ago. It's mixed — the /show page is sorted by... actually it's sorted by "ranking" similar to front page but for Show HN. Hmm, rank 2 with 2 points and 1 hour ago suggests it's ordered by recency more than score? Actually HN /show is sorted by ranking score which includes time decay.
+
+"最近热帖" — recent hot posts. The /show page is the default Show HN listing. But there's also "Show HN" newest: https://news.ycombinator.com/shownew (newest).
+
+The user asks "Show HN 榜单最近热帖" — recent hot posts on Show HN leaderboard. The default /show page is fine. But the ordering seems odd. Let me consider getting a more "score-sorted" view. Hmm.
+
+Given ambiguity, I'll present the /show listing (10 items) plus note that the Show HN list is HN's ranking order (time decay + votes). 
+
+Should I add one-line takeaways? The skill says step 4 requires reading originals. That's 10 tabs — heavy. The user just asked to "看下" (take a look). I think a table with scores/comments and a brief overall observation is enough. But providing takeaways adds value. Given cost, maybe fetch descriptions for the top few? Let me consider effort vs value.
+
+The user request is casual: "帮我看下 Show HN 榜单最近热帖". A clean table + short summary of main themes (title-based) is appropriate. I could add brief notes based on titles, but I must not fabricate facts. I'll keep to observable data (title, score, comments, site, age) and give a light thematic read clearly derived from titles.
+
+Maybe I should try to get a bit more: fetch a couple of original pages for descriptions? That could improve quality. Let's do a moderate approach: open the top 3 originals and grab meta descriptions via run_script. Actually that's several tool calls. Hmm, but value is decent.
+
+Let me instead do one script that opens tabs? No, run_script can't open tabs (that's a navigation action). Actually tools.open_tab is available via tools proxy? The protocol says open_tab creates working tab; in run_script, "提交、导航、关闭 tab 等页面生命周期动作不要塞进 run_script". So no.
+
+I'll do a lightweight approach: give the table, and note takeaway inferred from titles. Actually let me at least fetch descriptions for the top 5 by opening tabs one by one — that's ~5 open_tab + 5 script calls. Too many.
+
+Alternative: HN item pages include the post text for Show HN. For Show HN posts with a URL, no text. 
+
+I'll skip deep-reading and clearly mark that the one-line notes are title-based, not from reading originals. Hmm, but protocol prefers verified claims. Title-derived summary is fine if marked.
+
+Actually, let me do a compromise: fetch meta descriptions for the top 4 via one script that fetches? CORS blocks fetch. No.
+
+Decision: deliver table + thematic summary based on titles, explicitly labeled. Also mention there are 30 items on the page, showed top 10, and ask if they want the full list or details.
+
+Also should I save to data_store? Not necessary unless user wants. Skip.
+
+Note timing: collectedAt 2026/10/23 12:14:30 Beijing time.
+
+Let me write response with footnotes to HN discussion links? Footnote rules: claims about facts from web pages need citations. Score/data comes from HN page — I can cite the HN show page and item pages. Let me add a few footnotes for the top items with links I have (HN discussion URLs and original URLs). These are "verified" in the sense the page was read.
+
+I'll present a table with links, and footnotes for a few notable ones. Keep footnotes reasonable — maybe cite the Show HN list page and 3-4 key items.
+
+Let me build the table for top 10.</pre>
+  </div>
+    </div>
+  <template class="static-transcript-template" data-static-thinking-index="0">
+    <div class="thinking-group-slot-head">
+      <div class="thinking-group-slot-title">
+        <b>历史思考 1</b>
+      </div>
+      
+    <div class="timeline-pager thinking-group-slot-nav" aria-label="切换思考过程">
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn thinking-group-nav-btn" type="button" data-thinking-nav-direction="-1" aria-label="上一段思考" title="上一段思考" disabled="">‹</button>
+      <span>1/3</span>
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn thinking-group-nav-btn" type="button" data-thinking-nav-direction="1" aria-label="下一段思考" title="下一段思考">›</button>
+    </div>
+  
+    </div>
+    <pre class="thinking-group-body user-selectable" data-follow-tail="false" data-user-pinned="true">There's a skill hn-top5_brief available with a tool hn_top5_brief__hn_top_posts. But that tool is for the HN front page. The user wants Show HN. Let me load the skill to see if it supports Show HN.
+
+Actually let me first read the page to see Show HN posts. But the skill tool might work on show page too since it parses top posts. Let me load the skill first.</pre>
+  </template><template class="static-transcript-template" data-static-thinking-index="1">
+    <div class="thinking-group-slot-head">
+      <div class="thinking-group-slot-title">
+        <b>历史思考 2</b>
+      </div>
+      
+    <div class="timeline-pager thinking-group-slot-nav" aria-label="切换思考过程">
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn thinking-group-nav-btn" type="button" data-thinking-nav-direction="-1" aria-label="上一段思考" title="上一段思考">‹</button>
+      <span>2/3</span>
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn thinking-group-nav-btn" type="button" data-thinking-nav-direction="1" aria-label="下一段思考" title="下一段思考">›</button>
+    </div>
+  
+    </div>
+    <pre class="thinking-group-body user-selectable" data-follow-tail="false" data-user-pinned="true">The skill is for front page. User wants Show HN. I can use the same parsing approach on the Show page. Let me try the skill tool on the Show page — it parses tr.athing, which Show page also has. Let's try it with limit 10.</pre>
+  </template><template class="static-transcript-template" data-static-thinking-index="2">
+    <div class="thinking-group-slot-head">
+      <div class="thinking-group-slot-title">
+        <b>最近思考</b>
+      </div>
+      
+    <div class="timeline-pager thinking-group-slot-nav" aria-label="切换思考过程">
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn thinking-group-nav-btn" type="button" data-thinking-nav-direction="-1" aria-label="上一段思考" title="上一段思考">‹</button>
+      <span>3/3</span>
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn thinking-group-nav-btn" type="button" data-thinking-nav-direction="1" aria-label="下一段思考" title="下一段思考" disabled="">›</button>
+    </div>
+  
+    </div>
+    <pre class="thinking-group-body user-selectable" data-follow-tail="false" data-user-pinned="true">The Show HN page default ordering is not by score — it's by time? Actually Show HN page shows newest-ish ordered. Rank 1 has 94 points 13 hours ago, rank 2 has 2 points 1 hour ago. It's mixed — the /show page is sorted by... actually it's sorted by "ranking" similar to front page but for Show HN. Hmm, rank 2 with 2 points and 1 hour ago suggests it's ordered by recency more than score? Actually HN /show is sorted by ranking score which includes time decay.
+
+"最近热帖" — recent hot posts. The /show page is the default Show HN listing. But there's also "Show HN" newest: https://news.ycombinator.com/shownew (newest).
+
+The user asks "Show HN 榜单最近热帖" — recent hot posts on Show HN leaderboard. The default /show page is fine. But the ordering seems odd. Let me consider getting a more "score-sorted" view. Hmm.
+
+Given ambiguity, I'll present the /show listing (10 items) plus note that the Show HN list is HN's ranking order (time decay + votes). 
+
+Should I add one-line takeaways? The skill says step 4 requires reading originals. That's 10 tabs — heavy. The user just asked to "看下" (take a look). I think a table with scores/comments and a brief overall observation is enough. But providing takeaways adds value. Given cost, maybe fetch descriptions for the top few? Let me consider effort vs value.
+
+The user request is casual: "帮我看下 Show HN 榜单最近热帖". A clean table + short summary of main themes (title-based) is appropriate. I could add brief notes based on titles, but I must not fabricate facts. I'll keep to observable data (title, score, comments, site, age) and give a light thematic read clearly derived from titles.
+
+Maybe I should try to get a bit more: fetch a couple of original pages for descriptions? That could improve quality. Let's do a moderate approach: open the top 3 originals and grab meta descriptions via run_script. Actually that's several tool calls. Hmm, but value is decent.
+
+Let me instead do one script that opens tabs? No, run_script can't open tabs (that's a navigation action). Actually tools.open_tab is available via tools proxy? The protocol says open_tab creates working tab; in run_script, "提交、导航、关闭 tab 等页面生命周期动作不要塞进 run_script". So no.
+
+I'll do a lightweight approach: give the table, and note takeaway inferred from titles. Actually let me at least fetch descriptions for the top 5 by opening tabs one by one — that's ~5 open_tab + 5 script calls. Too many.
+
+Alternative: HN item pages include the post text for Show HN. For Show HN posts with a URL, no text. 
+
+I'll skip deep-reading and clearly mark that the one-line notes are title-based, not from reading originals. Hmm, but protocol prefers verified claims. Title-derived summary is fine if marked.
+
+Actually, let me do a compromise: fetch meta descriptions for the top 4 via one script that fetches? CORS blocks fetch. No.
+
+Decision: deliver table + thematic summary based on titles, explicitly labeled. Also mention there are 30 items on the page, showed top 10, and ask if they want the full list or details.
+
+Also should I save to data_store? Not necessary unless user wants. Skip.
+
+Note timing: collectedAt 2026/10/23 12:14:30 Beijing time.
+
+Let me write response with footnotes to HN discussion links? Footnote rules: claims about facts from web pages need citations. Score/data comes from HN page — I can cite the HN show page and item pages. Let me add a few footnotes for the top items with links I have (HN discussion URLs and original URLs). These are "verified" in the sense the page was read.
+
+I'll present a table with links, and footnotes for a few notable ones. Keep footnotes reasonable — maybe cite the Show HN list page and 3-4 key items.
+
+Let me build the table for top 10.</pre>
+  </template></div><div class="msg msg-tool msg-tool-timeline" data-chat-lane="summary" data-active-tool-key="call_00_Et7OReJAGFNxSslR8GV02415" data-tool-timeline-signature="1422293401" data-active-tool-index="2" data-static-collapsed-lane="summary" data-static-expanded-lane="wide" data-transcript-type="tool-group">
+    <button class="qz-chiphead tool-summary tool-timeline-summary " type="button" aria-expanded="false">
+      <span class="dot "></span>
+      <span class="tool-name">读取 HN 热帖</span>
+      <span class="tool-args-preview">已完成 · 3/3</span>
+      <span class="tool-caret">▸</span>
+    </button>
+    <div class="tool-details tool-timeline-details hidden" data-auto-expanded="true" data-active-tool-key="call_00_Et7OReJAGFNxSslR8GV02415" data-timeline-mode="steps" data-active-tool-index="2">
+      <div class="tool-timeline-nav-area" data-tool-timeline-nav-signature="steps|call_00_Vv9ELGu2AWx7JJ8VpzGx4290:success:arrival:新开页面:Show | Hacker News|call_00_UtviwGXuYCRLHB2pcjlk4119:success:process:加载技能:|call_00_Et7OReJAGFNxSslR8GV02415:success:plugin:research:读取 HN 热帖:">
+        
+    <div class="tool-timeline-rail">
+      
+    <button class="qz-pill tool-timeline-step success" type="button" data-tool-timeline-index="0" title="open_tab">
+      <span class="mini-dot"></span>
+      <span>新开页面</span>
+    </button>
+  
+    <button class="qz-pill tool-timeline-step success" type="button" data-tool-timeline-index="1" title="load_skill">
+      <span class="mini-dot"></span>
+      <span>加载技能</span>
+    </button>
+  
+    <button class="qz-pill tool-timeline-step success active" type="button" data-tool-timeline-index="2" title="hn_top5_brief__hn_top_posts">
+      <span class="mini-dot"></span>
+      <span>读取 HN 热帖</span>
+    </button>
+  
+    </div>
+  
+      </div>
+      <div class="tool-timeline-slot" data-tool-timeline-slot-signature="1422293401:2:call_00_Et7OReJAGFNxSslR8GV02415">
+        <div class="tool-timeline-slot-head">
+          
+    <div class="tool-timeline-slot-title">
+      <b>读取 HN 热帖</b>
+      
+    </div>
+  
+          
+    <div class="timeline-pager tool-timeline-slot-nav" data-timeline-mode="steps" aria-label="切换工具调用详情">
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn tool-timeline-nav-btn" type="button" data-timeline-nav-direction="-1" aria-label="上一个调用" title="上一个调用">‹</button>
+      <span title="全部工具 3/3" data-position-scope="timeline">3/3</span>
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn tool-timeline-nav-btn" type="button" data-timeline-nav-direction="1" aria-label="下一个调用" title="下一个调用" disabled="">›</button>
+    </div>
+  
+        </div>
+      <div class="tool-timeline-slot-body tool-details-hn_top5_brief__hn_top_posts" data-tool-renderer-owner="call_00_Et7OReJAGFNxSslR8GV02415"><div data-tool-renderer="plugin" data-tool-renderer-key="call_00_Et7OReJAGFNxSslR8GV02415" style="display: contents;"><div style="display: contents;"><div class="tool-data-table-host" data-tool-renderer="table" data-tool-renderer-key="table" style="display: contents;"><div class="tool-data-table-section">
+      <div class="tool-data-table-head">
+        <div class="tool-data-table-title">HN 首页热帖</div>
+        <div class="tool-data-table-head-right">
+          <div class="tool-data-table-meta">
+            <span title="已返回 10 行，共 30 行">10 / 30 行</span>
+            <span>8 列</span>
+            <span class="tool-data-table-truncated">已截断</span>
+            
+            
+          </div>
+          
+        </div>
+      </div>
+      <div class="tool-data-table-wrap" data-tool-scroll-surface="table" data-tool-stream-surface="10">
+        <table class="tool-data-table">
+          <thead>
+            <tr>
+              <th class="tool-data-row-index">#</th>
+              <th title="排名">排名</th><th title="标题">标题</th><th title="得分">得分</th><th title="评论数">评论数</th><th title="站点">站点</th><th title="发布时间">发布时间</th><th title="原文链接">原文链接</th><th title="HN 讨论">HN 讨论</th>
+            </tr>
+          </thead>
+          <tbody>
+            
+              <tr>
+                <td class="tool-data-row-index">1</td>
+                <td title="1">1</td><td title="Show HN: Uberblok – an interactive museum of ZFS internals">Show HN: Uberblok – an interactive museum of ZFS internals</td><td title="94">94</td><td title="23">23</td><td title="storagebits.workers.dev">storagebits.workers.dev</td><td title="13 hours ago">13 hours ago</td><td title="https://uberblok.storagebits.workers.dev/"><a href="https://uberblok.storagebits.workers.dev/" target="_blank" rel="noreferrer noopener">https://uberblok.storagebits.workers.dev/</a></td><td title="https://news.ycombinator.com/item?id=50180257"><a href="https://news.ycombinator.com/item?id=50180257" target="_blank" rel="noreferrer noopener">https://news.ycombinator.com/item?id=50180257</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">2</td>
+                <td title="2">2</td><td title="Show HN: A wysiwyg Markdown editor for macOS that works with agents">Show HN: A wysiwyg Markdown editor for macOS that works with agents</td><td title="2">2</td><td title="3">3</td><td title="kirahowe.com">kirahowe.com</td><td title="1 hour ago">1 hour ago</td><td title="https://kirahowe.com/2026/oct/22/editmd-0-1-0"><a href="https://kirahowe.com/2026/oct/22/editmd-0-1-0" target="_blank" rel="noreferrer noopener">https://kirahowe.com/2026/oct/22/editmd-0-1-0</a></td><td title="https://news.ycombinator.com/item?id=50203836"><a href="https://news.ycombinator.com/item?id=50203836" target="_blank" rel="noreferrer noopener">https://news.ycombinator.com/item?id=50203836</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">3</td>
+                <td title="3">3</td><td title="Show HN: Turn regular JavaScript into a neural net">Show HN: Turn regular JavaScript into a neural net</td><td title="38">38</td><td title="11">11</td><td title="chenglou.me">chenglou.me</td><td title="9 hours ago">9 hours ago</td><td title="https://chenglou.me/handwired/"><a href="https://chenglou.me/handwired/" target="_blank" rel="noreferrer noopener">https://chenglou.me/handwired/</a></td><td title="https://news.ycombinator.com/item?id=50172984"><a href="https://news.ycombinator.com/item?id=50172984" target="_blank" rel="noreferrer noopener">https://news.ycombinator.com/item?id=50172984</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">4</td>
+                <td title="4">4</td><td title="Show HN: UI micro interactions prompts for AI">Show HN: UI micro interactions prompts for AI</td><td title="74">74</td><td title="42">42</td><td title="typeui.sh">typeui.sh</td><td title="9 hours ago">9 hours ago</td><td title="https://www.typeui.sh/micro-interactions"><a href="https://www.typeui.sh/micro-interactions" target="_blank" rel="noreferrer noopener">https://www.typeui.sh/micro-interactions</a></td><td title="https://news.ycombinator.com/item?id=50199290"><a href="https://news.ycombinator.com/item?id=50199290" target="_blank" rel="noreferrer noopener">https://news.ycombinator.com/item?id=50199290</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">5</td>
+                <td title="5">5</td><td title="Show HN: agent-usage-guard – a Claude Code mod to protect your usage window">Show HN: agent-usage-guard – a Claude Code mod to protect your usage window</td><td title="22">22</td><td title="9">9</td><td title="github.com/rbartoli">github.com/rbartoli</td><td title="10 hours ago">10 hours ago</td><td title="https://github.com/rbartoli/agent-usage-guard"><a href="https://github.com/rbartoli/agent-usage-guard" target="_blank" rel="noreferrer noopener">https://github.com/rbartoli/agent-usage-guard</a></td><td title="https://news.ycombinator.com/item?id=50198936"><a href="https://news.ycombinator.com/item?id=50198936" target="_blank" rel="noreferrer noopener">https://news.ycombinator.com/item?id=50198936</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">6</td>
+                <td title="6">6</td><td title="Show HN: CATT 0.2.1: Test agents/services against a Muse/Instinct-alike, in CI">Show HN: CATT 0.2.1: Test agents/services against a Muse/Instinct-alike, in CI</td><td title="7">7</td><td title="1">1</td><td title="github.com/coverage-cat">github.com/coverage-cat</td><td title="5 hours ago">5 hours ago</td><td title="https://github.com/Coverage-Cat/consumer-agent-testing-tool"><a href="https://github.com/Coverage-Cat/consumer-agent-testing-tool" target="_blank" rel="noreferrer noopener">https://github.com/Coverage-Cat/consumer-agent-testing-tool</a></td><td title="https://news.ycombinator.com/item?id=50201860"><a href="https://news.ycombinator.com/item?id=50201860" target="_blank" rel="noreferrer noopener">https://news.ycombinator.com/item?id=50201860</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">7</td>
+                <td title="7">7</td><td title="Show HN: Replacing CAPTCHAs with adaptive proof-of-work in WordPress">Show HN: Replacing CAPTCHAs with adaptive proof-of-work in WordPress</td><td title="10">10</td><td title="7">7</td><td title="wordpress.org">wordpress.org</td><td title="7 hours ago">7 hours ago</td><td title="https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/"><a href="https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/" target="_blank" rel="noreferrer noopener">https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/</a></td><td title="https://news.ycombinator.com/item?id=50194762"><a href="https://news.ycombinator.com/item?id=50194762" target="_blank" rel="noreferrer noopener">https://news.ycombinator.com/item?id=50194762</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">8</td>
+                <td title="8">8</td><td title="Show HN: Dovepass – can I legally fly a drone along this exact path in SF?">Show HN: Dovepass – can I legally fly a drone along this exact path in SF?</td><td title="30">30</td><td title="8">8</td><td title="dovepass.com">dovepass.com</td><td title="14 hours ago">14 hours ago</td><td title="https://dovepass.com"><a href="https://dovepass.com" target="_blank" rel="noreferrer noopener">https://dovepass.com</a></td><td title="https://news.ycombinator.com/item?id=50156779"><a href="https://news.ycombinator.com/item?id=50156779" target="_blank" rel="noreferrer noopener">https://news.ycombinator.com/item?id=50156779</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">9</td>
+                <td title="9">9</td><td title="Show HN: Build a world on your phone, explore it in XR on Vision Pro and Quest">Show HN: Build a world on your phone, explore it in XR on Vision Pro and Quest</td><td title="13">13</td><td title="3">3</td><td title="camilleworld.com">camilleworld.com</td><td title="9 hours ago">9 hours ago</td><td title="https://3d.camilleworld.com/play/"><a href="https://3d.camilleworld.com/play/" target="_blank" rel="noreferrer noopener">https://3d.camilleworld.com/play/</a></td><td title="https://news.ycombinator.com/item?id=50199349"><a href="https://news.ycombinator.com/item?id=50199349" target="_blank" rel="noreferrer noopener">https://news.ycombinator.com/item?id=50199349</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">10</td>
+                <td title="10">10</td><td title="Show HN: Omnara – Open-source alternative to Claude Managed Agents">Show HN: Omnara – Open-source alternative to Claude Managed Agents</td><td title="110">110</td><td title="34">34</td><td title="github.com/omnara-ai">github.com/omnara-ai</td><td title="1 day ago">1 day ago</td><td title="https://github.com/omnara-ai/omnara"><a href="https://github.com/omnara-ai/omnara" target="_blank" rel="noreferrer noopener">https://github.com/omnara-ai/omnara</a></td><td title="https://news.ycombinator.com/item?id=50183892"><a href="https://news.ycombinator.com/item?id=50183892" target="_blank" rel="noreferrer noopener">https://news.ycombinator.com/item?id=50183892</a></td>
+              </tr>
+            
+          </tbody>
+        </table>
+      </div>
+    </div></div></div></div></div></div>
+      <div class="tool-timeline-footer">
+        <div class="tool-timeline-footer-row">
+          <button class="qz-btn qz-btn--ghost qz-btn--inline tool-timeline-raw-btn" type="button" aria-expanded="false">查看原始数据</button>
+          <span class="tool-timeline-footer-spacer"></span>
+          <time class="tool-timeline-duration">耗时 4.0s</time>
+          <button class="qz-btn qz-btn--ghost qz-btn--inline tool-timeline-collapse-btn" type="button">收起</button>
+        </div>
+        <div class="tool-timeline-raw-panel hidden"><span class="tool-raw-lazy-source hidden" aria-hidden="true"></span></div>
+      </div>
+    </div>
+  <template class="static-transcript-template" data-static-tool-index="0" data-static-tool-family-id="" data-static-tool-family-nav-html="" data-static-tool-family-panel-html="" data-static-tool-title="新开页面" data-static-tool-preview="已完成 · 1/3">
+        <div class="tool-timeline-slot-head">
+          
+    <div class="tool-timeline-slot-title">
+      <b>新开页面</b>
+      <span>Show | Hacker News</span>
+    </div>
+  
+          
+    <div class="timeline-pager tool-timeline-slot-nav" data-timeline-mode="steps" aria-label="切换工具调用详情">
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn tool-timeline-nav-btn" type="button" data-timeline-nav-direction="-1" aria-label="上一个调用" title="上一个调用" disabled="">‹</button>
+      <span title="全部工具 1/3" data-position-scope="timeline">1/3</span>
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn tool-timeline-nav-btn" type="button" data-timeline-nav-direction="1" aria-label="下一个调用" title="下一个调用">›</button>
+    </div>
+  
+        </div>
+      <div class="tool-timeline-slot-body tool-details-profile-navigation tool-details-open_tab" data-tool-renderer-owner="call_00_Vv9ELGu2AWx7JJ8VpzGx4290"><div data-tool-renderer="navigation" data-tool-renderer-key="call_00_Vv9ELGu2AWx7JJ8VpzGx4290" style="display: contents;"><div style="display: contents;"><div class="tool-compact-line">
+    <div class="tool-compact-title">已新开页面</div>
+    <div class="tool-compact-subtitle"><a href="https://news.ycombinator.com/show" target="_blank" rel="noopener noreferrer">https://news.ycombinator.com/show</a></div>
+    <div class="tool-compact-meta"><span>桌面端</span></div>
+  </div></div></div></div></template><template class="static-transcript-template" data-static-tool-index="1" data-static-tool-family-id="" data-static-tool-family-nav-html="" data-static-tool-family-panel-html="" data-static-tool-title="加载技能" data-static-tool-preview="已完成 · 2/3">
+        <div class="tool-timeline-slot-head">
+          
+    <div class="tool-timeline-slot-title">
+      <b>加载技能</b>
+      
+    </div>
+  
+          
+    <div class="timeline-pager tool-timeline-slot-nav" data-timeline-mode="steps" aria-label="切换工具调用详情">
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn tool-timeline-nav-btn" type="button" data-timeline-nav-direction="-1" aria-label="上一个调用" title="上一个调用">‹</button>
+      <span title="全部工具 2/3" data-position-scope="timeline">2/3</span>
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn tool-timeline-nav-btn" type="button" data-timeline-nav-direction="1" aria-label="下一个调用" title="下一个调用">›</button>
+    </div>
+  
+        </div>
+      <div class="tool-timeline-slot-body tool-details-profile-skill tool-details-load_skill" data-tool-renderer-owner="call_00_UtviwGXuYCRLHB2pcjlk4119"><div data-tool-renderer="skill" data-tool-renderer-key="call_00_UtviwGXuYCRLHB2pcjlk4119" style="display: contents;"><div style="display: contents;"><div class="tool-compact-line">
+    <div class="tool-compact-title">hn-top5-brief</div>
+    <div class="tool-compact-subtitle">采集 Hacker News 首页前 N 条热帖的标题、得分、评论数、链接与讨论页，并提炼一句话看点</div>
+    <div class="tool-compact-meta"><span>site</span><span>2 资源</span></div>
+  </div><div class="tool-slim-list">
+    <div class="tool-slim-title">资源</div>
+    
+        <div class="tool-slim-row">
+          <div class="tool-slim-main">plugin.json</div>
+          <div class="tool-slim-sub">json · 1.6 KB · 声明解析 Hacker News 首页前 N 条帖子的工具与表格渲染。</div>
+          
+        </div>
+      
+        <div class="tool-slim-row">
+          <div class="tool-slim-main">scripts/hn-top-posts.js</div>
+          <div class="tool-slim-sub">script · 3.0 KB · 解析 HN 首页 tr.athing 帖子行，输出结构化热帖列表。</div>
+          
+        </div>
+      
+  </div></div></div></div></template><template class="static-transcript-template" data-static-tool-index="2" data-static-tool-family-id="" data-static-tool-family-nav-html="" data-static-tool-family-panel-html="" data-static-tool-title="读取 HN 热帖" data-static-tool-preview="已完成 · 3/3">
+        <div class="tool-timeline-slot-head">
+          
+    <div class="tool-timeline-slot-title">
+      <b>读取 HN 热帖</b>
+      
+    </div>
+  
+          
+    <div class="timeline-pager tool-timeline-slot-nav" data-timeline-mode="steps" aria-label="切换工具调用详情">
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn tool-timeline-nav-btn" type="button" data-timeline-nav-direction="-1" aria-label="上一个调用" title="上一个调用">‹</button>
+      <span title="全部工具 3/3" data-position-scope="timeline">3/3</span>
+      <button class="qz-icon-btn qz-icon-btn--secondary qz-icon-btn--xs timeline-pager-btn tool-timeline-nav-btn" type="button" data-timeline-nav-direction="1" aria-label="下一个调用" title="下一个调用" disabled="">›</button>
+    </div>
+  
+        </div>
+      <div class="tool-timeline-slot-body tool-details-hn_top5_brief__hn_top_posts" data-tool-renderer-owner="call_00_Et7OReJAGFNxSslR8GV02415"><div data-tool-renderer="plugin" data-tool-renderer-key="call_00_Et7OReJAGFNxSslR8GV02415" style="display: contents;"><div style="display: contents;"><div class="tool-data-table-host" data-tool-renderer="table" data-tool-renderer-key="table" style="display: contents;"><div class="tool-data-table-section">
+      <div class="tool-data-table-head">
+        <div class="tool-data-table-title">HN 首页热帖</div>
+        <div class="tool-data-table-head-right">
+          <div class="tool-data-table-meta">
+            <span title="已返回 10 行，共 30 行">10 / 30 行</span>
+            <span>8 列</span>
+            <span class="tool-data-table-truncated">已截断</span>
+            
+            
+          </div>
+          
+        </div>
+      </div>
+      <div class="tool-data-table-wrap" data-tool-scroll-surface="table" data-tool-stream-surface="10">
+        <table class="tool-data-table">
+          <thead>
+            <tr>
+              <th class="tool-data-row-index">#</th>
+              <th title="排名">排名</th><th title="标题">标题</th><th title="得分">得分</th><th title="评论数">评论数</th><th title="站点">站点</th><th title="发布时间">发布时间</th><th title="原文链接">原文链接</th><th title="HN 讨论">HN 讨论</th>
+            </tr>
+          </thead>
+          <tbody>
+            
+              <tr>
+                <td class="tool-data-row-index">1</td>
+                <td title="1">1</td><td title="Show HN: Uberblok – an interactive museum of ZFS internals">Show HN: Uberblok – an interactive museum of ZFS internals</td><td title="94">94</td><td title="23">23</td><td title="storagebits.workers.dev">storagebits.workers.dev</td><td title="13 hours ago">13 hours ago</td><td title="https://uberblok.storagebits.workers.dev/"><a href="https://uberblok.storagebits.workers.dev/" target="_blank" rel="noopener noreferrer">https://uberblok.storagebits.workers.dev/</a></td><td title="https://news.ycombinator.com/item?id=50180257"><a href="https://news.ycombinator.com/item?id=50180257" target="_blank" rel="noopener noreferrer">https://news.ycombinator.com/item?id=50180257</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">2</td>
+                <td title="2">2</td><td title="Show HN: A wysiwyg Markdown editor for macOS that works with agents">Show HN: A wysiwyg Markdown editor for macOS that works with agents</td><td title="2">2</td><td title="3">3</td><td title="kirahowe.com">kirahowe.com</td><td title="1 hour ago">1 hour ago</td><td title="https://kirahowe.com/2026/oct/22/editmd-0-1-0"><a href="https://kirahowe.com/2026/oct/22/editmd-0-1-0" target="_blank" rel="noopener noreferrer">https://kirahowe.com/2026/oct/22/editmd-0-1-0</a></td><td title="https://news.ycombinator.com/item?id=50203836"><a href="https://news.ycombinator.com/item?id=50203836" target="_blank" rel="noopener noreferrer">https://news.ycombinator.com/item?id=50203836</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">3</td>
+                <td title="3">3</td><td title="Show HN: Turn regular JavaScript into a neural net">Show HN: Turn regular JavaScript into a neural net</td><td title="38">38</td><td title="11">11</td><td title="chenglou.me">chenglou.me</td><td title="9 hours ago">9 hours ago</td><td title="https://chenglou.me/handwired/"><a href="https://chenglou.me/handwired/" target="_blank" rel="noopener noreferrer">https://chenglou.me/handwired/</a></td><td title="https://news.ycombinator.com/item?id=50172984"><a href="https://news.ycombinator.com/item?id=50172984" target="_blank" rel="noopener noreferrer">https://news.ycombinator.com/item?id=50172984</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">4</td>
+                <td title="4">4</td><td title="Show HN: UI micro interactions prompts for AI">Show HN: UI micro interactions prompts for AI</td><td title="74">74</td><td title="42">42</td><td title="typeui.sh">typeui.sh</td><td title="9 hours ago">9 hours ago</td><td title="https://www.typeui.sh/micro-interactions"><a href="https://www.typeui.sh/micro-interactions" target="_blank" rel="noopener noreferrer">https://www.typeui.sh/micro-interactions</a></td><td title="https://news.ycombinator.com/item?id=50199290"><a href="https://news.ycombinator.com/item?id=50199290" target="_blank" rel="noopener noreferrer">https://news.ycombinator.com/item?id=50199290</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">5</td>
+                <td title="5">5</td><td title="Show HN: agent-usage-guard – a Claude Code mod to protect your usage window">Show HN: agent-usage-guard – a Claude Code mod to protect your usage window</td><td title="22">22</td><td title="9">9</td><td title="github.com/rbartoli">github.com/rbartoli</td><td title="10 hours ago">10 hours ago</td><td title="https://github.com/rbartoli/agent-usage-guard"><a href="https://github.com/rbartoli/agent-usage-guard" target="_blank" rel="noopener noreferrer">https://github.com/rbartoli/agent-usage-guard</a></td><td title="https://news.ycombinator.com/item?id=50198936"><a href="https://news.ycombinator.com/item?id=50198936" target="_blank" rel="noopener noreferrer">https://news.ycombinator.com/item?id=50198936</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">6</td>
+                <td title="6">6</td><td title="Show HN: CATT 0.2.1: Test agents/services against a Muse/Instinct-alike, in CI">Show HN: CATT 0.2.1: Test agents/services against a Muse/Instinct-alike, in CI</td><td title="7">7</td><td title="1">1</td><td title="github.com/coverage-cat">github.com/coverage-cat</td><td title="5 hours ago">5 hours ago</td><td title="https://github.com/Coverage-Cat/consumer-agent-testing-tool"><a href="https://github.com/Coverage-Cat/consumer-agent-testing-tool" target="_blank" rel="noopener noreferrer">https://github.com/Coverage-Cat/consumer-agent-testing-tool</a></td><td title="https://news.ycombinator.com/item?id=50201860"><a href="https://news.ycombinator.com/item?id=50201860" target="_blank" rel="noopener noreferrer">https://news.ycombinator.com/item?id=50201860</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">7</td>
+                <td title="7">7</td><td title="Show HN: Replacing CAPTCHAs with adaptive proof-of-work in WordPress">Show HN: Replacing CAPTCHAs with adaptive proof-of-work in WordPress</td><td title="10">10</td><td title="7">7</td><td title="wordpress.org">wordpress.org</td><td title="7 hours ago">7 hours ago</td><td title="https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/"><a href="https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/" target="_blank" rel="noopener noreferrer">https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/</a></td><td title="https://news.ycombinator.com/item?id=50194762"><a href="https://news.ycombinator.com/item?id=50194762" target="_blank" rel="noopener noreferrer">https://news.ycombinator.com/item?id=50194762</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">8</td>
+                <td title="8">8</td><td title="Show HN: Dovepass – can I legally fly a drone along this exact path in SF?">Show HN: Dovepass – can I legally fly a drone along this exact path in SF?</td><td title="30">30</td><td title="8">8</td><td title="dovepass.com">dovepass.com</td><td title="14 hours ago">14 hours ago</td><td title="https://dovepass.com"><a href="https://dovepass.com" target="_blank" rel="noopener noreferrer">https://dovepass.com</a></td><td title="https://news.ycombinator.com/item?id=50156779"><a href="https://news.ycombinator.com/item?id=50156779" target="_blank" rel="noopener noreferrer">https://news.ycombinator.com/item?id=50156779</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">9</td>
+                <td title="9">9</td><td title="Show HN: Build a world on your phone, explore it in XR on Vision Pro and Quest">Show HN: Build a world on your phone, explore it in XR on Vision Pro and Quest</td><td title="13">13</td><td title="3">3</td><td title="camilleworld.com">camilleworld.com</td><td title="9 hours ago">9 hours ago</td><td title="https://3d.camilleworld.com/play/"><a href="https://3d.camilleworld.com/play/" target="_blank" rel="noopener noreferrer">https://3d.camilleworld.com/play/</a></td><td title="https://news.ycombinator.com/item?id=50199349"><a href="https://news.ycombinator.com/item?id=50199349" target="_blank" rel="noopener noreferrer">https://news.ycombinator.com/item?id=50199349</a></td>
+              </tr>
+            
+              <tr>
+                <td class="tool-data-row-index">10</td>
+                <td title="10">10</td><td title="Show HN: Omnara – Open-source alternative to Claude Managed Agents">Show HN: Omnara – Open-source alternative to Claude Managed Agents</td><td title="110">110</td><td title="34">34</td><td title="github.com/omnara-ai">github.com/omnara-ai</td><td title="1 day ago">1 day ago</td><td title="https://github.com/omnara-ai/omnara"><a href="https://github.com/omnara-ai/omnara" target="_blank" rel="noopener noreferrer">https://github.com/omnara-ai/omnara</a></td><td title="https://news.ycombinator.com/item?id=50183892"><a href="https://news.ycombinator.com/item?id=50183892" target="_blank" rel="noopener noreferrer">https://news.ycombinator.com/item?id=50183892</a></td>
+              </tr>
+            
+          </tbody>
+        </table>
+      </div>
+    </div></div></div></div></div></template></div><div class="msg msg-assistant" data-stream-trace-id="run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:llm:4" data-content="这是 Hacker News 的 Show HN 榜单（也就是 /show 列表页）当前的排序。我按页面顺序取了前 10 条；页面共有 30 条。分数和评论数是 2026-10-23 12:14（北京时间）的快照，会随时间变化。
+
+## Show HN 榜单前 10
+
+| # | 标题 | 得分 | 评论 | 站点 | 发布 |
+|---|---|---|---|---|---|
+| 1 | [Show HN: Uberblok – an interactive museum of ZFS internals](https://uberblok.storagebits.workers.dev/) | 94 | 23 | storagebits.workers.dev | 13 小时前 |
+| 2 | [Show HN: A wysiwyg Markdown editor for macOS that works with agents](https://kirahowe.com/2026/oct/22/editmd-0-1-0) | 2 | 3 | kirahowe.com | 1 小时前 |
+| 3 | [Show HN: Turn regular JavaScript into a neural net](https://chenglou.me/handwired/) | 38 | 11 | chenglou.me | 9 小时前 |
+| 4 | [Show HN: UI micro interactions prompts for AI](https://www.typeui.sh/micro-interactions) | 74 | 42 | typeui.sh | 9 小时前 |
+| 5 | [Show HN: agent-usage-guard – a Claude Code mod to protect your usage window](https://github.com/rbartoli/agent-usage-guard) | 22 | 9 | github.com/rbartoli | 10 小时前 |
+| 6 | [Show HN: CATT 0.2.1: Test agents/services against a Muse/Instinct-alike, in CI](https://github.com/Coverage-Cat/consumer-agent-testing-tool) | 7 | 1 | github.com/coverage-cat | 5 小时前 |
+| 7 | [Show HN: Replacing CAPTCHAs with adaptive proof-of-work in WordPress](https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/) | 10 | 7 | wordpress.org | 7 小时前 |
+| 8 | [Show HN: Dovepass – can I legally fly a drone along this exact path in SF?](https://dovepass.com) | 30 | 8 | dovepass.com | 14 小时前 |
+| 9 | [Show HN: Build a world on your phone, explore it in XR on Vision Pro and Quest](https://3d.camilleworld.com/play/) | 13 | 3 | camilleworld.com | 9 小时前 |
+| 10 | [Show HN: Omnara – Open-source alternative to Claude Managed Agents](https://github.com/omnara-ai/omnara) | 110 | 34 | github.com/omnara-ai | 1 天前 |
+
+## 几点观察
+
+- **榜首与最高分不是同一条**：页面上分数最高的是第 10 名的 Omnara（110 分、34 评论），但它在列表里排第 10，因为 HN 的排序综合了时间衰减，这条已经发布 1 天。列表顺序并不等于分数顺序，第 2 名只有 2 分也是同样原因（1 小时前刚发）。
+- **今晚的主线明显是 AI Agent 工具**：Omnara（开源版 Claude Managed Agents）、agent-usage-guard（给 Claude Code 加用量窗口保护）、CATT（在 CI 里测试 agent 服务）、editmd（面向 agent 的 Markdown 编辑器）占了 4 条，讨论度也集中在 Omnara 和 typeui 上。
+- **讨论最热的不是最高分**：typeui.sh 的「给 AI 用的 UI 微交互提示词」74 分、42 条评论，是这 10 条里评论最多的，说明它更有争议或更值得讨论。
+- **技术向的项目更稳**：Uberblok 把 ZFS 内部结构做成交互式博物馆，94 分；handwired 用原生 JavaScript 手写神经网络，38 分——这两条是典型的「实现类 Show HN」，得分稳、评论理性。
+
+以上看点都只依据标题、分数和评论数得出，还没有逐条打开原文。需要我：
+
+1. 逐条读原文（README、正文、meta 描述），给每条补一句有依据的一句话看点，并保存到 data_store 表；
+2. 或者把 Show HN 全部 30 条内容拉成完整表格（包含「最新」列表 shownew）；
+3. 或者只针对 Omnara、typeui 这两条讨论最热的帖子，抓取评论区观点摘要。
+
+你想选哪一种？告诉我，我就继续。
+
+[^1]: [Show | Hacker News](https://news.ycombinator.com/show)" data-final-content="这是 Hacker News 的 Show HN 榜单（也就是 /show 列表页）当前的排序。我按页面顺序取了前 10 条；页面共有 30 条。分数和评论数是 2026-10-23 12:14（北京时间）的快照，会随时间变化。
+
+## Show HN 榜单前 10
+
+| # | 标题 | 得分 | 评论 | 站点 | 发布 |
+|---|---|---|---|---|---|
+| 1 | [Show HN: Uberblok – an interactive museum of ZFS internals](https://uberblok.storagebits.workers.dev/) | 94 | 23 | storagebits.workers.dev | 13 小时前 |
+| 2 | [Show HN: A wysiwyg Markdown editor for macOS that works with agents](https://kirahowe.com/2026/oct/22/editmd-0-1-0) | 2 | 3 | kirahowe.com | 1 小时前 |
+| 3 | [Show HN: Turn regular JavaScript into a neural net](https://chenglou.me/handwired/) | 38 | 11 | chenglou.me | 9 小时前 |
+| 4 | [Show HN: UI micro interactions prompts for AI](https://www.typeui.sh/micro-interactions) | 74 | 42 | typeui.sh | 9 小时前 |
+| 5 | [Show HN: agent-usage-guard – a Claude Code mod to protect your usage window](https://github.com/rbartoli/agent-usage-guard) | 22 | 9 | github.com/rbartoli | 10 小时前 |
+| 6 | [Show HN: CATT 0.2.1: Test agents/services against a Muse/Instinct-alike, in CI](https://github.com/Coverage-Cat/consumer-agent-testing-tool) | 7 | 1 | github.com/coverage-cat | 5 小时前 |
+| 7 | [Show HN: Replacing CAPTCHAs with adaptive proof-of-work in WordPress](https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/) | 10 | 7 | wordpress.org | 7 小时前 |
+| 8 | [Show HN: Dovepass – can I legally fly a drone along this exact path in SF?](https://dovepass.com) | 30 | 8 | dovepass.com | 14 小时前 |
+| 9 | [Show HN: Build a world on your phone, explore it in XR on Vision Pro and Quest](https://3d.camilleworld.com/play/) | 13 | 3 | camilleworld.com | 9 小时前 |
+| 10 | [Show HN: Omnara – Open-source alternative to Claude Managed Agents](https://github.com/omnara-ai/omnara) | 110 | 34 | github.com/omnara-ai | 1 天前 |
+
+## 几点观察
+
+- **榜首与最高分不是同一条**：页面上分数最高的是第 10 名的 Omnara（110 分、34 评论），但它在列表里排第 10，因为 HN 的排序综合了时间衰减，这条已经发布 1 天。列表顺序并不等于分数顺序，第 2 名只有 2 分也是同样原因（1 小时前刚发）。
+- **今晚的主线明显是 AI Agent 工具**：Omnara（开源版 Claude Managed Agents）、agent-usage-guard（给 Claude Code 加用量窗口保护）、CATT（在 CI 里测试 agent 服务）、editmd（面向 agent 的 Markdown 编辑器）占了 4 条，讨论度也集中在 Omnara 和 typeui 上。
+- **讨论最热的不是最高分**：typeui.sh 的「给 AI 用的 UI 微交互提示词」74 分、42 条评论，是这 10 条里评论最多的，说明它更有争议或更值得讨论。
+- **技术向的项目更稳**：Uberblok 把 ZFS 内部结构做成交互式博物馆，94 分；handwired 用原生 JavaScript 手写神经网络，38 分——这两条是典型的「实现类 Show HN」，得分稳、评论理性。
+
+以上看点都只依据标题、分数和评论数得出，还没有逐条打开原文。需要我：
+
+1. 逐条读原文（README、正文、meta 描述），给每条补一句有依据的一句话看点，并保存到 data_store 表；
+2. 或者把 Show HN 全部 30 条内容拉成完整表格（包含「最新」列表 shownew）；
+3. 或者只针对 Omnara、typeui 这两条讨论最热的帖子，抓取评论区观点摘要。
+
+你想选哪一种？告诉我，我就继续。
+
+[^1]: [Show | Hacker News](https://news.ycombinator.com/show)" data-transcript-type="assistant"><div class="msg-content"><p>这是 Hacker News 的 Show HN 榜单（也就是 /show 列表页）当前的排序。我按页面顺序取了前 10 条；页面共有 30 条。分数和评论数是 2026-10-23 12:14（北京时间）的快照，会随时间变化。</p>
+<h2>Show HN 榜单前 10</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>标题</th>
+<th>得分</th>
+<th>评论</th>
+<th>站点</th>
+<th>发布</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td><a href="https://uberblok.storagebits.workers.dev/" target="_blank" rel="noreferrer noopener">Show HN: Uberblok – an interactive museum of ZFS internals</a></td>
+<td>94</td>
+<td>23</td>
+<td>storagebits.workers.dev</td>
+<td>13 小时前</td>
+</tr>
+<tr>
+<td>2</td>
+<td><a href="https://kirahowe.com/2026/oct/22/editmd-0-1-0" target="_blank" rel="noreferrer noopener">Show HN: A wysiwyg Markdown editor for macOS that works with agents</a></td>
+<td>2</td>
+<td>3</td>
+<td>kirahowe.com</td>
+<td>1 小时前</td>
+</tr>
+<tr>
+<td>3</td>
+<td><a href="https://chenglou.me/handwired/" target="_blank" rel="noreferrer noopener">Show HN: Turn regular JavaScript into a neural net</a></td>
+<td>38</td>
+<td>11</td>
+<td>chenglou.me</td>
+<td>9 小时前</td>
+</tr>
+<tr>
+<td>4</td>
+<td><a href="https://www.typeui.sh/micro-interactions" target="_blank" rel="noreferrer noopener">Show HN: UI micro interactions prompts for AI</a></td>
+<td>74</td>
+<td>42</td>
+<td>typeui.sh</td>
+<td>9 小时前</td>
+</tr>
+<tr>
+<td>5</td>
+<td><a href="https://github.com/rbartoli/agent-usage-guard" target="_blank" rel="noreferrer noopener">Show HN: agent-usage-guard – a Claude Code mod to protect your usage window</a></td>
+<td>22</td>
+<td>9</td>
+<td>github.com/rbartoli</td>
+<td>10 小时前</td>
+</tr>
+<tr>
+<td>6</td>
+<td><a href="https://github.com/Coverage-Cat/consumer-agent-testing-tool" target="_blank" rel="noreferrer noopener">Show HN: CATT 0.2.1: Test agents/services against a Muse/Instinct-alike, in CI</a></td>
+<td>7</td>
+<td>1</td>
+<td>github.com/coverage-cat</td>
+<td>5 小时前</td>
+</tr>
+<tr>
+<td>7</td>
+<td><a href="https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/" target="_blank" rel="noreferrer noopener">Show HN: Replacing CAPTCHAs with adaptive proof-of-work in WordPress</a></td>
+<td>10</td>
+<td>7</td>
+<td>wordpress.org</td>
+<td>7 小时前</td>
+</tr>
+<tr>
+<td>8</td>
+<td><a href="https://dovepass.com" target="_blank" rel="noreferrer noopener">Show HN: Dovepass – can I legally fly a drone along this exact path in SF?</a></td>
+<td>30</td>
+<td>8</td>
+<td>dovepass.com</td>
+<td>14 小时前</td>
+</tr>
+<tr>
+<td>9</td>
+<td><a href="https://3d.camilleworld.com/play/" target="_blank" rel="noreferrer noopener">Show HN: Build a world on your phone, explore it in XR on Vision Pro and Quest</a></td>
+<td>13</td>
+<td>3</td>
+<td>camilleworld.com</td>
+<td>9 小时前</td>
+</tr>
+<tr>
+<td>10</td>
+<td><a href="https://github.com/omnara-ai/omnara" target="_blank" rel="noreferrer noopener">Show HN: Omnara – Open-source alternative to Claude Managed Agents</a></td>
+<td>110</td>
+<td>34</td>
+<td>github.com/omnara-ai</td>
+<td>1 天前</td>
+</tr>
+</tbody></table>
+<h2>几点观察</h2>
+<ul>
+<li><strong>榜首与最高分不是同一条</strong>：页面上分数最高的是第 10 名的 Omnara（110 分、34 评论），但它在列表里排第 10，因为 HN 的排序综合了时间衰减，这条已经发布 1 天。列表顺序并不等于分数顺序，第 2 名只有 2 分也是同样原因（1 小时前刚发）。</li>
+<li><strong>今晚的主线明显是 AI Agent 工具</strong>：Omnara（开源版 Claude Managed Agents）、agent-usage-guard（给 Claude Code 加用量窗口保护）、CATT（在 CI 里测试 agent 服务）、editmd（面向 agent 的 Markdown 编辑器）占了 4 条，讨论度也集中在 Omnara 和 typeui 上。</li>
+<li><strong>讨论最热的不是最高分</strong>：typeui.sh 的「给 AI 用的 UI 微交互提示词」74 分、42 条评论，是这 10 条里评论最多的，说明它更有争议或更值得讨论。</li>
+<li><strong>技术向的项目更稳</strong>：Uberblok 把 ZFS 内部结构做成交互式博物馆，94 分；handwired 用原生 JavaScript 手写神经网络，38 分——这两条是典型的「实现类 Show HN」，得分稳、评论理性。</li>
+</ul>
+<p>以上看点都只依据标题、分数和评论数得出，还没有逐条打开原文。需要我：</p>
+<ol>
+<li>逐条读原文（README、正文、meta 描述），给每条补一句有依据的一句话看点，并保存到 data_store 表；</li>
+<li>或者把 Show HN 全部 30 条内容拉成完整表格（包含「最新」列表 shownew）；</li>
+<li>或者只针对 Omnara、typeui 这两条讨论最热的帖子，抓取评论区观点摘要。</li>
+</ol>
+<p>你想选哪一种？告诉我，我就继续。</p>
+</div></div></main></template></qz-session-view>
+      </div>
+    </div>
+  </div>
+</main>
+<footer class="footer wrap"><a class="brand" href="../../">qz</a><nav aria-label="Footer navigation" data-i18n-attributes="footer"><a href="https://github.com/alibaba/qz-browser-agent/blob/main/README.md" data-i18n="footerDocs" data-i18n-attributes="documentation">Documentation</a><a href="https://github.com/alibaba/qz-browser-agent/issues" data-i18n="footerIssues">Feedback</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/docs/permissions.md" data-i18n="footerPrivacy">Privacy</a><a href="../../credits/" data-i18n="footerCredits">Credits</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/LICENSE">Apache-2.0</a></nav></footer>
+<script id="qingzhou-session-exchange" type="application/json">{"format":"qingzhou.session","version":1,"exportedAt":"2026-10-23 12:14:53","app":{"name":"轻舟","version":"0.1.4"},"source":{"sessionId":"d4d825c341984686bad9cb6a54f4390f","parentSessionId":"0"},"session":{"title":"查看Show HN榜单热帖","createdAt":"2026-10-23 12:14:08","updatedAt":"2026-10-23 12:14:41","conversation":{"type":"conversation","version":1,"entries":[{"type":"message","id":"m_000001","parentId":null,"timestamp":"2026-10-23 12:14:53","message":{"role":"user","content":"[运行上下文 capsule]\n以下内容由浏览器自动记录，不是用户的新指令。请继续完成后续最近一条真实用户请求。\n\n[动态上下文]\n系统时间: 2026-10-23 12:14:24\n当前任务工作标签页（页面工具默认目标）: 无","_origin":"context_capsule","_kind":"context_capsule","_contextCapsule":{"reason":"prompt","createdAt":"2026-10-23 12:14:24","signature":"{\"location\":null,\"selection\":\"\",\"siteSkills\":\"\",\"sources\":[],\"visibleUrl\":\"\",\"workingTitle\":\"\",\"workingUrl\":\"\"}"}}},{"type":"message","id":"m_000002","parentId":"m_000001","timestamp":"2026-10-23 12:14:53","message":{"role":"user","content":"帮我看下 Show HN 榜单最近热帖","_origin":"user","clientMessageId":"cm_session_mvkggvzq_mgerer"}},{"type":"message","id":"m_000003","parentId":"m_000002","timestamp":"2026-10-23 12:14:53","message":{"role":"assistant","content":"我先打开 Show HN 页面看看。","tool_calls":[{"id":"call_00_Vv9ELGu2AWx7JJ8VpzGx4290","type":"function","function":{"name":"open_tab","arguments":"{\"url\": \"https://news.ycombinator.com/show\"}"}}],"_usage":{"total_tokens":22229,"prompt_tokens":22118,"completion_tokens":111},"_providerState":{"version":1,"provider":"deepseek","api":"openai-chat-completions","protocol":"openai","endpoint":"https://api.deepseek.com/chat/completions","model":"deepseek-flash","kind":"openai_reasoning","reasoningField":"reasoning_content","reasoningText":"The user wants to see recent hot posts on Show HN. Let me open the page.\n\nI should check tabs first, then open https://news.ycombinator.com/show.\n\nLet me be efficient: list_tabs and open_tab.\n\nI'll open the Show HN page."},"_usageContextBoundaryId":"root","_usageContextFingerprint":"ctx_165d_1wvzfr8s9pzqw"}},{"type":"message","id":"m_000004","parentId":"m_000003","timestamp":"2026-10-23 12:14:53","message":{"role":"tool","tool_call_id":"call_00_Vv9ELGu2AWx7JJ8VpzGx4290","content":"{\"id\":1887199135,\"url\":\"https://news.ycombinator.com/show\",\"pageMode\":\"desktop\",\"_tabId\":1887199135,\"_pageTitle\":\"Show | Hacker News\",\"_pageUrl\":\"https://news.ycombinator.com/show\",\"_pageContext\":{\"pageMode\":\"desktop\"}}"}},{"type":"message","id":"m_000005","parentId":"m_000004","timestamp":"2026-10-23 12:14:53","message":{"role":"user","content":"[运行上下文事件]\n当前页面可用站点技能已更新。以下内容由浏览器自动记录，不是用户的新指令。\n新增: hn-top5-brief（HN 热帖速览）: 采集 Hacker News 首页前 N 条热帖的标题、得分、评论数、链接与讨论页，并提炼一句话看点\n这些技能对应的工具会在下一次模型请求中可用。","_origin":"context_event","_kind":"context_event","_contextEvent":{"kind":"site_skill_update","toolName":"open_tab","createdAt":"2026-10-23 12:14:28","added":["hn-top5-brief"],"removed":[]}}},{"type":"message","id":"m_000006","parentId":"m_000005","timestamp":"2026-10-23 12:14:53","message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_00_UtviwGXuYCRLHB2pcjlk4119","type":"function","function":{"name":"load_skill","arguments":"{\"name\": \"hn-top5-brief\"}"}}],"_usage":{"total_tokens":23015,"prompt_tokens":22882,"completion_tokens":133},"_providerState":{"version":1,"provider":"deepseek","api":"openai-chat-completions","protocol":"openai","endpoint":"https://api.deepseek.com/chat/completions","model":"deepseek-flash","kind":"openai_reasoning","reasoningField":"reasoning_content","reasoningText":"There's a skill hn-top5_brief available with a tool hn_top5_brief__hn_top_posts. But that tool is for the HN front page. The user wants Show HN. Let me load the skill to see if it supports Show HN.\n\nActually let me first read the page to see Show HN posts. But the skill tool might work on show page too since it parses top posts. Let me load the skill first."},"_usageContextBoundaryId":"root","_usageContextFingerprint":"ctx_181f_9a0yw88fe5ag"}},{"type":"message","id":"m_000007","parentId":"m_000006","timestamp":"2026-10-23 12:14:53","message":{"role":"tool","tool_call_id":"call_00_UtviwGXuYCRLHB2pcjlk4119","content":"{\"name\":\"hn-top5-brief\",\"displayName\":\"HN 热帖速览\",\"description\":\"采集 Hacker News 首页前 N 条热帖的标题、得分、评论数、链接与讨论页，并提炼一句话看点\",\"scope\":\"site\",\"domains\":[\"news.ycombinator.com\"],\"urlPatterns\":[\"/\",\"/news\",\"/item\"],\"excludePatterns\":[],\"status\":\"active\",\"source\":\"\",\"builtin\":false,\"readOnly\":false,\"updatedAt\":\"2026-10-23 12:13:32\",\"runtime\":\"Skill 运行环境是轻舟 Chrome 浏览器扩展，不是 Node.js，也不是服务器。\\nMarkdown content 应描述浏览器操作 SOP：页面观察、元素定位、Network/Data/下载/书签等 Skill 工具如何协作。\\nMarkdown content 引用 references、模板、示例或其他资源文件时，先用 load_skill_resource(name,path) 按需读取单个文件。\\nDOCX、XLSX、PDF 资源由 load_skill_resource 自动解析为 document model；返回 truncated 时加载 qingzhou-documents，并用 document_read_chunk 继续读取。\\nscript resources 与 run_script.code 使用同一种源码形态：默认写成 async () => { ... } 函数表达式，由轻舟自动调用；可访问 document/window/Web APIs、input/args、tabId、tools/tool；不能使用 fs/path/process/require、npm 包、服务器文件系统、后台常驻进程或本地 shell。\\n需要跨页面动作时，在 Markdown 中指导 agent 拆成普通工具步骤；不要在脚本里直接点击/提交导致当前 frame 卸载。\",\"content\":\"# HN 热帖速览\\n\\n给 news.ycombinator.com 首页做“前 N 条热帖速览”：标题、得分、评论数、原文链接、讨论链接，再为每条补一句有原文依据的看点。\\n\\n## 适用与前置\\n\\n- 适用：Hacker News 首页（含 /news）、需要当天热帖清单、需要把热帖落库或做成简报。\\n- 页面模式：桌面模式验证过（`pageMode: \\\"desktop\\\"`）。移动模式未验证，需要时用 `open_tab` 的 `mode:\\\"mobile\\\"` 或 `set_page_mode` 重新跑一遍流程。\\n- 无需登录；HN 首页是同步渲染的静态表格，不需要等待接口。\\n\\n## 步骤 1：打开首页\\n\\n用 `open_tab(\\\"https://news.ycombinator.com/\\\")`。若任务已有工作标签页，先用 `get_working_tab` / `list_tabs` 判断是否已经停在 HN。\\n\\n## 步骤 2：解析帖子列表\\n\\n优先调用本 Skill 的工具 `hn_top_posts`（参数 `limit`，默认 5）。它直接解析 DOM 并返回结构化行；如果工具不可用，用 `run_script` 页面模式做等价解析：\\n\\n```js\\nconst rows = [...document.querySelectorAll('tr.athing')].slice(0, limit);\\nrows.map((tr) => {\\n  const a = tr.querySelector('.titleline > a');\\n  const sub = tr.nextElementSibling;              // 得分/评论在紧随其后的 tr 里\\n  const score = sub?.querySelector('.score')?.textContent?.trim() || '';\\n  const commentA = [...sub.querySelectorAll('a')].find((x) => /comment|discuss/.test(x.textContent));\\n  return {\\n    title: a?.textContent?.trim(),\\n    url: a?.getAttribute('href'),\\n    site: tr.querySelector('.sitestr')?.textContent?.trim() || '',\\n    score,\\n    comments: commentA?.textContent?.replace(/\\\\s+/g, ' ').trim() || '',\\n    itemId: tr.getAttribute('id'),\\n  };\\n});\\n```\\n\\n关键选择器：`tr.athing`（每条帖子）、`.titleline > a`（标题+链接）、`.sitestr`（域名）、`tr.athing + tr`（元信息行）、`.score`、`.age`、`a[href^=\\\"item?id=\\\"]`（讨论页）。\\n\\n## 步骤 3：校验\\n\\n- 返回行数必须等于目标 N，否则可能是页面未渲染完成：`wait_for_element(\\\"tr.athing\\\")` 后重跑。\\n- 新帖可能没有 `.score`（或显示 \\\"discuss\\\" 而非评论数）：如实标注“未显示 / 暂无评论”，不要补造数字。\\n- 外链可能是相对 `item?id=` 形式（自帖、Ask HN、Show HN），需要拼成 `https://news.ycombinator.com/item?id=\u003cid>`。\\n\\n## 步骤 4：生成一句话看点（必须读原文）\\n\\n同源 `fetch` 抓文章页会被 CORS 拦（实测返回 `TypeError: Failed to fetch`），因此不要用 fetch 猜摘要：\\n\\n1. `open_tab(\u003c原文链接>)` 打开文章页。\\n2. 用 `run_script` 读 `meta[name=\\\"description\\\"]` / `meta[property=\\\"og:description\\\"]`、`h1` 和前 1-3 段正文（GitHub 仓库用 `read_article` 读 README）。\\n3. 每条提炼一句 40-80 字中文看点，只写原文可证的事实（数字、结论、争议点），不写评价性套话。\\n4. `close_tab` 收尾，避免标签页堆积。\\n\\n打不开或需要登录的站点，标注“原文不可读，看点为标题推断”。\\n\\n## 步骤 5：落库\\n\\n写入 data_store 表 `hn_home_top5`，列顺序：\\n`排名, 标题, 得分, 评论数, 链接, HN 讨论, 站点, 一句话看点, 发布时间, 采集时间`\\n\\n用 `upsert` + `dedupField:\\\"链接\\\"`，重复跑同一天不会产生重复行；`采集时间` 用北京时间 `YYYY-MM-DD HH:MM:SS`。\\n\\n## 步骤 6：交付\\n\\n- 先给一句整体判断（今天热帖的主线是什么），再给 Markdown 表格。\\n- 正文中提到具体事实时，用 footnote 引用已读过的原文 URL 和 HN 讨论页；不要引用搜索结果或未打开的页面。\\n- 分数/评论数会随时间变化，交付时写明采集时间点。\\n\",\"resources\":[{\"path\":\"plugin.json\",\"type\":\"json\",\"title\":\"HN 热帖速览 Skill 工具清单\",\"description\":\"声明解析 Hacker News 首页前 N 条帖子的工具与表格渲染。\",\"size\":1636,\"hasContent\":true},{\"path\":\"scripts/hn-top-posts.js\",\"type\":\"script\",\"title\":\"hn-top-posts.js\",\"description\":\"解析 HN 首页 tr.athing 帖子行，输出结构化热帖列表。\",\"size\":3039,\"hasContent\":true}],\"mcpServerCount\":0,\"mcpToolCount\":0,\"mcpServers\":[]}"}},{"type":"message","id":"m_000008","parentId":"m_000007","timestamp":"2026-10-23 12:14:53","message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_00_Et7OReJAGFNxSslR8GV02415","type":"function","function":{"name":"hn_top5_brief__hn_top_posts","arguments":"{\"limit\": 10, \"timeout\": 60}"}}],"_usage":{"total_tokens":24774,"prompt_tokens":24654,"completion_tokens":120},"_providerState":{"version":1,"provider":"deepseek","api":"openai-chat-completions","protocol":"openai","endpoint":"https://api.deepseek.com/chat/completions","model":"deepseek-flash","kind":"openai_reasoning","reasoningField":"reasoning_content","reasoningText":"The skill is for front page. User wants Show HN. I can use the same parsing approach on the Show page. Let me try the skill tool on the Show page — it parses tr.athing, which Show page also has. Let's try it with limit 10."},"_usageContextBoundaryId":"root","_usageContextFingerprint":"ctx_1bq5_w594vfhs5kn"}},{"type":"message","id":"m_000009","parentId":"m_000008","timestamp":"2026-10-23 12:14:53","message":{"role":"tool","tool_call_id":"call_00_Et7OReJAGFNxSslR8GV02415","content":"{\"elapsedMs\":10,\"engine\":\"cdp\",\"hasResult\":true,\"ok\":true,\"reason\":\"skill_script\",\"result\":{\"collectedAt\":\"2026/10/23 12:14:30\",\"count\":10,\"ok\":true,\"pageUrl\":\"https://news.ycombinator.com/show\",\"rows\":[{\"age\":\"13 hours ago\",\"comments\":23,\"commentsText\":\"23 comments\",\"commentsUrl\":\"https://news.ycombinator.com/item?id=50180257\",\"itemId\":\"50180257\",\"rank\":1,\"score\":94,\"scoreText\":\"94 points\",\"site\":\"storagebits.workers.dev\",\"title\":\"Show HN: Uberblok – an interactive museum of ZFS internals\",\"url\":\"https://uberblok.storagebits.workers.dev/\"},{\"age\":\"1 hour ago\",\"comments\":3,\"commentsText\":\"3 comments\",\"commentsUrl\":\"https://news.ycombinator.com/item?id=50203836\",\"itemId\":\"50203836\",\"rank\":2,\"score\":2,\"scoreText\":\"2 points\",\"site\":\"kirahowe.com\",\"title\":\"Show HN: A wysiwyg Markdown editor for macOS that works with agents\",\"url\":\"https://kirahowe.com/2026/oct/22/editmd-0-1-0\"},{\"age\":\"9 hours ago\",\"comments\":11,\"commentsText\":\"11 comments\",\"commentsUrl\":\"https://news.ycombinator.com/item?id=50172984\",\"itemId\":\"50172984\",\"rank\":3,\"score\":38,\"scoreText\":\"38 points\",\"site\":\"chenglou.me\",\"title\":\"Show HN: Turn regular JavaScript into a neural net\",\"url\":\"https://chenglou.me/handwired/\"},{\"age\":\"9 hours ago\",\"comments\":42,\"commentsText\":\"42 comments\",\"commentsUrl\":\"https://news.ycombinator.com/item?id=50199290\",\"itemId\":\"50199290\",\"rank\":4,\"score\":74,\"scoreText\":\"74 points\",\"site\":\"typeui.sh\",\"title\":\"Show HN: UI micro interactions prompts for AI\",\"url\":\"https://www.typeui.sh/micro-interactions\"},{\"age\":\"10 hours ago\",\"comments\":9,\"commentsText\":\"9 comments\",\"commentsUrl\":\"https://news.ycombinator.com/item?id=50198936\",\"itemId\":\"50198936\",\"rank\":5,\"score\":22,\"scoreText\":\"22 points\",\"site\":\"github.com/rbartoli\",\"title\":\"Show HN: agent-usage-guard – a Claude Code mod to protect your usage window\",\"url\":\"https://github.com/rbartoli/agent-usage-guard\"},{\"age\":\"5 hours ago\",\"comments\":1,\"commentsText\":\"1 comment\",\"commentsUrl\":\"https://news.ycombinator.com/item?id=50201860\",\"itemId\":\"50201860\",\"rank\":6,\"score\":7,\"scoreText\":\"7 points\",\"site\":\"github.com/coverage-cat\",\"title\":\"Show HN: CATT 0.2.1: Test agents/services against a Muse/Instinct-alike, in CI\",\"url\":\"https://github.com/Coverage-Cat/consumer-agent-testing-tool\"},{\"age\":\"7 hours ago\",\"comments\":7,\"commentsText\":\"7 comments\",\"commentsUrl\":\"https://news.ycombinator.com/item?id=50194762\",\"itemId\":\"50194762\",\"rank\":7,\"score\":10,\"scoreText\":\"10 points\",\"site\":\"wordpress.org\",\"title\":\"Show HN: Replacing CAPTCHAs with adaptive proof-of-work in WordPress\",\"url\":\"https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/\"},{\"age\":\"14 hours ago\",\"comments\":8,\"commentsText\":\"8 comments\",\"commentsUrl\":\"https://news.ycombinator.com/item?id=50156779\",\"itemId\":\"50156779\",\"rank\":8,\"score\":30,\"scoreText\":\"30 points\",\"site\":\"dovepass.com\",\"title\":\"Show HN: Dovepass – can I legally fly a drone along this exact path in SF?\",\"url\":\"https://dovepass.com\"},{\"age\":\"9 hours ago\",\"comments\":3,\"commentsText\":\"3 comments\",\"commentsUrl\":\"https://news.ycombinator.com/item?id=50199349\",\"itemId\":\"50199349\",\"rank\":9,\"score\":13,\"scoreText\":\"13 points\",\"site\":\"camilleworld.com\",\"title\":\"Show HN: Build a world on your phone, explore it in XR on Vision Pro and Quest\",\"url\":\"https://3d.camilleworld.com/play/\"},{\"age\":\"1 day ago\",\"comments\":34,\"commentsText\":\"34 comments\",\"commentsUrl\":\"https://news.ycombinator.com/item?id=50183892\",\"itemId\":\"50183892\",\"rank\":10,\"score\":110,\"scoreText\":\"110 points\",\"site\":\"github.com/omnara-ai\",\"title\":\"Show HN: Omnara – Open-source alternative to Claude Managed Agents\",\"url\":\"https://github.com/omnara-ai/omnara\"}],\"total\":30,\"truncated\":true,\"_plugin\":{\"id\":\"hn-top5-brief\",\"name\":\"HN 热帖速览\",\"displayName\":\"HN 热帖速览\",\"category\":{\"id\":\"research\",\"label\":\"研究\"},\"skillName\":\"hn-top5-brief\",\"tool\":\"hn_top5_brief__hn_top_posts\",\"capabilityId\":\"hn_top5_brief__hn_top_posts\",\"localName\":\"hn_top_posts\",\"title\":\"读取 HN 热帖\",\"familyId\":\"plugin:research\",\"familyTitle\":\"研究\",\"profileFamily\":\"\",\"resultFamily\":\"generic\",\"labelerId\":\"static\",\"pageContext\":true,\"detailLayout\":\"detail\",\"mediaPresentation\":\"\",\"script\":\"scripts/hn-top-posts.js\",\"runtime\":\"page\",\"mcp\":null,\"renderer\":{\"type\":\"table\",\"title\":\"HN 首页热帖\",\"subtitle\":\"\",\"titlePath\":\"\",\"subtitlePath\":\"\",\"titleFormat\":\"\",\"subtitleFormat\":\"\",\"sourcePath\":\"\",\"empty\":\"\",\"valuePath\":\"\",\"format\":\"\",\"fields\":[],\"columns\":[{\"label\":\"排名\",\"path\":\"rank\"},{\"label\":\"标题\",\"path\":\"title\"},{\"label\":\"得分\",\"path\":\"score\"},{\"label\":\"评论数\",\"path\":\"comments\"},{\"label\":\"站点\",\"path\":\"site\"},{\"label\":\"发布时间\",\"path\":\"age\"},{\"label\":\"原文链接\",\"path\":\"url\"},{\"label\":\"HN 讨论\",\"path\":\"commentsUrl\"}],\"itemsPath\":\"\",\"totalPath\":\"total\",\"truncatedPath\":\"truncated\",\"itemTitlePath\":\"title\",\"itemSubtitlePath\":\"url\",\"itemMeta\":[],\"authorPath\":\"\",\"timePath\":\"\",\"sourceNamePath\":\"\",\"urlPath\":\"\",\"bodyPath\":\"\",\"bodyFormat\":\"\",\"metaFields\":[],\"commentsPath\":\"\",\"commentsTitle\":\"\",\"commentTitlePath\":\"\",\"commentAuthorPath\":\"\",\"commentBodyPath\":\"\",\"commentTimePath\":\"\",\"commentMeta\":[],\"language\":\"\",\"languagePath\":\"\",\"filenamePath\":\"\"}}},\"resultType\":\"object\",\"trace\":[],\"execution_world\":\"page\",\"_tabId\":1887199135,\"_pageTitle\":\"Show | Hacker News\",\"_pageUrl\":\"https://news.ycombinator.com/show\",\"_pageContext\":{\"pageMode\":\"desktop\"},\"_plugin\":{\"id\":\"hn-top5-brief\",\"name\":\"HN 热帖速览\",\"displayName\":\"HN 热帖速览\",\"category\":{\"id\":\"research\",\"label\":\"研究\"},\"skillName\":\"hn-top5-brief\",\"tool\":\"hn_top5_brief__hn_top_posts\",\"capabilityId\":\"hn_top5_brief__hn_top_posts\",\"localName\":\"hn_top_posts\",\"title\":\"读取 HN 热帖\",\"familyId\":\"plugin:research\",\"familyTitle\":\"研究\",\"profileFamily\":\"\",\"resultFamily\":\"generic\",\"labelerId\":\"static\",\"pageContext\":true,\"detailLayout\":\"detail\",\"mediaPresentation\":\"\",\"script\":\"scripts/hn-top-posts.js\",\"runtime\":\"page\",\"mcp\":null,\"renderer\":{\"type\":\"table\",\"title\":\"HN 首页热帖\",\"subtitle\":\"\",\"titlePath\":\"\",\"subtitlePath\":\"\",\"titleFormat\":\"\",\"subtitleFormat\":\"\",\"sourcePath\":\"\",\"empty\":\"\",\"valuePath\":\"\",\"format\":\"\",\"fields\":[],\"columns\":[{\"label\":\"排名\",\"path\":\"rank\"},{\"label\":\"标题\",\"path\":\"title\"},{\"label\":\"得分\",\"path\":\"score\"},{\"label\":\"评论数\",\"path\":\"comments\"},{\"label\":\"站点\",\"path\":\"site\"},{\"label\":\"发布时间\",\"path\":\"age\"},{\"label\":\"原文链接\",\"path\":\"url\"},{\"label\":\"HN 讨论\",\"path\":\"commentsUrl\"}],\"itemsPath\":\"\",\"totalPath\":\"total\",\"truncatedPath\":\"truncated\",\"itemTitlePath\":\"title\",\"itemSubtitlePath\":\"url\",\"itemMeta\":[],\"authorPath\":\"\",\"timePath\":\"\",\"sourceNamePath\":\"\",\"urlPath\":\"\",\"bodyPath\":\"\",\"bodyFormat\":\"\",\"metaFields\":[],\"commentsPath\":\"\",\"commentsTitle\":\"\",\"commentTitlePath\":\"\",\"commentAuthorPath\":\"\",\"commentBodyPath\":\"\",\"commentTimePath\":\"\",\"commentMeta\":[],\"language\":\"\",\"languagePath\":\"\",\"filenamePath\":\"\"}}}"}},{"type":"message","id":"m_000010","parentId":"m_000009","timestamp":"2026-10-23 12:14:53","message":{"role":"assistant","content":"这是 Hacker News 的 Show HN 榜单（也就是 /show 列表页）当前的排序。我按页面顺序取了前 10 条；页面共有 30 条。分数和评论数是 2026-10-23 12:14（北京时间）的快照，会随时间变化。\n\n## Show HN 榜单前 10\n\n| # | 标题 | 得分 | 评论 | 站点 | 发布 |\n|---|---|---|---|---|---|\n| 1 | [Show HN: Uberblok – an interactive museum of ZFS internals](https://uberblok.storagebits.workers.dev/) | 94 | 23 | storagebits.workers.dev | 13 小时前 |\n| 2 | [Show HN: A wysiwyg Markdown editor for macOS that works with agents](https://kirahowe.com/2026/oct/22/editmd-0-1-0) | 2 | 3 | kirahowe.com | 1 小时前 |\n| 3 | [Show HN: Turn regular JavaScript into a neural net](https://chenglou.me/handwired/) | 38 | 11 | chenglou.me | 9 小时前 |\n| 4 | [Show HN: UI micro interactions prompts for AI](https://www.typeui.sh/micro-interactions) | 74 | 42 | typeui.sh | 9 小时前 |\n| 5 | [Show HN: agent-usage-guard – a Claude Code mod to protect your usage window](https://github.com/rbartoli/agent-usage-guard) | 22 | 9 | github.com/rbartoli | 10 小时前 |\n| 6 | [Show HN: CATT 0.2.1: Test agents/services against a Muse/Instinct-alike, in CI](https://github.com/Coverage-Cat/consumer-agent-testing-tool) | 7 | 1 | github.com/coverage-cat | 5 小时前 |\n| 7 | [Show HN: Replacing CAPTCHAs with adaptive proof-of-work in WordPress](https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/) | 10 | 7 | wordpress.org | 7 小时前 |\n| 8 | [Show HN: Dovepass – can I legally fly a drone along this exact path in SF?](https://dovepass.com) | 30 | 8 | dovepass.com | 14 小时前 |\n| 9 | [Show HN: Build a world on your phone, explore it in XR on Vision Pro and Quest](https://3d.camilleworld.com/play/) | 13 | 3 | camilleworld.com | 9 小时前 |\n| 10 | [Show HN: Omnara – Open-source alternative to Claude Managed Agents](https://github.com/omnara-ai/omnara) | 110 | 34 | github.com/omnara-ai | 1 天前 |\n\n## 几点观察\n\n- **榜首与最高分不是同一条**：页面上分数最高的是第 10 名的 Omnara（110 分、34 评论），但它在列表里排第 10，因为 HN 的排序综合了时间衰减，这条已经发布 1 天。列表顺序并不等于分数顺序，第 2 名只有 2 分也是同样原因（1 小时前刚发）。\n- **今晚的主线明显是 AI Agent 工具**：Omnara（开源版 Claude Managed Agents）、agent-usage-guard（给 Claude Code 加用量窗口保护）、CATT（在 CI 里测试 agent 服务）、editmd（面向 agent 的 Markdown 编辑器）占了 4 条，讨论度也集中在 Omnara 和 typeui 上。\n- **讨论最热的不是最高分**：typeui.sh 的「给 AI 用的 UI 微交互提示词」74 分、42 条评论，是这 10 条里评论最多的，说明它更有争议或更值得讨论。\n- **技术向的项目更稳**：Uberblok 把 ZFS 内部结构做成交互式博物馆，94 分；handwired 用原生 JavaScript 手写神经网络，38 分——这两条是典型的「实现类 Show HN」，得分稳、评论理性。\n\n以上看点都只依据标题、分数和评论数得出，还没有逐条打开原文。需要我：\n\n1. 逐条读原文（README、正文、meta 描述），给每条补一句有依据的一句话看点，并保存到 data_store 表；\n2. 或者把 Show HN 全部 30 条内容拉成完整表格（包含「最新」列表 shownew）；\n3. 或者只针对 Omnara、typeui 这两条讨论最热的帖子，抓取评论区观点摘要。\n\n你想选哪一种？告诉我，我就继续。\n\n[^1]: [Show | Hacker News](https://news.ycombinator.com/show)","_usage":{"total_tokens":28682,"prompt_tokens":26715,"completion_tokens":1967},"_providerState":{"version":1,"provider":"deepseek","api":"openai-chat-completions","protocol":"openai","endpoint":"https://api.deepseek.com/chat/completions","model":"deepseek-flash","kind":"openai_reasoning","reasoningField":"reasoning_content","reasoningText":"The Show HN page default ordering is not by score — it's by time? Actually Show HN page shows newest-ish ordered. Rank 1 has 94 points 13 hours ago, rank 2 has 2 points 1 hour ago. It's mixed — the /show page is sorted by... actually it's sorted by \"ranking\" similar to front page but for Show HN. Hmm, rank 2 with 2 points and 1 hour ago suggests it's ordered by recency more than score? Actually HN /show is sorted by ranking score which includes time decay.\n\n\"最近热帖\" — recent hot posts. The /show page is the default Show HN listing. But there's also \"Show HN\" newest: https://news.ycombinator.com/shownew (newest).\n\nThe user asks \"Show HN 榜单最近热帖\" — recent hot posts on Show HN leaderboard. The default /show page is fine. But the ordering seems odd. Let me consider getting a more \"score-sorted\" view. Hmm.\n\nGiven ambiguity, I'll present the /show listing (10 items) plus note that the Show HN list is HN's ranking order (time decay + votes). \n\nShould I add one-line takeaways? The skill says step 4 requires reading originals. That's 10 tabs — heavy. The user just asked to \"看下\" (take a look). I think a table with scores/comments and a brief overall observation is enough. But providing takeaways adds value. Given cost, maybe fetch descriptions for the top few? Let me consider effort vs value.\n\nThe user request is casual: \"帮我看下 Show HN 榜单最近热帖\". A clean table + short summary of main themes (title-based) is appropriate. I could add brief notes based on titles, but I must not fabricate facts. I'll keep to observable data (title, score, comments, site, age) and give a light thematic read clearly derived from titles.\n\nMaybe I should try to get a bit more: fetch a couple of original pages for descriptions? That could improve quality. Let's do a moderate approach: open the top 3 originals and grab meta descriptions via run_script. Actually that's several tool calls. Hmm, but value is decent.\n\nLet me instead do one script that opens tabs? No, run_script can't open tabs (that's a navigation action). Actually tools.open_tab is available via tools proxy? The protocol says open_tab creates working tab; in run_script, \"提交、导航、关闭 tab 等页面生命周期动作不要塞进 run_script\". So no.\n\nI'll do a lightweight approach: give the table, and note takeaway inferred from titles. Actually let me at least fetch descriptions for the top 5 by opening tabs one by one — that's ~5 open_tab + 5 script calls. Too many.\n\nAlternative: HN item pages include the post text for Show HN. For Show HN posts with a URL, no text. \n\nI'll skip deep-reading and clearly mark that the one-line notes are title-based, not from reading originals. Hmm, but protocol prefers verified claims. Title-derived summary is fine if marked.\n\nActually, let me do a compromise: fetch meta descriptions for the top 4 via one script that fetches? CORS blocks fetch. No.\n\nDecision: deliver table + thematic summary based on titles, explicitly labeled. Also mention there are 30 items on the page, showed top 10, and ask if they want the full list or details.\n\nAlso should I save to data_store? Not necessary unless user wants. Skip.\n\nNote timing: collectedAt 2026/10/23 12:14:30 Beijing time.\n\nLet me write response with footnotes to HN discussion links? Footnote rules: claims about facts from web pages need citations. Score/data comes from HN page — I can cite the HN show page and item pages. Let me add a few footnotes for the top items with links I have (HN discussion URLs and original URLs). These are \"verified\" in the sense the page was read.\n\nI'll present a table with links, and footnotes for a few notable ones. Keep footnotes reasonable — maybe cite the Show HN list page and 3-4 key items.\n\nLet me build the table for top 10."},"_usageContextBoundaryId":"root","_usageContextFingerprint":"ctx_1i8l_c80xl31c3k893"}}]},"transcript":[{"type":"user","text":"帮我看下 Show HN 榜单最近热帖","images":[],"documents":[],"runId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e","clientMessageId":"cm_session_mvkggvzq_mgerer","deliveryStatus":"accepted","eventSeq":1,"timestamp":"2026-10-23 12:14:24"},{"type":"thinking","text":"The user wants to see recent hot posts on Show HN. Let me open the page.\n\nI should check tabs first, then open https://news.ycombinator.com/show.\n\nLet me be efficient: list_tabs and open_tab.\n\nI'll open the Show HN page.","spanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:llm:1","runId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e","eventSeq":2,"timestamp":"2026-10-23 12:14:25","endedAt":"2026-10-23 12:14:26"},{"type":"assistant","content":"我先打开 Show HN 页面看看。","spanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:llm:1","runId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e","provider":"deepseek","model":"deepseek-flash","eventSeq":59,"timestamp":"2026-10-23 12:14:26","endedAt":"2026-10-23 12:14:26"},{"type":"tool","toolCallId":"call_00_Vv9ELGu2AWx7JJ8VpzGx4290","name":"open_tab","capabilityId":"open_tab","title":"新开页面","familyId":"arrival","familyTitle":"到达页面","args":{"url":"https://news.ycombinator.com/show"},"argsText":"","argsIncomplete":false,"argsGenerating":false,"argsState":"final","phase":"done","statusText":"","rateLimit":null,"result":{"id":1887199135,"url":"https://news.ycombinator.com/show","pageMode":"desktop","_tabId":1887199135,"_pageTitle":"Show | Hacker News","_pageUrl":"https://news.ycombinator.com/show","_pageContext":{"pageMode":"desktop"}},"isError":false,"isRunning":false,"image":null,"spanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:tool:call_00_Vv9ELGu2AWx7JJ8VpzGx4290","parentSpanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:llm:1","runId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e","provider":"deepseek","model":"deepseek-flash","eventSeq":68,"timestamp":"2026-10-23 12:14:26","endedAt":"2026-10-23 12:14:28"},{"type":"thinking","text":"There's a skill hn-top5_brief available with a tool hn_top5_brief__hn_top_posts. But that tool is for the HN front page. The user wants Show HN. Let me load the skill to see if it supports Show HN.\n\nActually let me first read the page to see Show HN posts. But the skill tool might work on show page too since it parses top posts. Let me load the skill first.","spanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:llm:2","runId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e","eventSeq":89,"timestamp":"2026-10-23 12:14:29","endedAt":"2026-10-23 12:14:29"},{"type":"tool","toolCallId":"call_00_UtviwGXuYCRLHB2pcjlk4119","name":"load_skill","capabilityId":"load_skill","title":"加载技能","familyId":"process","familyTitle":"处理数据","args":{"name":"hn-top5-brief"},"argsText":"","argsIncomplete":false,"argsGenerating":false,"argsState":"final","phase":"done","statusText":"","rateLimit":null,"result":{"name":"hn-top5-brief","displayName":"HN 热帖速览","description":"采集 Hacker News 首页前 N 条热帖的标题、得分、评论数、链接与讨论页，并提炼一句话看点","scope":"site","domains":["news.ycombinator.com"],"urlPatterns":["/","/news","/item"],"excludePatterns":[],"status":"active","source":"","builtin":false,"readOnly":false,"updatedAt":"2026-10-23 12:13:32","runtime":"Skill 运行环境是轻舟 Chrome 浏览器扩展，不是 Node.js，也不是服务器。\nMarkdown content 应描述浏览器操作 SOP：页面观察、元素定位、Network/Data/下载/书签等 Skill 工具如何协作。\nMarkdown content 引用 references、模板、示例或其他资源文件时，先用 load_skill_resource(name,path) 按需读取单个文件。\nDOCX、XLSX、PDF 资源由 load_skill_resource 自动解析为 document model；返回 truncated 时加载 qingzhou-documents，并用 document_read_chunk 继续读取。\nscript resources 与 run_script.code 使用同一种源码形态：默认写成 async () => { ... } 函数表达式，由轻舟自动调用；可访问 document/window/Web APIs、input/args、tabId、tools/tool；不能使用 fs/path/process/require、npm 包、服务器文件系统、后台常驻进程或本地 shell。\n需要跨页面动作时，在 Markdown 中指导 agent 拆成普通工具步骤；不要在脚本里直接点击/提交导致当前 frame 卸载。","content":"# HN 热帖速览\n\n给 news.ycombinator.com 首页做“前 N 条热帖速览”：标题、得分、评论数、原文链接、讨论链接，再为每条补一句有原文依据的看点。\n\n## 适用与前置\n\n- 适用：Hacker News 首页（含 /news）、需要当天热帖清单、需要把热帖落库或做成简报。\n- 页面模式：桌面模式验证过（`pageMode: \"desktop\"`）。移动模式未验证，需要时用 `open_tab` 的 `mode:\"mobile\"` 或 `set_page_mode` 重新跑一遍流程。\n- 无需登录；HN 首页是同步渲染的静态表格，不需要等待接口。\n\n## 步骤 1：打开首页\n\n用 `open_tab(\"https://news.ycombinator.com/\")`。若任务已有工作标签页，先用 `get_working_tab` / `list_tabs` 判断是否已经停在 HN。\n\n## 步骤 2：解析帖子列表\n\n优先调用本 Skill 的工具 `hn_top_posts`（参数 `limit`，默认 5）。它直接解析 DOM 并返回结构化行；如果工具不可用，用 `run_script` 页面模式做等价解析：\n\n```js\nconst rows = [...document.querySelectorAll('tr.athing')].slice(0, limit);\nrows.map((tr) => {\n  const a = tr.querySelector('.titleline > a');\n  const sub = tr.nextElementSibling;              // 得分/评论在紧随其后的 tr 里\n  const score = sub?.querySelector('.score')?.textContent?.trim() || '';\n  const commentA = [...sub.querySelectorAll('a')].find((x) => /comment|discuss/.test(x.textContent));\n  return {\n    title: a?.textContent?.trim(),\n    url: a?.getAttribute('href'),\n    site: tr.querySelector('.sitestr')?.textContent?.trim() || '',\n    score,\n    comments: commentA?.textContent?.replace(/\\s+/g, ' ').trim() || '',\n    itemId: tr.getAttribute('id'),\n  };\n});\n```\n\n关键选择器：`tr.athing`（每条帖子）、`.titleline > a`（标题+链接）、`.sitestr`（域名）、`tr.athing + tr`（元信息行）、`.score`、`.age`、`a[href^=\"item?id=\"]`（讨论页）。\n\n## 步骤 3：校验\n\n- 返回行数必须等于目标 N，否则可能是页面未渲染完成：`wait_for_element(\"tr.athing\")` 后重跑。\n- 新帖可能没有 `.score`（或显示 \"discuss\" 而非评论数）：如实标注“未显示 / 暂无评论”，不要补造数字。\n- 外链可能是相对 `item?id=` 形式（自帖、Ask HN、Show HN），需要拼成 `https://news.ycombinator.com/item?id=\u003cid>`。\n\n## 步骤 4：生成一句话看点（必须读原文）\n\n同源 `fetch` 抓文章页会被 CORS 拦（实测返回 `TypeError: Failed to fetch`），因此不要用 fetch 猜摘要：\n\n1. `open_tab(\u003c原文链接>)` 打开文章页。\n2. 用 `run_script` 读 `meta[name=\"description\"]` / `meta[property=\"og:description\"]`、`h1` 和前 1-3 段正文（GitHub 仓库用 `read_article` 读 README）。\n3. 每条提炼一句 40-80 字中文看点，只写原文可证的事实（数字、结论、争议点），不写评价性套话。\n4. `close_tab` 收尾，避免标签页堆积。\n\n打不开或需要登录的站点，标注“原文不可读，看点为标题推断”。\n\n## 步骤 5：落库\n\n写入 data_store 表 `hn_home_top5`，列顺序：\n`排名, 标题, 得分, 评论数, 链接, HN 讨论, 站点, 一句话看点, 发布时间, 采集时间`\n\n用 `upsert` + `dedupField:\"链接\"`，重复跑同一天不会产生重复行；`采集时间` 用北京时间 `YYYY-MM-DD HH:MM:SS`。\n\n## 步骤 6：交付\n\n- 先给一句整体判断（今天热帖的主线是什么），再给 Markdown 表格。\n- 正文中提到具体事实时，用 footnote 引用已读过的原文 URL 和 HN 讨论页；不要引用搜索结果或未打开的页面。\n- 分数/评论数会随时间变化，交付时写明采集时间点。\n","resources":[{"path":"plugin.json","type":"json","title":"HN 热帖速览 Skill 工具清单","description":"声明解析 Hacker News 首页前 N 条帖子的工具与表格渲染。","size":1636,"hasContent":true},{"path":"scripts/hn-top-posts.js","type":"script","title":"hn-top-posts.js","description":"解析 HN 首页 tr.athing 帖子行，输出结构化热帖列表。","size":3039,"hasContent":true}],"mcpServerCount":0,"mcpToolCount":0,"mcpServers":[]},"isError":false,"isRunning":false,"image":null,"spanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:tool:call_00_UtviwGXuYCRLHB2pcjlk4119","parentSpanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:llm:2","runId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e","provider":"deepseek","model":"deepseek-flash","eventSeq":179,"timestamp":"2026-10-23 12:14:29","endedAt":"2026-10-23 12:14:29"},{"type":"thinking","text":"The skill is for front page. User wants Show HN. I can use the same parsing approach on the Show page. Let me try the skill tool on the Show page — it parses tr.athing, which Show page also has. Let's try it with limit 10.","spanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:llm:3","runId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e","eventSeq":195,"timestamp":"2026-10-23 12:14:30","endedAt":"2026-10-23 12:14:30"},{"type":"tool","toolCallId":"call_00_Et7OReJAGFNxSslR8GV02415","name":"hn_top5_brief__hn_top_posts","capabilityId":"hn_top5_brief__hn_top_posts","title":"读取 HN 热帖","familyId":"plugin:research","familyTitle":"研究","args":{"limit":10,"timeout":60},"argsText":"","argsIncomplete":false,"argsGenerating":false,"argsState":"final","phase":"done","statusText":"","rateLimit":null,"result":{"elapsedMs":10,"engine":"cdp","hasResult":true,"ok":true,"reason":"skill_script","result":{"collectedAt":"2026/10/23 12:14:30","count":10,"ok":true,"pageUrl":"https://news.ycombinator.com/show","rows":[{"age":"13 hours ago","comments":23,"commentsText":"23 comments","commentsUrl":"https://news.ycombinator.com/item?id=50180257","itemId":"50180257","rank":1,"score":94,"scoreText":"94 points","site":"storagebits.workers.dev","title":"Show HN: Uberblok – an interactive museum of ZFS internals","url":"https://uberblok.storagebits.workers.dev/"},{"age":"1 hour ago","comments":3,"commentsText":"3 comments","commentsUrl":"https://news.ycombinator.com/item?id=50203836","itemId":"50203836","rank":2,"score":2,"scoreText":"2 points","site":"kirahowe.com","title":"Show HN: A wysiwyg Markdown editor for macOS that works with agents","url":"https://kirahowe.com/2026/oct/22/editmd-0-1-0"},{"age":"9 hours ago","comments":11,"commentsText":"11 comments","commentsUrl":"https://news.ycombinator.com/item?id=50172984","itemId":"50172984","rank":3,"score":38,"scoreText":"38 points","site":"chenglou.me","title":"Show HN: Turn regular JavaScript into a neural net","url":"https://chenglou.me/handwired/"},{"age":"9 hours ago","comments":42,"commentsText":"42 comments","commentsUrl":"https://news.ycombinator.com/item?id=50199290","itemId":"50199290","rank":4,"score":74,"scoreText":"74 points","site":"typeui.sh","title":"Show HN: UI micro interactions prompts for AI","url":"https://www.typeui.sh/micro-interactions"},{"age":"10 hours ago","comments":9,"commentsText":"9 comments","commentsUrl":"https://news.ycombinator.com/item?id=50198936","itemId":"50198936","rank":5,"score":22,"scoreText":"22 points","site":"github.com/rbartoli","title":"Show HN: agent-usage-guard – a Claude Code mod to protect your usage window","url":"https://github.com/rbartoli/agent-usage-guard"},{"age":"5 hours ago","comments":1,"commentsText":"1 comment","commentsUrl":"https://news.ycombinator.com/item?id=50201860","itemId":"50201860","rank":6,"score":7,"scoreText":"7 points","site":"github.com/coverage-cat","title":"Show HN: CATT 0.2.1: Test agents/services against a Muse/Instinct-alike, in CI","url":"https://github.com/Coverage-Cat/consumer-agent-testing-tool"},{"age":"7 hours ago","comments":7,"commentsText":"7 comments","commentsUrl":"https://news.ycombinator.com/item?id=50194762","itemId":"50194762","rank":7,"score":10,"scoreText":"10 points","site":"wordpress.org","title":"Show HN: Replacing CAPTCHAs with adaptive proof-of-work in WordPress","url":"https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/"},{"age":"14 hours ago","comments":8,"commentsText":"8 comments","commentsUrl":"https://news.ycombinator.com/item?id=50156779","itemId":"50156779","rank":8,"score":30,"scoreText":"30 points","site":"dovepass.com","title":"Show HN: Dovepass – can I legally fly a drone along this exact path in SF?","url":"https://dovepass.com"},{"age":"9 hours ago","comments":3,"commentsText":"3 comments","commentsUrl":"https://news.ycombinator.com/item?id=50199349","itemId":"50199349","rank":9,"score":13,"scoreText":"13 points","site":"camilleworld.com","title":"Show HN: Build a world on your phone, explore it in XR on Vision Pro and Quest","url":"https://3d.camilleworld.com/play/"},{"age":"1 day ago","comments":34,"commentsText":"34 comments","commentsUrl":"https://news.ycombinator.com/item?id=50183892","itemId":"50183892","rank":10,"score":110,"scoreText":"110 points","site":"github.com/omnara-ai","title":"Show HN: Omnara – Open-source alternative to Claude Managed Agents","url":"https://github.com/omnara-ai/omnara"}],"total":30,"truncated":true,"_plugin":{"id":"hn-top5-brief","name":"HN 热帖速览","displayName":"HN 热帖速览","category":{"id":"research","label":"研究"},"skillName":"hn-top5-brief","tool":"hn_top5_brief__hn_top_posts","capabilityId":"hn_top5_brief__hn_top_posts","localName":"hn_top_posts","title":"读取 HN 热帖","familyId":"plugin:research","familyTitle":"研究","profileFamily":"","resultFamily":"generic","labelerId":"static","pageContext":true,"detailLayout":"detail","mediaPresentation":"","script":"scripts/hn-top-posts.js","runtime":"page","mcp":null,"renderer":{"type":"table","title":"HN 首页热帖","subtitle":"","titlePath":"","subtitlePath":"","titleFormat":"","subtitleFormat":"","sourcePath":"","empty":"","valuePath":"","format":"","fields":[],"columns":[{"label":"排名","path":"rank"},{"label":"标题","path":"title"},{"label":"得分","path":"score"},{"label":"评论数","path":"comments"},{"label":"站点","path":"site"},{"label":"发布时间","path":"age"},{"label":"原文链接","path":"url"},{"label":"HN 讨论","path":"commentsUrl"}],"itemsPath":"","totalPath":"total","truncatedPath":"truncated","itemTitlePath":"title","itemSubtitlePath":"url","itemMeta":[],"authorPath":"","timePath":"","sourceNamePath":"","urlPath":"","bodyPath":"","bodyFormat":"","metaFields":[],"commentsPath":"","commentsTitle":"","commentTitlePath":"","commentAuthorPath":"","commentBodyPath":"","commentTimePath":"","commentMeta":[],"language":"","languagePath":"","filenamePath":""}}},"resultType":"object","trace":[],"execution_world":"page","_tabId":1887199135,"_pageTitle":"Show | Hacker News","_pageUrl":"https://news.ycombinator.com/show","_pageContext":{"pageMode":"desktop"},"_plugin":{"id":"hn-top5-brief","name":"HN 热帖速览","displayName":"HN 热帖速览","category":{"id":"research","label":"研究"},"skillName":"hn-top5-brief","tool":"hn_top5_brief__hn_top_posts","capabilityId":"hn_top5_brief__hn_top_posts","localName":"hn_top_posts","title":"读取 HN 热帖","familyId":"plugin:research","familyTitle":"研究","profileFamily":"","resultFamily":"generic","labelerId":"static","pageContext":true,"detailLayout":"detail","mediaPresentation":"","script":"scripts/hn-top-posts.js","runtime":"page","mcp":null,"renderer":{"type":"table","title":"HN 首页热帖","subtitle":"","titlePath":"","subtitlePath":"","titleFormat":"","subtitleFormat":"","sourcePath":"","empty":"","valuePath":"","format":"","fields":[],"columns":[{"label":"排名","path":"rank"},{"label":"标题","path":"title"},{"label":"得分","path":"score"},{"label":"评论数","path":"comments"},{"label":"站点","path":"site"},{"label":"发布时间","path":"age"},{"label":"原文链接","path":"url"},{"label":"HN 讨论","path":"commentsUrl"}],"itemsPath":"","totalPath":"total","truncatedPath":"truncated","itemTitlePath":"title","itemSubtitlePath":"url","itemMeta":[],"authorPath":"","timePath":"","sourceNamePath":"","urlPath":"","bodyPath":"","bodyFormat":"","metaFields":[],"commentsPath":"","commentsTitle":"","commentTitlePath":"","commentAuthorPath":"","commentBodyPath":"","commentTimePath":"","commentMeta":[],"language":"","languagePath":"","filenamePath":""}}},"isError":false,"isRunning":false,"image":null,"spanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:tool:call_00_Et7OReJAGFNxSslR8GV02415","parentSpanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:llm:3","runId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e","provider":"deepseek","model":"deepseek-flash","eventSeq":252,"timestamp":"2026-10-23 12:14:30","endedAt":"2026-10-23 12:14:30"},{"type":"thinking","text":"The Show HN page default ordering is not by score — it's by time? Actually Show HN page shows newest-ish ordered. Rank 1 has 94 points 13 hours ago, rank 2 has 2 points 1 hour ago. It's mixed — the /show page is sorted by... actually it's sorted by \"ranking\" similar to front page but for Show HN. Hmm, rank 2 with 2 points and 1 hour ago suggests it's ordered by recency more than score? Actually HN /show is sorted by ranking score which includes time decay.\n\n\"最近热帖\" — recent hot posts. The /show page is the default Show HN listing. But there's also \"Show HN\" newest: https://news.ycombinator.com/shownew (newest).\n\nThe user asks \"Show HN 榜单最近热帖\" — recent hot posts on Show HN leaderboard. The default /show page is fine. But the ordering seems odd. Let me consider getting a more \"score-sorted\" view. Hmm.\n\nGiven ambiguity, I'll present the /show listing (10 items) plus note that the Show HN list is HN's ranking order (time decay + votes). \n\nShould I add one-line takeaways? The skill says step 4 requires reading originals. That's 10 tabs — heavy. The user just asked to \"看下\" (take a look). I think a table with scores/comments and a brief overall observation is enough. But providing takeaways adds value. Given cost, maybe fetch descriptions for the top few? Let me consider effort vs value.\n\nThe user request is casual: \"帮我看下 Show HN 榜单最近热帖\". A clean table + short summary of main themes (title-based) is appropriate. I could add brief notes based on titles, but I must not fabricate facts. I'll keep to observable data (title, score, comments, site, age) and give a light thematic read clearly derived from titles.\n\nMaybe I should try to get a bit more: fetch a couple of original pages for descriptions? That could improve quality. Let's do a moderate approach: open the top 3 originals and grab meta descriptions via run_script. Actually that's several tool calls. Hmm, but value is decent.\n\nLet me instead do one script that opens tabs? No, run_script can't open tabs (that's a navigation action). Actually tools.open_tab is available via tools proxy? The protocol says open_tab creates working tab; in run_script, \"提交、导航、关闭 tab 等页面生命周期动作不要塞进 run_script\". So no.\n\nI'll do a lightweight approach: give the table, and note takeaway inferred from titles. Actually let me at least fetch descriptions for the top 5 by opening tabs one by one — that's ~5 open_tab + 5 script calls. Too many.\n\nAlternative: HN item pages include the post text for Show HN. For Show HN posts with a URL, no text. \n\nI'll skip deep-reading and clearly mark that the one-line notes are title-based, not from reading originals. Hmm, but protocol prefers verified claims. Title-derived summary is fine if marked.\n\nActually, let me do a compromise: fetch meta descriptions for the top 4 via one script that fetches? CORS blocks fetch. No.\n\nDecision: deliver table + thematic summary based on titles, explicitly labeled. Also mention there are 30 items on the page, showed top 10, and ask if they want the full list or details.\n\nAlso should I save to data_store? Not necessary unless user wants. Skip.\n\nNote timing: collectedAt 2026/10/23 12:14:30 Beijing time.\n\nLet me write response with footnotes to HN discussion links? Footnote rules: claims about facts from web pages need citations. Score/data comes from HN page — I can cite the HN show page and item pages. Let me add a few footnotes for the top items with links I have (HN discussion URLs and original URLs). These are \"verified\" in the sense the page was read.\n\nI'll present a table with links, and footnotes for a few notable ones. Keep footnotes reasonable — maybe cite the Show HN list page and 3-4 key items.\n\nLet me build the table for top 10.","spanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:llm:4","runId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e","eventSeq":269,"timestamp":"2026-10-23 12:14:31","endedAt":"2026-10-23 12:14:37"},{"type":"assistant","content":"这是 Hacker News 的 Show HN 榜单（也就是 /show 列表页）当前的排序。我按页面顺序取了前 10 条；页面共有 30 条。分数和评论数是 2026-10-23 12:14（北京时间）的快照，会随时间变化。\n\n## Show HN 榜单前 10\n\n| # | 标题 | 得分 | 评论 | 站点 | 发布 |\n|---|---|---|---|---|---|\n| 1 | [Show HN: Uberblok – an interactive museum of ZFS internals](https://uberblok.storagebits.workers.dev/) | 94 | 23 | storagebits.workers.dev | 13 小时前 |\n| 2 | [Show HN: A wysiwyg Markdown editor for macOS that works with agents](https://kirahowe.com/2026/oct/22/editmd-0-1-0) | 2 | 3 | kirahowe.com | 1 小时前 |\n| 3 | [Show HN: Turn regular JavaScript into a neural net](https://chenglou.me/handwired/) | 38 | 11 | chenglou.me | 9 小时前 |\n| 4 | [Show HN: UI micro interactions prompts for AI](https://www.typeui.sh/micro-interactions) | 74 | 42 | typeui.sh | 9 小时前 |\n| 5 | [Show HN: agent-usage-guard – a Claude Code mod to protect your usage window](https://github.com/rbartoli/agent-usage-guard) | 22 | 9 | github.com/rbartoli | 10 小时前 |\n| 6 | [Show HN: CATT 0.2.1: Test agents/services against a Muse/Instinct-alike, in CI](https://github.com/Coverage-Cat/consumer-agent-testing-tool) | 7 | 1 | github.com/coverage-cat | 5 小时前 |\n| 7 | [Show HN: Replacing CAPTCHAs with adaptive proof-of-work in WordPress](https://wordpress.org/plugins/gdpr-compliant-recaptcha-for-all-forms/) | 10 | 7 | wordpress.org | 7 小时前 |\n| 8 | [Show HN: Dovepass – can I legally fly a drone along this exact path in SF?](https://dovepass.com) | 30 | 8 | dovepass.com | 14 小时前 |\n| 9 | [Show HN: Build a world on your phone, explore it in XR on Vision Pro and Quest](https://3d.camilleworld.com/play/) | 13 | 3 | camilleworld.com | 9 小时前 |\n| 10 | [Show HN: Omnara – Open-source alternative to Claude Managed Agents](https://github.com/omnara-ai/omnara) | 110 | 34 | github.com/omnara-ai | 1 天前 |\n\n## 几点观察\n\n- **榜首与最高分不是同一条**：页面上分数最高的是第 10 名的 Omnara（110 分、34 评论），但它在列表里排第 10，因为 HN 的排序综合了时间衰减，这条已经发布 1 天。列表顺序并不等于分数顺序，第 2 名只有 2 分也是同样原因（1 小时前刚发）。\n- **今晚的主线明显是 AI Agent 工具**：Omnara（开源版 Claude Managed Agents）、agent-usage-guard（给 Claude Code 加用量窗口保护）、CATT（在 CI 里测试 agent 服务）、editmd（面向 agent 的 Markdown 编辑器）占了 4 条，讨论度也集中在 Omnara 和 typeui 上。\n- **讨论最热的不是最高分**：typeui.sh 的「给 AI 用的 UI 微交互提示词」74 分、42 条评论，是这 10 条里评论最多的，说明它更有争议或更值得讨论。\n- **技术向的项目更稳**：Uberblok 把 ZFS 内部结构做成交互式博物馆，94 分；handwired 用原生 JavaScript 手写神经网络，38 分——这两条是典型的「实现类 Show HN」，得分稳、评论理性。\n\n以上看点都只依据标题、分数和评论数得出，还没有逐条打开原文。需要我：\n\n1. 逐条读原文（README、正文、meta 描述），给每条补一句有依据的一句话看点，并保存到 data_store 表；\n2. 或者把 Show HN 全部 30 条内容拉成完整表格（包含「最新」列表 shownew）；\n3. 或者只针对 Omnara、typeui 这两条讨论最热的帖子，抓取评论区观点摘要。\n\n你想选哪一种？告诉我，我就继续。\n\n[^1]: [Show | Hacker News](https://news.ycombinator.com/show)","spanId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e:llm:4","runId":"run_d4d825c34198_mvkgh96q_1_1n0l4u093a1e","provider":"deepseek","model":"deepseek-flash","eventSeq":1164,"timestamp":"2026-10-23 12:14:37","endedAt":"2026-10-23 12:14:41"}]},"runtime":{"status":"completed","goal":null,"ownedTabs":[]},"dependencies":{"skills":["hn 热帖速览","hn-top5-brief"],"tools":["hn_top5_brief__hn_top_posts","load_skill","open_tab"]}}</script>
+</body>
+</html>
