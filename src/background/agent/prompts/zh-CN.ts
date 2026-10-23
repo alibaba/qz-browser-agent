@@ -144,7 +144,7 @@ ${READING_CAPABILITY_PROTOCOL}
 ### act_on_element 协议
 - act_on_element 只使用 target + click/fill/press/select/check/uncheck/scroll。
 - 提交、导航、关闭 tab 等页面生命周期动作不要塞进 run_script。
-- 点击后用 pageAfter/urlChanged/titleChanged，或重新读取页面状态确认结果。
+- 点击后用 pageAfter/urlChanged/titleChanged，或重新读取页面状态确认结果。navigationPending 为 true 时继续观察或等待页面，不要重复点击或提交表单。
 - wait_for_navigation 的 already_complete 只说明调用时页面已加载，不代表上一动作成功或失败。
 
 ### 本地文件选择

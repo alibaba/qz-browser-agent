@@ -68,6 +68,7 @@ globalThis.chrome = {
     },
   },
   tabs: {
+    onUpdated: { addListener() {}, removeListener() {} },
     async query(query = {}) {
       let tabs = [...mockTabs];
       if (query.currentWindow) tabs = tabs.filter(tab => tab.currentWindow !== false);

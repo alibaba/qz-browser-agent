@@ -9,6 +9,7 @@ import { chromeMessageId, decodeChromeMessage, defineMessages, HISTORICAL_LABELS
 import { getToolMetadataCatalog } from "../../src/shared/tools/tool-metadata.ts";
 import { createTranslator, getLanguage, getTextDirection } from "../../src/shared/i18n/index.ts";
 import { browserPermissionMessages, permissionT } from "../../src/shared/browser-permissions.ts";
+import { debuggerDetachMessages, debuggerDetachT } from "../../src/shared/debugger-detach.ts";
 import { createContentLanguageSnapshot } from "../../src/shared/i18n/content.ts";
 import { t as panelText } from "../../src/sidepanel/i18n/index.ts";
 import { localizeToolFailurePayload } from "../../src/shared/tools/tool-error-localization.ts";
@@ -21,7 +22,7 @@ import { groupProviderChoices } from "../../src/shared/settings-menu-utils.ts";
 const source = resolve("src");
 const namespaces = new Set([
   ...uiCatalogs.map(catalog => catalog.namespace), "core", "backend", "content",
-  "product-public", "document-input", "skill-renderers", browserPermissionMessages.namespace,
+  "product-public", "document-input", "skill-renderers", browserPermissionMessages.namespace, debuggerDetachMessages.namespace,
 ]);
 const baseline = readTranslationBaseline(source);
 const required = [...baseline.keys()].filter(key => namespaces.has(key.split(".")[0]));
@@ -143,6 +144,19 @@ test("permission recovery messages use localized permission names in every langu
         assert.ok(template, `${pack.language}: ${key} is shipped`);
         assert.equal(permissionT(key, { permission: name }), template.replace("{permission}", name));
       }
+    }
+  });
+});
+
+test("debugger reattach cards ship localized titles, disclosures and actions in every language", () => {
+  for (const pack of packs) withPack(pack, messages => {
+    for (const [key, authored] of Object.entries(debuggerDetachMessages.messages)) {
+      const expected = pack.catalog
+        ? decodeChromeMessage(messages[chromeMessageId(`debugger-detach.${key}`)])
+        : authored[pack.language];
+      assert.ok(expected, `${pack.language}: debugger-detach.${key} must be shipped`);
+      assert.equal(debuggerDetachT(key), expected, `${pack.language}: ${key} resolves through the native pack`);
+      if (pack.catalog) assert.notEqual(expected, authored.en, `${pack.language}: ${key} cannot silently fall back to English`);
     }
   });
 });

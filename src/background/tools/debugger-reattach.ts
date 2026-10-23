@@ -8,10 +8,11 @@ export async function confirmDebuggerReattach(
   { sessionId, runId, context, signal = null }: { tabId: number; sessionId: string; runId: string; context: ToolContext; signal?: AbortSignal | null },
   { sessions, emit }: ToolRuntimeDependencies,
 ): Promise<boolean> {
-  if (!sessionId || !runId || typeof sessions?.beginUserWait !== "function" || typeof emit !== "function"
-    || sessions.isWaitingForUser?.(sessionId)) {
+  if (!sessionId || !runId || typeof sessions?.beginUserWait !== "function" || typeof emit !== "function") {
     return true;
   }
+  // Preserve the current question without treating its occupied channel as approval.
+  if (sessions.isWaitingForUser?.(sessionId)) return false;
   const text = (key: "title" | "message") => withLanguage(context.language || getLanguage(), () => debuggerDetachT(key));
   const waitId = `debugger_reattach_${crypto.randomUUID()}`;
   const pending = sessions.beginUserWait(sessionId, {

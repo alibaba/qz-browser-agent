@@ -10,6 +10,7 @@ globalThis.chrome = {
   runtime: { id: "extension-id" },
   storage: { local: { async get() { return {}; } } },
   tabs: {
+    onUpdated: { addListener() {}, removeListener() {} },
     async get(tabId) { return { id: tabId, url: "https://example.test/page" }; },
     async update() {},
   },

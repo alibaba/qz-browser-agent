@@ -79,6 +79,7 @@ const imageUpserts = [];
 let imageWriteError = null;
 let bindBackendNodesImpl = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 0) });
 let readImageDataUrl = "data:image/png;base64,aW1hZ2U=";
+let readImageFailure = null;
 let listedImages = [{
   index: 4,
   rank: 0,
@@ -170,6 +171,8 @@ const runtime = registerMediaTools({
       };
     }
     if (action === "readImageElement") {
+      if (readImageFailure instanceof Error) throw readImageFailure;
+      if (readImageFailure) return readImageFailure;
       return {
         ...listedImages[0],
         ...(readImageDataUrl ? { dataUrl: readImageDataUrl } : {}),
@@ -1856,15 +1859,100 @@ try {
   assert.equal(fallbackImage.code, undefined, JSON.stringify(fallbackImage));
   assert.match(fallbackImage.method, /^element_screenshot_fallback:/, "a matching node-backed image still uses the screenshot fallback when canvas pixels are unavailable");
   assert.match(fallbackImage._image, /^data:image\//);
+
+  for (const failure of [
+    new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content bridge unavailable"),
+    { code: "IMAGE_SRC_EMPTY", error: "Image element has no src/currentSrc", details: { src: "", currentSrc: "" } },
+    { dataUrl: "data:image/png;base64,aW1hZ2U=" },
+  ]) {
+    readImageFailure = failure;
+    const capturesBeforeUnknownSource = cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length;
+    await assert.rejects(
+      definitions.get("read_image").execute({ target: bound.images[0].target }, undefined, { sessionId: "session-a" }),
+      error => error?.code === "STALE_IMAGE_TARGET" && error.details.currentSrc === "",
+      "a source-bound image must not return pixels when its current source cannot be verified",
+    );
+    assert.equal(cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length, capturesBeforeUnknownSource);
+  }
+  readImageFailure = { code: "IMAGE_SRC_EMPTY", error: "Image element has no src/currentSrc" };
+  const unboundFallback = await definitions.get("read_image").execute({ tabId: 6, target: "css:#gallery > img.hero" }, undefined, { sessionId: "session-a" });
+  assert.match(unboundFallback.method, /^element_screenshot_fallback:/, "explicit CSS reads have no listed source to verify");
+
+  for (const code of ["OPERATION_ABORTED", "SECURITY_GUARDRAIL_BLOCKED", "SESSION_TAB_FOREIGN", "CDP_RUN_RELEASED"]) {
+    readImageFailure = new ToolExecutionError(code, code);
+    const capturesBeforeForbidden = cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length;
+    await assert.rejects(
+      definitions.get("read_image").execute({ target: bound.images[0].target }, undefined, { sessionId: "session-a" }),
+      error => error === readImageFailure,
+    );
+    assert.equal(cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length, capturesBeforeForbidden);
+  }
 } finally {
   listedImages = savedListedImages;
   bindBackendNodesImpl = savedBind;
   readImageDataUrl = savedReadImageDataUrl;
+  readImageFailure = null;
 }
 
 console.log("media screenshot boundary tests passed");
 
 const { createElementRuntime } = await import("../../src/background/tools/element-runtime.js");
+{
+  const calls = [];
+  let failure = null;
+  const measured = { bounds: { x: 510, y: 620, width: 40, height: 30 }, viewport: { pageX: 500, pageY: 600 } };
+  let frameBounds = measured;
+  let frameContent = [100, 200, 420, 200, 420, 440, 100, 440];
+  const frameRef = { target: "uid:frame-image", uid: "frame-image", selector: "#same-id", ref: {
+    backendNodeId: 77, frameId: "child", loaderId: "child-loader",
+  } };
+  const send = async (method, params) => {
+    calls.push({ method, params });
+    if (method === "DOM.resolveNode") return { object: { objectId: "unrelated-main-node" } };
+    if (method === "Runtime.callFunctionOn") return { result: { value: { bounds: { x: 1, y: 2, width: 3, height: 4 } } } };
+    if (method === "DOM.getFrameOwner") return { backendNodeId: 999 };
+    if (method === "DOM.getBoxModel") return { model: { content: frameContent } };
+    if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 50, pageY: 70, zoom: 1 } };
+    if (method === "Page.captureScreenshot") return { data: "Y2Rw" };
+    throw new Error(`Unexpected method: ${method}`);
+  };
+  const frameRuntime = registerMediaTools({
+    registerTool() {}, ToolExecutionError, getElementTargetDescription: () => "target",
+    async assertTabAllowed() {},
+    clampNumber: (value, min, max, fallback) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback,
+    async callElement(tabId, binding, action) {
+      assert.equal(tabId, 6);
+      assert.equal(binding.ref.frameId, "child");
+      assert.equal(action, "getElementScreenshotBounds");
+      if (failure) throw failure;
+      return frameBounds;
+    },
+    async sendToContent() { throw new Error("A frame UID cannot fall back to a main-document selector"); },
+    async withDebugger(tabId, run) { return run({ tabId }, send); },
+    async sendCdp(_tabId, method, params) { return send(method, params); },
+  });
+  const shot = await frameRuntime.captureElementScreenshot(6, frameRef, { format: "png" });
+  assert.deepEqual(shot.clip, { x: 160, y: 290, width: 40, height: 30, scale: 1 },
+    "frame screenshots project the actual child element into the parent viewport and scroll position");
+  assert.equal(calls.some(({ method }) => method === "DOM.resolveNode"), false,
+    "a child backend node id must never resolve an unrelated same-numbered main-document node");
+  for (const code of ["STALE_ELEMENT_UID", "OPERATION_ABORTED", "SECURITY_GUARDRAIL_BLOCKED", "SESSION_TAB_FOREIGN", "CDP_RUN_RELEASED"]) {
+    failure = new ToolExecutionError(code, code);
+    const captures = calls.filter(({ method }) => method === "Page.captureScreenshot").length;
+    await assert.rejects(frameRuntime.captureElementScreenshot(6, frameRef, { format: "png" }), error => error === failure);
+    assert.equal(calls.filter(({ method }) => method === "Page.captureScreenshot").length, captures);
+  }
+  failure = null;
+  for (const invalid of [{}, { ...measured, viewport: {} }, { ...measured, bounds: { ...measured.bounds, width: 0 } }, measured]) {
+    frameBounds = invalid;
+    if (invalid === measured) frameContent = [];
+    const captures = calls.filter(({ method }) => method === "Page.captureScreenshot").length;
+    await assert.rejects(frameRuntime.captureElementScreenshot(6, frameRef, { format: "png" }), error => error?.code === "INVALID_ELEMENT_SCREENSHOT_BOUNDS");
+    assert.equal(calls.filter(({ method }) => method === "Page.captureScreenshot").length, captures);
+    assert.equal(calls.some(({ method }) => method === "DOM.resolveNode"), false);
+  }
+}
+
 const fallbackImages = [
   { index: 0, rank: 0, selector: "main > img.card:nth-of-type(1)", src: "https://example.test/a.png", currentSrc: "https://example.test/a.png", alt: "A", title: "", naturalWidth: 10, naturalHeight: 10, visible: true },
   { index: 1, rank: 1, selector: "main > img.card:nth-of-type(2)", src: "https://example.test/b.png", currentSrc: "https://example.test/b.png", alt: "B", title: "", naturalWidth: 10, naturalHeight: 10, visible: true },

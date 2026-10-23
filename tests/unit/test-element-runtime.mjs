@@ -10,6 +10,9 @@ let childBridge = true;
 let oopifBridge = true;
 let contentInitializations = 0;
 let exposeOopif = false;
+let childLoaderId = "child-loader";
+let navigateDuringBind = false;
+let childDocumentAvailable = true;
 const scriptCalls = [];
 globalThis.chrome = {
   runtime: { id: "extension-id" },
@@ -75,7 +78,7 @@ const runtime = createElementRuntime({
         frameTree: {
           frame: { id: "main", loaderId: params.loaderId || "loader-live" },
           childFrames: [{
-            frame: { id: "child", parentId: "main", loaderId: "child-loader" },
+            frame: { id: "child", parentId: "main", loaderId: childLoaderId },
             childFrames: [{ frame: { id: "grandchild", parentId: "child", loaderId: "grand-loader" } }],
           }],
         },
@@ -92,10 +95,18 @@ const runtime = createElementRuntime({
         return {};
       }
       if (method === "DOM.getDocument") return { root: { nodeId: 3 } };
+      if (method === "DOM.getFrameOwner") return { backendNodeId: 500 };
+      if (method === "DOM.pushNodesByBackendIdsToFrontend") return { nodeIds: [30] };
       if (method === "DOM.querySelectorAll") {
+        if (params.nodeId === 30) {
+          if (navigateDuringBind) childLoaderId = "child-replaced";
+          return { nodeIds: [19] };
+        }
         return { nodeIds: String(params.selector).includes("dup") ? [11, 12] : [9] };
       }
-      if (method === "DOM.describeNode") return { node: { backendNodeId: 44 } };
+      if (method === "DOM.describeNode") return { node: params.backendNodeId === 500
+        ? { contentDocument: childDocumentAvailable ? { backendNodeId: 51 } : undefined }
+        : { backendNodeId: params.nodeId === 19 ? 144 : 44 } };
       if (method === "DOM.resolveNode") return { object: { objectId: "uid-node" } };
       if (method === "Runtime.evaluate") {
         const bridge = Number(params.contextId) === 8 ? childBridge : true;
@@ -108,6 +119,9 @@ const runtime = createElementRuntime({
     send.inSession = sessionId => async (method, params = {}) => {
       commands.push({ method, params, sessionId });
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "oopif", loaderId: "oopif-loader" } } };
+      if (method === "DOM.getDocument") return { root: { nodeId: 3 } };
+      if (method === "DOM.querySelectorAll") return { nodeIds: [9] };
+      if (method === "DOM.describeNode") return { node: { backendNodeId: 244 } };
       if (method === "Runtime.disable" || method === "Runtime.releaseObjectGroup") return {};
       if (method === "Runtime.enable") {
         for (const listener of listeners) {
@@ -197,6 +211,27 @@ assert.equal(commands.slice(beforeStale).some(command => command.method === "DOM
 const bound = await runtime.bindBackendNodes(5, ["button.dup", "#only"], context);
 assert.equal(bound.loaderId, "loader-live");
 assert.deepEqual(bound.ids, [0, 44], "a selector that matches two nodes must not bind the first");
+
+const beforeChildBind = commands.length;
+const childScope = { frameId: "child", loaderId: "child-loader" };
+assert.deepEqual(await runtime.bindBackendNodes(5, ["#only"], context, childScope), { loaderId: "child-loader", ids: [144] });
+assert.equal(commands.slice(beforeChildBind).filter(command => command.method === "DOM.querySelectorAll").every(command => command.params.nodeId === 30), true,
+  "a same-process child selector is scoped to its own document");
+await assert.rejects(runtime.bindBackendNodes(5, ["#only"], context, { ...childScope, loaderId: "previous-loader" }), { code: "STALE_ELEMENT_UID" });
+navigateDuringBind = true;
+await assert.rejects(runtime.bindBackendNodes(5, ["#only"], context, childScope), { code: "STALE_ELEMENT_UID" });
+navigateDuringBind = false;
+childLoaderId = "child-loader";
+childDocumentAvailable = false;
+assert.deepEqual((await runtime.bindBackendNodes(5, ["#only"], context, childScope)).ids, [0], "a missing child document must not query the main document");
+childDocumentAvailable = true;
+
+exposeOopif = true;
+const beforeRemoteBind = commands.length;
+assert.deepEqual(await runtime.bindBackendNodes(5, ["#only"], context, { frameId: "oopif", loaderId: "oopif-loader" }), { loaderId: "oopif-loader", ids: [244] });
+assert.equal(commands.slice(beforeRemoteBind).filter(command => command.method === "DOM.querySelectorAll").every(command => command.sessionId === "sess"), true,
+  "an out-of-process child selector uses its own CDP session");
+exposeOopif = false;
 
 ownedTabs = [5493, 15493];
 assert.match(runtime.makeSnapshotId(5493, context), /^t5493\.[0-9a-z]{6}$/);

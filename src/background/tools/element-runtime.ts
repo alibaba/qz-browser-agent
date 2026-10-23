@@ -405,19 +405,34 @@ async function backendNodeIdForSelector(tabId: number, selector: string, context
   return bound.ids[0] || 0;
 }
 
-async function bindBackendNodes(tabId: number, selectors: string[], context: ToolContext = {}) {
+async function bindBackendNodes(tabId: number, selectors: string[], context: ToolContext = {}, scope?: Pick<ElementReference, "frameId" | "loaderId">) {
   try {
-    return await withDebugger(tabId, async (_target, send) => describeSelectors(send, selectors), context);
+    return await withDebugger(tabId, async (_target, send) => {
+      if (!scope?.frameId) return describeSelectors(send, selectors);
+      const frame = await openChildFrame(send, scope.frameId);
+      if (!frame || (scope.loaderId && frame.loaderId !== scope.loaderId)) throw staleElement(scope.frameId);
+      const bound = await describeSelectors(frame.send, selectors, frame.sessionId ? "" : frame.id);
+      if (await frameLoaderId(frame.send, frame.id) !== frame.loaderId) throw staleElement(scope.frameId);
+      return { ...bound, loaderId: frame.loaderId };
+    }, context);
   } catch (err) {
-    if (isCdpFallbackForbiddenError(err)) throw err;
-    return { loaderId: "", ids: selectors.map(() => 0) };
+    if (isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && err.code === "STALE_ELEMENT_UID")) throw err;
+    return { loaderId: scope?.loaderId || "", ids: selectors.map(() => 0) };
   }
 }
 
-async function describeSelectors(send: CdpCommand, selectors: string[]) {
+async function describeSelectors(send: CdpCommand, selectors: string[], localFrameId = "") {
   const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
   const root = record(await send("DOM.getDocument", { depth: 0, pierce: true }));
-  const documentNodeId = Number(record(root.root).nodeId || 0);
+  let documentNodeId = Number(record(root.root).nodeId || 0);
+  if (localFrameId) {
+    const owner = record(await send("DOM.getFrameOwner", { frameId: localFrameId }));
+    const described = record(await send("DOM.describeNode", { backendNodeId: owner.backendNodeId, depth: 1, pierce: true }));
+    const document = record(record(described.node).contentDocument);
+    const pushed = document.backendNodeId
+      ? record(await send("DOM.pushNodesByBackendIdsToFrontend", { backendNodeIds: [document.backendNodeId] })) : {};
+    documentNodeId = Array.isArray(pushed.nodeIds) ? Number(pushed.nodeIds[0] || 0) : 0;
+  }
   const ids: number[] = [];
   for (const selector of selectors) {
     if (!documentNodeId || !selector) { ids.push(0); continue; }

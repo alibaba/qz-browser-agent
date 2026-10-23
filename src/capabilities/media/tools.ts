@@ -442,7 +442,7 @@ async function resolveSelectedImageTarget(selectedTarget: string, tabId: number 
 function assertSelectedImageSource(candidate: ImageMetadata = {}, observedSrc: unknown = "") {
   const expectedSrc = String(candidate.expectedSrc || "").trim();
   const currentSrc = String(observedSrc || "").trim();
-  if (!expectedSrc || !currentSrc || currentSrc === expectedSrc) return;
+  if (!expectedSrc || currentSrc === expectedSrc) return;
   throw new ToolExecutionError(
     "STALE_IMAGE_TARGET",
     t("selectedImageTargetNoLongerPointsToTheListed"),
@@ -767,6 +767,7 @@ registerTool({
         },
       });
     } catch (err) {
+      if (isCdpFallbackForbiddenError(err) || String(errorCode(err)).startsWith("STALE_ELEMENT_UID")) throw err;
       return {
         error: canvasResult?.error || record(err).message || "Cannot read image pixels from the loaded DOM image",
         code: canvasResult?.code || errorCode(err) || "IMAGE_DOM_READ_FAILED",
@@ -902,6 +903,7 @@ async function readImageForAssetCollection(candidate: ImageMetadata = {}, option
     try {
       return await captureImageCandidateScreenshot(candidate, options, pageReadError || downloadError);
     } catch (screenshotError) {
+      if (isCdpFallbackForbiddenError(screenshotError)) throw screenshotError;
       throw combineImageCollectionReadError({ mode, candidate, pageReadError, downloadError, screenshotError });
     }
   };
@@ -916,7 +918,7 @@ async function readImageForAssetCollection(candidate: ImageMetadata = {}, option
         quality: normalizeImageQuality(options.quality),
       }, options.context || {}));
     } catch (err) {
-      if (err instanceof ToolExecutionError && String(err.code).startsWith("STALE_ELEMENT_UID")) throw err;
+      if (isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(err.code).startsWith("STALE_ELEMENT_UID"))) throw err;
       pageReadError = normalizeImageReadError(err, "IMAGE_PAGE_BINARY_FAILED", {
         stage: "page_canvas",
         selector: candidate.selector,
@@ -1627,15 +1629,19 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
   let cdpError: unknown = null;
   let selectorError: unknown = null;
 
-  if (ref?.ref?.backendNodeId) {
+  if (ref.ref?.frameId) {
+    // Child backend ids and selectors belong to that document, never the page target.
+    boundsInfo = await getFrameElementScreenshotBounds(tabId, ref, context);
+  } else if (ref?.ref?.backendNodeId) {
     try {
       boundsInfo = await getElementScreenshotBoundsFromRuntime(tabId, ref.ref.backendNodeId, context);
     } catch (err) {
+      if (isCdpFallbackForbiddenError(err)) throw err;
       runtimeError = err;
     }
   }
 
-  if (!boundsInfo && ref?.selector) {
+  if (!boundsInfo && !ref.ref?.frameId && ref?.selector) {
     try {
       const contentBounds = await sendToContent(tabId, "getElementScreenshotBounds", {
         selector: ref.selector,
@@ -1654,6 +1660,7 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
         };
       }
     } catch (err) {
+      if (isCdpFallbackForbiddenError(err)) throw err;
       selectorError = {
         error: errorMessage(err),
         code: errorCode(err) || "SELECTOR_BOUNDS_FAILED",
@@ -1662,10 +1669,11 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
     }
   }
 
-  if (!boundsInfo && ref?.ref?.backendNodeId) {
+  if (!boundsInfo && !ref.ref?.frameId && ref?.ref?.backendNodeId) {
     try {
       boundsInfo = await getElementScreenshotBoundsFromCdp(tabId, ref.ref.backendNodeId, context);
     } catch (err) {
+      if (isCdpFallbackForbiddenError(err)) throw err;
       cdpError = err;
     }
   }
@@ -1689,6 +1697,10 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
   }
 
   const layoutMetrics = await getScreenshotLayoutMetrics(tabId, context);
+  if (ref.ref?.frameId) {
+    const bounds = normalizeRuntimeBounds(boundsInfo.bounds);
+    boundsInfo.bounds = { ...bounds, x: bounds.x + layoutMetrics.pageX, y: bounds.y + layoutMetrics.pageY };
+  }
   const { clip, clipped, outputWidth, outputHeight, resized } = buildScreenshotClip(boundsInfo.bounds, {
     padding,
     maxWidth,
@@ -1731,6 +1743,28 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
     bounds: boundsInfo.bounds,
     layoutMetrics,
   };
+}
+
+async function getFrameElementScreenshotBounds(tabId: number, ref: ScreenshotRef, context: ToolContext): Promise<BoundsInfo> {
+  const value = imageMetadata(await callElement(tabId, imageCallTarget({ ...ref, tabId }), "getElementScreenshotBounds", {}, context));
+  if (value.error) throw new ToolExecutionError(value.code || "ELEMENT_HAS_NO_RENDERED_BOX", value.error, value.details);
+  const bounds = normalizeRuntimeBounds(value.bounds);
+  const viewport = record(value.viewport);
+  return withDebugger(tabId, async (_target, send) => {
+    const owner = record(await send("DOM.getFrameOwner", { frameId: ref.ref!.frameId }));
+    const backendNodeId = Number(owner.backendNodeId || 0);
+    if (!backendNodeId) throw new ToolExecutionError("ELEMENT_HAS_NO_RENDERED_BOX", t("elementHasNoRenderedBoxToScreenshot"));
+    const model = record(record(await send("DOM.getBoxModel", { backendNodeId })).model);
+    const content = Array.isArray(model.content) ? model.content : [];
+    // CDP gives the iframe content origin in the root viewport. Content bounds
+    // include the child's scroll; the caller adds the root document scroll.
+    return {
+      method: "frame_rect",
+      selector: value.selector,
+      bounds: { ...bounds, x: Number(content[0]) + bounds.x - Number(viewport.pageX), y: Number(content[1]) + bounds.y - Number(viewport.pageY) },
+      viewport: value.viewport,
+    };
+  }, context);
 }
 
 async function getElementScreenshotBoundsFromRuntime(tabId: number, backendNodeId: number, context: ToolContext = {}) {

@@ -19,12 +19,14 @@ interface AttachedChild {
 }
 
 globalThis.chrome?.debugger?.onEvent?.addListener((source, method, params) => noteDebuggerEvent(source, method, params));
-globalThis.chrome?.debugger?.onDetach?.addListener(source => {
-  const tabId = Number(source?.tabId);
+globalThis.chrome?.debugger?.onDetach?.addListener(source => forgetChildFrames(Number(source?.tabId)));
+
+/** Retire both event-driven and programmatic debugger connections. */
+export function forgetChildFrames(tabId: number) {
   if (!Number.isInteger(tabId) || tabId <= 0) return;
   attachedByTab.delete(tabId);
   armedConnectionByTab.delete(tabId);
-});
+}
 
 /** Direct child documents only. Nested frames stay on their parent as an iframe node. */
 export async function directChildFrames(send: CdpCommand): Promise<ChildFrame[]> {

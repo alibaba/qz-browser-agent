@@ -1,0 +1,6 @@
+{
+  "debugger-detach.title": "디버깅 연결 끊김",
+  "debugger-detach.message": "'이 브라우저를 디버깅 중' 알림 표시줄을 닫아 디버거 연결이 끊어졌습니다. 이 작업을 계속할까요?",
+  "debugger-detach.continue": "계속",
+  "debugger-detach.stop": "중지"
+}

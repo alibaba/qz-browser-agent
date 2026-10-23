@@ -1,7 +1,7 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
-import { directChildFrames, type CdpCommand } from "#sdk/background/browser";
+import { directChildFrames, openChildFrame, type CdpCommand } from "#sdk/background/browser";
 import { isPageOverview, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
 type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
@@ -73,7 +73,9 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
   let roots = defaultRoots;
   let rootFound = true;
   if (rootBackendNodeId) {
-    const requestedRoot = [...nodeMap.values()].find(node => Number(node?.backendDOMNodeId || 0) === Number(rootBackendNodeId) && String(node.documentFrameId || "") === String(rootFrameId || ""));
+    const requestedRoot = [...nodeMap.values()].find(node => Number(node?.backendDOMNodeId || 0) === Number(rootBackendNodeId)
+      && String(node.documentFrameId || "") === rootFrameId
+      && (!rootFrameId || node.documentLoaderId === loaderId));
     roots = requestedRoot ? [requestedRoot] : [];
     rootFound = !!requestedRoot;
   }
@@ -85,7 +87,8 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
     if (!rawNode) return;
     const compact = compactAxNode(rawNode);
     const backendNodeId = Number(compact.backendNodeId || 0);
-    const keep = shouldKeepAxNode(compact, depth) || actionBackendIds.has(backendNodeId);
+    const keep = shouldKeepAxNode(compact, depth)
+      || (compact.documentFrameId === rootFrameId && actionBackendIds.has(backendNodeId));
     let nextDepth = depth;
     let nextParentNode = parentNode;
 
@@ -113,7 +116,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
   };
 
   for (const root of roots) buildSemanticTree(root, 0, null);
-  const required = placeActions(actions, semanticNodes, semanticRoots);
+  const required = placeActions(rootFound ? actions : [], semanticNodes, semanticRoots, rootFrameId, loaderId);
   pruneRedundantText(semanticRoots);
   rebuildSemanticList(semanticRoots, semanticNodes);
   const includedNodes = selectSemanticNodesByBreadth(semanticRoots, limit, required);
@@ -184,14 +187,14 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
   };
 }
 
-function placeActions(actions: ActionAnchor[], semanticNodes: SemanticNode[], semanticRoots: SemanticNode[]) {
+function placeActions(actions: ActionAnchor[], semanticNodes: SemanticNode[], semanticRoots: SemanticNode[], frameId: string, loaderId: string) {
+  // Overview actions come from one document. Backend ids, names and ancestors
+  // may all collide with nodes grafted from another document.
+  const scopedNodes = semanticNodes.filter(node => node.compact.documentFrameId === frameId);
   const byBackend = new Map<number, SemanticNode>();
-  for (const node of semanticNodes) {
+  for (const node of scopedNodes) {
     const id = Number(node.compact.backendNodeId || 0);
-    if (id <= 0) continue;
-    const existing = byBackend.get(id);
-    // Backend ids restart in a child document. A parent action keeps the parent node.
-    if (!existing || (existing.compact.documentFrameId && !node.compact.documentFrameId)) byBackend.set(id, node);
+    if (id > 0) byBackend.set(id, node);
   }
   const used = new Set<SemanticNode>();
   const required = new Set<SemanticNode>();
@@ -200,10 +203,11 @@ function placeActions(actions: ActionAnchor[], semanticNodes: SemanticNode[], se
     const locator = actionLocator(anchor.action);
     let node = backendNodeId ? byBackend.get(backendNodeId) : undefined;
     // A real backend id, or a selector that identifies the element, must not attach to a same-named node.
-    if (!node && !backendNodeId && !locator) node = findBestSemanticNode(anchor.action, semanticNodes, used) || undefined;
-    if (!node && (backendNodeId || locator)) node = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots);
+    if (!node && !backendNodeId && !locator) node = findBestSemanticNode(anchor.action, scopedNodes, used) || undefined;
+    // Selector fallback addresses the main Content document, never a child frame.
+    if (!node && (backendNodeId || (locator && !frameId))) node = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots, frameId, loaderId);
     if (!node) {
-      node = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots);
+      node = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots, frameId, loaderId);
       node.unavailable = true;
       mergeAction(node, anchor.action);
       let current: SemanticNode | null = node;
@@ -226,7 +230,7 @@ function placeActions(actions: ActionAnchor[], semanticNodes: SemanticNode[], se
   return required;
 }
 
-function insertSynthetic(anchor: ActionAnchor, byBackend: Map<number, SemanticNode>, semanticNodes: SemanticNode[], semanticRoots: SemanticNode[]) {
+function insertSynthetic(anchor: ActionAnchor, byBackend: Map<number, SemanticNode>, semanticNodes: SemanticNode[], semanticRoots: SemanticNode[], frameId: string, loaderId: string) {
   let parent: SemanticNode | null = null;
   let childBackendIds: number[] = [];
   for (const ancestor of anchor.ancestors) {
@@ -246,15 +250,15 @@ function insertSynthetic(anchor: ActionAnchor, byBackend: Map<number, SemanticNo
       description: "",
       value: "",
       url: "",
-      documentFrameId: "",
-      documentLoaderId: "",
+      documentFrameId: frameId,
+      documentLoaderId: loaderId,
       flags: [],
     },
     depth: 0,
     parent: null,
     children: [],
   };
-  if (!parent && semanticRoots[0]) parent = semanticRoots[0];
+  if (!parent) parent = semanticRoots.find(node => node.compact.documentFrameId === frameId) || null;
   if (parent) {
     semantic.parent = parent;
     semantic.depth = parent.depth + 1;
@@ -718,19 +722,25 @@ registerTool({
       };
     }
 
-    const pageUrl = String(overview?.url || "").trim();
+    // UID pageUrl guards the owning tab, while a child overview reports its own URL.
+    const pageUrl = String(rootRef?.ref?.frameId ? rootRef.ref.pageUrl || "" : overview?.url || "").trim();
     const documentId = await readMainDocumentId(targetTabId);
     const ax = await withDebugger(targetTabId, async (_target, send) => {
       const actionList = overview?.actions || [];
-      const bound = await bindBackendNodes(targetTabId, actionList.map(action => String(action?.selector || "")), context);
-      const anchors = await actionAnchors(send, actionList, bound.ids);
+      const rootFrameId = String(rootRef?.ref?.frameId || "");
+      const bound = await bindBackendNodes(targetTabId, actionList.map(action => String(action?.selector || "")), context, rootRef?.ref);
+      const frame = rootFrameId ? await openChildFrame(send, rootFrameId) : null;
+      if (rootFrameId && (!frame || frame.loaderId !== bound.loaderId)) {
+        throw new ToolExecutionError("STALE_ELEMENT_UID", t("cannotResolveAxRoot", { selector: requestedRoot }), { root: requestedRoot });
+      }
+      const anchors = await actionAnchors(frame?.send || send, actionList, bound.ids);
       const fetchDepth = rootBackendNodeId ? 40 : axDepth;
       const result = await send("Accessibility.getFullAXTree", { depth: fetchDepth });
       const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
       const withFrames = await embedChildFrameNodes(send, nodes, fetchDepth);
       return buildAccessibilitySnapshot(withFrames, {
         tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,
-        rootBackendNodeId, rootFrameId: String(rootRef?.ref?.frameId || ""), maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,
+        rootBackendNodeId, rootFrameId, maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,
       });
     }, context);
     return {

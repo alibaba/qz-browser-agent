@@ -1,0 +1,6 @@
+{
+  "debugger-detach.title": "偵錯連線已中斷",
+  "debugger-detach.message": "你關閉了「正在偵錯此瀏覽器」提示，偵錯連線已中斷。要繼續這項任務嗎？",
+  "debugger-detach.continue": "繼續",
+  "debugger-detach.stop": "停止"
+}

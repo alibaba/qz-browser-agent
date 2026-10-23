@@ -94,7 +94,7 @@ async function ensureContentScript(tabId: number, force = false) {
     target: { tabId, allFrames: true },
     world: "ISOLATED",
     files: ["content/article-extractor.js", "content/content-script.js"],
-    injectImmediately: true,
+    injectImmediately: force,
   });
   const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }));
   if (response?.ok !== true) {
@@ -909,8 +909,8 @@ async function attachPageContextToToolResult(definition: RuntimeTool, args: Fiel
   return {
     ...result,
     _tabId: page.tabId,
-    _pageTitle: result._pageTitle || page.title,
-    _pageUrl: result._pageUrl || page.url,
+    _pageTitle: typeof result._pageTitle === "string" ? result._pageTitle : page.title,
+    _pageUrl: typeof result._pageUrl === "string" ? result._pageUrl : page.url,
     ...(capabilityBridges.describePage ? { _pageContext: capabilityBridges.describePage(page.tabId) } : {}),
   };
 }
@@ -1256,11 +1256,13 @@ const {
   withDebugger,
   withTemporaryDebugger,
   getDebuggerConnectionId,
+  getDebuggerRun,
   setDebuggerRetention,
   releaseDebugger,
   confirmRunReattach,
   releaseRun: releaseRunDebuggerConnections,
   releaseSession: releaseSessionCdp,
+  releaseTab: releaseTabCdp,
 } = createCdpRuntime({
   ToolExecutionError,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
@@ -1328,7 +1330,7 @@ export async function releaseRunCdp(sessionId: string, runId: string) {
   return await releaseRunDebuggerConnections(sessionId, runId);
 }
 
-export { releaseSessionCdp };
+export { releaseSessionCdp, releaseTabCdp };
 
 export async function withRunCdp<T>(tabId: number, context: ToolContext, fn: (target: chrome.debugger.Debuggee, send: CdpCommand) => T | Promise<T>) {
   return await withDebugger(tabId, fn, context);
@@ -1386,7 +1388,7 @@ const capabilityHost: ToolExtensionAPI = Object.freeze({
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
   assertPageUrlAccessible,
-  sendToContent, sendCdp, withDebugger, getDebuggerConnectionId, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
+  sendToContent, sendCdp, withDebugger, getDebuggerConnectionId, getDebuggerRun, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
   getTabPageState, pageStateDelta, prepareKnownPageNavigation, commitObservedPageNavigation,
   clickPointReady, clickNotReadyResult, captureTabScreenshot, enablePreNavigationNetworkWatch,
   publishSkillRegistryChange, summarizeToolArgsForTrace,

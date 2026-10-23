@@ -1,0 +1,6 @@
+{
+  "debugger-detach.title": "انقطع اتصال تصحيح الأخطاء",
+  "debugger-detach.message": "أغلقت شريط «تصحيح أخطاء هذا المتصفح»، فانقطع الاتصال بمصحح الأخطاء. هل تريد متابعة هذه المهمة؟",
+  "debugger-detach.continue": "متابعة",
+  "debugger-detach.stop": "إيقاف"
+}

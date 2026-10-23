@@ -722,3 +722,25 @@ for (const secondary of [false, true]) test(`UID survives Content upgrade and re
     }
   } finally { await h.close(); }
 });
+
+test("first console read after a UID click keeps earlier logs and the click exception once", async () => {
+  test.setTimeout(120000);
+  const h = await createHarness();
+  try {
+    await h.page.evaluate(() => {
+      console.log("qz-before-uid");
+      document.querySelector("#save").addEventListener("click", () => { throw new Error("qz-uid-click-error"); });
+    });
+    const target = targets((await tree(h)).snapshot, "button", "Save text")[0];
+    const exception = h.page.waitForEvent("pageerror");
+    expect(await h.call("act_on_element", { target, action: "click" })).not.toHaveProperty("code");
+    expect((await exception).message).toContain("qz-uid-click-error");
+    for (let read = 0; read < 2; read++) {
+      const result = await h.call("read_console_messages", { textPattern: "qz-(before-uid|uid-click-error)" });
+      expect(result, JSON.stringify(result)).not.toHaveProperty("code");
+      expect(result.results.filter(item => item.text === "qz-before-uid")).toHaveLength(1);
+      expect(result.results.filter(item => item.type === "exception" && item.text.includes("qz-uid-click-error"))).toHaveLength(1);
+    }
+    expect((await h.state()).hits.save).toBe(1);
+  } finally { await h.close(); }
+});

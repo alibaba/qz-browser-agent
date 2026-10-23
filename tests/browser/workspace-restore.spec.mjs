@@ -211,6 +211,7 @@ test("a failed page restore returns to the empty Chat workspace", async ({ page,
 });
 
 test("leaving a slow restoring page preserves the user's newer navigation", async ({ page }) => {
+  await page.clock.install();
   await page.goto("/__test_health");
   await page.evaluate(() => localStorage.clear());
   const sessionId = "cancelled-restoration";
@@ -230,7 +231,10 @@ test("leaving a slow restoring page preserves the user's newer navigation", asyn
       await new Promise(resolve => { globalThis.__releaseStoredSessionRead = resolve; });`) });
   });
   await page.goto(SIDEPANEL_URL, { waitUntil: "commit" });
-  await expect(page.locator("#app")).toHaveAttribute("data-workspace-boot-fallback", "timeout", { timeout: 8000 });
+  await page.waitForFunction(() => typeof globalThis.__releaseStoredSessionRead === "function");
+  // The boot deadline starts after module loading and consent, not navigation commit.
+  await page.clock.runFor(6000);
+  await expect(page.locator("#app")).toHaveAttribute("data-workspace-boot-fallback", "timeout");
   await page.locator('.tab-btn[data-tab="data"]').click();
   await expect(page.locator("#data-panel")).toBeVisible();
   await page.evaluate(() => globalThis.__releaseStoredSessionRead());
@@ -482,14 +486,18 @@ test("surfaces an error thrown by the application startup sequence", async ({ pa
 });
 
 test("reveals the current shell if workspace startup never settles", async ({ page }) => {
+  await page.clock.install();
   await page.addInitScript(installBenchmarkChromeStub, { benchmark: false });
   await page.route("**/extension/sidepanel/app.js", route => route.fulfill({
     contentType: "application/javascript",
-    body: "await new Promise(() => {}); export {};",
+    body: "globalThis.__workspaceStartupBlocked = true; await new Promise(() => {}); export {};",
   }));
 
   await page.goto(SIDEPANEL_URL, { waitUntil: "commit" });
-  await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-booting", { timeout: 8000 });
+  await page.waitForFunction(() => globalThis.__workspaceStartupBlocked === true);
+  await expect(page.locator("#app")).toHaveAttribute("data-workspace-booting", "");
+  await page.clock.runFor(6000);
+  await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-booting");
   await expect(page.locator("#app")).toHaveAttribute("data-workspace-boot-fallback", "timeout");
   await expect(page.locator("#workspace-boot-fallback")).toHaveText("轻舟仍在启动，请稍候或重新打开侧边栏");
   await expect(page.locator("#header")).toBeVisible();

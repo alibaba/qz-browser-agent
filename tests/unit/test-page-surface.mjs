@@ -37,6 +37,17 @@ test("a zero outer size gets one warmup capture and the tab stays in the backgro
   assert.deepEqual(unread, []);
 });
 
+test("a child surface is prepared even when the parent is laid out, and preparation failure propagates", async () => {
+  const original = chrome.scripting.executeScript;
+  chrome.scripting.executeScript = async () => [{ result: { width: 1200, height: 800 } }];
+  try {
+    const commands = [];
+    await ensurePageSurface(7, async method => { commands.push(method); }, { frameId: "child" });
+    assert.deepEqual(commands, ["Page.captureScreenshot"]);
+    await assert.rejects(ensurePageSurface(7, async () => { throw new Error("frame unavailable"); }, { frameId: "child" }), /frame unavailable/);
+  } finally { chrome.scripting.executeScript = original; }
+});
+
 test("a replaced document is not counted as a missed click", async () => {
   runInPage = ({ func, args }) => func(...args);
   try {
@@ -55,6 +66,7 @@ test("a replaced document is not counted as a missed click", async () => {
     const seen = await readPageInputReceipt(7, id);
     assert.ok(seen > 0);
     assert.equal(op(), undefined, "reading the receipt drops that operation");
+    assert.equal(page.timers.size, 0, "a normal read cancels the page expiry timer");
     pointerdown.listener({ isTrusted: true });
     assert.equal(op(), undefined);
     assert.equal(await readPageInputReceipt(7, id), null);
@@ -168,6 +180,78 @@ test("a frame that appears after the click does not hide a real miss", async () 
   });
 });
 
+test("a stalled surface probe is immediate and bounded without claiming a missing surface", async context => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const original = chrome.scripting.executeScript;
+  chrome.scripting.executeScript = options => {
+    assert.equal(options.injectImmediately, true);
+    return new Promise(() => {});
+  };
+  try {
+    const commands = [];
+    const pending = ensurePageSurface(7, async method => { commands.push(method); });
+    context.mock.timers.tick(1000);
+    await pending;
+    assert.deepEqual(commands, []);
+  } finally { chrome.scripting.executeScript = original; }
+});
+
+test("a stalled receipt read returns unknown and releases its background entry", async context => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const original = chrome.scripting.executeScript;
+  let reads = 0;
+  chrome.scripting.executeScript = options => {
+    assert.equal(options.injectImmediately, true);
+    if (options.args[1]) return Promise.resolve([{ frameId: 0, documentId: "main", result: 0 }]);
+    reads++;
+    return new Promise(() => {});
+  };
+  try {
+    const id = await armPageInputReceipt(7);
+    const pending = readPageInputReceipt(7, id);
+    context.mock.timers.tick(1000);
+    assert.equal(await pending, null, "unavailable delivery evidence is not a missed click");
+    assert.equal(await readPageInputReceipt(7, id), null);
+    assert.equal(reads, 1, "a timed-out receipt is removed from armedFrames");
+  } finally { chrome.scripting.executeScript = original; }
+});
+
+for (const delayedExecution of [false, true]) test(`a timed-out arm leaves no permanent receipt (delayed execution: ${delayedExecution})`, async context => {
+  context.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1000 });
+  const original = chrome.scripting.executeScript;
+  const page = installPage();
+  let execute, complete;
+  chrome.scripting.executeScript = options => {
+    assert.equal(options.injectImmediately, true);
+    execute = () => options.func(...options.args);
+    if (!delayedExecution) execute();
+    return new Promise(resolve => { complete = resolve; });
+  };
+  try {
+    const pending = armPageInputReceipt(7);
+    context.mock.timers.tick(1000);
+    assert.equal(await pending, "");
+    if (delayedExecution) {
+      assert.equal(execute(), null, "an arm that starts after its deadline is rejected");
+      assert.equal(page.document.__qzInputReceiptsV2, undefined);
+      assert.equal(page.timers.size, 0);
+    } else {
+      assert.equal(Object.keys(page.document.__qzInputReceiptsV2.ops).length, 1);
+      assert.equal(page.timers.size, 1);
+      const [{ callback, delay }] = page.timers.values();
+      assert.equal(delay, 30000);
+      context.mock.timers.tick(delay);
+      callback();
+      assert.deepEqual(page.document.__qzInputReceiptsV2.ops, {}, "expiry cleans an arm whose response was lost");
+    }
+    complete([{ frameId: 0, documentId: page.document.documentId, result: 0 }]);
+  } finally {
+    chrome.scripting.executeScript = original;
+    delete globalThis.document;
+    delete globalThis.addEventListener;
+  }
+});
+
 async function withFrames(results, run) {
   const original = chrome.scripting.executeScript;
   chrome.scripting.executeScript = async () => {
@@ -185,11 +269,19 @@ async function withFrames(results, run) {
 let documentSerial = 0;
 function installPage() {
   const listeners = [];
-  const document = { documentId: `doc-${++documentSerial}` };
+  const timers = new Map();
+  let nextTimer = 0;
+  const document = {
+    documentId: `doc-${++documentSerial}`,
+    defaultView: {
+      setTimeout(callback, delay) { timers.set(++nextTimer, { callback, delay }); return nextTimer; },
+      clearTimeout(timer) { timers.delete(timer); },
+    },
+  };
   globalThis.document = document;
   globalThis.addEventListener = (type, listener, capture) => {
     listeners.push({ type, listener, capture });
   };
   delete globalThis.__qzInputReceipt;
-  return { document, listeners };
+  return { document, listeners, timers };
 }

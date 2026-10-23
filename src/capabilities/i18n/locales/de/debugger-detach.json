@@ -1,0 +1,6 @@
+{
+  "debugger-detach.title": "Debugging-Verbindung getrennt",
+  "debugger-detach.message": "Du hast die Leiste „Dieser Browser wird debuggt“ geschlossen. Dadurch wurde die Verbindung zum Debugger getrennt. Möchtest du diese Aufgabe fortsetzen?",
+  "debugger-detach.continue": "Fortsetzen",
+  "debugger-detach.stop": "Stoppen"
+}

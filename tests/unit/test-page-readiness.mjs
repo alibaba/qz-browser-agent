@@ -3,18 +3,27 @@ import { test } from "node:test";
 
 const targetUrl = "https://example.test/gallery";
 let tab, closed, denied, reads, resolves, polls;
+let contentReady = true;
+let completeInjection;
+const injections = [];
 globalThis.chrome = {
   runtime: { getURL: path => `chrome-extension://test/${path}` },
   storage: { local: { async get() { return { securityGuardrails: { blockedDomains: ["blocked.test"] } }; } } },
   tabs: {
     async get() { polls++; if (closed) throw new Error("No tab with id: 1"); return { ...tab }; },
     async sendMessage(_tabId, message) {
-      if (message.action === "ping") return { ok: true };
+      if (message.action === "ping") return { ok: contentReady };
       reads++;
       assert.equal(tab.url, targetUrl, "must never read the initial blank document");
       return { text: "Loaded article", images: [], scanned: 0 };
     },
   },
+  scripting: { async executeScript(options) {
+    if (!options.files) return [];
+    injections.push(options);
+    await new Promise(resolve => { completeInjection = resolve; });
+    contentReady = true;
+  } },
 };
 const { createToolRuntime } = await import("../../src/background/tools/runtime.js");
 const runtime = createToolRuntime({ sessions: {
@@ -74,3 +83,28 @@ for (const name of ["read_article", "list_images"]) {
     });
   }
 }
+
+test("ordinary Content initialization waits for document_idle before reading", async () => {
+  closed = denied = false;
+  reads = 0;
+  contentReady = false;
+  load();
+  const pending = runtime.execute("read_article", { tabId: 1, limit: 1200 }, undefined, context);
+  try {
+    for (let attempt = 0; !completeInjection && attempt < 100; attempt++) await pause(2);
+    assert.equal(typeof completeInjection, "function", "a missing Content script must be initialized");
+    assert.deepEqual(injections, [{
+      target: { tabId: 1, allFrames: true }, world: "ISOLATED",
+      files: ["content/article-extractor.js", "content/content-script.js"], injectImmediately: false,
+    }]);
+    assert.equal(reads, 0, "the page read must wait for injection to finish");
+    completeInjection();
+    await pending;
+    assert.equal(reads, 1);
+    await runtime.execute("read_article", { tabId: 1, limit: 1200 }, undefined, context);
+    assert.equal(injections.length, 1, "an acknowledged Content script is reused");
+  } finally {
+    completeInjection?.();
+    await pending;
+  }
+});

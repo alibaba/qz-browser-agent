@@ -58,6 +58,7 @@ import {
   getToolIdentity,
   releaseRunCdp,
   releaseSessionCdp,
+  releaseTabCdp,
   resolveToolDefinition,
   sendToContent,
   withRunCdp,
@@ -1010,6 +1011,7 @@ function getMcpBridge() {
 dataConsent.whenAccepted.then(getMcpBridge).catch(error => console.debug("[qz] MCP bridge startup failed:", error));
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  void releaseTabCdp(tabId);
   sessionTabs.handleTabRemoved(tabId).catch((error) => {
     console.warn("[轻舟] persist tab removal failed:", error);
   });

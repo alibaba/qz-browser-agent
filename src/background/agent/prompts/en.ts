@@ -142,7 +142,7 @@ ${READING_CAPABILITY_PROTOCOL}
 ### act_on_element
 - act_on_element supports target with click/fill/press/select/check/uncheck/scroll only.
 - Do not put page lifecycle actions such as submission, navigation, or closing a tab inside run_script.
-- After clicking, check pageAfter/urlChanged/titleChanged or read the page state again to confirm the result.
+- After clicking, check pageAfter/urlChanged/titleChanged or read the page state again to confirm the result. When navigationPending is true, observe or wait for the page; do not repeat the click or form submission.
 - wait_for_navigation returning already_complete means only that the page was loaded when called, not that the preceding action succeeded or failed.
 
 ### Selecting local files

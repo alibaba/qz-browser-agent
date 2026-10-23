@@ -38,6 +38,8 @@ await steeringQueueFlow();
 await compactContextCommandFlow();
 await recordExchangeAndFallbackFlow();
 await repeatedSessionExchangeImportReusesExisting();
+await sessionExchangeImportDistinguishesDocuments();
+await concurrentSessionExchangeImportsReuseOneCopy();
 await importDedupIndexAvoidsRepeatSessionReads();
 await importDedupIdentityPriorityStaysOnTheIndex();
 await rejectedRecordWritePreservesTranscript();
@@ -1448,6 +1450,51 @@ async function repeatedSessionExchangeImportReusesExisting() {
   assert.equal(Object.keys(await fresh.repository.listMetadata()).length, 2);
 }
 
+async function sessionExchangeImportDistinguishesDocuments() {
+  const fixture = createFixture();
+  const payload = fileId => createSessionExchangePayload({
+    session: { id: `source-${fileId}`, title: "Document summary" },
+    conversation: serializeConversation([{
+      role: "user",
+      content: "Summarize the attached document",
+      documents: [{
+        sessionId: "source", messageId: "message", attachmentId: "attachment",
+        fileId, docModelId: `model-${fileId}`, filename: "report.pdf",
+        mimeType: "application/pdf", format: "pdf", size: 1024,
+      }],
+    }]),
+  });
+  const first = await fixture.commands.importSessionExchangeRuntime(payload("first"));
+  const second = await fixture.commands.importSessionExchangeRuntime(payload("second"));
+  assert.notEqual(second.session.id, first.session.id, "different attached documents must not collapse into one conversation");
+  const record = await fixture.repository.readRecord(second.session.id);
+  assert.equal(record.conversation.entries[0].message.documents[0].fileId, "second");
+  const again = await fixture.commands.importSessionExchangeRuntime(payload("second"));
+  assert.equal(again.session.id, second.session.id);
+}
+
+async function concurrentSessionExchangeImportsReuseOneCopy() {
+  const fixture = createFixture();
+  const payload = createSessionExchangePayload({
+    session: { id: "concurrent-source", title: "Shared import" },
+    conversation: serializeConversation([{ role: "user", content: "Continue this task" }]),
+    transcript: [pageToolTranscript("open_tab", "https://example.test/work")],
+    runtime: { ownedTabs: [{ url: "https://example.test/work", title: "Work", working: true }] },
+  });
+  const rejected = assert.rejects(fixture.commands.importSessionExchangeRuntime({}), {
+    code: "UNSUPPORTED_SESSION_EXCHANGE_FORMAT",
+  });
+  const [first, second] = await Promise.all([
+    fixture.commands.importSessionExchangeRuntime(payload),
+    fixture.commands.importSessionExchangeRuntime(payload),
+  ]);
+  await rejected;
+  assert.equal(second.session.id, first.session.id, "simultaneous imports share one committed copy after a rejected import");
+  assert.equal(Object.keys(await fixture.repository.listMetadata()).length, 1);
+  assert.equal(fixture.ownedTabsRestoreCalls.length, 1, "simultaneous imports restore workspace tabs once");
+  assert.equal(second.ownedTabsRestore, null);
+}
+
 async function importDedupIndexAvoidsRepeatSessionReads() {
   const storage = createMemoryStorage();
   let reads = 0;
@@ -1595,6 +1642,21 @@ async function importDedupIdentityPriorityStaysOnTheIndex() {
   }));
   assert.equal(sourceWins.session.id, older.session.id, "a recorded source id wins over another session's newer content");
   assert.equal(Object.keys(await fixture.repository.listMetadata()).length, 2);
+  assert.equal(
+    (await fixture.repository.getMetadata(older.session.id)).exchangeContentHash,
+    await hashSessionExchangeContent(olderConversation),
+    "reopening by source must not index content that was never saved",
+  );
+  const otherSource = await fixture.commands.importSessionExchangeRuntime(createSessionExchangePayload({
+    session: { id: "gamma", title: "Matching saved content" },
+    conversation: newerConversation,
+  }));
+  assert.equal(otherSource.session.id, newer.session.id, "a different source must match the copy that actually contains its content");
+  await fixture.repository.patchMetadata(older.session.id, { exchangeContentHash: "" });
+  await fixture.commands.importSessionExchangeRuntime(createSessionExchangePayload({
+    session: { id: "alpha" }, conversation: newerConversation,
+  }));
+  assert.equal((await fixture.repository.getMetadata(older.session.id)).exchangeContentHash, "", "a source-only identity cannot infer a saved hash from new incoming content");
 
   await fixture.repository.patchMetadata(newer.session.id, current => ({
     ...current,

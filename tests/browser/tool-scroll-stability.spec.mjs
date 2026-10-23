@@ -340,7 +340,7 @@ test.describe("completed tool card scroll stability", () => {
   });
 
   test("keeps following a streaming run script after the user returns its inner scroller to the tail", async ({ page }) => {
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const sessionId = "run_script_tail_resume_session";
       const runId = "run_script_tail_resume_run";
       const toolCallId = "run_script_tail_resume_tool";
@@ -348,35 +348,29 @@ test.describe("completed tool card scroll stability", () => {
         `const streamedValue${index} = rows.map((item) => item.score + ${index});`
       )).join("\n");
       const argsText = JSON.stringify({ target: "inner", timeout: 30, code });
-      const events = [];
-      for (let length = 160; length < argsText.length; length += 120) {
-        events.push({
-          type: "tool_call_update",
-          toolCallId,
-          spanId: `span-${toolCallId}`,
-          toolName: "run_script",
-          argsText: argsText.slice(0, length),
-          argsComplete: false,
-          phase: "preparing",
-        });
-      }
-      events.push({
+      let length = 2400;
+      let eventSeq = 1;
+      const update = () => ({
         type: "tool_call_update",
         toolCallId,
         spanId: `span-${toolCallId}`,
         toolName: "run_script",
-        argsText,
-        argsComplete: true,
+        argsText: argsText.slice(0, length),
+        argsComplete: length >= argsText.length,
         phase: "preparing",
       });
-      events.push({
-        type: "tool_execution_start",
-        toolCallId,
-        spanId: `span-${toolCallId}`,
-        toolName: "run_script",
-        args: { target: "inner", timeout: 30, code },
-      });
-      window.__runScriptTailReplay = window.qingzhouConversationBenchmark.runLiveReplay({
+      // Advance the stream with each assertion instead of racing a long replay
+      // against wall-clock time on busy Linux/macOS workers.
+      window.__advanceRunScriptTail = (finish = false) => {
+        length = finish ? argsText.length : Math.min(argsText.length, length + 1000);
+        window.qingzhouConversationBenchmark.dispatchBackgroundEvent({ sessionId, runId, eventSeq: eventSeq++, ...update() });
+        if (finish) window.qingzhouConversationBenchmark.dispatchBackgroundEvent({
+          sessionId, runId, eventSeq: eventSeq++, type: "tool_execution_start",
+          toolCallId, spanId: `span-${toolCallId}`, toolName: "run_script",
+          args: { target: "inner", timeout: 30, code },
+        });
+      };
+      await window.qingzhouConversationBenchmark.runLiveReplay({
         sessionId,
         baseTranscript: Array.from({ length: 8 }, (_, index) => ({
           type: "assistant",
@@ -384,10 +378,9 @@ test.describe("completed tool card scroll stability", () => {
           spanId: `history-${index}`,
           content: `历史消息 ${index + 1}：用于保证外层对话拥有独立滚动范围。`.repeat(3),
         })),
-        events,
+        events: [update()],
       }, {
         runId,
-        eventDelayMs: 28,
         framePerEvent: true,
       });
     });
@@ -410,9 +403,17 @@ test.describe("completed tool card scroll stability", () => {
     });
     const paused = await code.evaluate(node => ({
       top: node.scrollTop,
+      height: node.scrollHeight,
       gap: node.scrollHeight - node.scrollTop - node.clientHeight,
       following: node.dataset.followTail,
     }));
+    const whilePaused = await code.evaluate(async node => {
+      window.__advanceRunScriptTail();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return { top: node.scrollTop, height: node.scrollHeight, following: node.dataset.followTail };
+    });
+    expect(whilePaused).toMatchObject({ top: paused.top, following: "false" });
+    expect(whilePaused.height).toBeGreaterThan(paused.height);
 
     // Let the preceding automatic tail movement's grace window expire, then
     // model dragging the native scrollbar thumb back to the very bottom.
@@ -431,11 +432,15 @@ test.describe("completed tool card scroll stability", () => {
     await page.mouse.wheel(0, 160);
     const resumedSamples = [];
     for (let index = 0; index < 28; index += 1) {
-      await page.waitForTimeout(80);
-      resumedSamples.push(await code.evaluate(node => ({
-        gap: node.scrollHeight - node.scrollTop - node.clientHeight,
-        following: node.dataset.followTail,
-      })));
+      resumedSamples.push(await code.evaluate(async node => {
+        window.__advanceRunScriptTail();
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return {
+          height: node.scrollHeight,
+          gap: node.scrollHeight - node.scrollTop - node.clientHeight,
+          following: node.dataset.followTail,
+        };
+      }));
     }
 
     expect(paused.following).toBe("false");
@@ -444,9 +449,10 @@ test.describe("completed tool card scroll stability", () => {
       resumedSamples.every(sample => sample.following === "true" && sample.gap <= 28),
       JSON.stringify({ paused, resumedSamples }, null, 2),
     ).toBe(true);
-    await page.evaluate(async () => {
-      await window.__runScriptTailReplay;
-      delete window.__runScriptTailReplay;
+    expect(resumedSamples.at(-1).height).toBeGreaterThan(resumedSamples[0].height);
+    await page.evaluate(() => {
+      window.__advanceRunScriptTail(true);
+      delete window.__advanceRunScriptTail;
     });
   });
 

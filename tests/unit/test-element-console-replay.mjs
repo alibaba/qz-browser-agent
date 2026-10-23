@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 const listeners = [];
+const detachListeners = [];
 globalThis.chrome = {
   runtime: { id: "extension-id" },
   storage: { local: { async get() { return {}; } } },
   debugger: {
     onEvent: { addListener(listener) { listeners.push(listener); } },
-    onDetach: { addListener() {} },
+    onDetach: { addListener(listener) { detachListeners.push(listener); } },
   },
 };
 
@@ -24,10 +25,11 @@ class ToolExecutionError extends Error {
 
 const definitions = new Map();
 const sessions = new Map();
-createDiagnosticsTools({
+const diagnostics = createDiagnosticsTools({
   registerTool(definition) { definitions.set(definition.name, definition); },
   ToolExecutionError,
   makeSessionTabTargetError(code, details = {}) { return new ToolExecutionError(code, code, details); },
+  getDebuggerRun: tabId => sessions.get(tabId)?.owner ?? null,
   async sendCdp(tabId, method, params = {}) {
     const page = sessions.get(tabId);
     if (!page) throw new Error(`No debugger session for tab ${tabId}`);
@@ -86,9 +88,18 @@ function session(tabId, contexts) {
   };
   const remember = (method, params) => {
     buffer.push({ method, params });
-    emit(method, params);
+    if (runtimeEnabled) emit(method, params);
   };
-  return { commands, contexts, emit, send, remember, childFrames, enabled: () => runtimeEnabled };
+  return {
+    commands, contexts, emit, send, remember, childFrames,
+    owner: { ...run, connectionId: tabId },
+    enabled: () => runtimeEnabled,
+    disconnect() {
+      runtimeEnabled = false;
+      this.owner = null;
+      detachListeners.forEach(listener => listener({ tabId }));
+    },
+  };
 }
 
 function publicContext(context) {
@@ -138,6 +149,92 @@ function runtimeFor(tabId, page, binding = {}) {
     }, "inspectElement"),
   };
 }
+
+test("first console read retains messages replayed by an earlier uid operation", async () => {
+  const tabId = nextTab++;
+  const page = session(tabId, [isolated(7, true)]);
+  sessions.set(tabId, page);
+  page.remember("Runtime.consoleAPICalled", {
+    type: "log", args: [{ type: "string", value: "before uid" }], timestamp: 1,
+  });
+  assert.equal((await runtimeFor(tabId, page).call()).ok, true);
+  page.remember("Runtime.exceptionThrown", {
+    timestamp: 2, exceptionDetails: { text: "click failed" },
+  });
+  const first = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  assert.deepEqual(counts(first), { "exception:click failed": 1, "log:before uid": 1 });
+  const repeated = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  assert.deepEqual(counts(repeated), counts(first));
+  assert.equal(page.commands.includes("Runtime.disable"), false);
+});
+
+test("first console read also records synchronous replay from its own Runtime.enable", async () => {
+  const tabId = nextTab++;
+  const page = session(tabId, []);
+  sessions.set(tabId, page);
+  page.remember("Runtime.consoleAPICalled", {
+    type: "warning", args: [{ type: "string", value: "before first read" }], timestamp: 1,
+  });
+  const result = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  assert.deepEqual(counts(result), { "warning:before first read": 1 });
+});
+
+test("retained Runtime records the next run before its first read and ignores idle events", async () => {
+  const tabId = nextTab++;
+  const page = session(tabId, [isolated(7, true)]);
+  sessions.set(tabId, page);
+  await runtimeFor(tabId, page).call();
+  const log = text => page.remember("Runtime.consoleAPICalled", {
+    type: "log", args: [{ type: "string", value: text }], timestamp: 1,
+  });
+  log("first run");
+  const first = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  assert.deepEqual(counts(first), { "log:first run": 1 });
+  diagnostics.releaseRun(run.sessionId, run.runId);
+  page.owner = null;
+  log("idle connection");
+  const nextRun = { ...run, runId: "run-2" };
+  page.owner = { ...nextRun, connectionId: tabId };
+  await runtimeFor(tabId, page).call();
+  log("second run");
+  const second = await definitions.get("read_console_messages").execute({ tabId }, null, nextRun);
+  assert.deepEqual(counts(second), { "log:second run": 1 });
+  assert.equal(page.commands.includes("Runtime.disable"), false);
+});
+
+test("reconnect replaces the buffer with one replay and ignores detached events", async () => {
+  const tabId = nextTab++;
+  const page = session(tabId, [isolated(7, true)]);
+  sessions.set(tabId, page);
+  page.remember("Runtime.consoleAPICalled", {
+    type: "log", args: [{ type: "string", value: "replayed once" }], timestamp: 1,
+  });
+  await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  page.disconnect();
+  page.emit("Runtime.consoleAPICalled", { type: "log", args: [{ value: "late detached event" }] });
+  page.owner = { ...run, connectionId: tabId + 1000 };
+  const result = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  assert.deepEqual(counts(result), { "log:replayed once": 1 });
+});
+
+test("passive console history is bounded and honors a smaller first-read limit and reset", async () => {
+  const tabId = nextTab++;
+  const page = session(tabId, [isolated(7, true)]);
+  sessions.set(tabId, page);
+  await runtimeFor(tabId, page).call();
+  for (let index = 0; index < 250; index += 1) page.remember("Runtime.consoleAPICalled", {
+    type: "log", args: [{ value: String(index) }], timestamp: index + 1,
+  });
+  const first = await definitions.get("read_console_messages").execute({ tabId, limit: 200 }, null, run);
+  assert.equal(first.totalBuffered, 200);
+  assert.equal(first.results.at(-1).text, "50");
+  const limited = await definitions.get("read_console_messages").execute({ tabId, maxRecords: 20 }, null, run);
+  assert.equal(limited.totalBuffered, 20);
+  assert.equal(limited.results.at(-1).text, "230");
+  const reset = await definitions.get("read_console_messages").execute({ tabId, reset: true }, null, run);
+  assert.equal(reset.totalBuffered, 0);
+  assert.equal((await definitions.get("read_console_messages").execute({ tabId }, null, run)).records, 0);
+});
 
 test("uid resolution does not replay console messages already recorded for the tab", async () => {
   const tabId = nextTab++;

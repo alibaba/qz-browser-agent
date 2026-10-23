@@ -6,30 +6,46 @@ import { join } from "node:path";
 import { expect, test } from "./fixtures.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
 
-const sameDocument = `<!doctype html><button id="same" class="hit" type="button" onclick="window.clicks=(window.clicks||0)+1">Same</button><input id="field" aria-label="Same field" value="">`;
-const crossDocument = `<!doctype html><button id="cross" type="button" onclick="window.clicks=(window.clicks||0)+1">Cross</button><input id="field" aria-label="Cross field" value="">`;
+const sameDocument = `<!doctype html><div role="group" aria-label="Same controls"><button id="same" class="hit" type="button" onclick="window.clicks=(window.clicks||0)+1">Same</button><input id="field" aria-label="Same field" value=""></div>`;
+const crossDocument = `<!doctype html><div role="group" aria-label="Cross controls"><button id="cross" type="button" onclick="window.clicks=(window.clicks||0)+1">Cross</button><input id="field" aria-label="Cross field" value=""></div>`;
 const nestDocument = `<!doctype html><iframe title="Inner" srcdoc="<!doctype html><button id='deep'>Deep</button>"></iframe>`;
+const redImage = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"><rect width="40" height="30" fill="red"/></svg>';
 
 function pageHtml(crossUrl) {
   return `<!doctype html><meta charset="utf-8"><title>Iframe uids</title>
     <style>iframe{width:320px;height:80px;border:0;display:block}button,input{width:140px;height:28px}</style>
-    <iframe id="same" name="same" title="Same frame"></iframe>
-    <iframe id="cross" name="cross" title="Cross frame" src="${crossUrl}"></iframe>
+    <iframe id="same-frame" name="same" title="Same frame"></iframe>
+    <iframe id="cross-frame" name="cross" title="Cross frame" src="${crossUrl}"></iframe>
     <iframe id="nest" name="nest" title="Nest frame"></iframe>
     <button id="main-hit" class="hit" type="button" style="position:fixed;left:360px;top:8px;width:140px;height:28px" onclick="window.hits=(window.hits||0)+1">Main hit</button>
+    <div style="position:fixed;left:360px;top:60px">
+      <button id="same" onclick="window.wrongClicks=(window.wrongClicks||0)+1">Same</button>
+      <button id="cross" onclick="window.wrongClicks=(window.wrongClicks||0)+1">Cross</button>
+      <input id="field" aria-label="Main field" value="parent">
+    </div>
     <script>
-      document.querySelector("#same").srcdoc = ${JSON.stringify(sameDocument)};
+      document.querySelector("#same-frame").srcdoc = ${JSON.stringify(sameDocument)};
       document.querySelector("#nest").srcdoc = ${JSON.stringify(nestDocument)};
     </script>`;
 }
 
 test("one-level iframe elements have uids and accept click and fill", async () => {
   test.setTimeout(120000);
-  const cross = createServer((_request, response) => {
+  const cross = createServer((request, response) => {
+    if (request.url === "/image.svg") {
+      response.writeHead(200, { "Content-Type": "image/svg+xml" });
+      response.end(redImage);
+      return;
+    }
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     response.end(crossDocument);
   });
-  const parent = createServer((_request, response) => {
+  const parent = createServer((request, response) => {
+    if (request.url === "/image.svg") {
+      response.writeHead(200, { "Content-Type": "image/svg+xml" });
+      response.end(redImage);
+      return;
+    }
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     response.end(pageHtml(`http://localhost:${cross.address().port}/`));
   });
@@ -125,6 +141,68 @@ test("one-level iframe elements have uids and accept click and fill", async () =
     expect(cssClick).not.toHaveProperty("code");
     expect(await page.evaluate(() => window.hits)).toBe(1);
     expect(await page.frame({ name: "same" }).evaluate(() => window.clicks)).toBe(1);
+
+    // At depth 1 the group is the only AX node; its actionable descendants must
+    // be bound back into the same document rather than the matching parent ids.
+    for (const [name, label] of [["same", "Same"], ["cross", "Cross"]]) {
+      const root = targetFor(snapshot, `group "${label} controls"`);
+      expect(root, snapshot).toMatch(/^uid:/);
+      const subtree = await call("get_ax_tree", { root, depth: 1 });
+      expect(subtree, JSON.stringify(subtree)).not.toHaveProperty("error");
+      expect(subtree.rootFound).toBe(true);
+      expect(subtree.snapshot).not.toMatch(/Main field|Main hit|Iframe/);
+      expect(subtree.snapshot.split("\n").filter(line => line.includes(`button "${label}"`))).toHaveLength(1);
+      const button = targetFor(subtree.snapshot, `button "${label}"`);
+      const input = targetFor(subtree.snapshot, `textbox "${label} field"`);
+      expect(button, subtree.snapshot).toMatch(/^uid:/);
+      expect(input, subtree.snapshot).toMatch(/^uid:/);
+      const clicked = await call("act_on_element", { target: button, action: "click" });
+      expect(clicked, JSON.stringify(clicked)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+      expect(await page.frame({ name }).evaluate(() => window.clicks)).toBe(2);
+      const filled = await call("act_on_element", { target: input, action: "fill", value: `${name}-subtree` });
+      expect(filled, JSON.stringify(filled)).toMatchObject({ filled: true });
+      expect(await page.frame({ name }).locator("input").inputValue()).toBe(`${name}-subtree`);
+      expect(await page.evaluate(() => window.wrongClicks || 0)).toBe(0);
+      expect(await page.locator("#field").inputValue()).toBe("parent");
+    }
+
+    await page.evaluate(() => {
+      document.body.style.minHeight = "2000px";
+      const decoy = document.createElement("img");
+      decoy.id = "frame-image";
+      decoy.style.cssText = "position:fixed;left:360px;top:200px;width:40px;height:30px";
+      decoy.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"><rect width="40" height="30" fill="blue"/></svg>');
+      document.body.append(decoy);
+      window.scrollTo(0, 40);
+    });
+    for (const [name, source] of [["same", `http://localhost:${cross.address().port}/image.svg`], ["cross", `http://127.0.0.1:${parent.address().port}/image.svg`]]) {
+      await page.frame({ name }).evaluate(async ({ name, source }) => {
+        document.body.style.minHeight = "1000px";
+        const image = document.createElement("img");
+        image.id = "frame-image";
+        image.alt = `${name} pixels`;
+        image.style.cssText = "position:fixed;left:200px;top:40px;width:40px;height:30px";
+        image.src = source;
+        document.body.append(image);
+        await image.decode();
+        window.scrollTo(0, 120);
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      }, { name, source });
+      const tree = await call("get_ax_tree", {});
+      const target = targetFor(tree.snapshot, `image "${name} pixels"`);
+      expect(target, JSON.stringify(tree)).toMatch(/^uid:/);
+      const image = await call("read_image", { target, format: "png" });
+      expect(image, JSON.stringify(image)).not.toHaveProperty("error");
+      expect(image.method).toMatch(/^element_screenshot_fallback:/);
+      const pixels = await page.evaluate(async dataUrl => {
+        const image = await createImageBitmap(await (await fetch(dataUrl)).blob());
+        const canvas = new OffscreenCanvas(image.width, image.height);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(image, 0, 0);
+        return { width: image.width, height: image.height, center: [...ctx.getImageData(20, 15, 1, 1).data] };
+      }, image._image);
+      expect(pixels).toEqual({ width: 40, height: 30, center: [255, 0, 0, 255] });
+    }
   } finally {
     await close();
   }

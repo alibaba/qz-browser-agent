@@ -121,3 +121,30 @@ test("cancelling the tool signal settles the wait and late approval runs nothing
   assert.equal(stops.length, beforeStops, "abort does not stop the session");
   await tools.releaseRunCdp(sessionId, runId);
 });
+
+test("an existing question blocks re-attach without replacing the question or approving a later attempt", async () => {
+  const tabId = 74;
+  const { sessionId, runId, context } = await fixture(tabId);
+  const blocker = supervisor.beginUserWait(sessionId, { waitId: "question", runId });
+  const before = executed.length;
+  const beforeEvents = events.length;
+  const beforeStops = stops.length;
+  await assert.rejects(runtime.execute("__detach_probe", { attach: tabId }, undefined, context), { code: "CDP_RUN_RELEASED" });
+  assert.equal(executed.length, before, "the blocked tool body does not run");
+  assert.equal(events.length, beforeEvents, "the original question receives no replacement or settlement");
+  assert.equal(stops.length, beforeStops, "the existing wait does not stop the run");
+  assert.equal(cdpCalls.filter(call => call[0] === "attach" && call[1] === tabId).length, 1, "no silent re-attach");
+  assert.equal(supervisor.resolveUserWait({ sessionId, waitId: "question" }), true);
+  await blocker;
+  const retry = runtime.execute("__detach_probe", { attach: tabId }, undefined, context);
+  await tick();
+  const wait = lastWait();
+  assert.equal(wait.sessionId, sessionId);
+  assert.equal(wait.form.debuggerDetached, true, "answering the old question is not debugger approval");
+  assert.equal(executed.length, before);
+  supervisor.resolveUserWait({ sessionId, waitId: wait.waitId });
+  assert.equal((await retry).ok, true);
+  assert.equal(executed.length, before + 1, "explicit approval executes the tool once");
+  assert.equal(cdpCalls.filter(call => call[0] === "attach" && call[1] === tabId).length, 2);
+  await tools.releaseRunCdp(sessionId, runId);
+});

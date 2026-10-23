@@ -266,6 +266,7 @@ function canonicalSessionExchangeMessages(conversation: unknown) {
         content: message.content ?? null,
         toolCalls,
         toolCallId: String(message.tool_call_id || ""),
+        ...(Array.isArray(message.documents) && message.documents.length ? { documents: message.documents } : {}),
       };
     });
 }

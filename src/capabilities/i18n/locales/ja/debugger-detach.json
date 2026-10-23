@@ -1,0 +1,6 @@
+{
+  "debugger-detach.title": "デバッグ接続が切断されました",
+  "debugger-detach.message": "「このブラウザーをデバッグしています」というバーを閉じたため、デバッガーとの接続が切断されました。このタスクを続行しますか？",
+  "debugger-detach.continue": "続行",
+  "debugger-detach.stop": "停止"
+}

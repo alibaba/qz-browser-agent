@@ -4,6 +4,7 @@ const eventListeners = [];
 const detachListeners = [];
 const debuggerCommands = [];
 const cdpCommands = [];
+let debuggerRun = null;
 
 globalThis.chrome = {
   storage: { local: { async get() { return {}; } } },
@@ -32,7 +33,9 @@ const runtime = createDiagnosticsTools({
   registerTool({ name, description: _description, parameters: _parameters, execute }) { definitions.set(name, { execute }); },
   ToolExecutionError,
   makeSessionTabTargetError(code, details = {}) { return new ToolExecutionError(code, code, details); },
+  getDebuggerRun: () => debuggerRun,
   async sendCdp(tabId, method, params, context) {
+    debuggerRun = { sessionId: context.sessionId, runId: context.runId, connectionId: 1 };
     cdpCommands.push([tabId, method, params, context]);
     if (method === "Network.getResponseBody") return { body: `body-${tabId}`, base64Encoded: false };
     return {};

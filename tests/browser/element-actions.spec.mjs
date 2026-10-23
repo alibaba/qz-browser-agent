@@ -37,12 +37,37 @@ const html = `<!doctype html><meta name="viewport" content="width=device-width,i
 
 // Use the real extension's tool composition and Chrome debugger transport, as in page-mode.spec.
 async function createHarness(mode, launchOptions = {}) {
-  const server = createServer((_req, res) => { res.writeHead(200, { "Content-Type": "text/html" }); res.end(html); });
+  const submissions = [];
+  const responseTimers = new Set();
+  const server = createServer((req, res) => {
+    const url = new URL(req.url, "http://fixture.test");
+    res.setHeader("Content-Type", "text/html");
+    if (req.method === "POST" && url.pathname.startsWith("/navigation-")) {
+      req.resume();
+      submissions.push(req.url);
+      const timer = setTimeout(() => {
+        responseTimers.delete(timer);
+        res.end("<!doctype html><title>Submission completed</title><p>Submitted once</p>");
+      }, Number(url.searchParams.get("delay") || 0));
+      responseTimers.add(timer);
+    } else if (url.pathname === "/navigation-form" || url.pathname === "/navigation-same") {
+      const action = url.pathname === "/navigation-same" ? req.url : `/navigation-done${url.search}`;
+      res.end(`<!doctype html><title>Before submission</title>
+        <form method="post" action="${action}"><button id="send" style="width:160px;height:40px">Send once</button></form>
+        <script>
+          sessionStorage.navigationClicks = '0';
+          document.querySelector('#send').addEventListener('click', event => {
+            if (event.isTrusted) sessionStorage.navigationClicks = String(Number(sessionStorage.navigationClicks) + 1);
+          });
+        </script>`);
+    } else res.end(html);
+  });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const directory = await mkdtemp(join(tmpdir(), "qingzhou-element-actions-"));
   let browser;
   const close = async () => {
     await browser?.close(); server.closeAllConnections();
+    for (const timer of responseTimers) clearTimeout(timer);
     await new Promise(resolve => server.close(resolve));
     await rm(directory, { recursive: true, force: true });
   };
@@ -98,7 +123,7 @@ async function createHarness(mode, launchOptions = {}) {
     const opened = await call("open_tab", { url: `http://127.0.0.1:${server.address().port}/`, mode });
     expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
     await expect.poll(async () => { try { return (await state()).ready; } catch { return "loading"; } }).toBe("complete");
-    return { state, close, worker, page: browser.pages().find(page => page.url().startsWith('http://127.0.0.1:')),
+    return { state, close, worker, submissions, page: browser.pages().find(page => page.url().startsWith('http://127.0.0.1:')),
       command: (method, params) => worker.evaluate(({ method, params }) => elementHarness.command(method, params), { method, params }),
       screen: (name, args) => worker.evaluate(({ name, args }) => elementHarness.screen(name, args), { name, args }),
       blockEnter: () => worker.evaluate(() => elementHarness.blockEnter()),
@@ -417,6 +442,46 @@ test("a click that navigates is not reported as undelivered input", async () => 
       await expect.poll(() => h.page.url()).toContain(url);
     }
     expect(await h.worker.evaluate(() => receiptReads)).toBe(2);
+  } finally { await h.close(); }
+});
+
+test("form submission navigation waits for delayed responses without submitting twice", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    const origin = new URL(h.page.url()).origin;
+    for (const [path, delay] of [["/navigation-form", 1500], ["/navigation-form", 0], ["/navigation-same", 1500]]) {
+      const beforeUrl = `${origin}${path}?delay=${delay}`;
+      const afterUrl = path === "/navigation-same" ? beforeUrl : `${origin}/navigation-done?delay=${delay}`;
+      await h.page.goto(beforeUrl);
+      const beforeSubmissions = h.submissions.length;
+      const result = await h.act("send", "click");
+      expect(result, JSON.stringify(result)).toMatchObject({
+        clickDispatched: true, inputDelivered: true, navigated: true,
+        urlChanged: afterUrl !== beforeUrl,
+        pageBefore: { url: beforeUrl },
+        pageAfter: { url: afterUrl, title: "Submission completed" },
+        _pageUrl: afterUrl, _pageTitle: "Submission completed",
+      });
+      expect(h.submissions.length - beforeSubmissions).toBe(1);
+      expect(await h.page.evaluate(() => Number(sessionStorage.navigationClicks))).toBe(1);
+      expect(h.page.url()).toBe(afterUrl);
+    }
+    const beforeSubmissions = h.submissions.length;
+    const url = h.page.url();
+    await h.page.setContent(`<!doctype html><title>Prevented submission</title>
+      <form method="post" action="/navigation-done"><button id="prevented" style="width:160px;height:40px">Keep editing</button></form>
+      <script>window.clicks=0;window.submits=0;
+        document.querySelector('button').onclick=()=>{clicks++};
+        document.querySelector('form').onsubmit=event=>{event.preventDefault();submits++};
+      </script>`);
+    const prevented = await h.act("prevented", "click");
+    expect(prevented, JSON.stringify(prevented)).toMatchObject({
+      clickDispatched: true, inputDelivered: true, navigated: false, urlChanged: false,
+      pageAfter: { url }, _pageUrl: url,
+    });
+    expect(h.submissions).toHaveLength(beforeSubmissions);
+    expect(await h.page.evaluate(() => ({ clicks, submits }))).toEqual({ clicks: 1, submits: 1 });
   } finally { await h.close(); }
 });
 

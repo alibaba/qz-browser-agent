@@ -118,15 +118,21 @@ stops.length = 0;
 }
 
 {
-  // An active wait in the same Session is never superseded by the detach prompt.
+  // An active wait is preserved, but cannot grant permission to re-attach.
   const { sessionId, runId } = await fixture();
   const blocker = supervisor.beginUserWait(sessionId, { waitId: "other_wait", runId, onSettled() {} });
   const before = events.length;
-  assert.equal(await ask(sessionId, runId), true);
+  assert.equal(await ask(sessionId, runId), false);
   assert.equal(events.length, before, "no card is emitted while another wait is pending");
   assert.equal(supervisor.isWaitingForUser(sessionId), true);
+  assert.deepEqual(stops, [], "a busy wait channel does not stop the session");
   supervisor.resolveUserWait({ sessionId, waitId: "other_wait" });
   await blocker;
+  const retry = ask(sessionId, runId);
+  const wait = events.at(-1);
+  assert.equal(wait.form.debuggerDetached, true, "a later attempt still requires explicit approval");
+  supervisor.resolveUserWait({ sessionId, waitId: wait.waitId });
+  assert.equal(await retry, true);
 }
 
 console.log("Debugger re-attach confirmation tests passed");

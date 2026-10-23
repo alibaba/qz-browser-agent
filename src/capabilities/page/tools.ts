@@ -13,7 +13,7 @@ type PageElementHost = Pick<ToolExtensionAPI,
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
-import { armPageInputReceipt, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, readPageInputReceipt } from "#sdk/background/browser";
+import { armPageInputReceipt, beginPageNavigationObservation, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, readPageInputReceipt } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
 
 /** Iframe content scripts report iframe-local points. Shift them by the iframe content origin only at dispatch. */
@@ -80,11 +80,14 @@ function readBound<T>(binding: ElementTarget, context: ToolContext, fn: (call?: 
   if (!binding.uid) return fn();
   return useElement(binding.tabId, binding, context, call => fn(call));
 }
-async function observeElementNavigation(tabId: number, pageBefore: PageState, prepared: PreparedNavigation | null, guardrails: SecurityGuardrails) {
-  await new Promise(resolve => setTimeout(resolve, 180));
-  const pageAfter = await getTabPageState(tabId);
+async function observeElementNavigation(tabId: number, pageBefore: PageState, prepared: PreparedNavigation | null,
+  guardrails: SecurityGuardrails, observation: Awaited<ReturnType<typeof beginPageNavigationObservation>>) {
+  const { pageAfter, documentChanged, navigationPending, navigationStarted } = await observation.finish(pageBefore);
+  const delta = pageStateDelta(pageBefore, pageAfter);
   return {
-    pageDelta: pageStateDelta(pageBefore, pageAfter),
+    pageDelta: { ...delta, navigationPending,
+      navigated: delta.urlChanged || (navigationPending ? null : documentChanged ?? (navigationStarted ? null : false)),
+      _pageUrl: pageAfter.url, _pageTitle: pageAfter.title },
     observedNavigation: commitObservedPageNavigation({ pageBefore, pageAfter, prepared, guardrails, toolName: "act_on_element", tabId }),
   };
 }
@@ -313,24 +316,26 @@ registerTool({
             source: "resolved_href",
           });
           const navigationUrl = preparedNavigation?.url || resolved.navigateUrl;
-          await chrome.tabs.update(tabId, { url: navigationUrl });
-          const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails);
-          return {
-            action: "click",
-            target: resolvedTarget,
-            selector,
-            uid: ref.uid || undefined,
-            index,
-            tabId,
-            clickDispatched: false,
-            navigated: pageDelta.urlChanged,
-            method: "href_navigation",
-            href: navigationUrl,
-            ...pageDelta,
-            ...(observedNavigation ? { observedNavigation } : {}),
-            element: resolved.element || current,
-            originalElement: inspected,
-          };
+          const observation = await beginPageNavigationObservation(tabId, _signal);
+          try {
+            await chrome.tabs.update(tabId, { url: navigationUrl });
+            const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation);
+            return {
+              action: "click",
+              target: resolvedTarget,
+              selector,
+              uid: ref.uid || undefined,
+              index,
+              tabId,
+              clickDispatched: false,
+              method: "href_navigation",
+              href: navigationUrl,
+              ...pageDelta,
+              ...(observedNavigation ? { observedNavigation } : {}),
+              element: resolved.element || current,
+              originalElement: inspected,
+            };
+          } finally { observation.dispose(); }
         }
         if (resolved.resolvedSelector) {
           const resolvedInspection = await sendToContent(tabId, "scrollElementIntoView", {
@@ -374,11 +379,13 @@ registerTool({
         tabId,
         source: "href",
       });
+      const observation = await beginPageNavigationObservation(tabId, _signal);
       let touchInput = false;
       let delivered = false;
+      let dispatched = false;
       try {
         await withDebugger(tabId, async (_target, send) => {
-          await ensurePageSurface(tabId, send);
+          await ensurePageSurface(tabId, send, { frameId });
           const sameTarget = pointSelector === selector && pointIndex === index;
           const refreshed = await sendToContent(tabId, "inspectElement", { selector: pointSelector, index: pointIndex }, sameTarget ? bound : undefined);
           if (!refreshed.error && clickPointReady(refreshed)) current = refreshed;
@@ -386,16 +393,19 @@ registerTool({
           const point = await framedPagePoint(send, current.clickablePoint, frameId);
           touchInput = getPageContext(tabId).pageMode === "mobile";
           const receiptId = await armPageInputReceipt(tabId);
-          if (touchInput) { await touch(send, point, { signal: _signal }); }
-          else {
-            await send("Input.dispatchMouseEvent", {
-              type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1,
-            });
-            await send("Input.dispatchMouseEvent", {
-              type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1,
-            });
-          }
-          delivered = await inputWasDelivered(tabId, receiptId);
+          try {
+            if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
+            dispatched = true;
+            if (touchInput) { await touch(send, point, { signal: _signal }); }
+            else {
+              await send("Input.dispatchMouseEvent", {
+                type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1,
+              });
+              await send("Input.dispatchMouseEvent", {
+                type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1,
+              });
+            }
+          } finally { delivered = await inputWasDelivered(tabId, receiptId); }
         }, context);
         if (!clickPointReady(current)) {
           return clickNotReadyResult({
@@ -408,7 +418,7 @@ registerTool({
           });
         }
         if (!delivered) return inputNotDelivered({ action: "click", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId });
-        const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails);
+        const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation);
         return {
           action: "click",
           target: resolvedTarget,
@@ -418,7 +428,6 @@ registerTool({
           tabId,
           clickDispatched: true,
           inputDelivered: true,
-          navigated: pageDelta.urlChanged,
           method: pointSelector !== selector ? "cdp_resolved" : "cdp",
           href: current.href || resolved?.href || undefined,
           clickedSelector: pointSelector,
@@ -430,9 +439,10 @@ registerTool({
         };
       } catch (err) {
         rethrowStaleElement(err);
-        if (touchInput || isCdpFallbackForbiddenError(err)) throw err;
+        if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
+        if (frameId || dispatched || touchInput || isCdpFallbackForbiddenError(err)) throw err;
         const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound);
-        const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails);
+        const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation);
         return {
           ...fallback,
           target: resolvedTarget,
@@ -441,13 +451,12 @@ registerTool({
           index,
           tabId,
           clickDispatched: fallback.error ? false : Boolean(fallback.clicked || fallback.navigated),
-          navigated: Boolean(fallback.navigated) || pageDelta.urlChanged,
           method: fallback.error ? "content_failed" : "content_fallback",
           cdpError: err instanceof Error ? err.message : String(err),
           ...pageDelta,
           ...(observedNavigation ? { observedNavigation } : {}),
         };
-      }
+      } finally { observation.dispose(); }
     }
 
     const identity = { action: normalizedAction, target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId };
@@ -491,20 +500,23 @@ registerTool({
           return { ...identity, error: t("elementValueMismatch"), code: "ELEMENT_VALUE_MISMATCH",
             filled: false, value: actual.value, submitDispatched: false, element: actual };
         }
-        if (submit) {
-          if (!actual.focused) return { ...identity, error: t("elementFocusLost"), code: "ELEMENT_FOCUS_FAILED",
-            filled: true, value: actual.value, submitDispatched: false, element: actual };
-          // Enter preserves page key handlers and native form validation. Never replay after a CDP failure.
-          await inputKeyboard.press(tabId, "Enter", context);
+        const observation = submit ? await beginPageNavigationObservation(tabId, _signal) : null;
+        try {
+          if (submit) {
+            if (!actual.focused) return { ...identity, error: t("elementFocusLost"), code: "ELEMENT_FOCUS_FAILED",
+              filled: true, value: actual.value, submitDispatched: false, element: actual };
+            // Enter preserves page key handlers and native form validation. Never replay after a CDP failure.
+            await inputKeyboard.press(tabId, "Enter", context);
+            assertActive();
+          }
+          const navigation = pageBefore && guardrails && observation
+            ? await observeElementNavigation(tabId, pageBefore, null, guardrails, observation) : null;
           assertActive();
-        }
-        const navigation = pageBefore && guardrails
-          ? await observeElementNavigation(tabId, pageBefore, null, guardrails) : null;
-        assertActive();
-        return { ...identity, filled: true, value: actual.value, fill, submitDispatched: submit,
-          method: textInput ? "cdp" : "content", element: actual,
-          ...(navigation ? { ...navigation.pageDelta, navigated: navigation.pageDelta.urlChanged,
-            ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
+          return { ...identity, filled: true, value: actual.value, fill, submitDispatched: submit,
+            method: textInput ? "cdp" : "content", element: actual,
+            ...(navigation ? { ...navigation.pageDelta,
+              ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
+        } finally { observation?.dispose(); }
       }, context);
     }
 
@@ -520,7 +532,7 @@ registerTool({
       }
       return withDebugger(tabId, async (_target, send) => {
         assertActive();
-        await ensurePageSurface(tabId, send);
+        await ensurePageSurface(tabId, send, { frameId });
         const current = await sendToContent(tabId, "resolveCheckTarget", { selector, index }, bound);
         assertActive();
         if (current.error) return withElementActionHelp(current, normalizedAction);
@@ -533,24 +545,27 @@ registerTool({
           inspection: clickTarget, originalInspection: current, resolved: null });
         const point = await framedPagePoint(send, clickTarget.clickablePoint, frameId);
         const receiptId = await armPageInputReceipt(tabId);
-        if (getPageContext(tabId).pageMode === "mobile") {
-          await touch(send, point, { signal: _signal });
-        } else {
-          let released = false;
-          try {
-            await send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
-            assertActive();
-            await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
-            released = true;
-          } finally {
-            if (!released) {
-              // Release a possibly held button outside the control without completing its click.
-              try { await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: -1, y: -1, button: "left", clickCount: 1 }); } catch { /* The run may have lost its lease. */ }
+        let delivered = false;
+        try {
+          if (getPageContext(tabId).pageMode === "mobile") {
+            await touch(send, point, { signal: _signal });
+          } else {
+            let released = false;
+            try {
+              await send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+              assertActive();
+              await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+              released = true;
+            } finally {
+              if (!released) {
+                // Release a possibly held button outside the control without completing its click.
+                try { await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: -1, y: -1, button: "left", clickCount: 1 }); } catch { /* The run may have lost its lease. */ }
+              }
             }
           }
-        }
+        } finally { delivered = await inputWasDelivered(tabId, receiptId); }
         assertActive();
-        if (!await inputWasDelivered(tabId, receiptId)) return inputNotDelivered(identity);
+        if (!delivered) return inputNotDelivered(identity);
         const actual = await sendToContent(tabId, "readElementActionState", { selector, index }, bound);
         assertActive();
         if (actual.error) return withElementActionHelp(actual, normalizedAction);
@@ -575,19 +590,20 @@ registerTool({
         let delivered = !inspected.clickablePoint;
         if (inspected.clickablePoint) {
           await withDebugger(tabId, async (_target, send) => {
-            await ensurePageSurface(tabId, send);
+            await ensurePageSurface(tabId, send, { frameId });
             const refreshed = await sendToContent(tabId, "inspectElement", { selector, index }, bound);
             const localPoint = !refreshed.error && clickPointReady(refreshed) ? refreshed.clickablePoint : inspected.clickablePoint;
             if (!localPoint) return;
             const point = await framedPagePoint(send, localPoint, frameId);
             const receiptId = await armPageInputReceipt(tabId);
-            await send("Input.dispatchMouseEvent", {
-              type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1,
-            });
-            await send("Input.dispatchMouseEvent", {
-              type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1,
-            });
-            delivered = await inputWasDelivered(tabId, receiptId);
+            try {
+              await send("Input.dispatchMouseEvent", {
+                type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1,
+              });
+              await send("Input.dispatchMouseEvent", {
+                type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1,
+              });
+            } finally { delivered = await inputWasDelivered(tabId, receiptId); }
           }, context);
           if (!delivered) return inputNotDelivered({ action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey });
         }
@@ -595,7 +611,8 @@ registerTool({
         return { action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey, pressed: true, method: "cdp", inputDelivered: true, element: inspected };
       } catch (err) {
         rethrowStaleElement(err);
-        if (isCdpFallbackForbiddenError(err)) throw err;
+        assertActive();
+        if (frameId || isCdpFallbackForbiddenError(err)) throw err;
         const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: "press", value, key: pressedKey, submit }, bound);
         return { ...fallback, target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, method: fallback.error ? "content_failed" : "content_fallback", cdpError: err instanceof Error ? err.message : String(err), element: fallback.element || inspected };
       }

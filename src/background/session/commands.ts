@@ -105,7 +105,7 @@ import {
 import { compareBeijingDateTimeDesc, nowBeijingDateTime } from "../../shared/time-utils.js";
 import { localizeToolFailurePayload } from "../../shared/tools/tool-error-localization.js";
 import { assertMessageDocumentOwnership } from "../../shared/documents/document-attachments.js";
-import { createKeyedSerialQueue } from "../internal/serial-queue.js";
+import { createKeyedSerialQueue, createSerialQueue } from "../internal/serial-queue.js";
 import { formatTraceFields, trace } from "../trace.js";
 import { getOwnedTabIds, normalizeVisitedTaskSites, normalizeWorkingTab } from "./tabs.js";
 import {
@@ -173,6 +173,7 @@ export function createSessionCommands(deps: SessionCommandsDependencies) {
   const createStoredSession = (input: Parameters<Repository["createMetadata"]>[0]) => sessionRepository.createMetadata(input);
   const deleteStoredSession = (sessionId: string) => sessionRepository.deleteSession(sessionId);
   const composerDraftMutations = createKeyedSerialQueue();
+  const sessionExchangeImports = createSerialQueue();
   const automationRuntime = {
     syncSessionOutcome: (id: string) => getAutomationRuntime().syncSessionOutcome(id),
   };
@@ -491,13 +492,20 @@ async function exportSessionExchangeRuntime(sessionId: string) {
   });
 }
 
-async function importSessionExchangeRuntime(value: unknown, { sourceWindowId = null }: { sourceWindowId?: number | null } = {}) {
+function importSessionExchangeRuntime(value: unknown, options: { sourceWindowId?: number | null } = {}) {
+  return sessionExchangeImports.run(() => importSessionExchange(value, options));
+}
+
+async function importSessionExchange(value: unknown, { sourceWindowId = null }: { sourceWindowId?: number | null } = {}) {
   await sessionRuntimeReady;
   const payload = normalizeSessionExchangePayload(value);
   const contentHash = await hashSessionExchangeContent(payload.session.conversation);
   const existing = await findReusableImportedSession(payload.source.sessionId, contentHash);
   if (existing) {
-    await rememberImportedExchangeIdentity(existing.id, payload.source.sessionId, contentHash);
+    // Reopening a source preserves its saved conversation and its content identity.
+    if (!payload.source.sessionId || existing.exchangeSourceSessionId !== payload.source.sessionId) {
+      await rememberImportedExchangeIdentity(existing.id, payload.source.sessionId, contentHash);
+    }
     const session = (await getSessions())[existing.id] || existing;
     return {
       imported: true,

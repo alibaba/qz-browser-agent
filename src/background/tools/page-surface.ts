@@ -1,10 +1,26 @@
 type Send = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+const PROBE_TIMEOUT_MS = 1000;
+
+async function probe<T>(read: () => Promise<T>, unknown: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<T>(resolve => { timer = setTimeout(() => resolve(unknown), PROBE_TIMEOUT_MS); }),
+    ]);
+  } catch {
+    return unknown;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function outerSize(tabId: number) {
-  try {
+  return probe(async () => {
     const [frame] = await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
+      injectImmediately: true,
       func: () => {
         const view = globalThis as unknown as { outerWidth: number; outerHeight: number };
         return { width: view.outerWidth, height: view.outerHeight };
@@ -13,28 +29,28 @@ async function outerSize(tabId: number) {
     const value = frame?.result;
     if (!value) return null;
     return { width: Number(value.width) || 0, height: Number(value.height) || 0 };
-  } catch {
-    return null;
-  }
+  }, null);
 }
 
 function laidOut(size: { width: number; height: number } | null) {
   return !!size && size.width > 0 && size.height > 0;
 }
 
-/** A background tab drops CDP mouse input until Chrome has composited it. One capture does that. */
-export async function ensurePageSurface(tabId: number, send: Send) {
-  const size = await outerSize(tabId);
+/** A background tab or child frame can lack an input surface. One capture composites it before dispatch. */
+export async function ensurePageSurface(tabId: number, send: Send, { frameId = "" }: { frameId?: string } = {}) {
+  const size = frameId ? null : await outerSize(tabId);
   // An unreadable size is not evidence the surface is missing.
-  if (!size || laidOut(size)) return;
+  // A laid-out parent does not establish an out-of-process child's input surface.
+  if (!frameId && (!size || laidOut(size))) return;
   try {
     await send("Page.captureScreenshot", { format: "jpeg", quality: 1, fromSurface: true, captureBeyondViewport: false });
-  } catch {
+  } catch (error) {
+    if (frameId) throw error;
     // The discarded frame only nudges layout. The tab stays in the background.
   }
 }
 
-interface ReceiptOp { n: number }
+interface ReceiptOp { n: number; expiresAt: number; timer: number }
 interface ReceiptBook { ops: Record<string, ReceiptOp> }
 interface ArmedFrame { frameId: number; documentId: string }
 interface ReceiptFrame { frameId: number; documentId: string; result: unknown }
@@ -99,31 +115,39 @@ function frameKey(frameId: number, documentId: string) {
 }
 
 async function receiptFrames(tabId: number, receiptId: string, arm: boolean): Promise<ReceiptFrame[]> {
-  try {
+  return probe(async () => {
     const frames = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       world: "MAIN",
-      args: [receiptId, arm],
-      func: (opId: string, shouldArm: boolean) => {
+      injectImmediately: true,
+      args: [receiptId, arm, Date.now() + PROBE_TIMEOUT_MS],
+      func: (opId: string, shouldArm: boolean, armDeadline: number) => {
         const root = globalThis as unknown as {
           addEventListener: (type: string, listener: (event: { isTrusted: boolean }) => void, capture: boolean) => void;
           document: {
+            defaultView: {
+              setTimeout: (callback: () => void, delay: number) => number;
+              clearTimeout: (timer: number) => void;
+            } | null;
             __qzInputReceiptsV2Bound?: boolean;
             __qzInputReceiptsV2?: ReceiptBook;
           };
         };
         const doc = root.document;
-        if (!doc) return null;
+        if (!doc?.defaultView) return null;
         const ops = () => doc.__qzInputReceiptsV2?.ops;
         if (!shouldArm) {
           const book = ops();
           const op = book?.[opId];
           // This document never armed the operation. Navigation is not a missed click.
           if (!book || !op || typeof op.n !== "number") return null;
-          const count = op.n;
+          const count = op.expiresAt <= Date.now() ? null : op.n;
+          doc.defaultView.clearTimeout(op.timer);
           delete book[opId];
           return count;
         }
+        // executeScript can finish after the caller timed out or navigated away.
+        if (Date.now() >= armDeadline) return null;
         if (!doc.__qzInputReceiptsV2Bound) {
           doc.__qzInputReceiptsV2Bound = true;
           const count = (event: { isTrusted: boolean }) => {
@@ -138,7 +162,12 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean): Pr
           for (const type of ["pointerdown", "mousedown", "touchstart", "click"]) root.addEventListener(type, count, true);
         }
         const book = doc.__qzInputReceiptsV2 || (doc.__qzInputReceiptsV2 = { ops: {} });
-        book.ops[opId] = { n: 0 };
+        // A timed-out arm has no receipt id to read back. Expire it in the page.
+        book.ops[opId] = {
+          n: 0,
+          expiresAt: Date.now() + 30000,
+          timer: doc.defaultView.setTimeout(() => { delete book.ops[opId]; }, 30000),
+        };
         return 0;
       },
     });
@@ -147,7 +176,5 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean): Pr
       documentId: String(frame?.documentId || ""),
       result: frame?.result,
     }));
-  } catch {
-    return [];
-  }
+  }, []);
 }
