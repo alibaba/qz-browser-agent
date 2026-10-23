@@ -129,7 +129,8 @@ test("an existing question blocks re-attach without replacing the question or ap
   const before = executed.length;
   const beforeEvents = events.length;
   const beforeStops = stops.length;
-  await assert.rejects(runtime.execute("__detach_probe", { attach: tabId }, undefined, context), { code: "CDP_RUN_RELEASED" });
+  const attempts = Array.from({ length: 2 }, () => runtime.execute("__detach_probe", { attach: tabId }, undefined, context));
+  await Promise.all(attempts.map(attempt => assert.rejects(attempt, { code: "CDP_REATTACH_WAIT_CONFLICT" })));
   assert.equal(executed.length, before, "the blocked tool body does not run");
   assert.equal(events.length, beforeEvents, "the original question receives no replacement or settlement");
   assert.equal(stops.length, beforeStops, "the existing wait does not stop the run");

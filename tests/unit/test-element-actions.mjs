@@ -11,7 +11,7 @@ globalThis.chrome = {
 };
 const context = { sessionId: "owner", runId: "run", runProfile: { platform: { os: "linux" } } };
 
-function fixture({ checked, mobile = false, frameId = "" } = {}) {
+function fixture({ checked, mobile = false, frameId = "", hidden = false } = {}) {
   const commands = [], messages = [], observations = [], controller = new AbortController();
   const receipts = new Set();
   chrome.scripting = { async executeScript({ args }) {
@@ -24,7 +24,7 @@ function fixture({ checked, mobile = false, frameId = "" } = {}) {
   let execute, onCommand = async () => {}, onContent = async () => {};
   const inspection = () => ({ tag: "input", type: checked === undefined ? "text" : "checkbox",
     editable: checked === undefined, disabled: false, readOnly: false, focused: true, ...state,
-    clickablePoint: { x: 20, y: 20 }, clickablePointInViewport: true, inViewport: true });
+    clickablePoint: hidden ? null : { x: 20, y: 20 }, clickablePointInViewport: true, inViewport: true });
   const content = async (action, params) => {
     messages.push({ action, params });
     await onContent(action, params);
@@ -95,7 +95,10 @@ test("a lost click response releases receipts and never repeats the click", asyn
 
 test("an observation failure after a click never replays the action", async () => {
   const f = fixture(), get = chrome.tabs.get;
-  chrome.tabs.get = async () => { throw new Error("tab closed while observing"); };
+  chrome.tabs.get = async (...args) => {
+    if (f.commands.some(command => command.params.type === "mouseReleased")) throw new Error("tab closed while observing");
+    return get(...args);
+  };
   try {
     await assert.rejects(f.call({ action: "click" }), /tab closed while observing/);
     assert.equal(f.commands.filter(command => command.params.type === "mouseReleased").length, 1);
@@ -122,7 +125,8 @@ test("cancellation during click preparation cannot dispatch a Content fallback",
 test("a committed URL still undergoes navigation security checks while resources keep loading", async t => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const f = fixture(), get = chrome.tabs.get;
-  chrome.tabs.get = async () => ({ url: "https://example.test/done", title: "Done", status: "loading" });
+  chrome.tabs.get = async (...args) => f.commands.some(command => command.params.type === "mouseReleased")
+    ? { url: "https://example.test/done", title: "Done", status: "loading" } : get(...args);
   try {
     const pending = f.call({ action: "click" });
     await new Promise(setImmediate);
@@ -138,6 +142,78 @@ test("a committed URL still undergoes navigation security checks while resources
     assertNoReplay(f);
   } finally { chrome.tabs.get = get; }
 });
+
+test("page changes during click preparation form the baseline instead of being attributed to the click", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const f = fixture(), get = chrome.tabs.get;
+  let tab = { url: "https://example.test/", title: "Fixture", status: "complete" }, inspections = 0;
+  chrome.tabs.get = async () => ({ ...tab });
+  f.onContent(action => {
+    if (action === "inspectElement" && ++inspections === 2) {
+      tab = { url: "https://example.test/prepared", title: "Prepared", status: "loading" };
+      for (const listener of navigationListeners) listener(7, { url: tab.url, status: "loading" });
+    }
+  });
+  try {
+    const pending = f.call({ action: "click" });
+    await new Promise(setImmediate);
+    t.mock.timers.tick(180);
+    const result = await pending;
+    assert.equal(result.navigationPending, false);
+    assert.equal(result.navigated, null, "pre-existing loading is ambiguous, not evidence of a new navigation");
+    assert.equal(result.urlChanged, false);
+    assert.equal(result.pageBefore.url, tab.url);
+    assert.equal(result.pageAfter.url, tab.url);
+    assert.equal(f.commands.filter(command => command.params.type === "mouseReleased").length, 1);
+    assert.equal(navigationListeners.size, 0);
+  } finally { chrome.tabs.get = get; }
+});
+
+for (const method of ["href_navigation", "content_fallback"]) {
+  for (const outcome of ["no start", "stopped without commit", "already loading", "committed"]) {
+    test(`${method} observes ${outcome} without repeating the request`, async t => {
+      t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+      const hidden = method === "href_navigation";
+      const f = fixture({ hidden }), get = chrome.tabs.get, update = chrome.tabs.update;
+      const href = "https://example.test/done";
+      let inspections = 0, requests = 0;
+      const request = () => {
+        requests++;
+        if (outcome === "stopped without commit") {
+          for (const status of ["loading", "complete"]) {
+            for (const listener of navigationListeners) listener(7, { status });
+          }
+        }
+      };
+      chrome.tabs.get = async (...args) => outcome === "committed" && requests
+        ? { url: href, title: "Done", status: "complete" }
+        : { ...await get(...args), status: outcome === "already loading" ? "loading" : "complete" };
+      chrome.tabs.update = async (tabId, options) => {
+        assert.equal(tabId, 7);
+        assert.equal(options.url, href);
+        request();
+      };
+      if (hidden) f.state.navigateUrl = href;
+      f.onContent(action => {
+        if (!hidden && action === "inspectElement" && ++inspections === 2) throw new Error("CDP preparation failed");
+        if (action === "actOnElement") { request(); f.state.navigated = true; f.state.href = href; }
+      });
+      try {
+        const pending = f.call({ action: "click" });
+        await new Promise(setImmediate);
+        t.mock.timers.tick(180);
+        const result = await pending;
+        assert.equal(result.method, method);
+        assert.equal(result.navigationPending, false);
+        assert.equal(result.navigated, outcome === "already loading" ? null : outcome === "committed");
+        assert.equal(result.pageAfter.url, result._pageUrl);
+        assert.equal(requests, 1);
+        assert.equal(f.messages.filter(message => message.action === "actOnElement").length, hidden ? 0 : 1);
+        assert.equal(navigationListeners.size, 0);
+      } finally { chrome.tabs.get = get; chrome.tabs.update = update; }
+    });
+  }
+}
 
 test("a lost insertText response does not replay input or submit", async () => {
   const f = fixture();

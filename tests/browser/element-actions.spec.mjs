@@ -38,11 +38,19 @@ const html = `<!doctype html><meta name="viewport" content="width=device-width,i
 // Use the real extension's tool composition and Chrome debugger transport, as in page-mode.spec.
 async function createHarness(mode, launchOptions = {}) {
   const submissions = [];
+  const navigationRequests = [];
   const responseTimers = new Set();
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://fixture.test");
     res.setHeader("Content-Type", "text/html");
-    if (req.method === "POST" && url.pathname.startsWith("/navigation-")) {
+    if (["/navigation-download", "/navigation-no-content", "/navigation-blocked"].includes(url.pathname)) {
+      navigationRequests.push(url.pathname);
+      if (url.pathname === "/navigation-no-content") { res.writeHead(204); res.end(); }
+      else if (url.pathname === "/navigation-download") {
+        res.writeHead(200, { "Content-Type": "text/plain", "Content-Disposition": 'attachment; filename="navigation.txt"' });
+        res.end("Downloaded once");
+      } else res.end("<!doctype html><title>Unexpected navigation</title>");
+    } else if (req.method === "POST" && url.pathname.startsWith("/navigation-")) {
       req.resume();
       submissions.push(req.url);
       const timer = setTimeout(() => {
@@ -123,7 +131,7 @@ async function createHarness(mode, launchOptions = {}) {
     const opened = await call("open_tab", { url: `http://127.0.0.1:${server.address().port}/`, mode });
     expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
     await expect.poll(async () => { try { return (await state()).ready; } catch { return "loading"; } }).toBe("complete");
-    return { state, close, worker, submissions, page: browser.pages().find(page => page.url().startsWith('http://127.0.0.1:')),
+    return { state, close, worker, submissions, navigationRequests, page: browser.pages().find(page => page.url().startsWith('http://127.0.0.1:')),
       command: (method, params) => worker.evaluate(({ method, params }) => elementHarness.command(method, params), { method, params }),
       screen: (name, args) => worker.evaluate(({ name, args }) => elementHarness.screen(name, args), { name, args }),
       blockEnter: () => worker.evaluate(() => elementHarness.blockEnter()),
@@ -444,6 +452,46 @@ test("a click that navigates is not reported as undelivered input", async () => 
     expect(await h.worker.evaluate(() => receiptReads)).toBe(2);
   } finally { await h.close(); }
 });
+
+for (const outcome of ["download", "no-content", "blocked"]) {
+  test(`a hidden link whose navigation ends as ${outcome} does not wait for a document commit`, async () => {
+    test.setTimeout(120_000);
+    const h = await createHarness("desktop");
+    try {
+      const beforeUrl = h.page.url();
+      await h.page.setContent(`<!doctype html><title>Original document</title>
+        <button id="activate">Enable unload confirmation</button>
+        <a id="request" href="/navigation-${outcome}" hidden>Request</a>
+        <script>window.originalDocument = crypto.randomUUID();</script>`);
+      const documentMarker = await h.page.evaluate(() => window.originalDocument);
+      const downloads = [];
+      let dialogs = 0;
+      h.page.on("download", download => downloads.push(download));
+      if (outcome === "blocked") {
+        await h.page.bringToFront();
+        await h.page.click("#activate");
+        await h.page.evaluate(() => {
+          window.addEventListener("beforeunload", event => { event.preventDefault(); event.returnValue = ""; });
+        });
+        h.page.on("dialog", async dialog => { dialogs++; await dialog.dismiss(); });
+      }
+      const started = performance.now();
+      const result = await h.act("request", "click");
+      expect(performance.now() - started, JSON.stringify(result)).toBeLessThan(8000);
+      expect(result, JSON.stringify(result)).toMatchObject({
+        method: "href_navigation", navigationPending: false, navigated: false, urlChanged: false,
+        pageBefore: { url: beforeUrl }, pageAfter: { url: beforeUrl },
+      });
+      expect(await h.page.evaluate(() => window.originalDocument)).toBe(documentMarker);
+      expect(h.navigationRequests).toEqual(outcome === "blocked" ? [] : [`/navigation-${outcome}`]);
+      expect(dialogs).toBe(outcome === "blocked" ? 1 : 0);
+      if (outcome === "download") {
+        await expect.poll(() => downloads.length).toBe(1);
+        expect(downloads[0].suggestedFilename()).toBe("navigation.txt");
+      } else expect(downloads).toHaveLength(0);
+    } finally { await h.close(); }
+  });
+}
 
 test("form submission navigation waits for delayed responses without submitting twice", async () => {
   test.setTimeout(120_000);

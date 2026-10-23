@@ -2,6 +2,7 @@ import type { ToolContext } from "../../sdk/background.js";
 import type { ToolRuntimeDependencies } from "../../sdk/background/services.js";
 import { debuggerDetachT } from "../../shared/debugger-detach.js";
 import { withLanguage, getLanguage } from "../../shared/i18n/index.js";
+import { ToolExecutionError } from "./arguments.js";
 
 /** A dismissed debugging bar pauses the run until the user chooses to continue or stop. */
 export async function confirmDebuggerReattach(
@@ -12,7 +13,9 @@ export async function confirmDebuggerReattach(
     return true;
   }
   // Preserve the current question without treating its occupied channel as approval.
-  if (sessions.isWaitingForUser?.(sessionId)) return false;
+  if (sessions.isWaitingForUser?.(sessionId)) {
+    throw new ToolExecutionError("CDP_REATTACH_WAIT_CONFLICT", "Answer the pending question, then retry to confirm debugger reconnection", { sessionId, runId });
+  }
   const text = (key: "title" | "message") => withLanguage(context.language || getLanguage(), () => debuggerDetachT(key));
   const waitId = `debugger_reattach_${crypto.randomUUID()}`;
   const pending = sessions.beginUserWait(sessionId, {

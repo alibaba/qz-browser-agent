@@ -32,7 +32,7 @@ export interface ElementAccess {
   elementTargetForRef(ref?: ElementReference): string;
   isUidElementTarget(value: unknown): boolean;
   resolveSelectorTarget(tabId?: number, selector?: string, index?: number, context?: ToolContext): Promise<ElementTarget>;
-  resolveElementReference(tabId: number | undefined, options?: { target?: string; index?: number; allowBackendOnly?: boolean; readOnly?: boolean }, context?: ToolContext): Promise<ElementTarget & { index: number }>;
+  resolveElementReference(tabId: number | undefined, options?: { target?: string; index?: number; readOnly?: boolean }, context?: ToolContext): Promise<ElementTarget & { index: number }>;
   addElementTargetsToFindResult(value: unknown): unknown;
   backendNodeIdForSelector(tabId: number, selector: string, context?: ToolContext): Promise<number>;
   /** Bind unique selectors in one document; a frame scope also rejects a changed loader. */

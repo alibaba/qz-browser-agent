@@ -51,13 +51,6 @@ import {
 } from "../../shared/session/session-store.js";
 import { createSessionRecord, createSessionTitle, normalizeTranscript } from "../../shared/session/session-codec.js";
 import {
-  normalizeSessionImportDedupEntry,
-  sessionImportDedupEntryFromRecord,
-  sessionImportDedupKey,
-  sessionImportDedupWritePatch,
-  type SessionImportDedupEntry,
-} from "./import-dedup-index.js";
-import {
   createSessionListSummaryFromFirstMessage,
   normalizeSessionListSummary,
 } from "../../shared/session/session-list-summary.js";
@@ -241,7 +234,7 @@ export function createSessionRepository({
       await recordQueues.run(id, () => storageArea.remove([
         recordKey(id),
         transcriptCheckpointKey(id),
-        sessionImportDedupKey(id),
+        `_session_import_dedup_${id}`, // Obsolete cache from older builds.
       ])).catch(error => console.warn("[轻舟] deleted Session record cleanup failed", error));
       await conversationQueues.run(id, () => storageArea.remove(activeConversationKey(id))).catch(error => console.warn("[轻舟] deleted Session conversation cleanup failed", error));
       await deleteRuntime(id).catch(error => console.warn("[轻舟] deleted Session runtime cleanup failed", error));
@@ -281,18 +274,13 @@ export function createSessionRepository({
       assertSessionWritable(id);
       if (lease !== undefined) assertLease(id, lease);
       assertSessionRecordReadable(input);
-      const compatible = await readCompatibleStorage(id);
-      assertSessionWritable(id);
-      if (lease !== undefined) assertLease(id, lease);
-      const stored = input == null ? input : {
-        ...clone(record(input)), transcriptRevision: revision,
-      };
-      const dedupPatch = await importDedupPatch(id, stored, compatible[sessionImportDedupKey(id)]);
+      await readCompatibleStorage(id);
       assertSessionWritable(id);
       if (lease !== undefined) assertLease(id, lease);
       await storageArea.set({
-        [recordKey(id)]: stored,
-        ...dedupPatch,
+        [recordKey(id)]: input == null ? input : {
+          ...clone(record(input)), transcriptRevision: revision,
+        },
       });
       if (base) {
         base.persisted = true;
@@ -365,54 +353,11 @@ export function createSessionRepository({
     return (await readCompatibleStorage(id))[activeConversationKey(id)] ?? null;
   }
 
-  async function readImportDedupEntries(sessionIds: readonly string[]) {
-    const ids = [...new Set(sessionIds.map(sessionId => normalizeSessionId(sessionId)).filter(Boolean))];
-    if (!ids.length) return {} as Record<string, SessionImportDedupEntry | null>;
-    const values = await storageArea.get(ids.map(sessionId => sessionImportDedupKey(sessionId)));
-    return Object.fromEntries(ids.map(sessionId => [
-      sessionId,
-      normalizeSessionImportDedupEntry(values[sessionImportDedupKey(sessionId)]),
-    ]));
-  }
-
-  function rememberImportDedupEntries(entries: Record<string, SessionImportDedupEntry>) {
-    const ids = Object.keys(entries);
-    return Promise.all(ids.map(sessionId => {
-      let id = "";
-      try {
-        id = requireSessionId(sessionId);
-      } catch {
-        return Promise.resolve();
-      }
-      const entry = normalizeSessionImportDedupEntry(entries[sessionId]);
-      if (!entry) return Promise.resolve();
-      return recordQueues.run(id, async () => {
-        const key = sessionImportDedupKey(id);
-        if (normalizeSessionImportDedupEntry((await storageArea.get(key))[key])) return;
-        await storageArea.set({ [key]: entry });
-      });
-    }));
-  }
-
-  async function importDedupPatch(sessionId: string, storedRecord: unknown, existing: unknown) {
-    try {
-      return sessionImportDedupWritePatch(
-        sessionId,
-        existing,
-        await sessionImportDedupEntryFromRecord(storedRecord),
-      );
-    } catch (error) {
-      console.warn("[轻舟] import dedup index update failed", error);
-      return {};
-    }
-  }
-
   async function readCompatibleStorage(id: string) {
     const values = await storageArea.get([
       recordKey(id),
       activeConversationKey(id),
       transcriptCheckpointKey(id),
-      sessionImportDedupKey(id),
     ]);
     assertSessionRecordReadable(values[recordKey(id)]);
     assertConversationReadable(values[activeConversationKey(id)]);
@@ -559,8 +504,6 @@ export function createSessionRepository({
     updateMetadata,
     deleteSession,
     readRecord,
-    readImportDedupEntries,
-    rememberImportDedupEntries,
     writeRecord,
     writeTranscriptCheckpoint,
     readActiveConversation,

@@ -682,7 +682,7 @@ registerTool({
     let rootRef: Awaited<ReturnType<typeof resolveElementReference>> | null = null;
 
     if (requestedRoot !== "root") {
-      rootRef = await resolveElementReference(tabId, { target: requestedRoot, allowBackendOnly: true }, context);
+      rootRef = await resolveElementReference(tabId, { target: requestedRoot }, context);
       targetTabId = rootRef.tabId;
       resolvedRoot = rootRef.target || requestedRoot;
       overviewSelector = rootRef.selector || "";

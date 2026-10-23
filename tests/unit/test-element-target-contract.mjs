@@ -164,7 +164,7 @@ function assertAxTreeCompactContract() {
   assert.match(resolveToolDefinition("get_ax_tree").description, /root="root" 查看整页/, "get_ax_tree should document root=root");
   assert.match(resolveToolDefinition("get_ax_tree").description, /limit 使用 BFS 分配节点预算/, "get_ax_tree should document BFS budget semantics");
   assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated, N more\)/, "get_ax_tree should document truncated branch markers");
-  assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot, allowBackendOnly: true \}/, "get_ax_tree should resolve uid/css roots through the target resolver");
+  assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot \}/, "get_ax_tree should resolve uid/css roots through the target resolver");
   assert.match(block, /backendNodeIdForSelector\(targetTabId, overviewSelector, context\)/, "get_ax_tree should resolve css roots to backend nodes within the current run context");
   assert.match(block, /rootBackendNodeId/, "get_ax_tree should pass the resolved AX root into snapshot construction");
   assert.match(block, /const fetchDepth = rootBackendNodeId \? 40 : axDepth/, "get_ax_tree should search deep enough to find requested roots");
@@ -364,7 +364,7 @@ function assertImageCandidateTargetContract() {
   assert.doesNotMatch(collectBlock, /rows\.push\(row\)/, "collect_images should not persist failed diagnostic attempts as gallery rows");
   assert.match(tools, /matched\.length !== 1[\s\S]*IMAGE_TARGET_NOT_SINGLE/, "target collection should require exactly one image");
   assert.match(tools, /function assertSelectedImageSource[\s\S]*currentSrc === expectedSrc[\s\S]*STALE_IMAGE_TARGET/, "target collection should reject changed image identity");
-  assert.match(tools, /assertSelectedImageSource\(candidate, canvasResult\.currentSrc \|\| canvasResult\.src\)/, "collection should recheck image identity after the page read");
+  assert.match(tools, /assertSelectedImageSource\(candidate, canvasResult \|\| \{\}\)/, "collection should recheck image identity after the page read");
   const readBlock = toolBlock("read_image");
   assert.match(readBlock, /assertSelectedImageSource\(\{[\s\S]*expectedSrc: String\(ref\.ref\?\.imageSrc/, "read_image should verify the listed image source before returning pixels");
   assert.doesNotMatch(readBlock, /if\s*\(\s*!Number\(ref\.ref\?\.backendNodeId/, "a backend node id must not skip the listed image source check");

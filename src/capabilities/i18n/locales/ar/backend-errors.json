@@ -27,6 +27,8 @@
   "backend.toolError.CDP_COMMAND_FAILED.message": "فشل أمر تصحيح المتصفح.",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.label": "معلومات المهمة أو التشغيل مفقودة",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.message": "لا توجد لهذا الاستدعاء هوية جلسة أو تشغيل، لذا لا يمكنه التحكم في علامة تبويب.",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.label": "هناك سؤال آخر ينتظر الإجابة",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.message": "أجب عن السؤال المعلّق، ثم أعد محاولة العملية لتأكيد إعادة اتصال مصحّح الأخطاء.",
   "backend.toolError.CDP_RUN_RELEASED.label": "انتهى تشغيل المهمة",
   "backend.toolError.CDP_RUN_RELEASED.message": "انتهت المهمة؛ تم تجاهل عملية المتصفح المتأخرة.",
   "backend.toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label": "التحكم في علامة تبويب المهمة غير متاح",

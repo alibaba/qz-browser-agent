@@ -202,7 +202,7 @@ registerTool({
     let screenCapture = null;
 
     if (hasElementTarget) {
-      ref = await resolveElementReference(tabId, { target, index, allowBackendOnly: true }, context);
+      ref = await resolveElementReference(tabId, { target, index }, context);
       shot = await captureElementScreenshot(ref.tabId!, ref, {
         format,
         quality,
@@ -422,7 +422,7 @@ async function resolveSelectedImageTarget(selectedTarget: string, tabId: number 
   const item = matched[0];
   const expectedSrc = String(ref.ref?.imageSrc || "").trim();
   const currentSrc = String(item.currentSrc || item.src || "").trim();
-  assertSelectedImageSource({ target: selectedTarget, expectedSrc }, currentSrc);
+  assertSelectedImageSource({ target: selectedTarget, expectedSrc }, item);
   return {
     ...item,
     target: ref.target || selectedTarget,
@@ -439,10 +439,17 @@ async function resolveSelectedImageTarget(selectedTarget: string, tabId: number 
   };
 }
 
-function assertSelectedImageSource(candidate: ImageMetadata = {}, observedSrc: unknown = "") {
+function assertSelectedImageSource(candidate: ImageMetadata = {}, observed: ImageMetadata = {}) {
   const expectedSrc = String(candidate.expectedSrc || "").trim();
-  const currentSrc = String(observedSrc || "").trim();
-  if (!expectedSrc || currentSrc === expectedSrc) return;
+  if (!expectedSrc) return;
+  // A failed read is not evidence of a replacement. IMAGE_SRC_EMPTY is an
+  // explicit page observation; other replies must carry the observed source.
+  if (typeof observed.currentSrc !== "string" && typeof observed.src !== "string" && observed.code !== "IMAGE_SRC_EMPTY") {
+    if (observed.error) throw normalizeImageReadError(observed, "IMAGE_PAGE_BINARY_FAILED", { target: candidate.target });
+    throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", t("thePageReturnedAnInvalidImageResponseReadThe"), { target: candidate.target });
+  }
+  const currentSrc = String(observed.currentSrc || observed.src || "").trim();
+  if (currentSrc === expectedSrc) return;
   throw new ToolExecutionError(
     "STALE_IMAGE_TARGET",
     t("selectedImageTargetNoLongerPointsToTheListed"),
@@ -700,14 +707,14 @@ registerTool({
       return await readImageUrlAsResult(url, { detail, maxBytes, maxWidth, maxHeight, format, quality, signal });
     }
 
-    const ref = await resolveElementReference(tabId, { target, index, allowBackendOnly: true, readOnly: true }, context);
+    const ref = await resolveElementReference(tabId, { target, index, readOnly: true }, context);
     let canvasResult: ImageMetadata;
     try {
       canvasResult = imageMetadata(await callElement(ref.tabId!, ref, "readImageElement", {
         maxWidth, maxHeight, format, quality: normalizeImageQuality(quality),
       }, context));
     } catch (err) {
-      if (isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(errorCode(err)).startsWith("STALE_ELEMENT_UID"))) throw err;
+      if (ref.ref?.imageSrc || isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(errorCode(err)).startsWith("STALE_ELEMENT_UID"))) throw err;
       canvasResult = { error: errorMessage(err), code: errorCode(err) || "IMAGE_CANVAS_FAILED" };
     }
     // list_images records the source and binds a node afterward. The node can
@@ -716,7 +723,7 @@ registerTool({
     assertSelectedImageSource({
       target: ref.target || target,
       expectedSrc: String(ref.ref?.imageSrc || "").trim(),
-    }, canvasResult?.currentSrc || canvasResult?.src || "");
+    }, canvasResult);
 
     if (canvasResult?.dataUrl) {
 	      return buildReadImageResult({
@@ -918,7 +925,7 @@ async function readImageForAssetCollection(candidate: ImageMetadata = {}, option
         quality: normalizeImageQuality(options.quality),
       }, options.context || {}));
     } catch (err) {
-      if (isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(err.code).startsWith("STALE_ELEMENT_UID"))) throw err;
+      if (candidate.expectedSrc || isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(err.code).startsWith("STALE_ELEMENT_UID"))) throw err;
       pageReadError = normalizeImageReadError(err, "IMAGE_PAGE_BINARY_FAILED", {
         stage: "page_canvas",
         selector: candidate.selector,
@@ -926,8 +933,8 @@ async function readImageForAssetCollection(candidate: ImageMetadata = {}, option
         src: candidate.currentSrc || candidate.src || "",
       });
     }
+    assertSelectedImageSource(candidate, canvasResult || {});
     if (canvasResult?.dataUrl) {
-      assertSelectedImageSource(candidate, canvasResult.currentSrc || canvasResult.src);
       return normalizeCollectedImageResult({
         dataUrl: canvasResult.dataUrl,
         method: canvasResult.method || "page_canvas",
@@ -939,7 +946,6 @@ async function readImageForAssetCollection(candidate: ImageMetadata = {}, option
         },
       });
     }
-    assertSelectedImageSource(candidate, canvasResult?.currentSrc || canvasResult?.src);
     if (!pageReadError) {
       pageReadError = new ToolExecutionError(
         canvasResult?.code || "IMAGE_PAGE_BINARY_FAILED",
@@ -1020,8 +1026,10 @@ async function captureImageCandidateScreenshot(candidate: ImageMetadata = {}, op
     const current = imageMetadata(await callElement(tabId, binding, "listImageElements", {
       minWidth: 0, minHeight: 0, visibleOnly: false, limit: 2,
     }, options.context || {}));
-    const matched = Array.isArray(current?.images) ? current.images : [];
-    if (current?.error || matched.length !== 1) {
+    if (current.error) throw normalizeImageReadError(current, "LIST_IMAGES_FAILED", { target: candidate.target });
+    if (!Array.isArray(current.images)) throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", t("thePageReturnedAnInvalidImageResponseReadThe"), { target: candidate.target });
+    const matched = current.images;
+    if (matched.length !== 1) {
       throw new ToolExecutionError(
         "STALE_IMAGE_TARGET",
         t("selectedImageTargetIsNoLongerAvailableForScreenshot"),
@@ -1032,7 +1040,7 @@ async function captureImageCandidateScreenshot(candidate: ImageMetadata = {}, op
         },
       );
     }
-    assertSelectedImageSource(candidate, matched[0].currentSrc || matched[0].src);
+    assertSelectedImageSource(candidate, matched[0]);
   }
   const screenshotFormat = options.format === "png" ? "png" : "jpeg";
   const shot = await captureElementScreenshot(tabId, binding, {

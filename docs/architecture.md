@@ -210,8 +210,15 @@ marks the tab as user-detached; before the run's next tool call, outside the too
 confirmation asks to continue (re-attach) or stop (ending the run), while other detach reasons
 keep the silent reconnection. Capabilities can retain a connection across runs; completion or
 stop still revokes commands and event collection. Releasing a run does not disable Runtime.
-Detach of the connection drops that tab's isolated context table; a retained connection keeps
-Runtime enabled and keeps the table. Session deletion releases retained connections.
+Session deletion releases retained connections.
+An existing question remains pending when a tool requests reattachment; it does not grant consent.
+The tool returns `CDP_REATTACH_WAIT_CONFLICT`; after answering the question, retrying asks for
+reattachment approval.
+Closing a tab releases its debugger state and removes it from pending reattachment checks.
+
+Diagnostics captures bounded console history as soon as a run-owned connection enables Runtime,
+including replay triggered by UID tools. Buffers follow Session/run/connection identity; idle
+retained connections collect no events, and reconnecting replaces the buffer before accepting replay.
 
 [Page mode](../src/capabilities/tabs/page-mode.ts) applies mobile UA, viewport, and touch settings
 before initial navigation. Mobile mode retains its connection between runs. Mode changes refresh the
@@ -233,8 +240,19 @@ gate.
 
 Read-only page tools also wait for an initial pending navigation to leave `about:blank`, within
 their timeout and cancellation signal. They recheck access after waiting. Content injection uses
-Chrome's `document_idle` timing. Dynamic page content can require an explicit element or network
+Chrome's `document_idle` timing; explicit UID bridge recovery injects immediately and validates the
+document again. Dynamic page content can require an explicit element or network
 wait.
+
+Element clicks and form submission capture a navigation baseline immediately before input. They
+allow 180 ms for navigation to start, then wait up to 10 seconds while new navigation evidence
+coincides with loading or a pending URL. Pre-existing loading alone does not extend the wait.
+`pageAfter` and result page metadata describe the same observation. A changed document ID detects
+same-URL reloads, including documents still loading subresources. Sending a navigation request does
+not extend the wait. A settled page with an unchanged URL and document returns `navigated: false`,
+including downloads, 204 responses and cancelled navigations. Ambiguous observations leave
+`navigated` unknown. Committed URLs undergo navigation security
+checks. Observation never replays input; callers can inspect the page again.
 
 ### Page execution
 
@@ -251,6 +269,8 @@ Node-backed UIDs use the isolated context of the node's own document after verif
 extension ID and its Content bridge. The main frame is the default. A direct child iframe uses the
 same uid and action path: the snapshot grafts that frame's accessibility tree under the owning
 iframe, and click or fill resolves the node in the child frame.
+Snapshot actions and ancestor matches stay within that document; child-root selectors bind through
+the child frame's session and loader identity.
 
 Within one debugger connection, Runtime is enabled and never disabled. Tool paths do not disable
 and re-enable Runtime to rediscover contexts or to check that the target is alive. `isolatedByTab`
@@ -259,24 +279,22 @@ when Chrome reports one, the context's `uniqueId`. Probing and selection then ca
 `Runtime.evaluate` with `uniqueContextId`, so a numeric id reused after a cross-process navigation
 cannot select another context. A same-process frame is keyed by its CDP frame id. A cross-process
 frame is keyed by `session:` plus its flattened session id and that frame id.
-`Target.detachedFromTarget` drops that session's keys and their unique ids.
 
 When a frame has no recorded context, the only path is `Runtime.enable`, selection, one Content
 initialization, selection, then an error. There is no further recovery. Initialization injects
 scripts into every frame. Page messages stay on the main frame. Extension reloads can leave older
 contexts alive. This path precedes action dispatch; an action failure is never replayed.
 
-The table belongs to the debugger connection. `chrome.debugger.detach()` does not emit `onDetach`,
-so programmatic detach drops that tab's entries at the connection exit. A real debugger disconnect
-drops them from `onDetach`, including the flattened child sessions recorded for that tab. A retained
-connection, such as mobile mode between runs, stays attached: Runtime stays enabled and the table
-stays, because enabling Runtime again would not report contexts that are already live. Detach of a
-child session drops that session's context ids.
+Programmatic detach and debugger `onDetach` clear the tab's contexts and child-target cache.
+`chrome.debugger.detach()` does not emit `onDetach`, so the connection exit also performs this cleanup.
+A retained connection keeps Runtime enabled and its contexts; enabling Runtime again would not
+report contexts that are already live. `Target.detachedFromTarget` drops only that child's entries.
 
 Mouse and text input stay on the page target. A click point from a child frame adds that iframe's
 content origin. Nested frames stay unaddressed. A cross-site child is absent from the page frame
 tree; the page session auto-attaches to that child target and uses the child session for the tree
-and the node call.
+and the node call. Before child-frame input, one discarded screenshot refreshes Chrome's input
+surface. Preparation failure ends the operation before input is sent.
 
 [Script policy](../src/background/tools/script-policy.ts) and the [script
 bridge](../src/background/tools/run-script-bridge.ts) check page and inner-script access. The inner
@@ -351,8 +369,9 @@ Heavy UI libraries load on demand and update the instance that requested them.
 [Session export](../src/sidepanel/features/export/session-export-feature.ts) uses one Background
 exchange payload and synchronous `renderStatic` projections. It embeds the active skin and a
 standalone [export runtime](../src/sidepanel/features/export/session-export-runtime.ts). Text and
-tables work offline; formulas use deferred MathJax from a CDN. Import restores safe URLs into newly
-owned, inactive tabs. See [design system](design-system.md) and [localization](localization.md) for
+tables work offline; formulas use deferred MathJax from a CDN. Each import creates an independent
+Session, including repeated imports of the same file. Import restores safe URLs into newly owned,
+inactive tabs. See [design system](design-system.md) and [localization](localization.md) for
 export presentation.
 
 ## Build and source boundaries

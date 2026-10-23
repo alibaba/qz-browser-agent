@@ -37,6 +37,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   CANNOT_WAIT_CALLER_SESSION: { label: "toolError.CANNOT_WAIT_CALLER_SESSION.label", message: "toolError.CANNOT_WAIT_CALLER_SESSION.message" },
   CDP_COMMAND_FAILED: { label: "toolError.CDP_COMMAND_FAILED.label", message: "toolError.CDP_COMMAND_FAILED.message" },
   CDP_RUN_CONTEXT_REQUIRED: { label: "toolError.CDP_RUN_CONTEXT_REQUIRED.label", message: "toolError.CDP_RUN_CONTEXT_REQUIRED.message" },
+  CDP_REATTACH_WAIT_CONFLICT: { label: "toolError.CDP_REATTACH_WAIT_CONFLICT.label", message: "toolError.CDP_REATTACH_WAIT_CONFLICT.message" },
   CDP_RUN_RELEASED: { label: "toolError.CDP_RUN_RELEASED.label", message: "toolError.CDP_RUN_RELEASED.message" },
   CDP_SESSION_RUNTIME_UNAVAILABLE: { label: "toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label", message: "toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.message" },
   CDP_TAB_LEASE_CONFLICT: { label: "toolError.CDP_TAB_LEASE_CONFLICT.label", message: "toolError.CDP_TAB_LEASE_CONFLICT.message" },

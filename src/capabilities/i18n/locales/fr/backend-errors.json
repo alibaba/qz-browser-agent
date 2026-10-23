@@ -27,6 +27,8 @@
   "backend.toolError.CDP_COMMAND_FAILED.message": "La commande de débogage du navigateur a échoué.",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.label": "Informations de tâche ou d’exécution manquantes",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.message": "Cet appel n’a pas d’identité de session ou d’exécution et ne peut pas contrôler un onglet.",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.label": "Une autre question attend une réponse",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.message": "Répondez à la question en attente, puis réessayez l’opération pour confirmer la reconnexion du débogueur.",
   "backend.toolError.CDP_RUN_RELEASED.label": "Exécution de la tâche terminée",
   "backend.toolError.CDP_RUN_RELEASED.message": "La tâche est terminée ; l’opération tardive du navigateur a été ignorée.",
   "backend.toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label": "Contrôles d’onglet de tâche indisponibles",

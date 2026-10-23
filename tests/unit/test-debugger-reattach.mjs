@@ -122,7 +122,7 @@ stops.length = 0;
   const { sessionId, runId } = await fixture();
   const blocker = supervisor.beginUserWait(sessionId, { waitId: "other_wait", runId, onSettled() {} });
   const before = events.length;
-  assert.equal(await ask(sessionId, runId), false);
+  await assert.rejects(ask(sessionId, runId), { code: "CDP_REATTACH_WAIT_CONFLICT" });
   assert.equal(events.length, before, "no card is emitted while another wait is pending");
   assert.equal(supervisor.isWaitingForUser(sessionId), true);
   assert.deepEqual(stops, [], "a busy wait channel does not stop the session");

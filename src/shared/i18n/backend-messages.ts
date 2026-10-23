@@ -48,6 +48,8 @@ export const backendMessages = defineMessages("backend", {
   "toolError.CDP_COMMAND_FAILED.message": {"zh-CN": "浏览器调试命令执行失败。", "en": "The browser debugging command failed."},
   "toolError.CDP_RUN_CONTEXT_REQUIRED.label": {"zh-CN": "缺少任务运行上下文", "en": "Missing task or run information"},
   "toolError.CDP_RUN_CONTEXT_REQUIRED.message": {"zh-CN": "当前调用缺少 Session 或运行标识，不能接管浏览器标签页。", "en": "This call has no session or run identity and cannot take control of a browser tab."},
+  "toolError.CDP_REATTACH_WAIT_CONFLICT.label": {"zh-CN": "有其他问题等待回答", "en": "Another question is pending"},
+  "toolError.CDP_REATTACH_WAIT_CONFLICT.message": {"zh-CN": "请先回答当前问题，再重试操作以确认重新连接调试器。", "en": "Answer the pending question, then retry the operation to confirm debugger reconnection."},
   "toolError.CDP_RUN_RELEASED.label": {"zh-CN": "任务运行已经结束", "en": "Task run has ended"},
   "toolError.CDP_RUN_RELEASED.message": {"zh-CN": "当前任务运行已经结束，已忽略迟到的浏览器操作。", "en": "The task has ended; the late browser operation was ignored."},
   "toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label": {"zh-CN": "任务标签页运行环境不可用", "en": "Task tab controls unavailable"},

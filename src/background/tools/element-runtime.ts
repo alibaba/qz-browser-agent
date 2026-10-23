@@ -262,8 +262,7 @@ async function resolveSelectorTarget(tabId: number | undefined, selector = "", i
   return { tabId: ref.tabId, selector: ref.selector, index: ref.index, target: ref.target, uid: ref.uid, ref: ref.ref };
 }
 
-async function resolveElementReference(tabId: number | undefined, { target = "", index = 0, allowBackendOnly = false, readOnly = false } = {}, context: ToolContext = {}) {
-  void allowBackendOnly;
+async function resolveElementReference(tabId: number | undefined, { target = "", index = 0, readOnly = false } = {}, context: ToolContext = {}) {
   const normalized = parseElementTarget(target);
   const requestedUid = normalizeElementUid(normalized.uid);
   const requestedSelector = String(normalized.selector || "").trim();

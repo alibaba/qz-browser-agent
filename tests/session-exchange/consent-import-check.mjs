@@ -167,11 +167,14 @@ try {
   await consented.page.locator("#qingzhou-session-cta").click();
   const repeated = await waitUntil("repeat import", () => buttonState(consented.page), state => {
     if (state.text === "重试导入") throw new Error(`repeat import failed: ${state.title} ${JSON.stringify(state.results)}`);
-    return state.text === "已导入" && state.imported === existingId;
+    return state.text === "已导入" && state.imported && state.imported !== existingId;
   }, 20000);
-  assert.equal(repeated.imported, existingId);
-  assert.deepEqual(await sessionRecords(worker), importedRecords, "importing the same export again must not create another session");
-  const repeatedPanel = await waitUntil("panel reopens on the existing session", () => panelChat(context), snapshot => (
+  assert.notEqual(repeated.imported, existingId);
+  const repeatedRecords = await sessionRecords(worker);
+  assert.equal(repeatedRecords.length, importedRecords.length + 1, "each explicit import creates a new session");
+  assert.deepEqual(repeatedRecords.filter(session => session.id !== repeated.imported), importedRecords, "reimporting preserves existing sessions");
+  assert.equal(repeatedRecords.find(session => session.id === repeated.imported)?.title, "已同意直接导入");
+  const repeatedPanel = await waitUntil("panel opens the new imported copy", () => panelChat(context), snapshot => (
     snapshot.open === true
     && snapshot.title === "已同意直接导入"
     && snapshot.hidden === false

@@ -21,6 +21,8 @@
   "backend.toolError.CDP_COMMAND_FAILED.message": "瀏覽器除錯命令執行失敗。",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.label": "缺少任務執行上下文",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.message": "目前呼叫缺少 Session 或執行識別，不能接管瀏覽器分頁。",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.label": "有其他問題等待回答",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.message": "請先回答目前的問題，再重試操作以確認重新連線偵錯工具。",
   "backend.toolError.CDP_RUN_RELEASED.label": "任務執行已經結束",
   "backend.toolError.CDP_RUN_RELEASED.message": "目前任務執行已經結束，已忽略遲到的瀏覽器操作。",
   "backend.toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label": "任務分頁執行環境不可用",

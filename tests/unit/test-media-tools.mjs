@@ -80,6 +80,7 @@ let imageWriteError = null;
 let bindBackendNodesImpl = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 0) });
 let readImageDataUrl = "data:image/png;base64,aW1hZ2U=";
 let readImageFailure = null;
+let listImageResults = [];
 let listedImages = [{
   index: 4,
   rank: 0,
@@ -156,6 +157,9 @@ const runtime = registerMediaTools({
       return { selector: "#zoom-image", bounds: { x: 1200.5, y: 1400.25, width: 160, height: 120 } };
     }
     if (action === "listImageElements") {
+      const result = listImageResults.shift();
+      if (result instanceof Error) throw result;
+      if (result) return result;
       return {
         ok: true,
         count: listedImages.length,
@@ -1811,6 +1815,7 @@ assert.equal(recoveredScreenshot.totalRows, 1);
 const savedListedImages = listedImages;
 const savedBind = bindBackendNodesImpl;
 const savedReadImageDataUrl = readImageDataUrl;
+const savedCollectionFetch = globalThis.fetch;
 try {
   bindBackendNodesImpl = async (_tabId, selectors = []) => ({ loaderId: "loader-images", ids: selectors.map(() => 77) });
   listedImages = [{
@@ -1860,20 +1865,59 @@ try {
   assert.match(fallbackImage.method, /^element_screenshot_fallback:/, "a matching node-backed image still uses the screenshot fallback when canvas pixels are unavailable");
   assert.match(fallbackImage._image, /^data:image\//);
 
-  for (const failure of [
-    new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content bridge unavailable"),
-    { code: "IMAGE_SRC_EMPTY", error: "Image element has no src/currentSrc", details: { src: "", currentSrc: "" } },
-    { dataUrl: "data:image/png;base64,aW1hZ2U=" },
+  let downloads = 0;
+  globalThis.fetch = async (input, options) => {
+    if (String(input).startsWith("data:")) return savedCollectionFetch(input, options);
+    downloads++;
+    throw new Error("Image download unavailable");
+  };
+  const collectBound = () => definitions.get("collect_images").execute({
+    table: "source-verification", targets: [bound.images[0].target],
+  }, undefined, { sessionId: "session-a" });
+  for (const [failure, code] of [
+    [new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content bridge unavailable", { stage: "bridge" }), "CONTENT_SCRIPT_NOT_READY"],
+    [{ code: "CONTENT_SCRIPT_MESSAGE_FAILED", error: "Page reply unavailable", details: { stage: "reply" } }, "CONTENT_SCRIPT_MESSAGE_FAILED"],
+    [{ code: "IMAGE_SRC_EMPTY", error: "Image element has no src/currentSrc", details: { src: "", currentSrc: "" } }, "STALE_IMAGE_TARGET"],
+    [{ dataUrl: "data:image/png;base64,aW1hZ2U=" }, "INVALID_CONTENT_RESPONSE"],
+    [{ dataUrl: "data:image/png;base64,aW1hZ2U=", src: "", currentSrc: "" }, "STALE_IMAGE_TARGET"],
   ]) {
     readImageFailure = failure;
     const capturesBeforeUnknownSource = cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length;
     await assert.rejects(
       definitions.get("read_image").execute({ target: bound.images[0].target }, undefined, { sessionId: "session-a" }),
-      error => error?.code === "STALE_IMAGE_TARGET" && error.details.currentSrc === "",
+      error => error?.code === code
+        && (!(failure instanceof Error) || error === failure)
+        && (code !== "CONTENT_SCRIPT_MESSAGE_FAILED" || (error.message === failure.error && error.details.stage === "reply")),
       "a source-bound image must not return pixels when its current source cannot be verified",
     );
+    await assert.rejects(collectBound(), error => error?.code === "IMAGE_COLLECTION_ALL_FAILED"
+      && error.details.failures[0].code === code
+      && (!code.startsWith("CONTENT_SCRIPT_") || error.details.failures[0].error === (failure.message || failure.error)));
     assert.equal(cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length, capturesBeforeUnknownSource);
+    assert.equal(downloads, 0, "unverified page identity cannot become a successful URL fallback");
   }
+
+  readImageFailure = { code: "IMAGE_CANVAS_FAILED", error: "Canvas is tainted", src: listedImages[0].src };
+  for (const [reply, code] of [
+    [new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Screenshot preflight unavailable"), "CONTENT_SCRIPT_NOT_READY"],
+    [{ code: "CONTENT_SCRIPT_MESSAGE_FAILED", error: "Screenshot preflight reply unavailable" }, "CONTENT_SCRIPT_MESSAGE_FAILED"],
+    [{}, "INVALID_CONTENT_RESPONSE"],
+    [{ images: [] }, "STALE_IMAGE_TARGET"],
+    [{ images: [{ src: "https://example.test/replaced.png" }] }, "STALE_IMAGE_TARGET"],
+    [{ images: [{}] }, "INVALID_CONTENT_RESPONSE"],
+  ]) {
+    listImageResults = [null, reply]; // Initial resolution succeeds; screenshot preflight fails.
+    const captures = cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length;
+    await assert.rejects(collectBound(), error => error?.code === "IMAGE_COLLECTION_ALL_FAILED"
+      && error.details.failures[0].code === code
+      && (!code.startsWith("CONTENT_SCRIPT_") || error.details.failures[0].error === (reply.message || reply.error)));
+    assert.equal(listImageResults.length, 0, "collection rechecks the image before capturing fallback pixels");
+    assert.equal(cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length, captures);
+  }
+  const verifiedCollection = await collectBound();
+  assert.equal(verifiedCollection.collected, 1, "unchanged sources still allow a tainted canvas to use a screenshot");
+  assert.match(verifiedCollection.images[0].method, /^element_screenshot_fallback:/);
+
   readImageFailure = { code: "IMAGE_SRC_EMPTY", error: "Image element has no src/currentSrc" };
   const unboundFallback = await definitions.get("read_image").execute({ tabId: 6, target: "css:#gallery > img.hero" }, undefined, { sessionId: "session-a" });
   assert.match(unboundFallback.method, /^element_screenshot_fallback:/, "explicit CSS reads have no listed source to verify");
@@ -1892,6 +1936,8 @@ try {
   bindBackendNodesImpl = savedBind;
   readImageDataUrl = savedReadImageDataUrl;
   readImageFailure = null;
+  listImageResults = [];
+  globalThis.fetch = savedCollectionFetch;
 }
 
 console.log("media screenshot boundary tests passed");

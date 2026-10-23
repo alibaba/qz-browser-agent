@@ -151,7 +151,7 @@ test("a navigation during initialization rejects the old UID before resolving or
   assert.equal(h.commands.some(item => item.method === "DOM.resolveNode"), false);
 });
 
-for (const code of ["OPERATION_ABORTED", "SECURITY_GUARDRAIL_BLOCKED", "CDP_RUN_RELEASED", "CDP_TAB_LEASE_CONFLICT", "PERMISSION_DENIED"]) {
+for (const code of ["OPERATION_ABORTED", "SECURITY_GUARDRAIL_BLOCKED", "CDP_RUN_RELEASED", "CDP_REATTACH_WAIT_CONFLICT", "CDP_TAB_LEASE_CONFLICT", "PERMISSION_DENIED"]) {
   test(`candidate validation propagates ${code} without initialization or dispatch`, async () => {
     const error = new ToolExecutionError(code, code);
     const h = harness([world(7, { error }), world(8)]);

@@ -106,7 +106,7 @@ export function createCdpRuntime({
         .finally(() => { if (reattachPrompts.get(ownerKey) === prompt) reattachPrompts.delete(ownerKey); });
       reattachPrompts.set(ownerKey, prompt);
     }
-    const approved = await prompt.catch(() => false);
+    const approved = await prompt;
     if (!approved) throw runReleasedError(detached[0].tabId, sessionId, runId);
     for (const entry of tabs.values()) if (entry.ownerKey === ownerKey) entry.userDetached = false;
   }
@@ -584,6 +584,7 @@ export function isCdpFallbackForbiddenError(error: unknown) {
       "CDP_RUN_CONTEXT_REQUIRED",
       "CDP_RUN_RELEASED",
       "CDP_SESSION_RUNTIME_UNAVAILABLE",
+      "CDP_REATTACH_WAIT_CONFLICT",
       "CDP_TAB_LEASE_CONFLICT",
     ].includes(code);
 }

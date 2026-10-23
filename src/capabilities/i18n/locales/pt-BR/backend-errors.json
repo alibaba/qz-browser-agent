@@ -27,6 +27,8 @@
   "backend.toolError.CDP_COMMAND_FAILED.message": "O comando de depuração do navegador falhou.",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.label": "Informações de tarefa ou execução ausentes",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.message": "Esta chamada não tem identidade de sessão ou execução e não pode controlar uma aba.",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.label": "Há outra pergunta pendente",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.message": "Responda à pergunta pendente e tente a operação novamente para confirmar a reconexão do depurador.",
   "backend.toolError.CDP_RUN_RELEASED.label": "Execução da tarefa encerrada",
   "backend.toolError.CDP_RUN_RELEASED.message": "A tarefa terminou; a operação tardia do navegador foi ignorada.",
   "backend.toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label": "Controles da aba da tarefa indisponíveis",

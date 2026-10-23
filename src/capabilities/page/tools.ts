@@ -82,13 +82,14 @@ function readBound<T>(binding: ElementTarget, context: ToolContext, fn: (call?: 
 }
 async function observeElementNavigation(tabId: number, pageBefore: PageState, prepared: PreparedNavigation | null,
   guardrails: SecurityGuardrails, observation: Awaited<ReturnType<typeof beginPageNavigationObservation>>) {
-  const { pageAfter, documentChanged, navigationPending, navigationStarted } = await observation.finish(pageBefore);
-  const delta = pageStateDelta(pageBefore, pageAfter);
+  const { pageBefore: dispatchPage, pageAfter, documentChanged, navigationPending, navigationStarted } = await observation.finish(pageBefore);
+  const delta = pageStateDelta(dispatchPage, pageAfter);
   return {
     pageDelta: { ...delta, navigationPending,
-      navigated: delta.urlChanged || (navigationPending ? null : documentChanged ?? (navigationStarted ? null : false)),
+      navigated: delta.urlChanged || documentChanged === true
+        || (navigationPending || navigationStarted === null ? null : documentChanged ?? (navigationStarted ? null : false)),
       _pageUrl: pageAfter.url, _pageTitle: pageAfter.title },
-    observedNavigation: commitObservedPageNavigation({ pageBefore, pageAfter, prepared, guardrails, toolName: "act_on_element", tabId }),
+    observedNavigation: commitObservedPageNavigation({ pageBefore: dispatchPage, pageAfter, prepared, guardrails, toolName: "act_on_element", tabId }),
   };
 }
 const keyboard = createCdpKeyboard({ sendCdp, ToolExecutionError });
@@ -379,7 +380,7 @@ registerTool({
         tabId,
         source: "href",
       });
-      const observation = await beginPageNavigationObservation(tabId, _signal);
+      let observation: Awaited<ReturnType<typeof beginPageNavigationObservation>> | undefined;
       let touchInput = false;
       let delivered = false;
       let dispatched = false;
@@ -394,6 +395,7 @@ registerTool({
           touchInput = getPageContext(tabId).pageMode === "mobile";
           const receiptId = await armPageInputReceipt(tabId);
           try {
+            observation = await beginPageNavigationObservation(tabId, _signal);
             if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
             dispatched = true;
             if (touchInput) { await touch(send, point, { signal: _signal }); }
@@ -418,7 +420,7 @@ registerTool({
           });
         }
         if (!delivered) return inputNotDelivered({ action: "click", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId });
-        const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation);
+        const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation!);
         return {
           action: "click",
           target: resolvedTarget,
@@ -441,6 +443,7 @@ registerTool({
         rethrowStaleElement(err);
         if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
         if (frameId || dispatched || touchInput || isCdpFallbackForbiddenError(err)) throw err;
+        observation ??= await beginPageNavigationObservation(tabId, _signal);
         const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound);
         const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation);
         return {
@@ -456,7 +459,7 @@ registerTool({
           ...pageDelta,
           ...(observedNavigation ? { observedNavigation } : {}),
         };
-      } finally { observation.dispose(); }
+      } finally { observation?.dispose(); }
     }
 
     const identity = { action: normalizedAction, target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId };

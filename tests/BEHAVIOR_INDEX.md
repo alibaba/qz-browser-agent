@@ -174,11 +174,11 @@ Judge a task at four levels:
 - **Task**: Open Data, image collections, and files from a task or task list, and export or restore the full conversation.
 - **Preconditions**: A Session with at least one artifact or an exportable transcript.
 - **Steps**: Open an artifact pill or the top-level artifact entry → browse the index → open Data, images, or files. Export the conversation and wait for the HTML download. Import a Session exchange file to restore it, including its working tabs.
-- **Expected outcome**: Each logical artifact appears once, with a stable type, name, and count. HTML exports use the active skin and include a readable transcript, owned-tab URLs whose current hostnames are evidenced by successful page tools, and the working-tab marker. Later manual navigation to unrelated sites is excluded. Imported running states become interrupted. The new Session opens and owns valid pages, remapping the original working page to its new tab. Import returns after Chrome assigns the new tab IDs; the pages continue loading.
+- **Expected outcome**: Each logical artifact appears once, with a stable type, name, and count. HTML exports use the active skin and include a readable transcript, owned-tab URLs whose current hostnames are evidenced by successful page tools, and the working-tab marker. Later manual navigation to unrelated sites is excluded. Imported running states become interrupted. Every import creates an independent Session, including repeated imports of the same file. The new Session opens and owns valid pages, remapping the original working page to its new tab. Import returns after Chrome assigns the new tab IDs; the pages continue loading.
 - **Failure and recovery**: Missing artifacts show a useful error. Repeated export clicks share the active export. Older v1 files without owned tabs retain their behavior, and the earlier single-working-tab field still imports. Invalid or blocked URLs are rejected; existing tab ownership is preserved.
 - **Evidence**: [artifact unit](unit/test-session-artifacts.mjs), [resource ledger unit](unit/test-session-resource-ledger.mjs), [Message actions unit](unit/test-chat-message-actions.mjs), [session exchange unit](unit/test-session-exchange.mjs), [exchange E2E](session-exchange/e2e-check.py)
 - **Coverage**: Medium
-- **Next test**: Open each artifact type from a real task card, export HTML, import into an empty profile, and check deduplication and ownership.
+- **Next test**: Open each artifact type from a real task card, export HTML, import into an empty profile, and check independent imported copies and ownership.
 
 ### H08 · Browse, filter, edit, and export Data
 

@@ -90,22 +90,16 @@ import {
 import {
   appendSessionExchangeImportCapsule,
   createSessionExchangePayload,
-  hashSessionExchangeContent,
   normalizeSessionExchangePayload,
   settleImportedTranscript,
 } from "../../shared/session/session-exchange.js";
 import { mergeSessionListSummary } from "../../shared/session/session-list-summary.js";
 import { isActiveSessionRuntimeStatus } from "../../shared/session/session-runtime-status.js";
 import { normalizeParentSessionId, ROOT_SESSION_ID } from "../../shared/session/session-store.js";
-import {
-  groupSessionsByImportIdentity,
-  sessionImportDedupEntryFromRecord,
-  type SessionImportDedupEntry,
-} from "./import-dedup-index.js";
 import { compareBeijingDateTimeDesc, nowBeijingDateTime } from "../../shared/time-utils.js";
 import { localizeToolFailurePayload } from "../../shared/tools/tool-error-localization.js";
 import { assertMessageDocumentOwnership } from "../../shared/documents/document-attachments.js";
-import { createKeyedSerialQueue, createSerialQueue } from "../internal/serial-queue.js";
+import { createKeyedSerialQueue } from "../internal/serial-queue.js";
 import { formatTraceFields, trace } from "../trace.js";
 import { getOwnedTabIds, normalizeVisitedTaskSites, normalizeWorkingTab } from "./tabs.js";
 import {
@@ -173,7 +167,6 @@ export function createSessionCommands(deps: SessionCommandsDependencies) {
   const createStoredSession = (input: Parameters<Repository["createMetadata"]>[0]) => sessionRepository.createMetadata(input);
   const deleteStoredSession = (sessionId: string) => sessionRepository.deleteSession(sessionId);
   const composerDraftMutations = createKeyedSerialQueue();
-  const sessionExchangeImports = createSerialQueue();
   const automationRuntime = {
     syncSessionOutcome: (id: string) => getAutomationRuntime().syncSessionOutcome(id),
   };
@@ -492,28 +485,9 @@ async function exportSessionExchangeRuntime(sessionId: string) {
   });
 }
 
-function importSessionExchangeRuntime(value: unknown, options: { sourceWindowId?: number | null } = {}) {
-  return sessionExchangeImports.run(() => importSessionExchange(value, options));
-}
-
-async function importSessionExchange(value: unknown, { sourceWindowId = null }: { sourceWindowId?: number | null } = {}) {
+async function importSessionExchangeRuntime(value: unknown, { sourceWindowId = null }: { sourceWindowId?: number | null } = {}) {
   await sessionRuntimeReady;
   const payload = normalizeSessionExchangePayload(value);
-  const contentHash = await hashSessionExchangeContent(payload.session.conversation);
-  const existing = await findReusableImportedSession(payload.source.sessionId, contentHash);
-  if (existing) {
-    // Reopening a source preserves its saved conversation and its content identity.
-    if (!payload.source.sessionId || existing.exchangeSourceSessionId !== payload.source.sessionId) {
-      await rememberImportedExchangeIdentity(existing.id, payload.source.sessionId, contentHash);
-    }
-    const session = (await getSessions())[existing.id] || existing;
-    return {
-      imported: true,
-      session,
-      dependencies: payload.dependencies,
-      ownedTabsRestore: null,
-    };
-  }
 
   const session = await createStoredSession({
     title: payload.session.title,
@@ -589,7 +563,6 @@ async function importSessionExchange(value: unknown, { sourceWindowId = null }: 
     }
   }
 
-  await rememberImportedExchangeIdentity(session.id, payload.source.sessionId, contentHash);
   const importedSessions = await getSessions();
   const imported = importedSessions[session.id] || null;
   if (!imported) {
@@ -609,78 +582,6 @@ async function importSessionExchange(value: unknown, { sourceWindowId = null }: 
     dependencies: payload.dependencies,
     ownedTabsRestore,
   };
-}
-
-async function findReusableImportedSession(sourceSessionId: string, contentHash: string) {
-  const sourceId = String(sourceSessionId || "").trim();
-  const sessions = Object.values(await getSessions());
-  const indexed = groupSessionsByImportIdentity(sessions);
-  if (sourceId) {
-    const tagged = latestSession(indexed.bySourceId.get(sourceId) || []);
-    if (tagged) return tagged;
-  }
-  const hashed = latestSession(indexed.byContentHash.get(contentHash) || []);
-  if (hashed) return hashed;
-
-  // Copies imported before the source id was stored still carry the import capsule.
-  // The session that was exported does not, so the first import keeps its own id.
-  return findLegacyImportedSession(indexed.unmarked, contentHash);
-}
-
-async function findLegacyImportedSession(unmarked: SessionMetadata[], contentHash: string) {
-  if (!unmarked.length) return null;
-  let entries: Record<string, SessionImportDedupEntry | null> | null = null;
-  try {
-    entries = await sessionRepository.readImportDedupEntries(unmarked.map(session => session.id));
-  } catch (error) {
-    console.warn("[轻舟] import dedup index update failed", error);
-  }
-  const legacy: SessionMetadata[] = [];
-  const discovered: Record<string, SessionImportDedupEntry> = {};
-  for (const session of unmarked) {
-    const cached = entries?.[session.id] ?? null;
-    if (cached) {
-      if (cached.contentHash === contentHash) legacy.push(session);
-      continue;
-    }
-    const observation = await observeUnmarkedImportSession(session);
-    if (!observation) continue;
-    discovered[session.id] = observation;
-    if (observation.contentHash === contentHash) legacy.push(session);
-  }
-  if (Object.keys(discovered).length) {
-    try {
-      await sessionRepository.rememberImportDedupEntries(discovered);
-    } catch (error) {
-      console.warn("[轻舟] import dedup index update failed", error);
-    }
-  }
-  return latestSession(legacy);
-}
-
-async function observeUnmarkedImportSession(session: SessionMetadata) {
-  try {
-    return await sessionImportDedupEntryFromRecord(await sessionRepository.readRecord(session.id));
-  } catch {
-    return null;
-  }
-}
-
-async function rememberImportedExchangeIdentity(sessionId: string, sourceSessionId: string, contentHash: string) {
-  const sourceId = String(sourceSessionId || "").trim();
-  await sessionRepository.patchMetadata(sessionId, current => ({
-    ...current,
-    exchangeContentHash: contentHash,
-    ...(sourceId ? { exchangeSourceSessionId: sourceId } : {}),
-  }));
-}
-
-function latestSession(sessions: SessionMetadata[]) {
-  return [...sessions].sort((left, right) => {
-    const byTime = compareBeijingDateTimeDesc(left.updatedAt, right.updatedAt);
-    if (byTime) return byTime;
-    return String(right.id).localeCompare(String(left.id));
-  })[0] || null;
 }
 
 async function startSessionAgentTask({
