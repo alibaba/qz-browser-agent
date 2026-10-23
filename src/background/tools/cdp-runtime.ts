@@ -7,7 +7,7 @@ interface CdpState {
   tabId: number; target: chrome.debugger.Debuggee; ownerKey: string; ownerKind: CdpOwner['kind'];
   sessionId: string; runId: string; attached: boolean; releasing: boolean;
   connectionId: number;
-  retained: boolean;
+  retained: boolean; userDetached: boolean;
   restore: ((send: CdpCommand) => Promise<void>) | null;
   authorizeRestore: (() => Promise<unknown>) | null;
   recoveryPromise: Promise<void> | null;
@@ -27,6 +27,8 @@ interface CdpHost {
   isRunCurrent?: ((access: RunAccess) => boolean) | null;
   /** Ownership only; run liveness is separately enforced before every tool command. */
   authorizeRunTab?: ((access: RunAccess & { tabId: number }) => Promise<unknown>) | null;
+  /** Asks whether a run may re-attach after the user dismissed the debugging bar; false stops the run. */
+  confirmUserReattach?: ((access: RunAccess & { tabId: number; signal?: AbortSignal | null }) => Promise<boolean>) | null;
   debuggerApi?: DebuggerApi;
 }
 type CdpOperation<T> = (target: chrome.debugger.Debuggee, send: CdpCommand) => T | Promise<T>;
@@ -36,9 +38,11 @@ export function createCdpRuntime({
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   isRunCurrent = null,
   authorizeRunTab = null,
+  confirmUserReattach = null,
   debuggerApi = globalThis.chrome?.debugger,
 }: CdpHost) {
   const tabs = new Map<number, CdpState>();
+  const reattachPrompts = new Map<string, Promise<boolean>>();
   let temporaryScopeSeq = 0;
   let connectionSeq = 0;
 
@@ -49,6 +53,7 @@ export function createCdpRuntime({
     if (!state) return;
     state.attached = false;
     state.attachPromise = null;
+    if (reason === "canceled_by_user" && !state.releasing) state.userDetached = true;
     if (reason === "canceled_by_user" && state.recoveryPromise) state.restore = null;
     if (!state.releasing && reason === "target_closed" && state.retained && state.restore && !state.recoveryPromise) {
       // A target can disappear during navigation while its tab survives. Restore only
@@ -74,6 +79,32 @@ export function createCdpRuntime({
       assertRunCurrent(owner, id, context);
     }
     return ensureForOwner(tabId, owner, context);
+  }
+
+  /**
+   * Pre-tool gate, called before the tool timeout starts: a run that owns a
+   * user-detached tab asks once whether to continue or stop. Parallel calls
+   * share the answer; approval leaves the re-attach to the normal path.
+   */
+  async function confirmRunReattach({ sessionId, runId, context = {}, signal = null }: RunAccess & { signal?: AbortSignal | null }) {
+    const ownerKey = `run:${String(sessionId || "").trim()}:${String(runId || "").trim()}`;
+    const detached = [...tabs.values()].filter(entry => entry.ownerKey === ownerKey
+      && entry.userDetached && !entry.attached && !entry.releasing);
+    if (!detached.length) return;
+    if (typeof confirmUserReattach !== "function") {
+      for (const entry of detached) entry.userDetached = false;
+      return;
+    }
+    let prompt = reattachPrompts.get(ownerKey);
+    if (!prompt) {
+      prompt = Promise.resolve()
+        .then(() => confirmUserReattach({ tabId: detached[0].tabId, sessionId, runId, context, signal }))
+        .finally(() => { if (reattachPrompts.get(ownerKey) === prompt) reattachPrompts.delete(ownerKey); });
+      reattachPrompts.set(ownerKey, prompt);
+    }
+    const approved = await prompt.catch(() => false);
+    if (!approved) throw runReleasedError(detached[0].tabId, sessionId, runId);
+    for (const entry of tabs.values()) if (entry.ownerKey === ownerKey) entry.userDetached = false;
   }
 
   async function ensureForOwner(tabId: unknown, owner: CdpOwner, context: ToolContext = {}): Promise<CdpState> {
@@ -132,6 +163,7 @@ export function createCdpRuntime({
         attached: false,
         connectionId: 0,
         retained: false,
+        userDetached: false,
         restore: null,
         authorizeRestore: null,
         recoveryPromise: null,
@@ -149,6 +181,7 @@ export function createCdpRuntime({
         try {
           await debuggerApi.attach(state.target, "1.3");
           state.attached = true;
+          state.userDetached = false;
           state.connectionId = ++connectionSeq;
         } catch (err) {
           if (tabs.get(id) === state) tabs.delete(id);
@@ -358,6 +391,7 @@ export function createCdpRuntime({
       check();
       state.attachPromise = debuggerApi.attach(state.target, "1.3").then(() => {
         state.attached = true;
+        state.userDetached = false;
         state.connectionId = ++connectionSeq;
       });
       await state.attachPromise;
@@ -389,6 +423,7 @@ export function createCdpRuntime({
         // Detach is best-effort at a terminal boundary; the cache must still be retired.
       } finally {
         state.attached = false;
+        state.userDetached = false;
         // chrome.debugger.detach() does not emit onDetach. Retiring the connection
         // drops this tab's isolated contexts so the next connection cannot probe them.
         forgetIsolatedContexts(state.tabId);
@@ -497,6 +532,7 @@ export function createCdpRuntime({
 
   return Object.freeze({
     ensureDebugger,
+    confirmRunReattach,
     sendCdp,
     evaluateCdpScript,
     withDebugger,

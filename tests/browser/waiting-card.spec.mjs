@@ -470,6 +470,45 @@ for (const kind of ["bookmarks", "history", "location"]) {
   });
 }
 
+test("debugger detach card translates persisted copy and sends continue or stop commands", async ({ page }) => {
+  await page.evaluate(async () => {
+    const { withLanguage } = await import("/extension/shared/i18n/index.js");
+    const { debuggerDetachT } = await import("/extension/shared/debugger-detach.js");
+    const f = window.waitFixture;
+    f.entry = withLanguage("zh-CN", () => ({
+      type: "wait", waitId: "detach-wait", runId: "run-a", status: "waiting",
+      message: debuggerDetachT("message"),
+      form: { debuggerDetached: true, title: debuggerDetachT("title") },
+    }));
+    withLanguage("zh-CN", () => f.cards.patch(f.el, f.entry, "session-a"));
+  });
+  await expect(page.locator(".waiting-title")).toHaveText("已断开调试");
+  await expect(page.locator(".waiting-message")).toHaveText("你关闭了「正在调试此浏览器」提示，调试连接已断开。要继续这个任务吗？");
+  await expect(page.locator('[data-wait-action="continue"]')).toHaveText("继续");
+  await expect(page.locator('[data-wait-action="cancel"]')).toHaveText("停止");
+  await expect(page.locator(".waiting-hint")).toHaveCount(0);
+
+  await page.evaluate(async () => {
+    const { withLanguage } = await import("/extension/shared/i18n/index.js");
+    const f = window.waitFixture;
+    withLanguage("en", () => f.cards.patch(f.el, f.entry, "session-a"));
+  });
+  await expect(page.locator(".waiting-title")).toHaveText("Debugging disconnected");
+  await expect(page.locator(".waiting-message")).toContainText("debugging this browser");
+  await expect(page.locator('[data-wait-action="continue"]')).toHaveText("Continue");
+  await expect(page.locator('[data-wait-action="cancel"]')).toHaveText("Stop");
+
+  await page.locator('[data-wait-action="cancel"]').click();
+  expect(await page.evaluate(() => window.waitFixture.state.commands)).toEqual([
+    { type: "cancel_wait", sessionId: "session-a", waitId: "detach-wait" },
+  ]);
+  await page.evaluate(() => window.waitFixture.state.sends[0].reject(new Error("port disconnected")));
+  await page.locator('[data-wait-action="continue"]').click();
+  expect(await page.evaluate(() => window.waitFixture.state.commands[1])).toEqual(
+    { type: "continue_task", sessionId: "session-a", waitId: "detach-wait" },
+  );
+});
+
 test("language changes preserve model-authored questions and form labels", async ({ page }) => {
   await page.evaluate(async () => {
     const { withLanguage } = await import("/extension/shared/i18n/index.js");

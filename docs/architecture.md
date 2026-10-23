@@ -205,11 +205,13 @@ resolve targets through it. Parent and child Sessions have separate runs and tab
 claiming, and updating a tab requires the current run's authority.
 
 [CDP runtime](../src/background/tools/cdp-runtime.ts) manages debugger connections and operation
-leases. A run normally releases its connections on completion. Capabilities can retain a connection
-across runs; completion or stop still revokes commands and event collection. Releasing a run does
-not disable Runtime. Detach of the connection drops that tab's isolated context table; a retained
-connection keeps Runtime enabled and keeps the table. Session deletion releases retained
-connections.
+leases. A run normally releases its connections on completion. Dismissing Chrome's debugging bar
+marks the tab as user-detached; before the run's next tool call, outside the tool timeout, a
+confirmation asks to continue (re-attach) or stop (ending the run), while other detach reasons
+keep the silent reconnection. Capabilities can retain a connection across runs; completion or
+stop still revokes commands and event collection. Releasing a run does not disable Runtime.
+Detach of the connection drops that tab's isolated context table; a retained connection keeps
+Runtime enabled and keeps the table. Session deletion releases retained connections.
 
 [Page mode](../src/capabilities/tabs/page-mode.ts) applies mobile UA, viewport, and touch settings
 before initial navigation. Mobile mode retains its connection between runs. Mode changes refresh the

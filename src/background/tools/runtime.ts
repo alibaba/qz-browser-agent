@@ -71,6 +71,7 @@ import {
   listSkillMcpTools,
 } from "../skills/skill-tool-runtime.js";
 import { createCdpRuntime } from "./cdp-runtime.js";
+import { confirmDebuggerReattach } from "./debugger-reattach.js";
 import { createElementRuntime } from "./element-runtime.js";
 import { callMcpServerTool, inspectMcpServer } from "../mcp/mcp-client.js";
 
@@ -363,6 +364,8 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     if (definition.requires?.browserPermission) {
       await ensureToolBrowserPermission(definition.requires.browserPermission, context, signal, getToolRuntimeDependencies(context));
     }
+    // A dismissed debugging bar pauses the run here, outside the tool timeout.
+    await confirmRunReattach({ sessionId: String(context.sessionId || ""), runId: String(context.runId || ""), context, signal });
     const timeoutMs = resolveToolTimeoutMs(definition, executionArgs);
     if (traceTool) {
       toolTrace(`[tool] resolved name=${name} kind=${definition.source} capability=${definition.capabilityId} timeoutMs=${timeoutMs} executionArgs=${summarizeToolArgsForTrace(executionArgs)}`);
@@ -1255,6 +1258,7 @@ const {
   getDebuggerConnectionId,
   setDebuggerRetention,
   releaseDebugger,
+  confirmRunReattach,
   releaseRun: releaseRunDebuggerConnections,
   releaseSession: releaseSessionCdp,
 } = createCdpRuntime({
@@ -1262,6 +1266,7 @@ const {
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   isRunCurrent: isCdpRunCurrent,
   authorizeRunTab: authorizeRunCdpTab,
+  confirmUserReattach: access => confirmDebuggerReattach(access, getToolRuntimeDependencies(access.context)),
 });
 
 function isCdpRunCurrent({ sessionId, runId, context = {} }: { sessionId: string; runId: string; context?: ToolContext }) {
