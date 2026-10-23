@@ -1,5 +1,6 @@
 import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js';
 import type { CdpCommand } from '../../sdk/background/browser.js';
+import { forgetIsolatedContexts } from './isolated-contexts.js';
 export type { CdpCommand };
 interface CdpOwner { key: string; kind: 'run' | 'temporary' | 'session'; sessionId: string; runId: string }
 interface CdpState {
@@ -302,6 +303,8 @@ export function createCdpRuntime({
         state.ownerKind = "session";
         // Keep emulation and Runtime. Network and Page collection stops. Runtime
         // stays enabled so the next borrower does not replay console calls.
+        // The connection stays attached, so isolated contexts stay too: a second
+        // enable would not report the worlds that are already live.
         state.idlePromise = Promise.resolve(state.recoveryPromise).then(async () => {
           if (!state.attached || state.releasing) return;
           // The stopped run can no longer send its own cleanup commands. Release
@@ -386,6 +389,9 @@ export function createCdpRuntime({
         // Detach is best-effort at a terminal boundary; the cache must still be retired.
       } finally {
         state.attached = false;
+        // chrome.debugger.detach() does not emit onDetach. Retiring the connection
+        // drops this tab's isolated contexts so the next connection cannot probe them.
+        forgetIsolatedContexts(state.tabId);
         if (tabs.get(state.tabId) === state) tabs.delete(state.tabId);
       }
     })();

@@ -19,20 +19,23 @@ interface ElementRuntimeHost {
   initializeContentScript(tabId: number): Promise<void>;
 }
 import { isCdpFallbackForbiddenError } from "./cdp-runtime.js";
+import { forgetIsolatedContexts, isolatedByTab, type IsolatedContext } from "./isolated-contexts.js";
 import { isElementReply } from "../../shared/contracts/page-content.js";
 import { getEffectiveTabUrl } from "../../shared/tab-utils.js";
 import { getLanguage } from "../../shared/i18n/index.js";
 import { t } from "./messages.js";
 
 const OBJECT_GROUP = "qz-uid";
-// One table per tab while Runtime stays enabled. A same-process frame is keyed
-// by its CDP frame id. A cross-process frame is keyed by session id plus frame id.
-// Detach of a child session drops that session's keys.
-const isolatedByTab = new Map<number, Map<string, Set<number>>>();
+// One table per tab while its debugger connection is alive. A same-process frame
+// is keyed by its CDP frame id. A cross-process frame is keyed by session id plus
+// frame id. Detach of a child session drops that session's keys and unique ids.
 function contextKey(sessionId: string, frameId: string) {
   return sessionId ? `session:${sessionId}\n${frameId}` : frameId;
 }
-function scopedContextKeys(map: Map<string, Set<number>>, sessionId: string) {
+function contextIdentity(context: IsolatedContext) {
+  return context.uniqueId ? `uid:${context.uniqueId}` : `id:${context.id}`;
+}
+function scopedContextKeys(map: Map<string, Map<string, IsolatedContext>>, sessionId: string) {
   const prefix = sessionId ? `session:${sessionId}\n` : "";
   return [...map.keys()].filter(key => sessionId ? key.startsWith(prefix) : !key.startsWith("session:"));
 }
@@ -64,7 +67,9 @@ function noteExecutionContext(source: { tabId?: number; sessionId?: string } | u
     for (const key of scopedContextKeys(map, sessionId)) {
       const candidates = map.get(key);
       if (!candidates) continue;
-      candidates.delete(id);
+      for (const [identity, candidate] of candidates) {
+        if (candidate.id === id) candidates.delete(identity);
+      }
       if (!candidates.size) map.delete(key);
     }
     if (!map.size) isolatedByTab.delete(tabId);
@@ -75,19 +80,23 @@ function noteExecutionContext(source: { tabId?: number; sessionId?: string } | u
   const aux = record(context.auxData);
   if (context.origin !== `chrome-extension://${chrome.runtime?.id || ""}` || aux.type !== "isolated") return;
   const id = Number(context.id), frameId = String(aux.frameId || "");
+  const uniqueId = typeof context.uniqueId === "string" ? context.uniqueId : "";
   if (!Number.isInteger(id) || id <= 0 || !frameId) return;
-  const map = current() || new Map<string, Set<number>>();
+  const map = current() || new Map<string, Map<string, IsolatedContext>>();
   const key = contextKey(sessionId, frameId);
-  const candidates = map.get(key) || new Set<number>();
-  candidates.add(id);
+  const candidates = map.get(key) || new Map<string, IsolatedContext>();
+  const next: IsolatedContext = { id, uniqueId };
+  const identity = contextIdentity(next);
+  for (const [existingIdentity, existing] of candidates) {
+    if (existing.id === id && existingIdentity !== identity) candidates.delete(existingIdentity);
+  }
+  candidates.set(identity, next);
   map.set(key, candidates);
   isolatedByTab.set(tabId, map);
 }
 globalThis.chrome?.debugger?.onEvent?.addListener((source, method, params) => noteExecutionContext(source, method, params));
 globalThis.chrome?.debugger?.onDetach?.addListener(source => {
-  const tabId = Number(source?.tabId);
-  if (!Number.isInteger(tabId)) return;
-  isolatedByTab.delete(tabId);
+  forgetIsolatedContexts(Number(source?.tabId));
 });
 type ElementCaller = (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
@@ -561,21 +570,29 @@ async function frameLoaderId(send: CdpCommand, frameId: string) {
 async function contentContextId(tabId: number, send: CdpCommand, frameId: string, sessionId = "") {
   const select = async () => {
     const candidates = isolatedContexts(tabId, sessionId)?.get(frameId);
-    for (const contextId of [...(candidates || [])]) {
+    if (!candidates?.size) return 0;
+    for (const candidate of [...candidates.values()]) {
       try {
-        const result = record(await send("Runtime.evaluate", {
-          contextId, returnByValue: true,
+        const probe: Record<string, unknown> = {
+          returnByValue: true,
           expression: `(() => {
             let extensionId = "";
             try { extensionId = globalThis.chrome?.runtime?.id || ""; } catch {}
             return { extensionId, bridge: typeof globalThis.__qzInvoke === "function" };
           })()`,
-        }));
+        };
+        // uniqueContextId is the context identity. A reused numeric id must not
+        // satisfy this probe. Reports that omit uniqueId keep the numeric id.
+        if (candidate.uniqueId) probe.uniqueContextId = candidate.uniqueId;
+        else probe.contextId = candidate.id;
+        const result = record(await send("Runtime.evaluate", probe));
         const value = record(record(result.result).value);
+        const current = isolatedContexts(tabId, sessionId)?.get(frameId);
+        const still = current?.get(contextIdentity(candidate));
         const selected = !result.exceptionDetails && Boolean(chrome.runtime.id)
           && value.extensionId === chrome.runtime.id && value.bridge === true
-          && isolatedContexts(tabId, sessionId)?.get(frameId) === candidates && candidates?.has(contextId);
-        if (selected) return contextId;
+          && current === candidates && still?.id === candidate.id && still.uniqueId === candidate.uniqueId;
+        if (selected) return candidate.id;
       } catch (error) {
         if (isCdpFallbackForbiddenError(error) || !/Cannot find context|Execution context (?:was destroyed|is not available)/i.test(String(error))) throw error;
       }

@@ -30,7 +30,7 @@ globalThis.chrome?.debugger?.onDetach?.addListener(source => {
 export async function directChildFrames(send: CdpCommand): Promise<ChildFrame[]> {
   const { mainId, frames } = await readMainTree(send);
   if (!mainId || !send.inSession) return frames;
-  const remote = await remoteChildFrames(send, mainId, new Set(frames.map(frame => frame.id)));
+  const remote = await autoAttachedFrames(send, mainId, new Set(frames.map(frame => frame.id)));
   return [...frames, ...remote];
 }
 
@@ -41,7 +41,7 @@ export async function openChildFrame(send: CdpCommand, frameId: string): Promise
   const { mainId, frames } = await readMainTree(send);
   const local = frames.find(frame => frame.id === wanted);
   if (local || !mainId || !send.inSession) return local || null;
-  const remote = await remoteChildFrames(send, mainId, new Set(frames.map(frame => frame.id)));
+  const remote = await autoAttachedFrames(send, mainId, new Set(frames.map(frame => frame.id)));
   return remote.find(frame => frame.id === wanted) || null;
 }
 
@@ -82,10 +82,6 @@ async function readMainTree(send: CdpCommand): Promise<{ mainId: string; frames:
     frames.push({ id, loaderId: String(frame.loaderId || ""), sessionId: "", send });
   }
   return { mainId, frames };
-}
-
-async function remoteChildFrames(send: CdpCommand, mainId: string, localIds: Set<string>): Promise<ChildFrame[]> {
-  return autoAttachedFrames(send, mainId, localIds);
 }
 
 /**
