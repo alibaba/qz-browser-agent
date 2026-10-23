@@ -49,7 +49,7 @@ for (const colorScheme of ["light", "dark"]) {
         await expect(offline.locator(".chat-error-card")).toContainText("Unable to continue");
         expect(await offline.evaluate(() => window.pwned)).toBeUndefined();
         await offline.evaluate(() => window.postMessage({ type: "qingzhou:session-export:result", action: "probe", installed: true }, "*"));
-        await expect(offline.locator("#qingzhou-session-cta")).toHaveText("Import into qz");
+        await expect(offline.locator("#qingzhou-session-cta")).toHaveText("Continue in qz");
         await offline.evaluate(() => window.postMessage({ type: "qingzhou:session-export:result", action: "import", ok: false }, "*"));
         await expect(offline.locator("#qingzhou-session-cta")).toHaveText("Try again");
         expect(errors).toEqual([]);

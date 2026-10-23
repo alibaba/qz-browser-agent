@@ -205,9 +205,20 @@ resolve targets through it. Parent and child Sessions have separate runs and tab
 claiming, and updating a tab requires the current run's authority.
 
 [CDP runtime](../src/background/tools/cdp-runtime.ts) manages debugger connections and operation
-leases. A run normally releases its connections on completion. Capabilities can retain a connection
-across runs; completion or stop still revokes commands and event collection. Session deletion
-releases retained connections.
+leases. A run normally releases its connections on completion. Dismissing Chrome's debugging bar
+marks the tab as user-detached; before the run's next tool call, outside the tool timeout, a
+confirmation asks to continue (re-attach) or stop (ending the run), while other detach reasons
+keep the silent reconnection. Capabilities can retain a connection across runs; completion or
+stop still revokes commands and event collection. Releasing a run does not disable Runtime.
+Session deletion releases retained connections.
+An existing question remains pending when a tool requests reattachment; it does not grant consent.
+The tool returns `CDP_REATTACH_WAIT_CONFLICT`; after answering the question, retrying asks for
+reattachment approval.
+Closing a tab releases its debugger state and removes it from pending reattachment checks.
+
+Diagnostics captures bounded console history as soon as a run-owned connection enables Runtime,
+including replay triggered by UID tools. Buffers follow Session/run/connection identity; idle
+retained connections collect no events, and reconnecting replaces the buffer before accepting replay.
 
 [Page mode](../src/capabilities/tabs/page-mode.ts) applies mobile UA, viewport, and touch settings
 before initial navigation. Mobile mode retains its connection between runs. Mode changes refresh the
@@ -229,8 +240,19 @@ gate.
 
 Read-only page tools also wait for an initial pending navigation to leave `about:blank`, within
 their timeout and cancellation signal. They recheck access after waiting. Content injection uses
-Chrome's `document_idle` timing. Dynamic page content can require an explicit element or network
+Chrome's `document_idle` timing; explicit UID bridge recovery injects immediately and validates the
+document again. Dynamic page content can require an explicit element or network
 wait.
+
+Element clicks and form submission capture a navigation baseline immediately before input. They
+allow 180 ms for navigation to start, then wait up to 10 seconds while new navigation evidence
+coincides with loading or a pending URL. Pre-existing loading alone does not extend the wait.
+`pageAfter` and result page metadata describe the same observation. A changed document ID detects
+same-URL reloads, including documents still loading subresources. Sending a navigation request does
+not extend the wait. A settled page with an unchanged URL and document returns `navigated: false`,
+including downloads, 204 responses and cancelled navigations. Ambiguous observations leave
+`navigated` unknown. Committed URLs undergo navigation security
+checks. Observation never replays input; callers can inspect the page again.
 
 ### Page execution
 
@@ -242,6 +264,37 @@ Element actions inspect fields in Content, use CDP for text input and checkbox/r
 read back field state. Mobile actions use touch. Optional form submission sends Enter and follows
 page handlers and native validation. A CDP error ends that attempt. Multiline rich-text fields use
 their paragraph writer.
+
+Node-backed UIDs use the isolated context of the node's own document after verifying the current
+extension ID and its Content bridge. The main frame is the default. A direct child iframe uses the
+same uid and action path: the snapshot grafts that frame's accessibility tree under the owning
+iframe, and click or fill resolves the node in the child frame.
+Snapshot actions and ancestor matches stay within that document; child-root selectors bind through
+the child frame's session and loader identity.
+
+Within one debugger connection, Runtime is enabled and never disabled. Tool paths do not disable
+and re-enable Runtime to rediscover contexts or to check that the target is alive. `isolatedByTab`
+is the only source of isolated contexts. Each record stores the numeric execution context id and,
+when Chrome reports one, the context's `uniqueId`. Probing and selection then call
+`Runtime.evaluate` with `uniqueContextId`, so a numeric id reused after a cross-process navigation
+cannot select another context. A same-process frame is keyed by its CDP frame id. A cross-process
+frame is keyed by `session:` plus its flattened session id and that frame id.
+
+When a frame has no recorded context, the only path is `Runtime.enable`, selection, one Content
+initialization, selection, then an error. There is no further recovery. Initialization injects
+scripts into every frame. Page messages stay on the main frame. Extension reloads can leave older
+contexts alive. This path precedes action dispatch; an action failure is never replayed.
+
+Programmatic detach and debugger `onDetach` clear the tab's contexts and child-target cache.
+`chrome.debugger.detach()` does not emit `onDetach`, so the connection exit also performs this cleanup.
+A retained connection keeps Runtime enabled and its contexts; enabling Runtime again would not
+report contexts that are already live. `Target.detachedFromTarget` drops only that child's entries.
+
+Mouse and text input stay on the page target. A click point from a child frame adds that iframe's
+content origin. Nested frames stay unaddressed. A cross-site child is absent from the page frame
+tree; the page session auto-attaches to that child target and uses the child session for the tree
+and the node call. Before child-frame input, one discarded screenshot refreshes Chrome's input
+surface. Preparation failure ends the operation before input is sent.
 
 [Script policy](../src/background/tools/script-policy.ts) and the [script
 bridge](../src/background/tools/run-script-bridge.ts) check page and inner-script access. The inner
@@ -255,6 +308,10 @@ encoded. Producers normalize before sending across runtimes. Each context runs o
 operation at a time and releases the bitmap on completion, failure, or cancellation. DOM adapters
 live in `src/dom/`; SVG conversion runs in offscreen and retains the original dimensions in its
 result.
+
+Element screenshots keep bounds and padding in CSS pixels, then convert the capture rectangle
+to CDP's device-independent pixels using the current page zoom. UID and CSS targets, including
+image-read screenshot fallbacks, share this conversion without changing the user's zoom.
 
 The model gateway limits cumulative image bytes to 48 MiB and the final adapter request to 64 MiB.
 Over-budget requests return an explicit terminal error. Remote image references first pass through a
@@ -312,8 +369,9 @@ Heavy UI libraries load on demand and update the instance that requested them.
 [Session export](../src/sidepanel/features/export/session-export-feature.ts) uses one Background
 exchange payload and synchronous `renderStatic` projections. It embeds the active skin and a
 standalone [export runtime](../src/sidepanel/features/export/session-export-runtime.ts). Text and
-tables work offline; formulas use deferred MathJax from a CDN. Import restores safe URLs into newly
-owned, inactive tabs. See [design system](design-system.md) and [localization](localization.md) for
+tables work offline; formulas use deferred MathJax from a CDN. Each import creates an independent
+Session, including repeated imports of the same file. Import restores safe URLs into newly owned,
+inactive tabs. See [design system](design-system.md) and [localization](localization.md) for
 export presentation.
 
 ## Build and source boundaries

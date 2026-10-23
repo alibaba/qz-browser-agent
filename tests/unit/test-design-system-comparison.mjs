@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { chromium } from "playwright";
 import { fixtureDirectories, createComparisonServer, stableCapture, compareCaptures } from "../design-system/comparison.mjs";
+import { MISSING_IMAGEMAGICK_REASON, imageMagickCommandAvailable } from "../support/imagemagick.mjs";
 
 test("CSS-only fixture arguments remain compatible and each application can override its own root", () => {
   assert.deepEqual(fixtureDirectories({ "fixture-dir": "shared" }), { reference: resolve("shared"), candidate: resolve("shared") });
@@ -33,6 +34,7 @@ test("each server serves its frozen control markup instead of sharing the mutabl
 });
 
 test("real application markup and module class changes are detected without a pixel tolerance", async t => {
+  if (!imageMagickCommandAvailable()) return t.skip(MISSING_IMAGEMAGICK_REASON);
   const directory = await mkdtemp(join(tmpdir(), "qingzhou-css-comparison-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const stylesheet = String.raw`body { margin: 0; background: white; } #app { width: 180px; height: 90px; background: #d4e4f4; }

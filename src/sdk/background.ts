@@ -63,6 +63,8 @@ export interface ToolExtensionAPI extends Omit<PageNavigationHost, "commitObserv
   readonly getPageContext: (tabId: number) => Readonly<Record<string, string | number | boolean>>;
   /** Inspect connection identity without attaching; release only this run's lease after failed setup. */
   readonly getDebuggerConnectionId: (tabId: number) => number | null;
+  /** Current run owning an attached connection; null while retained without an active run. */
+  readonly getDebuggerRun: (tabId: number) => { sessionId: string; runId: string; connectionId: number } | null;
   /** Retain configuration across runs; optional restore replays it after target loss, never after user detach. */
   readonly setDebuggerRetention: (tabId: number, retained: boolean, context: ToolContext,
     restore?: (send: CdpCommand) => Promise<void>) => void;

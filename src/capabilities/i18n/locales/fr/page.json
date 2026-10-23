@@ -61,5 +61,6 @@
   "page.elementFocusLost": "Le champ a perdu le focus. Aucune touche de soumission n’a été envoyée. Vérifiez la page avant de continuer.",
   "page.elementNotCheckable": "La cible n’est ni une case à cocher ni un bouton radio natifs. Choisissez un autre élément.",
   "page.radioCannotBeUnchecked": "Un bouton radio sélectionné ne peut pas être désélectionné en cliquant dessus. Choisissez une autre option du groupe.",
-  "page.elementCheckStateMismatch": "Le contrôle n’a pas atteint l’état de sélection demandé. Vérifiez-le avant de continuer."
+  "page.elementCheckStateMismatch": "Le contrôle n’a pas atteint l’état de sélection demandé. Vérifiez-le avant de continuer.",
+  "page.inputNotDelivered": "La saisie n’a pas été remise. La page n’a pas reçu ce clic. Laissez l’onglet finir sa mise en page, puis réessayez."
 }

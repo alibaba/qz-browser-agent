@@ -1,4 +1,5 @@
 import { isToolBrowserPermission, type ToolBrowserPermission } from "../../../../shared/browser-permissions.js";
+import { debuggerDetachT } from "../../../../shared/debugger-detach.js";
 import { requestBrowserPermission, permissionT } from "../../../ui/browser-permissions.js";
 import { t as backendT } from "../../../../shared/i18n/backend.js";
 import { t, tHtml } from "../../../i18n/index.js";
@@ -14,7 +15,7 @@ export type WaitingField = FieldBase & (
   | { type: "single_choice"; presentation?: "cards"; options: ChoiceOption[]; defaultValue: string }
   | { type: "multi_choice"; presentation?: "cards"; options: ChoiceOption[]; defaultValue: string[] }
 );
-interface WaitingForm { locationConsent?: boolean; browserPermission?: ToolBrowserPermission; title: string; submitLabel: string; fields: WaitingField[] }
+interface WaitingForm { locationConsent?: boolean; browserPermission?: ToolBrowserPermission; debuggerDetached?: boolean; title: string; submitLabel: string; fields: WaitingField[] }
 interface WaitCard {
   waitId: string; runId: string; title: string; message: string; status: string; reason: string; form: WaitingForm;
 }
@@ -152,6 +153,9 @@ function normalizeWaitCard(value: unknown): WaitCard {
   } else if (form.browserPermission) {
     form.title = permissionT("title");
     message = permissionT(form.browserPermission);
+  } else if (form.debuggerDetached) {
+    form.title = debuggerDetachT("title");
+    message = debuggerDetachT("message");
   }
   return {
     waitId: String(entry.waitId || ""), runId: String(entry.runId || ""),
@@ -180,7 +184,7 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
     && entry.message === form.title;
   const message = repeatedCardTitle ? "" : entry.message || "";
   const hint = waiting
-    ? (form.browserPermission ? permissionT("hint") : hasResultChoices ? "" : hasForm ? t("agentAfterSubmit") : t("agentAfterAction"))
+    ? (form.browserPermission ? permissionT("hint") : form.debuggerDetached || hasResultChoices ? "" : hasForm ? t("agentAfterSubmit") : t("agentAfterAction"))
     : waitResolvedHint(entry);
   return `
     <div class="waiting-card${statusClass} qz:relative qz:overflow-hidden qz:px-3 qz:pt-2.5 qz:pb-3">
@@ -193,8 +197,8 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
       </div>
       ${waiting ? `
         <div class="waiting-actions qz:flex qz:gap-1.5">
-          <button class="qz-btn qz-btn--primary qz-btn--sm waiting-continue-btn qz:flex-1" type="button" data-wait-action="continue">${escapeHtml(form.locationConsent ? t("dataConsentAccept") : form.browserPermission ? permissionT("allow") : hasForm ? form.submitLabel : t("doneContinue"))}</button>
-          <button class="qz-btn qz-btn--ghost qz-btn--sm waiting-cancel-btn" type="button" data-wait-action="cancel">${tHtml("cancel")}</button>
+          <button class="qz-btn qz-btn--primary qz-btn--sm waiting-continue-btn qz:flex-1" type="button" data-wait-action="continue">${escapeHtml(form.locationConsent ? t("dataConsentAccept") : form.browserPermission ? permissionT("allow") : form.debuggerDetached ? debuggerDetachT("continue") : hasForm ? form.submitLabel : t("doneContinue"))}</button>
+          <button class="qz-btn qz-btn--ghost qz-btn--sm waiting-cancel-btn" type="button" data-wait-action="cancel">${form.debuggerDetached ? escapeHtml(debuggerDetachT("stop")) : tHtml("cancel")}</button>
         </div>
       ` : ""}
     </div>
@@ -224,6 +228,7 @@ export function normalizeWaitingForm(value: unknown = {}): WaitingForm {
   return {
     ...(form.locationConsent === true ? { locationConsent: true } : {}),
     ...(isToolBrowserPermission(form.browserPermission) ? { browserPermission: form.browserPermission } : {}),
+    ...(form.debuggerDetached === true ? { debuggerDetached: true } : {}),
     title: String(form.title || "").trim(),
     submitLabel: String(form.submitLabel || t("submit")).trim(),
     fields: fields.map((value: unknown, index): WaitingField => {

@@ -137,6 +137,47 @@ test("hydrates the restored chat session before revealing it", async ({ page }) 
   ))).toBe(false);
 });
 
+for (const status of ["aborted", "interrupted"]) {
+  for (const stateFirst of [true, false]) {
+    test(`restores history when ${status} state arrives ${stateFirst ? "before" : "after"} storage, without sending a message`, async ({ page }) => {
+      await page.goto("/__test_health");
+      await page.evaluate(() => localStorage.clear());
+      const sessionId = `restored-${status}`;
+      const runId = "saved-run";
+      const stateResponse = { type: "state", sessionId, status, runtime: { sessionId, runId, status, running: false } };
+      const transcript = [
+        { type: "user", text: "查找演出照片", runId },
+        { type: "thinking", text: "查看图片来源", runId, spanId: "thinking-1", streaming: true },
+        { type: "assistant", content: "找到相关图片，正在核对。", runId, spanId: "answer-1", streaming: true },
+      ];
+      if (status === "aborted") transcript.push({ type: "run-status", status, runId });
+      await page.addInitScript(installBenchmarkChromeStub, {
+        benchmark: false, windowId: WINDOW_ID, localGetDelayMs: 10,
+        respondToStateWithoutRequestId: stateFirst,
+        stateResponse,
+        sessionStorage: { [VIEW_KEY]: { v: 1, page: "chat", sessionId } },
+        localStorage: await storedSessionFixture(page, {
+          session: { id: sessionId, title: "恢复取消的对话" },
+          conversation: [{ role: "user", content: transcript[0].text }], transcript,
+        }),
+      });
+
+      for (let opening = 0; opening < 2; opening++) {
+        await page.goto(SIDEPANEL_URL, { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-booting");
+        if (!stateFirst) await page.evaluate(event => window.__qzEmitPortMessage(event), stateResponse);
+        await expect(page.locator("#messages")).toContainText(transcript[0].text);
+        await expect(page.locator("#messages")).toContainText(transcript[2].content);
+        await expect(page.locator("#messages .msg-thinking-group")).toHaveCount(1);
+        await expect(page.locator("#messages .thinking-group-summary-running")).toHaveCount(0);
+        await expect(page.locator("#messages .msg-run-status")).toHaveCount(1);
+        await expect(page.locator("#messages .msg-run-status")).toContainText(status === "aborted" ? "已取消" : "已中断");
+        expect(await page.evaluate(() => window.__qzPostedMessages.some(message => message.type === "prompt"))).toBe(false);
+      }
+    });
+  }
+}
+
 test("a failed page restore returns to the empty Chat workspace", async ({ page, browserDiagnostics }) => {
   await page.goto("/__test_health");
   await page.evaluate(() => localStorage.clear());
@@ -170,6 +211,7 @@ test("a failed page restore returns to the empty Chat workspace", async ({ page,
 });
 
 test("leaving a slow restoring page preserves the user's newer navigation", async ({ page }) => {
+  await page.clock.install();
   await page.goto("/__test_health");
   await page.evaluate(() => localStorage.clear());
   const sessionId = "cancelled-restoration";
@@ -189,7 +231,10 @@ test("leaving a slow restoring page preserves the user's newer navigation", asyn
       await new Promise(resolve => { globalThis.__releaseStoredSessionRead = resolve; });`) });
   });
   await page.goto(SIDEPANEL_URL, { waitUntil: "commit" });
-  await expect(page.locator("#app")).toHaveAttribute("data-workspace-boot-fallback", "timeout", { timeout: 8000 });
+  await page.waitForFunction(() => typeof globalThis.__releaseStoredSessionRead === "function");
+  // The boot deadline starts after module loading and consent, not navigation commit.
+  await page.clock.runFor(6000);
+  await expect(page.locator("#app")).toHaveAttribute("data-workspace-boot-fallback", "timeout");
   await page.locator('.tab-btn[data-tab="data"]').click();
   await expect(page.locator("#data-panel")).toBeVisible();
   await page.evaluate(() => globalThis.__releaseStoredSessionRead());
@@ -441,14 +486,18 @@ test("surfaces an error thrown by the application startup sequence", async ({ pa
 });
 
 test("reveals the current shell if workspace startup never settles", async ({ page }) => {
+  await page.clock.install();
   await page.addInitScript(installBenchmarkChromeStub, { benchmark: false });
   await page.route("**/extension/sidepanel/app.js", route => route.fulfill({
     contentType: "application/javascript",
-    body: "await new Promise(() => {}); export {};",
+    body: "globalThis.__workspaceStartupBlocked = true; await new Promise(() => {}); export {};",
   }));
 
   await page.goto(SIDEPANEL_URL, { waitUntil: "commit" });
-  await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-booting", { timeout: 8000 });
+  await page.waitForFunction(() => globalThis.__workspaceStartupBlocked === true);
+  await expect(page.locator("#app")).toHaveAttribute("data-workspace-booting", "");
+  await page.clock.runFor(6000);
+  await expect(page.locator("#app")).not.toHaveAttribute("data-workspace-booting");
   await expect(page.locator("#app")).toHaveAttribute("data-workspace-boot-fallback", "timeout");
   await expect(page.locator("#workspace-boot-fallback")).toHaveText("轻舟仍在启动，请稍候或重新打开侧边栏");
   await expect(page.locator("#header")).toBeVisible();

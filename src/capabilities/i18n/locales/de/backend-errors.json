@@ -27,6 +27,8 @@
   "backend.toolError.CDP_COMMAND_FAILED.message": "Der Browser-Debugbefehl ist fehlgeschlagen.",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.label": "Aufgaben- oder Laufinformationen fehlen",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.message": "Diesem Aufruf fehlt eine Sitzungs- oder Laufkennung; er kann keinen Browser-Tab steuern.",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.label": "Eine andere Frage ist noch offen",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.message": "Beantworten Sie die offene Frage und wiederholen Sie dann den Vorgang, um die erneute Verbindung mit dem Debugger zu bestätigen.",
   "backend.toolError.CDP_RUN_RELEASED.label": "Aufgabenlauf beendet",
   "backend.toolError.CDP_RUN_RELEASED.message": "Die Aufgabe ist beendet; die verspätete Browseraktion wurde ignoriert.",
   "backend.toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label": "Aufgaben-Tabsteuerung nicht verfügbar",

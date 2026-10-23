@@ -488,6 +488,7 @@ async function exportSessionExchangeRuntime(sessionId: string) {
 async function importSessionExchangeRuntime(value: unknown, { sourceWindowId = null }: { sourceWindowId?: number | null } = {}) {
   await sessionRuntimeReady;
   const payload = normalizeSessionExchangePayload(value);
+
   const session = await createStoredSession({
     title: payload.session.title,
     firstMessage: "",

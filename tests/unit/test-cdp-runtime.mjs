@@ -9,13 +9,14 @@ class ToolExecutionError extends Error {
   }
 }
 
-function createHarness() {
+function createHarness({ confirmUserReattach = null } = {}) {
   const detachListeners = [];
   const calls = [];
   const allowedTabs = [];
   const authorized = [];
   const activeRuns = new Set();
   const livenessChecks = [];
+  const reattachPrompts = [];
   let commandHandler = async (_target, method) => ({ method });
   let authorizeHandler = async () => {};
   const debuggerApi = {
@@ -23,7 +24,7 @@ function createHarness() {
     async attach(target, version) { calls.push(["attach", target.tabId, version]); },
     async detach(target) { calls.push(["detach", target.tabId]); },
     async sendCommand(target, method, params) {
-      calls.push(["command", target.tabId, method, params]);
+      calls.push(["command", target.tabId, method, params, target.sessionId || ""]);
       return await commandHandler(target, method, params);
     },
   };
@@ -42,6 +43,12 @@ function createHarness() {
         throw new ToolExecutionError("SESSION_TAB_FOREIGN", "foreign tab", { tabId: input.tabId });
       }
     },
+    ...(typeof confirmUserReattach === "function" ? {
+      confirmUserReattach(input) {
+        reattachPrompts.push(input);
+        return confirmUserReattach(input);
+      },
+    } : {}),
   });
   return {
     runtime,
@@ -50,6 +57,7 @@ function createHarness() {
     authorized,
     livenessChecks,
     detachListeners,
+    reattachPrompts,
     activateRun(run) { activeRuns.add(runKey(run)); },
     retireRun(run) { activeRuns.delete(runKey(run)); },
     setCommandHandler(handler) { commandHandler = handler; },
@@ -72,6 +80,8 @@ await runtime.sendCdp(7, "Page.enable", {}, runA);
 await runtime.sendCdp(7, "Runtime.enable", {}, runA);
 const firstConnection = runtime.getDebuggerConnectionId(7);
 assert.equal(typeof firstConnection, "number");
+assert.deepEqual(runtime.getDebuggerRun(7), { ...runA, connectionId: firstConnection });
+assert.equal(runtime.getDebuggerRun(999), null, "observing ownership never attaches a new tab");
 await runtime.releaseDebugger(7, runB);
 assert.equal(runtime.getDebuggerConnectionId(7), firstConnection, "failed setup cannot release another run's lease");
 assert.equal(calls.filter(call => call[0] === "attach" && call[1] === 7).length, 1, "one run reuses one physical tab connection");
@@ -103,6 +113,7 @@ await assert.rejects(
 
 detachListeners.forEach(listener => listener({ tabId: 7 }, "canceled_by_user"));
 assert.equal(runtime.getDebuggerConnectionId(7), null, "detached emulation must not be reported as active");
+assert.equal(runtime.getDebuggerRun(7), null);
 await runtime.sendCdp(7, "Runtime.enable", {}, runA);
 assert.notEqual(runtime.getDebuggerConnectionId(7), firstConnection, "reconnection has a new identity");
 assert.equal(calls.filter(call => call[0] === "attach" && call[1] === 7).length, 2, "external detach is repaired on the next use");
@@ -273,10 +284,11 @@ assert.deepEqual(commandRaceCalls, [
   const lateResult = oldSend("Runtime.evaluate");
   assert.deepEqual(await f.runtime.releaseRun(first.sessionId, first.runId), { released: 0, tabIds: [] });
   assert.equal(f.runtime.getDebuggerConnectionId(41), connection, "run completion preserves physical emulation");
+  assert.equal(f.runtime.getDebuggerRun(41), null, "an idle retained connection cannot collect run events");
   assert(f.calls.some(call => call[2] === "Input.dispatchTouchEvent" && call[3].type === "touchCancel"),
     "retaining a stopped run's connection must release any held finger");
   assert.deepEqual(f.calls.filter(call => call[0] === "command" && call[2].endsWith(".disable")).map(call => call[2]),
-    ["Network.disable", "Runtime.disable", "Page.disable"], "idle emulation does not keep event domains enabled");
+    ["Network.disable", "Page.disable"], "idle emulation stops network and page events and leaves Runtime enabled");
   finishOld({ stale: true });
   await assert.rejects(lateResult, { code: "CDP_RUN_RELEASED" });
   await assert.rejects(oldSend("Input.dispatchMouseEvent"), { code: "CDP_RUN_RELEASED" });
@@ -284,6 +296,7 @@ assert.deepEqual(commandRaceCalls, [
   f.retireRun(first);
   await assert.rejects(f.runtime.sendCdp(41, "Page.enable", {}, runB), { code: "CDP_TAB_LEASE_CONFLICT" });
   const freshSend = await f.runtime.withDebugger(41, (_target, send) => send, next);
+  assert.deepEqual(f.runtime.getDebuggerRun(41), { ...next, connectionId: connection });
   assert.equal(f.authorized.filter(access => access.runId === "next").length, 1, "the next borrower is authorized afresh");
   assert.equal(f.calls.filter(call => call[0] === "attach").length, 1, "a new run reuses the physical connection");
   await f.runtime.releaseDebugger(41, first);
@@ -298,6 +311,7 @@ assert.deepEqual(commandRaceCalls, [
   assert.notEqual(f.runtime.getDebuggerConnectionId(41), null);
   await f.runtime.releaseSession("mobile");
   assert.equal(f.runtime.getDebuggerConnectionId(41), null, "deleting an idle session releases its retained connection");
+  assert.equal(f.runtime.getDebuggerRun(41), null);
 }
 
 {
@@ -396,6 +410,175 @@ for (const scenario of ["closed-or-foreign", "delete-during-authorization", "can
   await assert.rejects(oldSend("Page.enable"), { code: "CDP_RUN_RELEASED" });
   assert.notEqual(f.runtime.getDebuggerConnectionId(53), null, "run completion during recovery keeps emulation");
   await f.runtime.releaseSession(runA.sessionId);
+}
+
+{
+  const f = createHarness();
+  f.activateRun(runA);
+  await f.runtime.withDebugger(7, async (_target, send) => {
+    await send("Page.getFrameTree");
+    await send.inSession("child-session")("Accessibility.getFullAXTree", { depth: 1 });
+  }, runA);
+  const frames = f.calls.filter(call => call[2] === "Page.getFrameTree");
+  const trees = f.calls.filter(call => call[2] === "Accessibility.getFullAXTree");
+  assert.equal(frames.at(-1)[4], "");
+  assert.equal(trees.at(-1)[4], "child-session");
+  assert.equal(trees.at(-1)[1], 7);
+}
+
+const gate = (f, run, signal = null) => f.runtime.confirmRunReattach({
+  sessionId: run.sessionId,
+  runId: run.runId,
+  context: run,
+  signal,
+});
+
+{
+  // Dismissing the debugging bar pauses the run: the pre-tool gate asks, then the tool re-attaches on approval.
+  const f = createHarness({ confirmUserReattach: async () => true });
+  f.activateRun(runA);
+  const controller = new AbortController();
+  await gate(f, runA);
+  assert.equal(f.reattachPrompts.length, 0, "a run without a detached tab is never asked");
+  await f.runtime.sendCdp(60, "Page.enable", {}, runA);
+  f.detachListeners.forEach(listener => listener({ tabId: 60 }, "canceled_by_user"));
+  await gate(f, runA, controller.signal);
+  assert.equal(f.reattachPrompts.length, 1, "user detach asks once before the next tool call");
+  assert.deepEqual(
+    [f.reattachPrompts[0].tabId, f.reattachPrompts[0].sessionId, f.reattachPrompts[0].runId],
+    [60, runA.sessionId, runA.runId],
+  );
+  assert.equal(f.reattachPrompts[0].signal, controller.signal, "the tool signal reaches the confirmation");
+  await f.runtime.sendCdp(60, "Runtime.enable", {}, runA);
+  assert.equal(f.calls.filter(call => call[0] === "attach" && call[1] === 60).length, 2, "approval re-attaches through the normal path");
+  assert.ok(f.calls.some(call => call[1] === 60 && call[2] === "Runtime.enable"), "the tool call continues after approval");
+  await gate(f, runA);
+  await f.runtime.sendCdp(60, "Network.enable", {}, runA);
+  assert.equal(f.reattachPrompts.length, 1, "an approved run is not asked about again");
+  await f.runtime.releaseRun(runA.sessionId, runA.runId);
+}
+
+{
+  // Every other detach reason keeps the silent reconnection.
+  const f = createHarness({ confirmUserReattach: async () => true });
+  f.activateRun(runA);
+  await f.runtime.sendCdp(61, "Page.enable", {}, runA);
+  for (const reason of ["target_closed", "replaced_with_devtools"]) {
+    f.detachListeners.forEach(listener => listener({ tabId: 61 }, reason));
+    await gate(f, runA);
+    await f.runtime.sendCdp(61, "Page.enable", {}, runA);
+  }
+  assert.equal(f.reattachPrompts.length, 0, "non-user detach reasons never ask");
+  assert.equal(f.calls.filter(call => call[0] === "attach" && call[1] === 61).length, 3, "both re-attach silently");
+  await f.runtime.releaseRun(runA.sessionId, runA.runId);
+}
+
+{
+  // Rejection stops the run without re-attaching, and run release clears the flag for the next run.
+  const f = createHarness({ confirmUserReattach: async () => false });
+  f.activateRun(runA);
+  f.activateRun(runB);
+  await f.runtime.sendCdp(62, "Page.enable", {}, runA);
+  f.detachListeners.forEach(listener => listener({ tabId: 62 }, "canceled_by_user"));
+  await assert.rejects(gate(f, runA), { code: "CDP_RUN_RELEASED" });
+  assert.equal(f.reattachPrompts.length, 1);
+  assert.equal(f.calls.filter(call => call[0] === "attach" && call[1] === 62).length, 1, "rejection never re-attaches");
+  await assert.rejects(gate(f, runA), { code: "CDP_RUN_RELEASED" });
+  assert.equal(f.reattachPrompts.length, 2, "a settled prompt is never reused or left dangling");
+  f.retireRun(runA);
+  await f.runtime.releaseRun(runA.sessionId, runA.runId);
+  await gate(f, runB);
+  await f.runtime.sendCdp(62, "Page.enable", {}, runB);
+  assert.equal(f.reattachPrompts.length, 2, "run release clears the flag; the next run attaches directly");
+  await f.runtime.releaseRun(runB.sessionId, runB.runId);
+}
+
+{
+  // Parallel prechecks within one run share a single prompt.
+  let finishReattach;
+  const f = createHarness({
+    confirmUserReattach: () => new Promise(resolve => { finishReattach = resolve; }),
+  });
+  f.activateRun(runA);
+  await f.runtime.sendCdp(63, "Page.enable", {}, runA);
+  f.detachListeners.forEach(listener => listener({ tabId: 63 }, "canceled_by_user"));
+  const first = gate(f, runA);
+  const second = gate(f, runA);
+  const third = gate(f, runA);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(f.reattachPrompts.length, 1, "parallel prechecks share one prompt");
+  finishReattach(true);
+  await Promise.all([first, second, third]);
+  await f.runtime.sendCdp(63, "Runtime.enable", {}, runA);
+  assert.equal(f.calls.filter(call => call[0] === "attach" && call[1] === 63).length, 2, "approval lets the next tool re-attach");
+  await f.runtime.releaseRun(runA.sessionId, runA.runId);
+}
+
+{
+  // A run that ends while the prompt is open cannot re-attach after a late approval.
+  let finishReattach;
+  const f = createHarness({
+    confirmUserReattach: () => new Promise(resolve => { finishReattach = resolve; }),
+  });
+  f.activateRun(runA);
+  await f.runtime.sendCdp(64, "Page.enable", {}, runA);
+  f.detachListeners.forEach(listener => listener({ tabId: 64 }, "canceled_by_user"));
+  const pending = gate(f, runA);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(f.reattachPrompts.length, 1);
+  f.retireRun(runA);
+  const released = f.runtime.releaseRun(runA.sessionId, runA.runId);
+  finishReattach(true);
+  await pending;
+  await released;
+  await assert.rejects(f.runtime.sendCdp(64, "Runtime.enable", {}, runA), { code: "CDP_RUN_RELEASED" });
+  assert.equal(f.calls.filter(call => call[0] === "attach" && call[1] === 64).length, 1, "approval after run end never re-attaches");
+  f.activateRun(runB);
+  await gate(f, runB);
+  await f.runtime.sendCdp(64, "Page.enable", {}, runB);
+  assert.equal(f.reattachPrompts.length, 1, "the next run attaches without a stale prompt");
+  await f.runtime.releaseRun(runB.sessionId, runB.runId);
+}
+
+{
+  // Closing a user-detached tab removes its confirmation requirement for the remaining run.
+  const f = createHarness({ confirmUserReattach: async () => true });
+  f.activateRun(runA);
+  await f.runtime.sendCdp(66, "Page.enable", {}, runA);
+  f.detachListeners.forEach(listener => listener({ tabId: 66 }, "canceled_by_user"));
+  await f.runtime.releaseTab(66);
+  await gate(f, runA);
+  await f.runtime.sendCdp(67, "Page.enable", {}, runA);
+  assert.equal(f.reattachPrompts.length, 0, "a closed tab does not ask before tools on another tab");
+  await f.runtime.releaseSession(runA.sessionId);
+}
+
+for (const closeBoth of [false, true]) {
+  // Removal between the precheck and prompt must skip the closed target, not another live detached tab.
+  const f = createHarness({ confirmUserReattach: async () => true });
+  f.activateRun(runA);
+  for (const tabId of [68, 69]) {
+    await f.runtime.sendCdp(tabId, "Page.enable", {}, runA);
+    f.detachListeners.forEach(listener => listener({ tabId }, "canceled_by_user"));
+  }
+  const pending = gate(f, runA);
+  const cleanup = [f.runtime.releaseTab(68)];
+  if (closeBoth) cleanup.push(f.runtime.releaseTab(69));
+  await Promise.all([pending, ...cleanup]);
+  assert.deepEqual(f.reattachPrompts.map(prompt => prompt.tabId), closeBoth ? [] : [69], "only a remaining live tab can request re-attach");
+  await f.runtime.releaseSession(runA.sessionId);
+}
+
+{
+  // Hosts without a confirmation channel keep the silent re-attach.
+  const f = createHarness();
+  f.activateRun(runA);
+  await f.runtime.sendCdp(65, "Page.enable", {}, runA);
+  f.detachListeners.forEach(listener => listener({ tabId: 65 }, "canceled_by_user"));
+  await gate(f, runA);
+  await f.runtime.sendCdp(65, "Runtime.enable", {}, runA);
+  assert.equal(f.calls.filter(call => call[0] === "attach" && call[1] === 65).length, 2, "a prompt-less host re-attaches silently");
+  await f.runtime.releaseRun(runA.sessionId, runA.runId);
 }
 
 console.log("CDP run/tab lifecycle tests passed");

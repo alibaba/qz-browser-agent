@@ -142,7 +142,7 @@ export default defineMessages("core", {
   imagePreview: { "zh-CN": "图片预览", en: "Image preview" },
   images: { "zh-CN": "图片", en: "Images" },
   close: { "zh-CN": "关闭", en: "Close" },
-  importQingzhou: { "zh-CN": "导入轻舟", en: "Import into qz" },
+  importQingzhou: { "zh-CN": "导入轻舟继续对话", en: "Continue in qz" },
   importing: { "zh-CN": "正在导入", en: "Importing" },
   imported: { "zh-CN": "已导入", en: "Imported" },
   retryImport: { "zh-CN": "重试导入", en: "Try again" },

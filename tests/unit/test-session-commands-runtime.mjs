@@ -13,6 +13,11 @@ import {
   serializeConversation,
   transcriptFromConversation,
 } from "../../src/shared/session/session-codec.js";
+import {
+  appendSessionExchangeImportCapsule,
+  createSessionExchangePayload,
+  settleImportedTranscript,
+} from "../../src/shared/session/session-exchange.js";
 import { ROOT_SESSION_ID } from "../../src/shared/session/session-store.js";
 
 await creationRunAndHistoryFlow();
@@ -30,6 +35,9 @@ await queuedFollowUpAttachmentDeletionFlow();
 await steeringQueueFlow();
 await compactContextCommandFlow();
 await recordExchangeAndFallbackFlow();
+await sessionExchangeImportsCreateIndependentCopies();
+await sessionExchangeImportPreservesDocuments();
+await concurrentSessionExchangeImportsCreateSeparateCopies();
 await rejectedRecordWritePreservesTranscript();
 await resetPersistsEmptyConversationAndDisplay();
 await lateUiSavePreservesStreamingCurrentTurn();
@@ -1281,6 +1289,15 @@ async function recordExchangeAndFallbackFlow() {
   }]);
   assert.equal(fixture.runtimes.get(imported.session.id).workingUrl, "https://example.test/live");
   assert.equal(fixture.runtimes.get(imported.session.id).ownedTabIds.length, 3);
+  const sessionsAfterFirst = Object.keys(await fixture.repository.listMetadata()).sort();
+  const again = await fixture.commands.importSessionExchangeRuntime(exportedWithTabs, { sourceWindowId: 17 });
+  assert.equal(again.imported, true);
+  assert.notEqual(again.session.id, imported.session.id, "each explicit import creates an independent local session");
+  assert.equal(again.ownedTabsRestore.restored, true);
+  assert.deepEqual(Object.keys(await fixture.repository.listMetadata()).sort(), [...sessionsAfterFirst, again.session.id].sort());
+  assert.equal(fixture.ownedTabsRestoreCalls.length, 2, "each imported copy restores its own workspace");
+  assert.equal(fixture.ownedTabsRestoreCalls[1].sessionId, again.session.id);
+  assert.equal(fixture.ownedTabsRestoreCalls[1].sourceWindowId, 17);
 
   const tabLookupFailure = createFixture({
     getSessionOwnedTabContexts: async () => {
@@ -1343,6 +1360,101 @@ async function recordExchangeAndFallbackFlow() {
     saved: false,
     reason: "missing_session_id",
   });
+}
+
+async function sessionExchangeImportsCreateIndependentCopies() {
+  const storage = createMemoryStorage();
+  const fixture = createFixture({ storage });
+  const payload = content => createSessionExchangePayload({
+    session: { id: "original-source", title: "Imported copy" },
+    conversation: serializeConversation([{ role: "user", content }]),
+  });
+  const original = payload("Exported text");
+  const first = await fixture.commands.importSessionExchangeRuntime(original);
+  const edited = serializeConversation([{ role: "user", content: "Edited local copy" }]);
+  await fixture.commands.saveSessionRecordRuntime({
+    sessionId: first.session.id,
+    conversation: appendSessionExchangeImportCapsule(edited),
+    transcript: transcriptFromConversation(edited),
+  });
+  // Existing installs may still contain the retired import identities and cache.
+  await fixture.repository.patchMetadata(first.session.id, {
+    exchangeSourceSessionId: original.source.sessionId,
+    exchangeContentHash: "legacy-hash",
+  });
+  const legacyKey = `_session_import_dedup_${first.session.id}`;
+  await storage.set({ [legacyKey]: { schemaVersion: 1, contentHash: "legacy-hash" } });
+  const savedFirst = await fixture.repository.readRecord(first.session.id);
+  const ids = new Set([first.session.id]);
+  for (const input of [original, { ...original, source: { sessionId: "" } }, payload("Updated export")]) {
+    const imported = await fixture.commands.importSessionExchangeRuntime(input);
+    assert.equal(imported.imported, true);
+    assert.equal(ids.has(imported.session.id), false, "source ids and content never select an existing session");
+    ids.add(imported.session.id);
+    const exported = await fixture.commands.exportSessionExchangeRuntime(imported.session.id);
+    assert.deepEqual(exported.session.conversation, input.session.conversation);
+    assert.equal(exported.source.sessionId, imported.session.id);
+    assert.equal(imported.session.exchangeContentHash, undefined);
+    assert.equal(imported.session.exchangeSourceSessionId, undefined);
+  }
+  assert.equal(Object.keys(await fixture.repository.listMetadata()).length, ids.size);
+  assert.deepEqual(await fixture.repository.readRecord(first.session.id), savedFirst, "import leaves the edited local copy untouched");
+  assert.deepEqual(Object.keys(storage.snapshot()).filter(key => key.startsWith("_session_import_dedup_")), [legacyKey]);
+  await fixture.repository.deleteSession(first.session.id);
+  assert.equal(storage.snapshot()[legacyKey], undefined, "deleting an old session also removes its retired cache");
+}
+
+async function sessionExchangeImportPreservesDocuments() {
+  const fixture = createFixture();
+  const payload = fileId => createSessionExchangePayload({
+    session: { id: `source-${fileId}`, title: "Document summary" },
+    conversation: serializeConversation([{
+      role: "user",
+      content: "Summarize the attached document",
+      documents: [{
+        sessionId: "source", messageId: "message", attachmentId: "attachment",
+        fileId, docModelId: `model-${fileId}`, filename: "report.pdf",
+        mimeType: "application/pdf", format: "pdf", size: 1024,
+      }],
+    }]),
+  });
+  const first = await fixture.commands.importSessionExchangeRuntime(payload("first"));
+  const secondPayload = payload("second");
+  const second = await fixture.commands.importSessionExchangeRuntime(secondPayload);
+  assert.notEqual(second.session.id, first.session.id, "different attached documents must not collapse into one conversation");
+  const record = await fixture.repository.readRecord(second.session.id);
+  assert.equal(record.conversation.entries[0].message.documents[0].fileId, "second");
+  const again = await fixture.commands.importSessionExchangeRuntime(secondPayload);
+  assert.notEqual(again.session.id, second.session.id);
+  const exported = await fixture.commands.exportSessionExchangeRuntime(again.session.id);
+  assert.deepEqual(exported.session.conversation, secondPayload.session.conversation);
+}
+
+async function concurrentSessionExchangeImportsCreateSeparateCopies() {
+  const fixture = createFixture();
+  const payload = createSessionExchangePayload({
+    session: { id: "concurrent-source", title: "Shared import" },
+    conversation: serializeConversation([{ role: "user", content: "Continue this task" }]),
+    transcript: [pageToolTranscript("open_tab", "https://example.test/work")],
+    runtime: { ownedTabs: [{ url: "https://example.test/work", title: "Work", working: true }] },
+  });
+  const rejected = assert.rejects(fixture.commands.importSessionExchangeRuntime({}), {
+    code: "UNSUPPORTED_SESSION_EXCHANGE_FORMAT",
+  });
+  const [first, second] = await Promise.all([
+    fixture.commands.importSessionExchangeRuntime(payload),
+    fixture.commands.importSessionExchangeRuntime(payload),
+  ]);
+  await rejected;
+  assert.notEqual(second.session.id, first.session.id, "simultaneous imports create separate copies after a rejected import");
+  assert.equal(Object.keys(await fixture.repository.listMetadata()).length, 2);
+  assert.equal(fixture.ownedTabsRestoreCalls.length, 2);
+  assert.deepEqual(new Set(fixture.ownedTabsRestoreCalls.map(call => call.sessionId)), new Set([first.session.id, second.session.id]));
+  for (const imported of [first, second]) {
+    assert.equal(imported.ownedTabsRestore.restored, true);
+    const exported = await fixture.commands.exportSessionExchangeRuntime(imported.session.id);
+    assert.deepEqual(exported.session.conversation, payload.session.conversation);
+  }
 }
 
 async function atomicRuntimeInputSnapshots() {
@@ -1809,7 +1921,7 @@ async function serializedSessionDraftMutations() {
 }
 
 function createFixture(options = {}) {
-  const baseRepository = createSessionRepository({ storage: createMemoryStorage() });
+  const baseRepository = createSessionRepository({ storage: options.storage || createMemoryStorage() });
   const repository = options.wrapRepository?.(baseRepository) || baseRepository;
   const runtimes = new Map();
   const transcripts = new Map();

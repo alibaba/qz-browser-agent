@@ -22,6 +22,8 @@ test("full verification inventories production coverage and includes indexed ext
   assert.equal(c8.all, true, "coverage must expose production files that no test loads");
   assert.match(pkg.scripts.verify, /typecheck/);
   assert.match(pkg.scripts.verify, /npm test -- --all --coverage/);
+  assert.equal(pkg.scripts["verify:quick"], "npm run typecheck && npm test -- --all");
+  assert.doesNotMatch(pkg.scripts["verify:quick"], /--coverage/);
   assert.match(listed, /Coverage: c8 \+ full runtime critical gate/);
   assert.doesNotMatch(listed, /tests\/live\/|agent-behavior-e2e/);
 });

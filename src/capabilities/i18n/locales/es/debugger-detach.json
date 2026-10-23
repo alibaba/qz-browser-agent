@@ -1,0 +1,6 @@
+{
+  "debugger-detach.title": "Depuración desconectada",
+  "debugger-detach.message": "Cerraste la barra «Depurando este navegador», por lo que se cerró la conexión con el depurador. ¿Quieres continuar esta tarea?",
+  "debugger-detach.continue": "Continuar",
+  "debugger-detach.stop": "Detener"
+}

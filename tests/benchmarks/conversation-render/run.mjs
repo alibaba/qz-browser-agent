@@ -13,6 +13,7 @@ import { parseExportHtmlFixture } from "./tools/export-html-fixture.mjs";
 import { runConversationVisualAudit } from "./visual-audit.mjs";
 import { prepareBenchmarkAssets } from "../../support/benchmark-assets.mjs";
 import { ensureTestExtension, resolveTestAsset } from "../../support/extension-build.mjs";
+import { MISSING_IMAGEMAGICK_REASON } from "../../support/imagemagick.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const DEFAULT_TIMEOUT_MS = clampNumber(process.env.CONVERSATION_BENCH_TIMEOUT_MS, 5_000, 600_000, 180_000);
@@ -89,6 +90,10 @@ if (args.help) {
 }
 if (args.realExamples && (args.fixture || args._.length || args.screenshot || args.baselineDir || args.updateBaseline || args.compareBaseline)) {
   throw new Error("--real-examples cannot be combined with a single fixture, screenshot or baseline; select an individual file for those options.");
+}
+if (args.compareBaseline === true && !findImageMagickExecutable()) {
+  console.log(`conversation render baseline comparison skipped: ${MISSING_IMAGEMAGICK_REASON}`);
+  process.exit(0);
 }
 const fixturePaths = args.realExamples
   ? discoverRealExamples(join(ROOT, "tests/benchmarks/conversation-render/real_examples"))

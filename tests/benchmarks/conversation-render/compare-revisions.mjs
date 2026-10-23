@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { buildExtension } from "../../../scripts/build-extension.mjs";
 import { instrumentComparisonDriver } from "./comparison-preload.mjs";
+import { MISSING_IMAGEMAGICK_REASON, imageMagickCommandAvailable } from "../../support/imagemagick.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const DRIVER = "tests/benchmarks/conversation-render/run.mjs";
@@ -208,6 +209,10 @@ export function writeReport(output, plan, results, planned) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const action = args.shift();
+  if ((action === "--prepare" || action === "--run") && !imageMagickCommandAvailable()) {
+    console.log(`conversation revision comparison skipped: ${MISSING_IMAGEMAGICK_REASON}`);
+    process.exit(0);
+  }
   const output = resolve(args.shift() || "tests/results/live-visual-comparison");
   if (action === "--prepare") console.log(JSON.stringify(prepareComparison(output, args[0]), null, 2));
   else if (action === "--captures") console.log(JSON.stringify(prepareCapturedFixtures(output, resolve(args[0]), resolve(args[1])), null, 2));

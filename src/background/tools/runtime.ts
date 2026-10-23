@@ -71,26 +71,32 @@ import {
   listSkillMcpTools,
 } from "../skills/skill-tool-runtime.js";
 import { createCdpRuntime } from "./cdp-runtime.js";
+import { confirmDebuggerReattach } from "./debugger-reattach.js";
 import { createElementRuntime } from "./element-runtime.js";
 import { callMcpServerTool, inspectMcpServer } from "../mcp/mcp-client.js";
 
 // ---------------------------------------------------------------------------
 // Content script messaging
+// One injection covers every frame. Messages stay on the main frame; without
+// a frame id, Chrome accepts whichever frame answers first.
 // ---------------------------------------------------------------------------
 
-async function ensureContentScript(tabId: number) {
-  try {
-    const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }));
-    if (response?.ok === true) return;
-  } catch(_e) {
-    // Inject the content script when it is missing.
+async function ensureContentScript(tabId: number, force = false) {
+  if (!force) {
+    try {
+      const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }));
+      if (response?.ok === true) return;
+    } catch(_e) {
+      // Inject the content script when it is missing.
+    }
   }
   await chrome.scripting.executeScript({
-    target: { tabId },
+    target: { tabId, allFrames: true },
     world: "ISOLATED",
     files: ["content/article-extractor.js", "content/content-script.js"],
+    injectImmediately: force,
   });
-  const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }));
+  const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }));
   if (response?.ok !== true) {
     throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", {
       tabId,
@@ -119,7 +125,7 @@ export async function sendToContent(tabId: number | undefined, action: string, p
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
   await ensureContentScript(tabId);
   try {
-    const response = await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action, ...params });
+    const response = await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action, ...params }, { frameId: 0 });
     if (response == null) {
       throw new ToolExecutionError("EMPTY_CONTENT_RESPONSE", `Content script returned empty response for ${action}`, {
         action,
@@ -358,6 +364,8 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     if (definition.requires?.browserPermission) {
       await ensureToolBrowserPermission(definition.requires.browserPermission, context, signal, getToolRuntimeDependencies(context));
     }
+    // A dismissed debugging bar pauses the run here, outside the tool timeout.
+    await confirmRunReattach({ sessionId: String(context.sessionId || ""), runId: String(context.runId || ""), context, signal });
     const timeoutMs = resolveToolTimeoutMs(definition, executionArgs);
     if (traceTool) {
       toolTrace(`[tool] resolved name=${name} kind=${definition.source} capability=${definition.capabilityId} timeoutMs=${timeoutMs} executionArgs=${summarizeToolArgsForTrace(executionArgs)}`);
@@ -841,6 +849,11 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
 
   const tabId = inferWorkingTabId(definition, args, result);
   if (!tabId) return;
+  // A uid has no explicit tabId, so a read-only look at an unclaimed tab never
+  // sets _readOnlyTabAccess. That look must not become the working tab.
+  if ((isUidElementTarget(args?.target) || isUidElementTarget(args?.selector))
+    && resolvePageAccess(definition, args) === "readOnly"
+    && !elementRuntime.taskTabIds(context).includes(tabId)) return;
 
   let tab = null;
   try {
@@ -896,8 +909,8 @@ async function attachPageContextToToolResult(definition: RuntimeTool, args: Fiel
   return {
     ...result,
     _tabId: page.tabId,
-    _pageTitle: result._pageTitle || page.title,
-    _pageUrl: result._pageUrl || page.url,
+    _pageTitle: typeof result._pageTitle === "string" ? result._pageTitle : page.title,
+    _pageUrl: typeof result._pageUrl === "string" ? result._pageUrl : page.url,
     ...(capabilityBridges.describePage ? { _pageContext: capabilityBridges.describePage(page.tabId) } : {}),
   };
 }
@@ -1243,15 +1256,19 @@ const {
   withDebugger,
   withTemporaryDebugger,
   getDebuggerConnectionId,
+  getDebuggerRun,
   setDebuggerRetention,
   releaseDebugger,
+  confirmRunReattach,
   releaseRun: releaseRunDebuggerConnections,
   releaseSession: releaseSessionCdp,
+  releaseTab: releaseTabCdp,
 } = createCdpRuntime({
   ToolExecutionError,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   isRunCurrent: isCdpRunCurrent,
   authorizeRunTab: authorizeRunCdpTab,
+  confirmUserReattach: access => confirmDebuggerReattach(access, getToolRuntimeDependencies(access.context)),
 });
 
 function isCdpRunCurrent({ sessionId, runId, context = {} }: { sessionId: string; runId: string; context?: ToolContext }) {
@@ -1313,7 +1330,7 @@ export async function releaseRunCdp(sessionId: string, runId: string) {
   return await releaseRunDebuggerConnections(sessionId, runId);
 }
 
-export { releaseSessionCdp };
+export { releaseSessionCdp, releaseTabCdp };
 
 export async function withRunCdp<T>(tabId: number, context: ToolContext, fn: (target: chrome.debugger.Debuggee, send: CdpCommand) => T | Promise<T>) {
   return await withDebugger(tabId, fn, context);
@@ -1329,6 +1346,11 @@ const elementRuntime = createElementRuntime({
   makeSessionTabTargetError,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   withDebugger,
+  sendToContent,
+  initializeContentScript: async tabId => {
+    await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action: "initialize" });
+    await ensureContentScript(tabId, true);
+  },
 });
 const { isUidElementTarget } = elementRuntime;
 
@@ -1366,7 +1388,7 @@ const capabilityHost: ToolExtensionAPI = Object.freeze({
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
   assertPageUrlAccessible,
-  sendToContent, sendCdp, withDebugger, getDebuggerConnectionId, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
+  sendToContent, sendCdp, withDebugger, getDebuggerConnectionId, getDebuggerRun, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
   getTabPageState, pageStateDelta, prepareKnownPageNavigation, commitObservedPageNavigation,
   clickPointReady, clickNotReadyResult, captureTabScreenshot, enablePreNavigationNetworkWatch,
   publishSkillRegistryChange, summarizeToolArgsForTrace,

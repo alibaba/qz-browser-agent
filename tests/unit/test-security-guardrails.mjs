@@ -45,6 +45,9 @@ const root = fileURLToPath(new URL("../..", import.meta.url));
 const navigation = navigationDocuments();
 
 globalThis.chrome = {
+  // Ordering and copy assertions in this file are written for the Chinese UI.
+  // Pin it here so a non-Chinese process locale cannot turn missing text into a false order failure.
+  i18n: { getUILanguage: () => "zh-CN" },
   storage: {
     local: {
       async get(key) {
@@ -65,6 +68,7 @@ globalThis.chrome = {
     },
   },
   tabs: {
+    onUpdated: { addListener() {}, removeListener() {} },
     async query(query = {}) {
       let tabs = [...mockTabs];
       if (query.currentWindow) tabs = tabs.filter(tab => tab.currentWindow !== false);
@@ -254,9 +258,17 @@ function installClickableElementMock({
   element = {},
 } = {}) {
   let activeHref = href;
+  let hrefReady = false;
+  // Layout warmup inspects the element again. One click still navigates to one href.
+  const resolveHref = () => {
+    if (hrefReady) return activeHref;
+    activeHref = typeof href === "function" ? href() : href;
+    hrefReady = true;
+    return activeHref;
+  };
   contentMessageHandler = async (_tabId, message) => {
     if (message?.action === "inspectElement") {
-      activeHref = typeof href === "function" ? href() : href;
+      const currentHref = resolveHref();
       return {
         selector: message.selector,
         index: message.index || 0,
@@ -264,7 +276,7 @@ function installClickableElementMock({
         disabled: false,
         state: { inViewport: true, clickablePointInViewport: true, obscuredAtCenter: false },
         clickablePoint: clickable ? { x: 12, y: 34 } : null,
-        href: activeHref || undefined,
+        href: currentHref || undefined,
         ...element,
       };
     }
@@ -272,7 +284,9 @@ function installClickableElementMock({
   };
   debuggerCommandHandler = async (target, method, params = {}) => {
     if (method === "Input.dispatchMouseEvent" && params.type === "mouseReleased") {
-      const nextUrl = typeof afterUrl === "function" ? afterUrl(activeHref) : afterUrl;
+      const currentHref = resolveHref();
+      hrefReady = false;
+      const nextUrl = typeof afterUrl === "function" ? afterUrl(currentHref) : afterUrl;
       if (nextUrl) setMockTabUrl(target.tabId, nextUrl);
     }
     return {};

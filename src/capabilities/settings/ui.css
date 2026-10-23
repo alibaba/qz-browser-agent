@@ -1034,7 +1034,8 @@ details[open] > .cli-address-summary .cli-address-chevron {
 .guardrail-rule-action,
 .guardrail-rule-type {
   min-width: 0;
-  padding-inline-end: 26px;
+  /* Clears the chevron drawn 8-16px from the trailing edge and fits a 320px column. */
+  padding-inline-end: 20px;
 }
 
 .guardrail-rate-limit-field.hidden {

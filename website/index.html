@@ -2,11 +2,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="An open-source AI agent in your signed-in Chrome browser. Bring your own model or sign in with ChatGPT. Connect coding agents through CLI, Skill, or MCP." data-i18n-attributes="description">
+  <meta name="description" content="A coding agent that lives in your browser. It opens tabs, reads pages, runs scripts, and turns what works into a Skill." data-i18n-attributes="description">
   <meta name="theme-color" content="#f7f7f5">
   <meta property="og:type" content="website">
   <meta property="og:title" content="qz — Open-source browser agent" data-i18n-attributes="ogTitle">
-  <meta property="og:description" content="An open-source AI agent in your signed-in Chrome browser. Bring your own model or sign in with ChatGPT. Connect coding agents through CLI, Skill, or MCP." data-i18n-attributes="ogDescription">
+  <meta property="og:description" content="A coding agent that lives in your browser. It opens tabs, reads pages, runs scripts, and turns what works into a Skill." data-i18n-attributes="ogDescription">
   <meta property="og:image" content="https://alibaba.github.io/qz-browser-agent/assets/og-card.png" data-i18n-attributes="ogImage">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="https://alibaba.github.io/qz-browser-agent/assets/og-card.png" data-i18n-attributes="ogImage">
@@ -16,6 +16,7 @@
   <link rel="alternate" hreflang="x-default" href="https://alibaba.github.io/qz-browser-agent/">
   <link rel="icon" type="image/png" href="./assets/icon.png">
   <link rel="stylesheet" href="./assets/site.css">
+  <link rel="stylesheet" href="./assets/examples.css">
   <script src="./assets/site.js" type="module"></script>
   <title>qz — Open-source browser agent</title>
 </head>
@@ -28,12 +29,42 @@
 </header>
 <main id="main">
 <section class="hero wrap" aria-labelledby="hero-title">
-  <div class="hero-copy"><p class="eyebrow" data-i18n="heroBadge"><span class="square" aria-hidden="true"></span>OPEN SOURCE · LOCAL FIRST</p><div class="hero-grid"><h1 id="hero-title" data-i18n="heroTitle">An agent that<br><span>actually uses<br>the browser.</span></h1><div class="hero-aside"><p class="intro" data-i18n="heroIntro">An AI agent in the Chrome browser you already use and are signed in to. Bring your own model or sign in with ChatGPT. Delegate tasks through CLI, Skill, or MCP.</p><div class="actions"><a class="button" href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm" data-i18n="heroAction">Add to Chrome<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a><a class="source-link" href="https://github.com/alibaba/qz-browser-agent"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.03A9.6 9.6 0 0 1 12 6.82c.85 0 1.71.11 2.51.34 1.91-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"></path></svg><span>GitHub</span></a></div></div></div></div>
+  <div class="hero-copy"><p class="eyebrow" data-i18n="heroBadge"><span class="square" aria-hidden="true"></span>OPEN SOURCE · LOCAL FIRST</p><div class="hero-grid"><h1 id="hero-title" data-i18n="heroTitle">An agent that<br><span>actually uses<br>the browser.</span></h1><div class="hero-aside"><p class="intro" data-i18n="heroIntro">A coding agent that lives in your browser. It opens tabs, reads pages, runs scripts, and turns what works into a Skill.</p><div class="actions"><a class="button" href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm" data-i18n="heroAction">Add to Chrome<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a><a class="source-link" href="https://github.com/alibaba/qz-browser-agent"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.03A9.6 9.6 0 0 1 12 6.82c.85 0 1.71.11 2.51.34 1.91-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"></path></svg><span>GitHub</span></a></div></div></div></div>
   <figure class="showcase" id="demo"><a class="workspace-link" data-open-image="" href="./assets/workspace.png" aria-label="Open full-size screenshot" data-i18n-attributes="screenshotLink"><img class="workspace" src="./assets/workspace.png" width="2880" height="1572" alt="qz at work on Wikipedia’s Hangzhou page" fetchpriority="high" data-i18n-attributes="screenshot"></a><div class="film-strip"><div class="film-label"><span data-i18n="filmCaption">Wikipedia · Page reading and JavaScript execution</span></div><a class="film-button" href="./assets/demo-en.mp4" data-open-video=""><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="m9 5 11 7-11 7z"></path></svg><span data-i18n="filmAction">Watch demo</span><span class="film-time">00:45</span></a></div></figure>
   <div class="under-hero"><span>qz-browser-agent</span><a href="https://github.com/alibaba/qz-browser-agent/blob/main/LICENSE">Apache-2.0 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg></a></div>
 </section>
+<!-- examples:start -->
+<section class="examples section wrap" id="examples" aria-labelledby="examples-title">
+  <div class="section-heading">
+    <h2 id="examples-title" data-i18n="examplesTitle">Real tasks, start to finish.</h2>
+    <p data-i18n="examplesLede">Each example is a real qz session. The frame on the left is from that session. Follow every step on the right, then import it into qz and pick up the conversation.</p>
+  </div>
+  <div class="example-grid" data-i18n="examplesGrid">
+    <a class="example-card" href="./examples/en/travel/">
+      <span class="example-cover"><picture><source media="(prefers-reduced-motion: reduce)" srcset="./assets/examples/travel-en.webp"><img src="./assets/examples/travel-en-card.gif" width="840" height="500" alt="The gallery of Kyoto photos from the session" loading="lazy" decoding="async"></picture></span>
+      <h3>Kyoto attractions gallery</h3>
+      <p>5 sub-tasks run at once, each finds its own pictures, and the results merge into one gallery.</p>
+    </a>
+    <a class="example-card" href="./examples/en/hn-skill/">
+      <span class="example-cover"><picture><source media="(prefers-reduced-motion: reduce)" srcset="./assets/examples/hn-skill-en.webp"><img src="./assets/examples/hn-skill-en-card.gif" width="840" height="500" alt="Building a Skill from the HN front page" loading="lazy" decoding="async"></picture></span>
+      <h3>Turn Hacker News into a Skill</h3>
+      <p>Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.</p>
+    </a>
+    <a class="example-card" href="./examples/en/github-weekly/">
+      <span class="example-cover"><picture><source media="(prefers-reduced-motion: reduce)" srcset="./assets/examples/github-weekly-en.webp"><img src="./assets/examples/github-weekly-en-card.gif" width="840" height="518" alt="This week's trending list and the project table" loading="lazy" decoding="async"></picture></span>
+      <h3>Weekly GitHub trending digest</h3>
+      <p>Reads this week's Trending list, puts it into a table, and writes a short weekly summary.</p>
+    </a>
+    <a class="example-card" href="./examples/en/pelican/">
+      <span class="example-cover"><picture><source media="(prefers-reduced-motion: reduce)" srcset="./assets/examples/pelican-en.webp"><img src="./assets/examples/pelican-en-card.gif" width="840" height="518" alt="A pelican on a bicycle, drawn with the mouse on a canvas" loading="lazy" decoding="async"></picture></span>
+      <h3>A pelican riding a bicycle</h3>
+      <p>Operating the UI like a person.</p>
+    </a>
+  </div>
+</section>
+<!-- examples:end -->
 <section class="results section wrap" id="overview" aria-labelledby="overview-title">
- <h2 id="overview-title" data-i18n="overviewTitle">Web research, saved as data.</h2>
+ <h2 id="overview-title" data-i18n="overviewTitle">Web research, delivered as data.</h2>
  <figure class="table-example"><a class="screen-link" data-open-image="" href="./assets/screens/table-en.png" aria-label="Enlarge browser automation comparison table" data-i18n-attributes="tableLink"><img width="2560" height="920" loading="lazy" decoding="async" src="./assets/screens/table-en.png" alt="qz Data view: a live research comparison of Playwright, Puppeteer, and Selenium" data-i18n-attributes="tableImage"></a><figcaption class="example-copy"><h3 data-i18n="tableTitle">Compare tools using their official documentation</h3><p data-i18n="tableDescription">qz read the Playwright, Puppeteer, and Selenium docs and saved a six-criterion comparison. The result is a table you can edit and export.</p></figcaption></figure>
  <div class="result-grid">
   <article class="result-example"><a class="screen-link" data-open-image="" href="./assets/screens/gallery-en.png" aria-label="Enlarge: qz image collection with Hangzhou landmark photographs" data-i18n-attributes="galleryLink"><img width="740" height="1360" loading="lazy" decoding="async" src="./assets/screens/gallery-en.png" alt="qz image collection with Hangzhou landmark photographs" data-i18n-attributes="galleryImage"></a><div class="example-copy"><h3 data-i18n="galleryTitle">Collect images with their sources</h3><p data-i18n="galleryDescription">Save photos from a page to a local collection. Browse thumbnails and open the source image. Shown here: Hangzhou landmarks from Wikipedia.</p></div></article>
@@ -109,7 +140,7 @@ qz connect</code></pre>
 <section class="get-started section wrap" id="get-started" aria-labelledby="get-title"><div class="get-grid"><div><h2 id="get-title" data-i18n="startTitle">Install qz</h2><p class="section-description" data-i18n="startDescription">Install from the Chrome Web Store, then connect your model service or sign in with ChatGPT.</p><a class="button" href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm" data-i18n="startDownload">Add to Chrome<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a><a class="install-guide text-link" href="https://github.com/alibaba/qz-browser-agent/releases/latest" data-i18n="startGuide" data-i18n-attributes="installGuide">Manual install · GitHub Release<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg></a></div><ol class="steps"><li><span class="index">01</span><div><h3 data-i18n="step1Title">Add to Chrome</h3><p data-i18n="step1Description">In the Chrome Web Store, click “Add to Chrome” and confirm the installation.</p></div></li><li><span class="index">02</span><div><h3 data-i18n="step2Title">Connect your model</h3><p data-i18n="step2Description">Open qz Settings. Choose a provider and enter its credentials, or choose OpenAI Codex and sign in with ChatGPT. Select a model and save.</p></div></li><li><span class="index">03</span><div><h3 data-i18n="step3Title">Give it a task</h3><p data-i18n="step3Description">Open the side panel and describe what you want to do. You can adjust the task while it runs.</p></div></li></ol></div><div class="first-prompt"><div class="prompt-label"><span class="eyebrow" data-i18n="promptLabel">TRY A TASK</span><button class="copy-prompt" type="button" data-copy-prompt="" data-copied="Copied" data-failed="Select and copy the prompt below." data-i18n-attributes="copy" hidden=""><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4"></path></svg><span data-i18n="promptCopy">Copy prompt</span></button></div><p id="first-prompt" data-i18n="prompt">Find this year’s Nobel Prize winners in every category and put them in a table with source links.</p><span class="copy-status" role="status" aria-live="polite"></span></div></section>
 
 </main>
-<footer class="footer wrap"><a class="brand" href="./">qz<span class="footer-name">qz-browser-agent</span></a><nav aria-label="Footer navigation" data-i18n-attributes="footer"><a href="https://github.com/alibaba/qz-browser-agent/blob/main/README.md" data-i18n="footerDocs" data-i18n-attributes="documentation">Documentation</a><a href="https://github.com/alibaba/qz-browser-agent/issues" data-i18n="footerIssues">Feedback</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/docs/permissions.md" data-i18n="footerPrivacy">Privacy</a><a href="./credits/" data-i18n="footerCredits">Credits</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/LICENSE">Apache-2.0</a></nav></footer>
+<footer class="footer wrap"><a class="brand" href="./">qz</a><nav aria-label="Footer navigation" data-i18n-attributes="footer"><a href="https://github.com/alibaba/qz-browser-agent/blob/main/README.md" data-i18n="footerDocs" data-i18n-attributes="documentation">Documentation</a><a href="https://github.com/alibaba/qz-browser-agent/issues" data-i18n="footerIssues">Feedback</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/docs/permissions.md" data-i18n="footerPrivacy">Privacy</a><a href="./credits/" data-i18n="footerCredits">Credits</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/LICENSE">Apache-2.0</a></nav></footer>
 <dialog id="video-dialog" aria-labelledby="video-title"><div class="video-top"><div><h2 id="video-title" data-i18n="videoTitle">qz demo</h2><p data-i18n="videoLanguage">English demo · Captions available</p></div><button type="button" class="close-video" aria-label="Close video" data-i18n-attributes="closeVideo"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"></path></svg></button></div><video controls="" playsinline="" preload="none" data-src="./assets/demo-en.mp4"><track kind="captions" src="./assets/captions.en.vtt" srclang="en" label="English"><span class="video-fallback" data-i18n="videoFallback">Your browser does not support this video. </span><a href="./assets/demo-en.mp4" data-i18n="videoDownload">Download the video</a></video><p class="video-note" data-i18n="videoNote">Page reading, data extraction, scripting, Skills, and parallel tasks.</p></dialog>
 
 

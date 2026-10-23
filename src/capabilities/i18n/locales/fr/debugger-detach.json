@@ -1,0 +1,6 @@
+{
+  "debugger-detach.title": "Débogage déconnecté",
+  "debugger-detach.message": "Vous avez fermé la barre « Débogage de ce navigateur », ce qui a fermé la connexion au débogueur. Voulez-vous continuer cette tâche ?",
+  "debugger-detach.continue": "Continuer",
+  "debugger-detach.stop": "Arrêter"
+}

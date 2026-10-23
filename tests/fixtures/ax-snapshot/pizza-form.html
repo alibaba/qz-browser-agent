@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Pizza order</title>
+<style>body { font: 16px/1.4 sans-serif; margin: 24px } label, button { display: block; margin: 8px 0 } fieldset { margin: 12px 0 }</style>
+<h1>Order a pizza</h1>
+<form method="post" action="/post">
+  <label>Customer name: <input name="custname" autocomplete="name"></label>
+  <label>Telephone: <input type="tel" name="custtel" autocomplete="tel"></label>
+  <label>E-mail address: <input type="email" name="custemail" autocomplete="email"></label>
+  <fieldset>
+    <legend>Pizza Size</legend>
+    <label><input type="radio" name="size" value="small"> Small</label>
+    <label><input type="radio" name="size" value="medium" checked> Medium</label>
+    <label><input type="radio" name="size" value="large"> Large</label>
+  </fieldset>
+  <fieldset>
+    <legend>Pizza Toppings</legend>
+    <label><input type="checkbox" name="topping" value="bacon"> Bacon</label>
+    <label><input type="checkbox" name="topping" value="cheese" checked> Extra Cheese</label>
+    <label><input type="checkbox" name="topping" value="onion"> Onion</label>
+    <label><input type="checkbox" name="topping" value="mushroom"> Mushroom</label>
+  </fieldset>
+  <label>Preferred delivery time: <input type="time" name="delivery" min="11:00" max="21:00" step="900"></label>
+  <label>Delivery instructions: <textarea name="comments" placeholder="Ring the bell"></textarea></label>
+  <label>Photo of the door: <input type="file" name="door" accept="image/*" multiple></label>
+  <button>Submit order</button>
+</form>
+<p><a href="/forms/next">Continue to payment</a> <a href="https://example.com/help">Help</a></p>

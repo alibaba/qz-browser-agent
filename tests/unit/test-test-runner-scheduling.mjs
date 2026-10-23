@@ -239,6 +239,7 @@ async function createFixture(t, { secondaryPeer = SECONDARY } = {}) {
     "tests/release/bundle-release.test.mjs",
     "tests/release/npm-package.mjs",
     "tests/release/chrome-smoke.mjs",
+    "tests/session-exchange/consent-import-check.mjs",
     "tests/support/run-python-browser.mjs",
   ]) await put(root, path, childSource);
 

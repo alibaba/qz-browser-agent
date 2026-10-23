@@ -1,6 +1,7 @@
 import { initializeLanguage, whenLanguageReady, readLanguagePreference, saveLanguagePreference, getAvailableLanguages } from "../shared/i18n/index.js";
 import { matchConfiguredModelCapabilities } from "../shared/models/model-capabilities.js";
 import { createContentLanguageSnapshot } from "../shared/i18n/content.js";
+import { createSessionImportLabels } from "./services/session-import-labels.js";
 import { t } from "../shared/i18n/backend.js";
 import type { Agent } from "./agent/agent.js";
 /**
@@ -57,6 +58,7 @@ import {
   getToolIdentity,
   releaseRunCdp,
   releaseSessionCdp,
+  releaseTabCdp,
   resolveToolDefinition,
   sendToContent,
   withRunCdp,
@@ -92,6 +94,7 @@ import {
 } from "./session/id.js";
 import {
   createSessionTabs,
+  getOwnedTabIds,
 } from "./session/tabs.js";
 import {
   createAgentBrowserContext,
@@ -586,10 +589,20 @@ automationRuntime = createAutomationRuntime({
 chrome.alarms?.onAlarm?.addListener((alarm) => {
   automationRuntime.handleAlarm(alarm);
 });
+function dataConsentAllowsImport() {
+  try {
+    dataConsent.assertAccepted();
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error && "code" in error && error.code === "DATA_CONSENT_REQUIRED") return false;
+    throw error;
+  }
+}
 const sessionExchangeBridge = createSessionExchangeBridge({
   sidePanel: chrome.sidePanel,
   importSessionExchange: sessionCommands.importSessionExchangeRuntime,
   channel: sidepanelChannel,
+  consentAccepted: dataConsentAllowsImport,
 });
 skillSettings = createSkillSettingsService({
   storage: chrome.storage.local,
@@ -704,6 +717,9 @@ toolRuntime = createToolRuntime({
     updateWorkingTab: sessionTabs.updateWorkingTab,
     clearWorkingTab: sessionTabs.clearWorkingTab,
     resolveTargetTab: sessionTabs.resolveTargetTab,
+    listOwnedTabIds(sessionId: string) {
+      return getOwnedTabIds(sessionCommands.getSessionRuntimeState(sessionId));
+    },
     isRunCurrent: sessionSupervisor.isRunCurrent,
     updateGoal: sessionCommands.updateSessionGoal,
     stopSession: sessionCommands.stopSessionRuntime,
@@ -819,6 +835,11 @@ const backgroundApi = createBackgroundApi({
       await whenLanguageReady();
       return createContentLanguageSnapshot();
     },
+    sessionImportLabels: async (language: unknown) => {
+      await languageReady;
+      await whenLanguageReady();
+      return createSessionImportLabels(typeof language === "string" ? language : "");
+    },
     acceptDataConsent: dataConsent.accept,
     acceptLocationConsent: locationService.accept,
     ready: async () => sessionRuntimeReady,
@@ -888,6 +909,7 @@ const backgroundApi = createBackgroundApi({
     export: sessionCommands.exportSessionExchangeRuntime,
     import: sessionCommands.importSessionExchangeRuntime,
     importFromPage: sessionExchangeBridge.importFromPage,
+    revealForImport: sessionExchangeBridge.revealForImport,
   },
   ui: {
     startElementPicker: platformCommands.startElementPicker,
@@ -955,7 +977,7 @@ const backgroundApi = createBackgroundApi({
     stream: sidepanelChannel.recordStreamTrace,
   },
 }, path => {
-  if (["system.ready", "system.contentLanguage", "system.ping", "system.acceptDataConsent", "system.mcpConnectionStatus", "system.disconnectMcp", "sessions.stop"].includes(path)) return;
+  if (["system.ready", "system.contentLanguage", "system.sessionImportLabels", "system.ping", "system.acceptDataConsent", "exchange.revealForImport", "system.mcpConnectionStatus", "system.disconnectMcp", "sessions.stop"].includes(path)) return;
   dataConsent.assertAccepted();
 });
 
@@ -989,6 +1011,7 @@ function getMcpBridge() {
 dataConsent.whenAccepted.then(getMcpBridge).catch(error => console.debug("[qz] MCP bridge startup failed:", error));
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  void releaseTabCdp(tabId);
   sessionTabs.handleTabRemoved(tabId).catch((error) => {
     console.warn("[轻舟] persist tab removal failed:", error);
   });

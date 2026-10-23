@@ -309,7 +309,8 @@ export class SessionState {
     } else if (options.transcript !== false && !NO_TRANSCRIPT_REDUCER_EVENT_TYPES.has(type)) {
       const result = updateTranscriptWithAgentEvent(entry.transcript, event);
       if (result.changed) {
-        entry.transcriptLoaded = true;
+        // A status snapshot can add a terminal pill before stored history arrives.
+        if (type !== "state") entry.transcriptLoaded = true;
         entry.transcript = result.transcript;
         entry.revision.transcript += 1;
         transcriptChanged = true;

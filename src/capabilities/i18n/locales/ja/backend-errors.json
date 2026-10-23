@@ -27,6 +27,8 @@
   "backend.toolError.CDP_COMMAND_FAILED.message": "ブラウザーのデバッグコマンドに失敗しました。",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.label": "タスクまたは実行の情報がありません",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.message": "この呼び出しにはセッションまたは実行の識別情報がないため、タブを操作できません。",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.label": "別の質問が回答待ちです",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.message": "保留中の質問に回答してから操作を再試行し、デバッガーの再接続を確認してください。",
   "backend.toolError.CDP_RUN_RELEASED.label": "タスクの実行は終了しました",
   "backend.toolError.CDP_RUN_RELEASED.message": "タスクは終了しています。遅れて届いたブラウザー操作は無視しました。",
   "backend.toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label": "タスクのタブ操作を利用できません",

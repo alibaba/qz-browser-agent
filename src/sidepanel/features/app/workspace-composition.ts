@@ -60,7 +60,9 @@ export function createWorkspaceComposition(options: WorkspaceOptions) {
   const isCurrentSession = (id: unknown) => Boolean(normalizeSessionId(id) && normalizeSessionId(id) === getCurrentSessionId());
   const switchTab: ReturnType<typeof createAppShellFeature>["switchTab"] = (tab, input = {}) => appShell?.switchTab(tab, input) === true;
   const switchToSession: Navigation["switchToSession"] = (id, input = {}) => {
-    if (!workspaceStarted && input.source === "notification") {
+    // Hold the target until boot finishes. Restoring the saved new-chat view would
+    // otherwise replace an import that arrived while the panel was still starting.
+    if (!workspaceStarted && (input.source === "notification" || input.source === "export_import")) {
       pendingSessionRevealId = normalizeSessionId(id) || null;
       return Promise.resolve(undefined);
     }

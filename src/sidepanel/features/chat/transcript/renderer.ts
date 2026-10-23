@@ -35,7 +35,7 @@ interface TranscriptOptions {
 interface RenderPlan { history: TranscriptEntry[]; prefiltered: boolean; partial: boolean }
 interface PlaybackState { target: string; units: string[]; visibleCount: number; carry: number; lastTs: number; lastRenderTs: number; raf: number; finishing: boolean }
 import { adoptRendererTree, prepareRendererTree } from "../../../tools/renderer-host.js";
-import { mergeTranscriptSnapshotWithLocalState } from "../../../../shared/session/session-codec.js";
+import { mergeTranscriptSnapshotWithLocalState, updateTranscriptWithAgentEvent } from "../../../../shared/session/session-codec.js";
 import { editUserTranscriptAndTruncate } from "../../../../shared/session/conversation-edit.js";
 import { findElementReferenceTokens } from "../../../../shared/element-reference.js";
 import { replaceLoneSurrogates } from "../../../../shared/unicode-utils.js";
@@ -1876,7 +1876,9 @@ function seedSessionTranscriptFromStorage(sessionId: unknown, incoming: SessionE
   const id = normalizeSessionId(sessionId);
   const next = Array.isArray(incoming) ? incoming.filter(Boolean) : [];
   if (!id || next.length === 0 || hasSessionTranscript(id)) return false;
-  setSessionTranscript(id, next);
+  // Apply a status received before hydration to the full stored history as well.
+  const settled = updateTranscriptWithAgentEvent(next, { type: "state", runtime: sessionState.getRuntime(id) });
+  setSessionTranscript(id, settled.transcript);
   return true;
 }
 

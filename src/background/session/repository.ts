@@ -231,7 +231,11 @@ export function createSessionRepository({
         if (normalizeParentSessionId(session.parentSessionId) === id) session.parentSessionId = parentId;
       }
       await storageArea.set({ [SESSIONS_KEY]: sessions });
-      await recordQueues.run(id, () => storageArea.remove([recordKey(id), transcriptCheckpointKey(id)])).catch(error => console.warn("[轻舟] deleted Session record cleanup failed", error));
+      await recordQueues.run(id, () => storageArea.remove([
+        recordKey(id),
+        transcriptCheckpointKey(id),
+        `_session_import_dedup_${id}`, // Obsolete cache from older builds.
+      ])).catch(error => console.warn("[轻舟] deleted Session record cleanup failed", error));
       await conversationQueues.run(id, () => storageArea.remove(activeConversationKey(id))).catch(error => console.warn("[轻舟] deleted Session conversation cleanup failed", error));
       await deleteRuntime(id).catch(error => console.warn("[轻舟] deleted Session runtime cleanup failed", error));
       return { sessionId: id, deleted: true, existed };
@@ -350,7 +354,11 @@ export function createSessionRepository({
   }
 
   async function readCompatibleStorage(id: string) {
-    const values = await storageArea.get([recordKey(id), activeConversationKey(id), transcriptCheckpointKey(id)]);
+    const values = await storageArea.get([
+      recordKey(id),
+      activeConversationKey(id),
+      transcriptCheckpointKey(id),
+    ]);
     assertSessionRecordReadable(values[recordKey(id)]);
     assertConversationReadable(values[activeConversationKey(id)]);
     readCheckpointRecord(values[recordKey(id)], values[transcriptCheckpointKey(id)]);

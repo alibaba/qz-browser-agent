@@ -1,0 +1,6 @@
+{
+  "debugger-detach.title": "Отладка отключена",
+  "debugger-detach.message": "Вы закрыли панель «Отладка этого браузера», поэтому соединение с отладчиком прервано. Продолжить эту задачу?",
+  "debugger-detach.continue": "Продолжить",
+  "debugger-detach.stop": "Остановить"
+}

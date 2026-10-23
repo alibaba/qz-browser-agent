@@ -27,6 +27,8 @@
   "backend.toolError.CDP_COMMAND_FAILED.message": "브라우저 디버깅 명령이 실패했습니다.",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.label": "작업 또는 실행 정보 누락",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.message": "이 호출에는 세션 또는 실행 식별 정보가 없어 브라우저 탭을 제어할 수 없습니다.",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.label": "다른 질문이 답변을 기다리고 있습니다",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.message": "대기 중인 질문에 답한 후 작업을 다시 시도하여 디버거 재연결을 확인하세요.",
   "backend.toolError.CDP_RUN_RELEASED.label": "작업 실행 종료됨",
   "backend.toolError.CDP_RUN_RELEASED.message": "작업이 종료되어 늦게 도착한 브라우저 조작을 무시했습니다.",
   "backend.toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label": "작업 탭 제어를 사용할 수 없음",

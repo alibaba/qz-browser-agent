@@ -417,7 +417,7 @@ function assertUiRuntimeContracts() {
   assert.match(sidepanelTransport, /case\s+"resend_prompt":[\s\S]*call\("sessions.resend",\s*\{\s*\.\.\.message,\s*sourceWindowId:/, "sidepanel transport should expose resend_prompt with its Side Panel window through the Background API");
   assert.match(sessionCommands, /function resendSessionMessageRuntime[\s\S]*editUserMessageAndRerun[\s\S]*images:\s*params\.images\s*\|\|\s*\[\]/, "runtime resend should pass images to the agent");
   assert.match(sessionCommands, /type:\s*"transcript_replace"/, "runtime should broadcast canonical transcript replacement after edit");
-  assert.match(sidepanel, /import\s*\{\s*mergeTranscriptSnapshotWithLocalState\s*\}\s*from\s*"\.\.\/\.\.\/\.\.\/\.\.\/shared\/session\/session-codec\.js"/, "transcript renderer should import shared snapshot reconciliation from the transcript codec");
+  assert.match(sidepanel, /import\s*\{[^}]*\bmergeTranscriptSnapshotWithLocalState\b[^}]*\}\s*from\s*"\.\.\/\.\.\/\.\.\/\.\.\/shared\/session\/session-codec\.js"/, "transcript renderer should import shared snapshot reconciliation from the transcript codec");
   assert.match(sessionCodec, /export\s+function\s+mergeTranscriptSnapshotWithLocalState/, "shared transcript codec should own snapshot reconciliation");
   assert.match(sessionCodec, /function\s+isProtectedLocalTool/, "shared transcript codec should explicitly protect local live tool evidence from snapshots");
   assert.doesNotMatch(sidepanel, /function\s+mergeSnapshotWithLocalTranscriptState/, "sidepanel should not keep a second snapshot reconciliation entrypoint");

@@ -3,7 +3,7 @@ import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import type { ToolContext } from "#sdk/background";
 type DiagnosticsHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "makeSessionTabTargetError" | "sendCdp"
-  | "secondsToMs" | "assertUrlAllowed">;
+  | "getDebuggerRun" | "secondsToMs" | "assertUrlAllowed">;
 interface RemoteObject { type?: string; subtype?: string; value?: unknown; description?: string; unserializableValue?: string }
 interface CallFrame { functionName?: string; url?: string; lineNumber?: number; columnNumber?: number }
 interface StackTrace { callFrames?: CallFrame[] }
@@ -44,6 +44,7 @@ export function createDiagnosticsTools({
   ToolExecutionError,
   makeSessionTabTargetError,
   sendCdp,
+  getDebuggerRun,
   secondsToMs,
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
 }: DiagnosticsHost) {
@@ -52,7 +53,7 @@ interface ConsoleRecord {
   stackTrace: ReturnType<typeof formatStackTrace>; args?: ReturnType<typeof formatRemoteObject>[];
   exception?: ReturnType<typeof formatRemoteObject>; level?: string;
 }
-interface ConsoleMonitor extends Monitor { records: ConsoleRecord[] }
+interface ConsoleMonitor extends Monitor { connectionId: number; records: ConsoleRecord[] }
 
 // ---------------------------------------------------------------------------
 // Network monitor: per-tab ring buffer over CDP Network events
@@ -63,7 +64,7 @@ const DEFAULT_NETWORK_LIMIT = 200;
 const DEFAULT_BODY_LIMIT = 120000;
 
 chrome.debugger?.onEvent?.addListener((source, method, params) => {
-  if (source.tabId == null || !method.startsWith("Network.")) return;
+  if (source.sessionId || source.tabId == null || !method.startsWith("Network.")) return;
   const monitor = networkMonitors.get(source.tabId);
   if (!monitor?.enabled) return;
   handleNetworkEvent(monitor, method, params as NetworkEvent);
@@ -73,8 +74,11 @@ const consoleMonitors = new Map<number, ConsoleMonitor>();
 const DEFAULT_CONSOLE_LIMIT = 200;
 
 chrome.debugger?.onEvent?.addListener((source, method, params) => {
-  if (source.tabId == null || !method.startsWith("Runtime.")) return;
-  const monitor = consoleMonitors.get(source.tabId);
+  if (source.sessionId || source.tabId == null
+    || (method !== "Runtime.consoleAPICalled" && method !== "Runtime.exceptionThrown")) return;
+  // UID tools can enable Runtime before diagnostics. Capture its one-time replay
+  // under the CDP lease, so the first read neither loses it nor toggles Runtime.
+  const monitor = getConsoleMonitor(source.tabId);
   if (!monitor?.enabled) return;
   handleConsoleEvent(monitor, method, params as ConsoleEvent);
 });
@@ -83,8 +87,7 @@ chrome.debugger?.onDetach?.addListener((source) => {
   if (source.tabId == null) return;
   const networkMonitor = networkMonitors.get(source.tabId);
   if (networkMonitor) networkMonitor.enabled = false;
-  const consoleMonitor = consoleMonitors.get(source.tabId);
-  if (consoleMonitor) consoleMonitor.enabled = false;
+  consoleMonitors.delete(source.tabId);
 });
 
 function getNetworkMonitor(tabId: number) {
@@ -107,14 +110,16 @@ function getNetworkMonitor(tabId: number) {
 }
 
 function getConsoleMonitor(tabId: number) {
+  const run = getDebuggerRun(tabId);
+  if (!run) return null;
   let monitor = consoleMonitors.get(tabId);
-  if (!monitor) {
+  if (!monitor || monitor.sessionId !== run.sessionId || monitor.runId !== run.runId
+    || monitor.connectionId !== run.connectionId) {
     monitor = {
       tabId,
-      enabled: false,
+      enabled: true,
       maxRecords: DEFAULT_CONSOLE_LIMIT,
-      sessionId: "",
-      runId: "",
+      ...run,
       records: [],
     };
     consoleMonitors.set(tabId, monitor);
@@ -122,26 +127,17 @@ function getConsoleMonitor(tabId: number) {
   return monitor;
 }
 
-function resetConsoleMonitor(monitor: ConsoleMonitor, maxRecords = monitor.maxRecords) {
-  monitor.maxRecords = clampNumber(maxRecords, 20, 1000, DEFAULT_CONSOLE_LIMIT);
-  monitor.records = [];
-}
-
 async function enableConsoleMonitor(tabId: number | undefined, { reset = false, maxRecords = DEFAULT_CONSOLE_LIMIT } = {}, context: ToolContext = {}) {
   if (!tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "read_console_messages" });
 
-  const monitor = getConsoleMonitor(tabId);
-  const runChanged = monitor.sessionId !== String(context.sessionId || "")
-    || monitor.runId !== String(context.runId || "");
-  if (runChanged) {
-    resetConsoleMonitor(monitor, maxRecords);
-    monitor.sessionId = String(context.sessionId || "");
-    monitor.runId = String(context.runId || "");
-  }
-  if (reset) resetConsoleMonitor(monitor, maxRecords);
-  monitor.maxRecords = clampNumber(maxRecords, 20, 1000, monitor.maxRecords);
-
   await sendCdp(tabId, "Runtime.enable", {}, context);
+  const monitor = getConsoleMonitor(tabId);
+  if (!monitor || monitor.sessionId !== context.sessionId || monitor.runId !== context.runId) {
+    throw new ToolExecutionError("CDP_RUN_RELEASED", "The Agent run no longer owns this debugger connection", { tabId });
+  }
+  if (reset) monitor.records = [];
+  monitor.maxRecords = clampNumber(maxRecords, 20, 1000, monitor.maxRecords);
+  monitor.records.splice(0, Math.max(0, monitor.records.length - monitor.maxRecords));
   monitor.enabled = true;
   return monitor;
 }

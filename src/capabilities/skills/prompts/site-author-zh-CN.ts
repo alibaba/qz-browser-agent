@@ -63,7 +63,7 @@ export const content = [
   "",
   "打开目标站点后，先观察页面、网络、DOM、登录状态和公开数据入口。分类用于帮助选择数据路径，不是一次性定论；如果站点呈现混合结构，可以按入口或候选工具分别记录判断。优先使用当前轻舟工具 schema 中可用的浏览器工具，例如：`open_tab`/`navigate`、`wait_for_navigation`、`wait_for_element`、`read_article`、`get_ax_tree`、`find_elements`、`inspect_element`、`run_script`、`network_recent`、`network_body`、`read_console_messages`、`screenshot`。",
   "",
-  "页面观察工具按当前契约使用：新页先 `get_ax_tree({ root:\"root\" })` 总览；复杂区域用 snapshot/actions 中的 target 作为 `root` 展开子树。读正文/列表/表格用 `read_article` 并显式传 `limit`；长文按 `hasMore/nextOffset` 分段，读某章节时使用 `outline` 条目的 `offset/endOffset/charCount` 再调用 `read_article`；需要 DOM 结构证据时，用返回的 `sourceSelector` 调 `read_dom`。`find_elements` 用于按 pattern/role/tag 找候选 target，返回的 `lineRange` 可给 `read_dom` 读取原始 HTML 行片段；`read_dom` 只用于验证隐藏字段、form/action、id/class/data-testid、p/br 等结构证据，不作为常规页面探索入口。",
+  "页面观察工具按当前契约使用：新页先 `get_ax_tree({ root:\"root\" })` 总览；复杂区域用 snapshot 中的 target 作为 `root` 展开子树。读正文/列表/表格用 `read_article` 并显式传 `limit`；长文按 `hasMore/nextOffset` 分段，读某章节时使用 `outline` 条目的 `offset/endOffset/charCount` 再调用 `read_article`；需要 DOM 结构证据时，用返回的 `sourceSelector` 调 `read_dom`。`find_elements` 用于按 pattern/role/tag 找候选 target，返回的 `lineRange` 可给 `read_dom` 读取原始 HTML 行片段；`read_dom` 只用于验证隐藏字段、form/action、id/class/data-testid、p/br 等结构证据，不作为常规页面探索入口。",
   "",
   "调用工具前必须做必填参数自检：`open_tab`/`navigate` 必须有 `url`，`run_script` 必须有可返回值的 `code`，`ask_user`/wait form 必须有 `message` 和非空 `fields`。如果还没构造出表单或 URL，先补齐候选菜单和表单字段，或者输出 `needs_user_design_confirmation` 停住。`run_script` 侦察时优先用一个能直接返回对象的表达式或函数表达式；若首次返回 `undefined`，先修正代码形态再继续归因，不要误判为站点 CSP 或页面不可读。",
   "",

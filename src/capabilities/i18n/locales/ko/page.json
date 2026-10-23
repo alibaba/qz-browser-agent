@@ -61,5 +61,6 @@
   "page.elementFocusLost": "입력란에서 포커스가 벗어났습니다. 제출 키는 전송되지 않았습니다. 페이지를 확인한 후 계속하세요.",
   "page.elementNotCheckable": "대상이 기본 체크박스나 라디오 버튼이 아닙니다. 다른 요소를 선택하세요.",
   "page.radioCannotBeUnchecked": "선택된 라디오 버튼은 클릭해서 해제할 수 없습니다. 같은 그룹의 다른 옵션을 선택하세요.",
-  "page.elementCheckStateMismatch": "요청한 선택 상태로 변경되지 않았습니다. 요소를 확인한 후 계속하세요."
+  "page.elementCheckStateMismatch": "요청한 선택 상태로 변경되지 않았습니다. 요소를 확인한 후 계속하세요.",
+  "page.inputNotDelivered": "입력이 전달되지 않았습니다. 페이지가 이 클릭을 받지 못했습니다. 탭 레이아웃이 끝난 뒤 다시 시도하세요."
 }

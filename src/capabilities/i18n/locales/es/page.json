@@ -61,5 +61,6 @@
   "page.elementFocusLost": "El campo perdió el foco. No se envió la tecla de envío. Revisa la página antes de continuar.",
   "page.elementNotCheckable": "El destino no es una casilla ni un botón de opción nativos. Elige otro elemento.",
   "page.radioCannotBeUnchecked": "No se puede desmarcar un botón de opción seleccionado haciendo clic en él. Elige otra opción del grupo.",
-  "page.elementCheckStateMismatch": "El control no quedó en el estado de selección solicitado. Revísalo antes de continuar."
+  "page.elementCheckStateMismatch": "El control no quedó en el estado de selección solicitado. Revísalo antes de continuar.",
+  "page.inputNotDelivered": "La entrada no se entregó. La página no recibió este clic. Deja que la pestaña termine de componerse y vuelve a intentarlo."
 }

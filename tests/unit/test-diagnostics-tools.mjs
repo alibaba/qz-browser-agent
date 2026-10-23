@@ -4,6 +4,7 @@ const eventListeners = [];
 const detachListeners = [];
 const debuggerCommands = [];
 const cdpCommands = [];
+let debuggerRun = null;
 
 globalThis.chrome = {
   storage: { local: { async get() { return {}; } } },
@@ -32,7 +33,9 @@ const runtime = createDiagnosticsTools({
   registerTool({ name, description: _description, parameters: _parameters, execute }) { definitions.set(name, { execute }); },
   ToolExecutionError,
   makeSessionTabTargetError(code, details = {}) { return new ToolExecutionError(code, code, details); },
+  getDebuggerRun: () => debuggerRun,
   async sendCdp(tabId, method, params, context) {
+    debuggerRun = { sessionId: context.sessionId, runId: context.runId, connectionId: 1 };
     cdpCommands.push([tabId, method, params, context]);
     if (method === "Network.getResponseBody") return { body: `body-${tabId}`, base64Encoded: false };
     return {};
@@ -76,6 +79,14 @@ emit("Network.loadingFinished", { requestId: "r1", timestamp: 1.2, encodedDataLe
 
 const recent = await definitions.get("network_recent").execute({ tabId: 4, limit: 10 }, null, runOne);
 assert.equal(recent.records, 1);
+for (const listener of eventListeners) listener({ tabId: 4, sessionId: "child" }, "Network.requestWillBeSent", {
+  requestId: "child",
+  request: { url: "https://example.test/child", method: "GET", headers: {} },
+  type: "Fetch",
+  timestamp: 1.3,
+});
+const afterChildSession = await definitions.get("network_recent").execute({ tabId: 4, limit: 10 }, null, runOne);
+assert.equal(afterChildSession.records, 1, "a child debugger session must not enter the page network monitor");
 assert.equal(recent.results[0].status, 200);
 assert.equal(recent.results[0].durationMs, 200);
 

@@ -27,6 +27,8 @@
   "backend.toolError.CDP_COMMAND_FAILED.message": "Команда отладки браузера завершилась ошибкой.",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.label": "Нет сведений о задаче или запуске",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.message": "У вызова нет идентификатора сессии или запуска, поэтому он не может управлять вкладкой.",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.label": "Другой вопрос ожидает ответа",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.message": "Ответьте на ожидающий вопрос, затем повторите операцию, чтобы подтвердить повторное подключение отладчика.",
   "backend.toolError.CDP_RUN_RELEASED.label": "Запуск задачи завершён",
   "backend.toolError.CDP_RUN_RELEASED.message": "Задача завершена; запоздалая операция браузера проигнорирована.",
   "backend.toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label": "Управление вкладкой задачи недоступно",

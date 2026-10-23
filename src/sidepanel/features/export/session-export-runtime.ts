@@ -1,7 +1,8 @@
 import { resolveFamilyTimelineTarget } from "../../tools/timeline-navigation.js";
+import { readSessionImportLabels, sessionImportButtonText } from "../../../shared/session/session-import-copy.js";
 /** Standalone exported HTML entry, compiled and embedded by build-extension. No extension APIs. */
 (() => {
-  // Exported controls retain the language chosen when the document was created.
+  // Captured document labels stay with the export. Import-button labels from the extension bridge replace them.
   const messages: Record<string, unknown> = JSON.parse(document.getElementById("qingzhou-export-messages")?.textContent || "{}");
   const t = (key: string): string => typeof messages[key] === "string" ? messages[key] : key;
   let imageLightbox: HTMLElement | null = null;
@@ -194,6 +195,27 @@ import { resolveFamilyTimelineTarget } from "../../tools/timeline-navigation.js"
   let cta: HTMLElement | null = document.getElementById("qingzhou-session-cta");
   if (!cta) return;
 
+  function useImportLabels(value: unknown) {
+    const labels = readSessionImportLabels(value);
+    if (!labels) return;
+    Object.assign(messages, labels);
+  }
+
+  function refreshImportButton() {
+    if (!(cta instanceof HTMLButtonElement) || !cta.hasAttribute("data-qingzhou-session-import")) return;
+    cta.textContent = sessionImportButtonText({
+      busy: cta.getAttribute("aria-busy") === "true",
+      imported: Boolean(cta.getAttribute("data-qingzhou-imported-session-id")),
+      titled: Boolean(cta.title),
+    }, {
+      importQingzhou: t("importQingzhou"),
+      importing: t("importing"),
+      imported: t("imported"),
+      retryImport: t("retryImport"),
+      importFailedRetry: t("importFailedRetry"),
+    });
+  }
+
   function enableImport() {
     if (!cta || cta.hasAttribute("data-qingzhou-session-import")) return;
     let button = document.createElement("button");
@@ -232,7 +254,11 @@ import { resolveFamilyTimelineTarget } from "../../tools/timeline-navigation.js"
     if (!data || typeof data !== "object" || Array.isArray(data)) return;
     const message = data as Record<string, unknown>;
     if (message.type !== RESULT_TYPE) return;
-    if (message.action === "probe" && message.installed) enableImport();
+    if (message.action === "probe" && message.installed) {
+      useImportLabels(message.labels);
+      enableImport();
+      refreshImportButton();
+    }
     if (message.action === "import") updateImportState(message);
   });
 

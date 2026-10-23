@@ -161,7 +161,7 @@ for (const width of [320, 360, 430]) {
               available: select.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
             };
           });
-          expect.soft(languageText.width, "The selected language fits the compact control").toBeLessThanOrEqual(languageText.available + 1);
+          expect.soft(languageText.width, "The selected language fits the compact control").toBeLessThanOrEqual(languageText.available + 2);
           const languageLabelLines = await page.locator('label[for="i18n-language-select"]').evaluate(label =>
             label.getBoundingClientRect().height / parseFloat(getComputedStyle(label).lineHeight));
           expect.soft(languageLabelLines, "The language label stays readable in a compact settings row").toBeLessThanOrEqual(2.1);

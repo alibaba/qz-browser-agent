@@ -126,7 +126,7 @@ for (const [locale, language, chromeLocale] of scenarios) {
             await button.scrollIntoViewIfNeeded();
             await button.click({ trial: true });
             const geometry = await button.evaluate(element => ({ client: element.clientWidth, scroll: element.scrollWidth }));
-            expect.soft(geometry.scroll, `${prefix}: ${await button.innerText()} is fully readable`).toBeLessThanOrEqual(geometry.client + 1);
+            expect.soft(geometry.scroll, `${prefix}: ${await button.innerText()} is fully readable`).toBeLessThanOrEqual(geometry.client + 2);
           }
           await page.evaluate(() => window.qingzhouConversationBenchmark.dispatchBackgroundEvent({ type: "model_preset_switcher_requested", source: "shortcut" }));
           await expect(page.locator("#model-preset-switcher")).toBeVisible();

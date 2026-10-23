@@ -27,6 +27,8 @@
   "backend.toolError.CDP_COMMAND_FAILED.message": "ब्राउज़र की डीबग कमांड विफल हुई।",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.label": "कार्य या रन की जानकारी नहीं है",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.message": "इस कॉल में सत्र या रन की पहचान नहीं है, इसलिए यह ब्राउज़र टैब नियंत्रित नहीं कर सकती।",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.label": "एक और प्रश्न का उत्तर बाकी है",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.message": "लंबित प्रश्न का उत्तर दें, फिर डीबगर से दोबारा जुड़ने की पुष्टि करने के लिए कार्रवाई फिर से आज़माएँ।",
   "backend.toolError.CDP_RUN_RELEASED.label": "कार्य का रन समाप्त हुआ",
   "backend.toolError.CDP_RUN_RELEASED.message": "कार्य समाप्त हुआ; देर से आई ब्राउज़र कार्रवाई अनदेखी की गई।",
   "backend.toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label": "कार्य टैब नियंत्रण उपलब्ध नहीं",

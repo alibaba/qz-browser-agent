@@ -37,12 +37,45 @@ const html = `<!doctype html><meta name="viewport" content="width=device-width,i
 
 // Use the real extension's tool composition and Chrome debugger transport, as in page-mode.spec.
 async function createHarness(mode, launchOptions = {}) {
-  const server = createServer((_req, res) => { res.writeHead(200, { "Content-Type": "text/html" }); res.end(html); });
+  const submissions = [];
+  const navigationRequests = [];
+  const responseTimers = new Set();
+  const server = createServer((req, res) => {
+    const url = new URL(req.url, "http://fixture.test");
+    res.setHeader("Content-Type", "text/html");
+    if (["/navigation-download", "/navigation-no-content", "/navigation-blocked"].includes(url.pathname)) {
+      navigationRequests.push(url.pathname);
+      if (url.pathname === "/navigation-no-content") { res.writeHead(204); res.end(); }
+      else if (url.pathname === "/navigation-download") {
+        res.writeHead(200, { "Content-Type": "text/plain", "Content-Disposition": 'attachment; filename="navigation.txt"' });
+        res.end("Downloaded once");
+      } else res.end("<!doctype html><title>Unexpected navigation</title>");
+    } else if (req.method === "POST" && url.pathname.startsWith("/navigation-")) {
+      req.resume();
+      submissions.push(req.url);
+      const timer = setTimeout(() => {
+        responseTimers.delete(timer);
+        res.end("<!doctype html><title>Submission completed</title><p>Submitted once</p>");
+      }, Number(url.searchParams.get("delay") || 0));
+      responseTimers.add(timer);
+    } else if (url.pathname === "/navigation-form" || url.pathname === "/navigation-same") {
+      const action = url.pathname === "/navigation-same" ? req.url : `/navigation-done${url.search}`;
+      res.end(`<!doctype html><title>Before submission</title>
+        <form method="post" action="${action}"><button id="send" style="width:160px;height:40px">Send once</button></form>
+        <script>
+          sessionStorage.navigationClicks = '0';
+          document.querySelector('#send').addEventListener('click', event => {
+            if (event.isTrusted) sessionStorage.navigationClicks = String(Number(sessionStorage.navigationClicks) + 1);
+          });
+        </script>`);
+    } else res.end(html);
+  });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const directory = await mkdtemp(join(tmpdir(), "qingzhou-element-actions-"));
   let browser;
   const close = async () => {
     await browser?.close(); server.closeAllConnections();
+    for (const timer of responseTimers) clearTimeout(timer);
     await new Promise(resolve => server.close(resolve));
     await rm(directory, { recursive: true, force: true });
   };
@@ -98,7 +131,7 @@ async function createHarness(mode, launchOptions = {}) {
     const opened = await call("open_tab", { url: `http://127.0.0.1:${server.address().port}/`, mode });
     expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
     await expect.poll(async () => { try { return (await state()).ready; } catch { return "loading"; } }).toBe("complete");
-    return { state, close, worker, page: browser.pages().find(page => page.url().startsWith('http://127.0.0.1:')),
+    return { state, close, worker, submissions, navigationRequests, page: browser.pages().find(page => page.url().startsWith('http://127.0.0.1:')),
       command: (method, params) => worker.evaluate(({ method, params }) => elementHarness.command(method, params), { method, params }),
       screen: (name, args) => worker.evaluate(({ name, args }) => elementHarness.screen(name, args), { name, args }),
       blockEnter: () => worker.evaluate(() => elementHarness.blockEnter()),
@@ -320,3 +353,296 @@ for (const mode of ["desktop", "mobile"]) {
     } finally { await h.close(); }
   });
 }
+
+test("httpbin pizza radios check through the wrapped label", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    await h.page.setContent(`<!doctype html><title>pizza</title>
+      <form method="post" action="/post">
+        <fieldset>
+          <legend> Pizza Size </legend>
+          <p><label> <input type=radio name=size value="small"> Small </label></p>
+          <p><label> <input type=radio name=size value="medium"> Medium </label></p>
+          <p><label> <input type=radio name=size value="large"> Large </label></p>
+        </fieldset>
+        <fieldset>
+          <legend> Pizza Toppings </legend>
+          <p><label> <input type=checkbox name="topping" value="bacon"> Bacon </label></p>
+          <p><label> <input type=checkbox name="topping" value="onion"> Onion </label></p>
+        </fieldset>
+      </form>`);
+    const call = (target, action) => h.worker.evaluate(
+      ({ target, action }) => elementHarness.call("act_on_element", { target, action }),
+      { target, action },
+    );
+    const large = await call('css:input[name="size"][value="large"]', "check");
+    const checks = await h.page.evaluate(() => Object.fromEntries([...document.querySelectorAll("input")].map(el => [el.value || el.name, el.checked])));
+    expect(large, JSON.stringify({ large, checks })).toMatchObject({ checked: true, changed: true, method: "cdp" });
+    expect(checks).toMatchObject({ small: false, medium: false, large: true });
+    const label = await call("css:fieldset:nth-of-type(1) > p:nth-of-type(2) > label", "click");
+    const afterLabel = await h.page.evaluate(() => Object.fromEntries([...document.querySelectorAll('input[type=radio]')].map(el => [el.value, el.checked])));
+    expect(label, JSON.stringify({ label, afterLabel })).not.toHaveProperty("error");
+    expect(afterLabel).toMatchObject({ small: false, medium: true, large: false });
+    const bacon = await call('css:input[name="topping"][value="bacon"]', "check");
+    expect(bacon, JSON.stringify(bacon)).toMatchObject({ checked: true, changed: true, inputDelivered: true });
+    const opened = await h.worker.evaluate((url) => elementHarness.call("open_tab", { url }), h.page.url());
+    expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
+    const shot = await h.worker.evaluate((tabId) => elementHarness.call("screenshot", { tabId, actionable: true }, "run_script"), opened.id);
+    expect(shot, JSON.stringify({ ...shot, _image: undefined })).not.toHaveProperty("error");
+    const acted = await h.worker.evaluate((tabId) => elementHarness.call("act_on_screen", {
+      tabId, action: "click", x: 20, y: 20, returnScreenshot: false,
+    }, "run_script"), opened.id);
+    expect(acted, JSON.stringify(acted)).not.toHaveProperty("code", "SCREENSHOT_CONTEXT_STALE");
+  } finally { await h.close(); }
+});
+
+test("a click cancelled at pointerdown still counts as delivered", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    await h.page.setContent(`<!doctype html><button id="once" type="button" style="width:160px;height:40px">Once</button>
+      <script>
+        window.clicks = 0;
+        const button = document.querySelector("#once");
+        button.addEventListener("pointerdown", event => event.preventDefault());
+        button.addEventListener("click", () => { window.clicks += 1; });
+      </script>`);
+    const result = await h.act("once", "click");
+    expect(result, JSON.stringify(result)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+    expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+    expect(await h.page.evaluate(() => window.clicks)).toBe(1);
+  } finally { await h.close(); }
+});
+
+test("a click that navigates is not reported as undelivered input", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    await h.worker.evaluate(() => {
+      const original = chrome.scripting.executeScript.bind(chrome.scripting);
+      globalThis.receiptReads = 0;
+      chrome.scripting.executeScript = async options => {
+        const source = String(options?.func || "");
+        if (!source.includes("__qzInputReceipts") || options.args?.[1] !== false) return original(options);
+        // A committed navigation leaves this read on a document that was never armed.
+        receiptReads += 1;
+        const root = globalThis;
+        const previousDocument = root.document;
+        root.document = { addEventListener() {} };
+        try { return [{ result: options.func(options.args[0], false) }]; }
+        finally {
+          if (previousDocument === undefined) delete root.document;
+          else root.document = previousDocument;
+        }
+      };
+    });
+    for (const [id, html, url] of [
+      ["go", `<!doctype html><a id="go" href="/next" style="display:block;width:160px;height:40px">Next</a>`, "/next"],
+      ["send", `<!doctype html><form action="/sent" method="get"><button id="send" type="submit" style="width:160px;height:40px">Send</button></form>`, "/sent"],
+    ]) {
+      await h.page.setContent(html);
+      const result = await h.act(id, "click");
+      expect(result, JSON.stringify(result)).toMatchObject({
+        clickDispatched: true, inputDelivered: true, navigated: true,
+      });
+      expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+      await expect.poll(() => h.page.url()).toContain(url);
+    }
+    expect(await h.worker.evaluate(() => receiptReads)).toBe(2);
+  } finally { await h.close(); }
+});
+
+for (const outcome of ["download", "no-content", "blocked"]) {
+  test(`a hidden link whose navigation ends as ${outcome} does not wait for a document commit`, async () => {
+    test.setTimeout(120_000);
+    const h = await createHarness("desktop");
+    try {
+      const beforeUrl = h.page.url();
+      await h.page.setContent(`<!doctype html><title>Original document</title>
+        <button id="activate">Enable unload confirmation</button>
+        <a id="request" href="/navigation-${outcome}" hidden>Request</a>
+        <script>window.originalDocument = crypto.randomUUID();</script>`);
+      const documentMarker = await h.page.evaluate(() => window.originalDocument);
+      const downloads = [];
+      let dialogs = 0;
+      h.page.on("download", download => downloads.push(download));
+      if (outcome === "blocked") {
+        await h.page.bringToFront();
+        await h.page.click("#activate");
+        await h.page.evaluate(() => {
+          window.addEventListener("beforeunload", event => { event.preventDefault(); event.returnValue = ""; });
+        });
+        h.page.on("dialog", async dialog => { dialogs++; await dialog.dismiss(); });
+      }
+      const started = performance.now();
+      const result = await h.act("request", "click");
+      expect(performance.now() - started, JSON.stringify(result)).toBeLessThan(8000);
+      expect(result, JSON.stringify(result)).toMatchObject({
+        method: "href_navigation", navigationPending: false, navigated: false, urlChanged: false,
+        pageBefore: { url: beforeUrl }, pageAfter: { url: beforeUrl },
+      });
+      expect(await h.page.evaluate(() => window.originalDocument)).toBe(documentMarker);
+      expect(h.navigationRequests).toEqual(outcome === "blocked" ? [] : [`/navigation-${outcome}`]);
+      expect(dialogs).toBe(outcome === "blocked" ? 1 : 0);
+      if (outcome === "download") {
+        await expect.poll(() => downloads.length).toBe(1);
+        expect(downloads[0].suggestedFilename()).toBe("navigation.txt");
+      } else expect(downloads).toHaveLength(0);
+    } finally { await h.close(); }
+  });
+}
+
+test("form submission navigation waits for delayed responses without submitting twice", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    const origin = new URL(h.page.url()).origin;
+    for (const [path, delay] of [["/navigation-form", 1500], ["/navigation-form", 0], ["/navigation-same", 1500]]) {
+      const beforeUrl = `${origin}${path}?delay=${delay}`;
+      const afterUrl = path === "/navigation-same" ? beforeUrl : `${origin}/navigation-done?delay=${delay}`;
+      await h.page.goto(beforeUrl);
+      const beforeSubmissions = h.submissions.length;
+      const result = await h.act("send", "click");
+      expect(result, JSON.stringify(result)).toMatchObject({
+        clickDispatched: true, inputDelivered: true, navigated: true,
+        urlChanged: afterUrl !== beforeUrl,
+        pageBefore: { url: beforeUrl },
+        pageAfter: { url: afterUrl, title: "Submission completed" },
+        _pageUrl: afterUrl, _pageTitle: "Submission completed",
+      });
+      expect(h.submissions.length - beforeSubmissions).toBe(1);
+      expect(await h.page.evaluate(() => Number(sessionStorage.navigationClicks))).toBe(1);
+      expect(h.page.url()).toBe(afterUrl);
+    }
+    const beforeSubmissions = h.submissions.length;
+    const url = h.page.url();
+    await h.page.setContent(`<!doctype html><title>Prevented submission</title>
+      <form method="post" action="/navigation-done"><button id="prevented" style="width:160px;height:40px">Keep editing</button></form>
+      <script>window.clicks=0;window.submits=0;
+        document.querySelector('button').onclick=()=>{clicks++};
+        document.querySelector('form').onsubmit=event=>{event.preventDefault();submits++};
+      </script>`);
+    const prevented = await h.act("prevented", "click");
+    expect(prevented, JSON.stringify(prevented)).toMatchObject({
+      clickDispatched: true, inputDelivered: true, navigated: false, urlChanged: false,
+      pageAfter: { url }, _pageUrl: url,
+    });
+    expect(h.submissions).toHaveLength(beforeSubmissions);
+    expect(await h.page.evaluate(() => ({ clicks, submits }))).toEqual({ clicks: 1, submits: 1 });
+  } finally { await h.close(); }
+});
+
+const clickFrameDocument = `<!doctype html><style>html,body{margin:0;height:100%}button{width:100%;height:100%;margin:0}</style>
+  <button id="inner" type="button">Inside</button>
+  <script>window.clicks=0;document.querySelector("#inner").addEventListener("click",()=>{window.clicks+=1});</script>`;
+const keyFrameDocument = `<!doctype html><style>html,body{margin:0}input{width:100%;height:48px;margin:0;box-sizing:border-box}</style>
+  <input id="keys">
+  <script>window.keys=[];document.querySelector("#keys").addEventListener("keydown",event=>{window.keys.push(event.key)});</script>`;
+
+async function installFrames(page, frames) {
+  await page.setContent("<!doctype html><title>frames</title><body></body>");
+  await page.evaluate(specs => {
+    for (const spec of specs) {
+      const frame = document.createElement("iframe");
+      frame.id = spec.id;
+      frame.name = spec.name;
+      frame.setAttribute("style", "width:220px;height:48px;border:0;display:block;margin:0");
+      if (spec.src) frame.src = spec.src;
+      else frame.srcdoc = spec.html;
+      document.body.append(frame);
+    }
+  }, frames);
+}
+
+async function waitForFrameControl(page, name, selector) {
+  await expect.poll(async () => {
+    const frame = page.frame({ name });
+    if (!frame) return 0;
+    return frame.evaluate(target => document.querySelector(target)?.getBoundingClientRect().width || 0, selector).catch(() => 0);
+  }, { timeout: 15000 }).toBeGreaterThan(20);
+}
+
+test("an iframe click lands once and its key still arrives", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  const cross = createServer((request, response) => {
+    response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    response.end(request.url?.includes("key") ? keyFrameDocument : clickFrameDocument);
+  });
+  try {
+    await new Promise(resolve => cross.listen(0, "127.0.0.1", resolve));
+    const port = cross.address().port;
+    await installFrames(h.page, [
+      { id: "frame", name: "same-click", html: clickFrameDocument },
+      { id: "keyframe", name: "same-key", html: keyFrameDocument },
+      { id: "xoframe", name: "cross-click", src: `http://127.0.0.1:${port}/click` },
+      { id: "xokey", name: "cross-key", src: `http://127.0.0.1:${port}/key` },
+    ]);
+    for (const [name, selector] of [["same-click", "button"], ["same-key", "input"], ["cross-click", "button"], ["cross-key", "input"]]) {
+      await waitForFrameControl(h.page, name, selector);
+    }
+    for (const [id, name] of [["frame", "same-click"], ["xoframe", "cross-click"]]) {
+      const result = await h.act(id, "click");
+      const clicks = await h.page.frame({ name }).evaluate(() => window.clicks);
+      expect(result, JSON.stringify({ result, clicks })).toMatchObject({ clickDispatched: true, inputDelivered: true });
+      expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+      expect(clicks).toBe(1);
+    }
+    for (const [id, name] of [["keyframe", "same-key"], ["xokey", "cross-key"]]) {
+      const result = await h.act(id, "press", { key: "a" });
+      const keys = await h.page.frame({ name }).evaluate(() => window.keys);
+      expect(result, JSON.stringify({ result, keys })).toMatchObject({ pressed: true, inputDelivered: true });
+      expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+      expect(keys).toContain("a");
+    }
+  } finally {
+    cross.closeAllConnections?.();
+    await new Promise(resolve => cross.close(resolve));
+    await h.close();
+  }
+});
+
+test("a confirmed miss is one click and an unknown receipt still presses", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    await h.page.setContent(`<!doctype html><button id="once" type="button" style="width:160px;height:40px">Once</button>
+      <input id="keys" style="width:160px;height:40px">
+      <script>
+        window.clicks = 0; window.keys = [];
+        document.querySelector("#once").addEventListener("click", () => { window.clicks += 1; });
+        document.querySelector("#keys").addEventListener("keydown", event => { window.keys.push(event.key); });
+      </script>`);
+    await h.worker.evaluate(() => {
+      const original = chrome.scripting.executeScript.bind(chrome.scripting);
+      globalThis.receiptMode = "zero";
+      chrome.scripting.executeScript = async options => {
+        const source = String(options?.func || "");
+        if (source.includes("__qzInputReceipts") && options.args?.[1] === false) {
+          const real = await original(options);
+          const result = receiptMode === "zero" ? 0 : null;
+          return real.map(frame => ({ ...frame, result }));
+        }
+        return original(options);
+      };
+    });
+    const missed = await h.act("once", "click");
+    expect(missed, JSON.stringify(missed)).toMatchObject({
+      code: "INPUT_NOT_DELIVERED", clickDispatched: true, inputDelivered: false,
+    });
+    expect(await h.page.evaluate(() => window.clicks)).toBe(1);
+    const skipped = await h.act("keys", "press", { key: "a" });
+    expect(skipped, JSON.stringify(skipped)).toMatchObject({ code: "INPUT_NOT_DELIVERED", clickDispatched: true });
+    expect(await h.page.evaluate(() => window.keys)).toEqual([]);
+
+    await h.worker.evaluate(() => { receiptMode = "unknown"; });
+    const clicked = await h.act("once", "click");
+    expect(clicked, JSON.stringify(clicked)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+    expect(clicked).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+    expect(await h.page.evaluate(() => window.clicks)).toBe(2);
+    const pressed = await h.act("keys", "press", { key: "a" });
+    expect(pressed, JSON.stringify(pressed)).toMatchObject({ pressed: true, inputDelivered: true });
+    expect(await h.page.evaluate(() => window.keys)).toContain("a");
+  } finally { await h.close(); }
+});

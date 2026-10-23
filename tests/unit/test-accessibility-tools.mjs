@@ -24,6 +24,7 @@ registerAccessibilityTools({
   registerElementRef: ref => refs.push(ref),
   resolveElementReference: async () => ({ tabId: 8, target: "css:button", selector: "button", index: 0 }),
   backendNodeIdForSelector: async () => 2,
+  bindBackendNodes: async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 2) }),
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),
   sendToContent: async () => input,
   withDebugger: async (id, fn, context) => {
@@ -37,9 +38,9 @@ registerAccessibilityTools({
 const context = { sessionId: "owner", runId: "run" };
 const result = await definition.execute({ tabId: 8 }, null, context);
 assert.equal(result.returnedNodeCount, 2);
-assert.equal(result.actions[0].target, "uid:snapshot_1");
-assert.equal("selector" in result.actions[0], false);
-assert.deepEqual(result.headings, [{ level: 0, text: "Section" }]);
+assert.match(result.snapshot, /target=uid:snapshot\.1 button "Continue"/);
+assert.equal("actions" in result, false);
+assert.equal("headings" in result, false);
 assert.deepEqual(result.canvases, overview.canvases);
 assert.ok(refs.every(ref => ref.sessionId === "owner" && ref.tabId === 8));
 const subtree = await definition.execute({ tabId: 8, root: "css:button" }, null, context);
@@ -49,5 +50,6 @@ input = { actions: [{ selector: 123 }] };
 const malformed = await definition.execute({ tabId: 8 }, null, context);
 assert.equal(malformed.pageOverviewError.code, "PAGE_OVERVIEW_FAILED");
 assert.equal(malformed.returnedNodeCount, 2, "AX output remains available after invalid overview");
-assert.deepEqual(malformed.actions, []);
+assert.equal("actions" in malformed, false);
+assert.equal("headings" in malformed, false);
 console.log("accessibility tree and unknown content boundary passed");

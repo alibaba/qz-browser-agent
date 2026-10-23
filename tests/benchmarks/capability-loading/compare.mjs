@@ -8,6 +8,7 @@ import { parseArgs } from "node:util";
 import { chromium } from "playwright";
 import { installBenchmarkChromeStub } from "../../browser/benchmark-chrome-stub.mjs";
 import { comparePixels } from "../conversation-render/compare-revisions.mjs";
+import { skipWithoutImageMagick } from "../../support/imagemagick.mjs";
 
 const { values } = parseArgs({ options: {
   reference: { type: "string" }, candidate: { type: "string" }, fixture: { type: "string" },
@@ -18,6 +19,7 @@ const directories = { reference: resolve(values.reference), candidate: resolve(v
 const output = resolve(values.output), rounds = Number(values.rounds);
 assert.ok(Number.isInteger(rounds) && rounds > 0);
 assert.ok(!existsSync(output), `Refusing to overwrite ${output}`);
+skipWithoutImageMagick("capability loading comparison");
 mkdirSync(output, { recursive: true });
 const save = (name, value) => writeFileSync(join(output, name), `${JSON.stringify(value, null, 2)}\n`);
 let active = "reference";

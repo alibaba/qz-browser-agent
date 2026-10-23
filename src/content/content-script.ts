@@ -15,7 +15,7 @@ interface ElementSummary extends PageAction {
   rect: { x: number; y: number; w: number; h: number }; clickablePoint: PagePoint | null;
 }
 interface ContentRequest {
-  action: string; selector?: string; source?: string; offset?: number; limit?: number;
+  action: string; selector?: string; editingHost?: boolean; fillToken?: string; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
   index?: number; block?: ScrollLogicalPosition; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
@@ -28,8 +28,11 @@ interface PickerState {
   hoverTimer: number; renderedTarget: Element | null; focusRect: PickerRect | null; immediateUpdate: boolean;
   raf: number; motionRaf: number; timer: number; listeners: [string, EventListener, boolean | AddEventListenerOptions][];
 }
+type ContentMessageListener = Parameters<typeof chrome.runtime.onMessage.addListener>[0];
 interface ContentGlobals {
   __QZ_CONTENT_VERSION?: string; __QZ_CONTENT_READY?: boolean; QingzhouArticleExtractor?: ArticleExtractor;
+  __QZ_CONTENT_MESSAGE_LISTENER?: ContentMessageListener;
+  __qzInvoke?: (node: Node | null, payload: ContentRequest) => Promise<unknown>;
 }
 const host = globalThis as typeof globalThis & ContentGlobals;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -37,7 +40,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-09-23-image-capture-identity";
+  const QZ_CONTENT_VERSION = "2026-10-22-iframe-frame";
   const imageSourceIdentities = new WeakMap<HTMLImageElement, { source: string; identity: string }>();
   const imageSourceScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let imageSourceSequence = 0;
@@ -50,13 +53,13 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   let elementPickerGeneration = 0;
   let elementPickerStarting = false;
   // Skip duplicate injection of this version; a new version refreshes styles and handlers.
-  if (host.__QZ_CONTENT_VERSION === QZ_CONTENT_VERSION) return;
+  if (host.__QZ_CONTENT_VERSION === QZ_CONTENT_VERSION && typeof host.__qzInvoke === "function") return;
   host.__QZ_CONTENT_READY = true;
   host.__QZ_CONTENT_VERSION = QZ_CONTENT_VERSION;
 
   // Content actions share one reply channel; asynchronous handlers must keep it open.
 
-  chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
+  const onMessage: ContentMessageListener = (raw: unknown, _sender, sendResponse) => {
     const msg = (raw && typeof raw === "object" ? raw : {}) as ContentRequest;
     const handler = handlers[msg.action];
     if (!handler) {
@@ -77,7 +80,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       )));
 
     return true; // Keep sendResponse available for the asynchronous handler.
-  });
+  };
+  // Reinitialization replaces the old message owner before accepting new actions.
+  if (host.__QZ_CONTENT_MESSAGE_LISTENER) chrome.runtime.onMessage.removeListener(host.__QZ_CONTENT_MESSAGE_LISTENER);
+  chrome.runtime.onMessage.addListener(onMessage);
+  host.__QZ_CONTENT_MESSAGE_LISTENER = onMessage;
 
   // Handlers
 
@@ -753,6 +760,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function queryAll(selector: unknown) {
+    if (selector instanceof Element) {
+      return selector.isConnected
+        ? { elements: [selector] }
+        : { error: toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {}), elements: [] as Element[] };
+    }
     if (typeof selector !== "string" || !selector.trim()) {
       return {
         error: toolError("MISSING_SELECTOR", "selector is required", { selector }),
@@ -780,7 +792,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   function queryElement(selector: unknown, index: number) {
     const query = queryAll(selector);
     if (query.error) return { ...query.error, interactable: getInteractableElements() };
-    const element = query.elements[index];
+    const element = selector instanceof Element ? query.elements[0] : query.elements[index];
     if (!element) {
       return {
         ...toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
@@ -887,7 +899,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   async function readImageElement({ selector, index = 0, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE, format = "png", quality = 0.88 }: Partial<ContentRequest>) {
     const query = queryAll(selector);
     if (query.error) return query.error;
-    const matched = query.elements[Math.max(0, Math.floor(Number(index) || 0))];
+    const requested: unknown = selector;
+    const matched = requested instanceof Element ? query.elements[0] : query.elements[Math.max(0, Math.floor(Number(index) || 0))];
     if (!matched) {
       return toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
         selector,
@@ -1959,7 +1972,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         || (target.isContentEditable && !hasLineBreaks(value)) ? "text" : "content";
       target.scrollIntoView({ behavior: "instant", block: "center" });
       target.focus({ preventScroll: true });
-      if (!target.isConnected || document.activeElement !== target) {
+      if (!target.isConnected || !elementHasFocus(target)) {
         return toolError("ELEMENT_FOCUS_FAILED", "Element could not receive focus", getElementSummary(target));
       }
       if (fillMode === "text") {
@@ -1968,7 +1981,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         } else if (!selectEditableContents(target)) {
           return toolError("ELEMENT_SELECTION_FAILED", "Element contents could not be selected", getElementSummary(target));
         }
-        if (!target.isConnected || document.activeElement !== target) {
+        if (!target.isConnected || !elementHasFocus(target)) {
           return toolError("ELEMENT_FOCUS_FAILED", "Element lost focus while selecting its contents", getElementSummary(target));
         }
       }
@@ -1993,7 +2006,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return {
         ...getElementSummary(el),
         value: getElementValue(el, true),
-        focused: document.activeElement === el,
+        focused: elementHasFocus(el),
         checked: "checked" in el ? !!el.checked : undefined,
       };
     },
@@ -2012,7 +2025,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         const inspection = getElementInspection(candidate);
         const point = inspection.clickablePoint;
         if (!inspection.visible || inspection.disabled || !pointInViewport(point) || inspection.state.obscuredAtCenter) continue;
-        let hit = point && document.elementFromPoint(point.x, point.y);
+        let hit = point && elementAtPoint(candidate, point.x, point.y);
         if (!hit || (hit !== candidate && !candidate.contains(hit))) continue;
         // Label activation excludes nested links and other independent controls.
         while (hit && hit !== candidate && hit !== el) {
@@ -2518,12 +2531,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function getElementInspection(el: Element, meta: object = {}) {
     const summary = getElementSummary(el);
+    const extra = { ...(meta as Record<string, unknown>) };
+    if (extra.selector instanceof Element) delete extra.selector;
     return {
       ...summary,
-      ...meta,
+      ...extra,
       attrs: getElementAttrs(el),
       state: {
-        focused: document.activeElement === el,
+        focused: elementHasFocus(el),
         inViewport: isInViewport(el),
         clickablePointInViewport: pointInViewport(summary.clickablePoint),
         obscuredAtCenter: isObscuredAtCenter(el),
@@ -2777,6 +2792,24 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return parent.textContent?.trim().replace(/\s+/g, " ").slice(0, 300) || "";
   }
 
+  function elementHasFocus(el: Element) {
+    let current: Node | null = el;
+    for (let depth = 0; current && depth < 8; depth += 1) {
+      const root = current.getRootNode();
+      if (!(root instanceof Document || root instanceof ShadowRoot)) return false;
+      if (root.activeElement === el) return true;
+      if (!(root instanceof ShadowRoot)) return false;
+      current = root.host;
+    }
+    return false;
+  }
+
+  function elementFromNode(node: Node | null) {
+    if (!node || !node.isConnected) return null;
+    if (node instanceof Element) return node;
+    return node.nodeType === Node.TEXT_NODE ? node.parentElement : null;
+  }
+
   function isVisible(el: Element) {
     const rect = el.getBoundingClientRect();
     const style = getComputedStyle(el);
@@ -2793,12 +2826,21 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return point.x >= 0 && point.y >= 0 && point.x <= window.innerWidth && point.y <= window.innerHeight;
   }
 
+  // document.elementFromPoint stops at a shadow host. The element's own root,
+  // including a closed root reached from the element, returns the inner hit and
+  // still returns a light-DOM node when that node is the one on top.
+  function elementAtPoint(el: Element, x: number, y: number) {
+    const root = el.getRootNode();
+    const scope = root instanceof Document || root instanceof ShadowRoot ? root : document;
+    return scope.elementFromPoint(x, y);
+  }
+
   function isObscuredAtCenter(el: Element) {
     const rect = el.getBoundingClientRect();
     if (!rect.width || !rect.height) return false;
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
-    const top = document.elementFromPoint(x, y);
+    const top = elementAtPoint(el, x, y);
     return !!top && top !== el && !el.contains(top);
   }
 
@@ -2865,8 +2907,12 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     let current: Element | null = el;
     while (current && current !== document.documentElement) {
       if (current.id) {
-        parts.unshift(`#${cssEscapeIdent(current.id)}`);
-        break; // A unique id completes the selector.
+        const idSelector = `#${cssEscapeIdent(current.id)}`;
+        // A repeated id does not identify the element. Keep walking a unique path.
+        if (current.ownerDocument.querySelectorAll(idSelector).length === 1) {
+          parts.unshift(idSelector);
+          break; // A unique id completes the selector.
+        }
       }
       let tag = current.tagName.toLowerCase();
       const parent: Element | null = current.parentElement;
@@ -2885,7 +2931,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       parts.unshift(tag);
       current = parent;
     }
-    return parts.join(' > ');
+    const selector = parts.join(" > ");
+    if (!selector) return "";
+    try {
+      const matches = el.ownerDocument.querySelectorAll(selector);
+      return matches.length === 1 && matches[0] === el ? selector : "";
+    } catch {
+      return "";
+    }
   }
 
   function cssEscapeIdent(value: unknown) {
@@ -2922,5 +2975,49 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return item;
     });
   }
+
+  const FILL_ROOT_LIMIT = 8;
+  const fillRoots = new Map<string, Element>();
+  function rememberFillRoot(token: string, root: Element) {
+    if (!token || !root.isConnected) return;
+    for (const [key, element] of fillRoots) {
+      if (!element.isConnected) fillRoots.delete(key);
+    }
+    fillRoots.delete(token);
+    fillRoots.set(token, root);
+    while (fillRoots.size > FILL_ROOT_LIMIT) {
+      const oldest = fillRoots.keys().next().value;
+      if (oldest === undefined) break;
+      fillRoots.delete(oldest);
+    }
+  }
+  host.__qzInvoke = async (node, payload) => {
+    const token = String(payload?.fillToken || "");
+    if (payload?.action === "releaseFillRoot") {
+      if (token) fillRoots.delete(token);
+      return { ok: true };
+    }
+    let element = elementFromNode(node);
+    // RootWebArea resolves to the Document. Overview reads from the page element.
+    if (!element && payload?.action === "pageOverview" && node instanceof Document) {
+      element = node.body || node.documentElement;
+    }
+    const saved = token ? fillRoots.get(token) : undefined;
+    if ((!element || !element.isConnected) && saved?.isConnected) element = saved;
+    // This script accepts elements in its own document, including a direct child frame it was injected into.
+    if (!element || element.ownerDocument !== document) return toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {});
+    if (payload?.editingHost && element instanceof HTMLElement && element.isContentEditable) {
+      const root = getContentEditableRoot(element);
+      if (root.isConnected) {
+        element = root;
+        rememberFillRoot(token, root);
+      }
+    }
+    const handler = handlers[payload?.action];
+    if (!handler) return toolError("UNKNOWN_ACTION", `Unknown content action: ${payload?.action}`, { action: payload?.action });
+    const result = await handler({ ...payload, selector: element } as unknown as ContentRequest);
+    const encoded = JSON.stringify(result, (_key, value) => value instanceof Node ? "" : value);
+    return encoded === undefined ? {} : JSON.parse(encoded);
+  };
 
 })();

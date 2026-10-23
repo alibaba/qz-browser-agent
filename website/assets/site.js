@@ -18,6 +18,12 @@ function preferredLanguage() {
   return navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
 }
 
+function pageLocale() {
+  const specified = languageButton?.dataset.exampleLocale;
+  if (specified && Object.hasOwn(translations, specified)) return specified;
+  return '';
+}
+
 function setLanguage(next, { remember = false } = {}) {
   const copy = translations[next];
   if (!copy) return;
@@ -47,10 +53,19 @@ function setLanguage(next, { remember = false } = {}) {
 }
 
 if (languageButton instanceof HTMLButtonElement) {
-  setLanguage(preferredLanguage());
+  setLanguage(pageLocale() || preferredLanguage());
   languageButton.hidden = false;
-  languageButton.addEventListener('click', () => setLanguage(locale === 'en' ? 'zh-CN' : 'en', { remember: true }));
-  window.addEventListener('popstate', () => setLanguage(preferredLanguage()));
+  languageButton.addEventListener('click', () => {
+    const href = languageButton.dataset.switchHref;
+    if (href) {
+      const next = locale === 'en' ? 'zh-CN' : 'en';
+      try { localStorage.setItem(languageStorageKey, next); } catch { /* Optional preference. */ }
+      location.assign(href);
+      return;
+    }
+    setLanguage(locale === 'en' ? 'zh-CN' : 'en', { remember: true });
+  });
+  window.addEventListener('popstate', () => setLanguage(pageLocale() || preferredLanguage()));
 }
 
 const dialog = document.querySelector('#video-dialog');

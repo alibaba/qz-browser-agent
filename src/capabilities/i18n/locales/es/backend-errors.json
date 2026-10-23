@@ -27,6 +27,8 @@
   "backend.toolError.CDP_COMMAND_FAILED.message": "El comando de depuración del navegador falló.",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.label": "Falta información de tarea o ejecución",
   "backend.toolError.CDP_RUN_CONTEXT_REQUIRED.message": "Esta llamada no tiene identidad de sesión o ejecución y no puede controlar una pestaña.",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.label": "Hay otra pregunta pendiente",
+  "backend.toolError.CDP_REATTACH_WAIT_CONFLICT.message": "Responde a la pregunta pendiente y vuelve a intentar la operación para confirmar la reconexión del depurador.",
   "backend.toolError.CDP_RUN_RELEASED.label": "La ejecución de la tarea terminó",
   "backend.toolError.CDP_RUN_RELEASED.message": "La tarea terminó; se ignoró la operación tardía del navegador.",
   "backend.toolError.CDP_SESSION_RUNTIME_UNAVAILABLE.label": "Controles de pestaña de tarea no disponibles",

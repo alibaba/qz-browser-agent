@@ -113,6 +113,11 @@ export function createSuiteCatalog({ root: ROOT, match, unitConcurrency }) {
         "node",
         "tests/benchmarks/conversation-render/run-stream-interaction.mjs",
       ),
+      commandWith(
+        { id: "consent-import-e2e", resource: "browser-secondary" },
+        "node",
+        "tests/session-exchange/consent-import-check.mjs",
+      ),
       testPythonSecondary("tests/session-exchange/e2e-check.py"),
       testPythonSecondary("tests/qingzhou-documents/e2e-check.py"),
       testPythonSecondary("tests/tool-timeline/e2e-check.py"),
