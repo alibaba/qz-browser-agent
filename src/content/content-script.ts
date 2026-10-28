@@ -1,5 +1,6 @@
 import { elementAriaRole } from "./implicit-aria-role.js";
 import { refreshContentLanguage, t } from "./i18n.js";
+import { documentReadiness } from "../shared/document-readiness.js";
 import { normalizeImage } from "../shared/images/normalize.js";
 import { assertImageDimensions, IMAGE_MAX_EDGE } from "../shared/images/policy.js";
 import { Readability } from "@mozilla/readability";
@@ -66,14 +67,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const handler = handlers[msg.action];
     if (!handler) {
       if (msg.action === "ping") {
-        sendResponse({ ok: true, contentVersion: QZ_CONTENT_VERSION });
+        sendResponse({ ok: true, contentVersion: QZ_CONTENT_VERSION, documentReady: documentReadiness() });
         return;
       }
       sendResponse(toolError("UNKNOWN_ACTION", `Unknown content action: ${msg.action}`, { action: msg.action }));
       return;
     }
 
-    Promise.resolve(handler(msg))
+    Promise.resolve().then(() => handler(msg))
       .then((result) => sendResponse(normalizeResponse(result, msg.action)))
       .catch((err) => sendResponse(toolError(
         "ACTION_FAILED",
@@ -87,6 +88,15 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   if (host.__QZ_CONTENT_MESSAGE_LISTENER) chrome.runtime.onMessage.removeListener(host.__QZ_CONTENT_MESSAGE_LISTENER);
   chrome.runtime.onMessage.addListener(onMessage);
   host.__QZ_CONTENT_MESSAGE_LISTENER = onMessage;
+
+  // One event-only wait per document, even when a caller stops waiting.
+  let documentReady: Promise<{ ok: true }> | undefined;
+  function awaitDocument() {
+    if (documentReady) return documentReady;
+    const ready = documentReadiness("wait");
+    if (ready === true) return { ok: true };
+    return documentReady = ready.then(() => ({ ok: true }));
+  }
 
   // Handlers
 
@@ -1597,6 +1607,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   const handlers: Record<string, (message: ContentRequest) => unknown> = {
+    awaitDocument,
     startElementPicker,
     confirmElementPicker,
     cancelElementPicker,
@@ -1880,16 +1891,19 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         ...(root.matches?.(actionSelector) ? [root] : []),
         ...root.querySelectorAll(actionSelector),
       ];
+      // Ranking uses semantic fields and geometry. Build unique selectors only for retained actions.
       const actions = actionElements
-        .map((el) => getElementSummary(el))
-        .filter((item) => item.visible && isUsefulOverviewItem(item))
-        .sort((a, b) => {
+        .map(el => ({ el, item: getElementSummary(el, { selector: false, labels: false }) }))
+        .filter(({ el, item }) => item.visible && (isUsefulOverviewItem(item)
+          || (!item.role && isUsefulOverviewItem(getElementSummary(el, { selector: false })))))
+        .sort(({ item: a }, { item: b }) => {
           const av = isRectInViewport(a.rect) ? 0 : 1;
           const bv = isRectInViewport(b.rect) ? 0 : 1;
           if (av !== bv) return av - bv;
           return (a.rect.y - b.rect.y) || (a.rect.x - b.rect.x);
         })
         .slice(0, max)
+        .map(({ el }) => getElementSummary(el))
         .map((item, i) => ({
           i,
           selector: item.selector,
@@ -2532,18 +2546,18 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     };
   }
 
-  function getElementSummary(el: Element) {
+  function getElementSummary(el: Element, { selector = true, labels = true } = {}) {
     const rect = el.getBoundingClientRect();
     const tag = el.tagName.toLowerCase();
     const isFileInput = el instanceof HTMLInputElement
       && String(el.type || el.getAttribute("type") || "").toLowerCase() === "file";
     const summary: ElementSummary = {
-      selector: getAbsoluteSelector(el),
+      selector: selector ? getAbsoluteSelector(el) : "",
       tag,
       role: getElementRole(el),
       type: el.getAttribute("type") || "",
-      name: getAccessibleName(el),
-      text: el.textContent?.trim().replace(/\s+/g, " ").slice(0, 160) || "",
+      name: labels ? getAccessibleName(el) : "",
+      text: labels ? el.textContent?.trim().replace(/\s+/g, " ").slice(0, 160) || "" : "",
       value: getElementValue(el),
       placeholder: el.getAttribute("placeholder") || "",
       href: getHref(el),

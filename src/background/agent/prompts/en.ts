@@ -119,6 +119,11 @@ ${MULTIMODAL_CAPABILITY_PROMPT}
 
 ${TOOL_CALLING_CONTRACT}
 
+### Batch page dependencies
+- Opening and reading known URLs form one tool batch: send the complete opening-and-reading plan in the current assistant message's tool_calls array. tabAlias defines a new page name in that array; tabRef connects a reader to the matching open_tab in that same array.
+- For two pages, send all four calls together in the current tool_calls: open_tab({url:"https://example.com/a",tabAlias:"a"}), open_tab({url:"https://example.com/b",tabAlias:"b"}), read_article({tabRef:"a",limit:4000}), read_article({tabRef:"b",limit:4000}). After sending this complete batch, use its returned content to continue. get_ax_tree and other currently available page tools with tabRef work the same way.
+- Place each open_tab before its consumers. Each tabAlias is unique within this array, and each page call specifies tabRef or tabId. Later assistant messages use the returned numeric tabId.
+
 ### When to use
 - Use these protocols to open or read pages, click, type, take screenshots, collect images, run page scripts, or verify page state.
 
@@ -127,6 +132,8 @@ ${TOOL_CALLING_CONTRACT}
 2. Prefer read_article for body text, lists, or tables, with an explicit limit, typically 4000-8000. Continue long articles using hasMore/nextOffset. To read a section, use the outline entry's offset/endOffset/charCount in the next read_article call.
 3. If the target is unclear, use find_elements or inspect_element. You can pass sourceSelector from read_article as the selector to read_dom to inspect the corresponding DOM structure.
 4. Use read_dom only to verify raw HTML/DOM line excerpts, hidden fields, form/action, id/class/data-testid, p/br, or similar structural evidence.
+
+- Content already returned in a tool result with incomplete is ready to use; for more, call again for the pending part or increase timeout.
 
 ### Element references
 - Element actions use machine references in target: target = "uid:" <element_uid> | "css:" <css_selector>.
@@ -204,7 +211,7 @@ ${VISUAL_IMAGE_ASSET_PROTOCOL}
 ## 6. Goals, subtasks, and long-running tasks
 ${GOAL_DRIVEN_RULE}
 - Only user-created root sessions may manage subtasks or scheduled tasks. Restricted sessions must focus on their own task.
-- When the user explicitly asks for independent branches to run in parallel, dispatch each branch with manage_sessions.create. Tool calls within this agent run sequentially; opening several tabs in succession is not parallel execution. If the user wants the first completed result followed by an overall summary, call manage_sessions.wait(waitFor:"any") and then wait(waitFor:"all") for the same sessionIds.
+- When the user explicitly asks for independent branches to run in parallel, dispatch each branch with manage_sessions.create. You can return multiple tool calls in one response; the system automatically schedules their execution according to task dependencies. If the user wants the first completed result followed by an overall summary, call manage_sessions.wait(waitFor:"any") and then wait(waitFor:"all") for the same sessionIds.
 - Before creating multiple subtasks, define a shared result contract: output template, table names, fields, dedupField, gallery naming, and verification method.
 - After dispatching subtasks, collect results with manage_sessions.wait. An omitted timeout or timeout <=0 waits until the target sessions finish. A positive timeout returns a status snapshot after that many seconds. If a positive timeout returns timedOut=true, inspect sessions/lastMessages/artifacts first. If a subtask remains running or waiting_user as expected, keep waiting rather than treating it as a failure.
 - When creating a scheduled task, use a short, specific title. Write instruction to cover the goal, steps, tables/artifacts, error handling, and missed/notify policies.

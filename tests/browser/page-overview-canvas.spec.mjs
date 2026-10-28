@@ -72,6 +72,23 @@ test("page overview reports only large visible canvases using rendered CSS size"
   expect(fullPage.canvases.map(item => item.name)).toContain("范围外画布");
 });
 
+test('page overview ranks every candidate but resolves selectors only for retained actions', async ({ page }) => {
+  await installContentScript(page, `<style>a { display:block }</style>${Array.from({ length: 800 }, (_, i) =>
+    `<a id="link-${i}" href="/item/${i}">Item ${i}</a>`).join('')}`);
+  const result = await page.evaluate(async () => {
+    const original = document.querySelectorAll.bind(document);
+    let selectorReads = 0;
+    document.querySelectorAll = selector => { if (selector.startsWith('#link-')) selectorReads++; return original(selector); };
+    try {
+      const overview = await __callQingzhouContent('pageOverview', { limit: 5 });
+      return { actions: overview.actions, selectorReads };
+    } finally { document.querySelectorAll = original; }
+  });
+  expect(result.actions.map(item => item.selector)).toEqual(['#link-0', '#link-1', '#link-2', '#link-3', '#link-4']);
+  expect(result.actions.map(item => item.text)).toEqual(['Item 0', 'Item 1', 'Item 2', 'Item 3', 'Item 4']);
+  expect(result.selectorReads).toBe(10, 'unique-ID and final-selector checks are bounded by output size');
+});
+
 test("page overview bounds Canvas hints for model context", async ({ page }) => {
   const canvases = Array.from({ length: 10 }, (_, index) => (
     `<canvas width="300" height="150" aria-label="画布 ${index + 1}"></canvas>`

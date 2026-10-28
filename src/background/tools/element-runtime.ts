@@ -16,7 +16,7 @@ interface ElementRuntimeHost {
   assertTabAllowed(tabId: number, details: Record<string, unknown>): Promise<unknown>;
   withDebugger: ReturnType<typeof createCdpRuntime>['withDebugger'];
   sendToContent(tabId: number | undefined, action: string, params?: Record<string, unknown>): Promise<unknown>;
-  initializeContentScript(tabId: number): Promise<void>;
+  initializeContentScript(tabId: number, context?: ToolContext): Promise<void>;
 }
 import { isCdpFallbackForbiddenError } from "./cdp-runtime.js";
 import { ISOLATED_CONTENT_INVOKE, ISOLATED_CONTENT_PROBE } from "./isolated-page-calls.js";
@@ -163,13 +163,15 @@ function uniqueTabSuffix(tabId: number, peerTabIds: readonly number[]) {
   return self;
 }
 
+let lastSnapshotSerial = 0;
 function makeSnapshotId(tabId: number, context: ToolContext = {}) {
   const id = Number(tabId);
   const peers = taskTabIds(context);
   const ids = peers.includes(id) ? peers : [...peers, id];
   const suffix = uniqueTabSuffix(id, ids);
-  // Milliseconds modulo 36^6. The id comes from the clock, so a worker restart does not reuse a recent snapshot.
-  const serial = (Date.now() % (36 ** 6)).toString(36).padStart(6, "0");
+  // A monotonic clock serial keeps the established six-character format within a worker.
+  lastSnapshotSerial = Math.max(Date.now(), lastSnapshotSerial + 1);
+  const serial = (lastSnapshotSerial % (36 ** 6)).toString(36).padStart(6, "0");
   return `t${suffix}.${serial}`;
 }
 
@@ -324,7 +326,15 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     );
   }
 
-  const resolvedTabId = Number(tabId || ref.tabId);
+  // Reject an explicit mismatch before resolving ownership can select or claim that tab.
+  if (tabId && Number(tabId) !== Number(ref.tabId)) {
+    throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", `Element target belongs to tab ${ref.tabId}, not tab ${tabId}`, {
+      target: elementTargetForUid(requestedUid),
+      tabId,
+      refTabId: ref.tabId,
+    });
+  }
+  const resolvedTabId = Number(ref.tabId);
   if (!Number.isFinite(resolvedTabId) || resolvedTabId <= 0) {
     throw new ToolExecutionError("MISSING_TAB_ID", `Element target has no usable tabId: uid:${requestedUid}`, {
       target: elementTargetForUid(requestedUid),
@@ -335,8 +345,11 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   if (currentSessionId && typeof sessions?.resolveTargetTab === "function") {
     const resolved = await sessions.resolveTargetTab({
       sessionId: currentSessionId,
+      runId: context.runId,
+      signal: context.signal,
       tabId: resolvedTabId,
       source: "element_uid_reference",
+      checkOnly: context.preserveWorkingTab === true || context.deferToolCommit === true,
       // Selector fallback is a content-script read. Node-backed uids keep the ownership check.
       readOnly: readOnly === true && selectorFallback,
     });
@@ -350,36 +363,53 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
         message: resolved?.error || "",
       });
     }
+    if ((context.preserveWorkingTab || context.deferToolCommit) && resolved.claimRequired && !resolved.readOnlyAccess) {
+      throw makeSessionTabTargetError("SESSION_TAB_UNOWNED", {
+        toolName: "element_uid_reference", sessionId: currentSessionId, tabId: resolvedTabId,
+      });
+    }
   }
+  // Security guardrails gate before any page probe, including the read-only document id.
+  await assertTabAllowedBySecurityGuardrails(resolvedTabId, { tool: "element_target", source: "uid_target" });
+  let currentUrl = "";
   if (ref.pageUrl) {
-    let currentUrl = "";
     try {
       const tab = await chrome.tabs.get(resolvedTabId);
       currentUrl = getEffectiveTabUrl(tab);
     } catch(_e) {
       currentUrl = "";
     }
-    if (currentUrl && !samePageUrl(currentUrl, ref.pageUrl)) {
+  }
+  const urlChanged = Boolean(ref.pageUrl && currentUrl && !samePageUrl(currentUrl, ref.pageUrl));
+  const storedDocumentId = String(ref.documentId || "");
+  if (storedDocumentId) {
+    const currentDocumentId = await readMainDocumentId(resolvedTabId);
+    // A title redirect or history.replaceState keeps the document; a real navigation replaces it.
+    if (currentDocumentId && currentDocumentId !== storedDocumentId) {
+      if (urlChanged) {
+        throw new ToolExecutionError(
+          "STALE_ELEMENT_UID_PAGE_CHANGED",
+          `Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.`,
+          { target: elementTargetForUid(requestedUid), tabId: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl },
+        );
+      }
+      throw staleElement(requestedUid);
+    }
+    // A changed URL string is positive evidence the page changed; only a matching live
+    // document disproves it. A missing probe cannot, so the strict verdict stands.
+    if (urlChanged && !currentDocumentId) {
       throw new ToolExecutionError(
         "STALE_ELEMENT_UID_PAGE_CHANGED",
         `Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.`,
         { target: elementTargetForUid(requestedUid), tabId: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl },
       );
     }
-  }
-  if (tabId && Number(tabId) !== Number(ref.tabId)) {
-    throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", `Element target belongs to tab ${ref.tabId}, not tab ${tabId}`, {
-      target: elementTargetForUid(requestedUid),
-      tabId,
-      refTabId: ref.tabId,
-    });
-  }
-  await assertTabAllowedBySecurityGuardrails(resolvedTabId, { tool: "element_target", source: "uid_target" });
-  const storedDocumentId = String(ref.documentId || "");
-  if (storedDocumentId) {
-    const currentDocumentId = await readMainDocumentId(resolvedTabId);
-    // A missing probe is not evidence the document changed. A new id on the same URL is.
-    if (currentDocumentId && currentDocumentId !== storedDocumentId) throw staleElement(requestedUid);
+  } else if (urlChanged) {
+    throw new ToolExecutionError(
+      "STALE_ELEMENT_UID_PAGE_CHANGED",
+      `Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.`,
+      { target: elementTargetForUid(requestedUid), tabId: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl },
+    );
   }
   const backendNodeId = Number(ref.backendNodeId || 0);
   return {
@@ -398,6 +428,29 @@ function normalizeElementUid(uid: unknown) {
   if (elementRefRegistry.has(value)) return value;
   const match = value.match(/\bt\d+\.[0-9a-z]{6}\.[0-9a-z]*\d+\b/i);
   return match ? match[0] : value;
+}
+
+/**
+ * The one tab every value's uid is registered to, or null when any value is not a
+ * known uid or the set spans tabs. Null tells callers to fall back to conservative
+ * targeting; the registry is the only authority on a uid's tab.
+ */
+function elementUidTabId(values: readonly unknown[]) {
+  let shared = 0;
+  for (const value of values || []) {
+    let uid = "";
+    try {
+      uid = normalizeElementUid(parseElementTarget(typeof value === "string" ? value : "").uid);
+    } catch {
+      return null;
+    }
+    const ref = uid ? elementRefRegistry.get(uid) : undefined;
+    const tabId = Number(ref?.tabId);
+    if (!ref || !Number.isInteger(tabId) || tabId <= 0) return null;
+    if (!shared) shared = tabId;
+    else if (shared !== tabId) return null;
+  }
+  return shared || null;
 }
 
 async function backendNodeIdForSelector(tabId: number, selector: string, context: ToolContext = {}) {
@@ -528,7 +581,7 @@ async function withElement<T>(tabId: number | undefined, binding: { tabId?: numb
       loaderId = String(frame.loaderId || "");
       if (binding.ref?.loaderId && loaderId && binding.ref.loaderId !== loaderId) throw staleElement(binding.uid || binding.target || "");
     }
-    const contextId = await contentContextId(id, nodeSend, cdpFrameId, sessionId);
+    const contextId = await contentContextId(id, nodeSend, cdpFrameId, sessionId, context);
     if (requestedFrameId) {
       if ((await frameLoaderId(nodeSend, cdpFrameId)) !== loaderId) throw staleElement(binding.uid || binding.target || "");
     } else {
@@ -538,7 +591,7 @@ async function withElement<T>(tabId: number | undefined, binding: { tabId?: numb
     }
     const objectId = await objectFromBackend(nodeSend, binding, objectGroup, contextId);
     try {
-      return await run(nodeSend, (action, params = {}) => invokeBound(nodeSend, objectId, action, params, objectGroup));
+      return await run(nodeSend, (action, params = {}) => invokeBound(nodeSend, objectId, action, params, objectGroup, context));
     } finally {
       try { await nodeSend("Runtime.releaseObjectGroup", { objectGroup }); } catch { /* The node may already be gone. */ }
     }
@@ -582,7 +635,7 @@ async function frameLoaderId(send: CdpCommand, frameId: string) {
   return "";
 }
 
-async function contentContextId(tabId: number, send: CdpCommand, frameId: string, sessionId = "") {
+async function contentContextId(tabId: number, send: CdpCommand, frameId: string, sessionId = "", context: ToolContext = {}) {
   const select = async () => {
     const candidates = isolatedContexts(tabId, sessionId)?.get(frameId);
     if (!candidates?.size) return 0;
@@ -621,24 +674,27 @@ async function contentContextId(tabId: number, send: CdpCommand, frameId: string
   if (id) return id;
   // The reported worlds have no bridge. Initialize Content once, then validate
   // again; no action has been dispatched on this path.
-  await initializeContentScript(tabId);
+  await initializeContentScript(tabId, context);
   await discover();
   id = await select();
   if (!id) throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabId });
   return id;
 }
 
-async function invokeBound(send: CdpCommand, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string) {
-  const remote = record(await send("Runtime.callFunctionOn", {
-    objectId, objectGroup, awaitPromise: true, returnByValue: true,
-    functionDeclaration: ISOLATED_CONTENT_INVOKE,
-    arguments: [{ value: { ...params, action } }],
-  }));
-  const details = record(remote.exceptionDetails);
-  if (details.text || details.exception) {
-    throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", String(details.text || "Content script call failed"), { action });
-  }
-  return asElementReply(record(remote.result).value, action);
+async function invokeBound(send: CdpCommand, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string, context: ToolContext) {
+  const finishPhase = context.measurePhase?.("extraction");
+  try {
+    const remote = record(await send("Runtime.callFunctionOn", {
+      objectId, objectGroup, awaitPromise: true, returnByValue: true,
+      functionDeclaration: ISOLATED_CONTENT_INVOKE,
+      arguments: [{ value: { ...params, action } }],
+    }));
+    const details = record(remote.exceptionDetails);
+    if (details.text || details.exception) {
+      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", String(details.text || "Content script call failed"), { action });
+    }
+    return asElementReply(record(remote.result).value, action);
+  } finally { finishPhase?.(); }
 }
 
 function asElementReply(value: unknown, action: string) {
@@ -671,6 +727,7 @@ function samePageUrl(a: unknown, b: unknown) {
     elementTargetForUid,
     elementTargetForSelector,
     elementTargetForRef,
+    elementUidTabId,
     isUidElementTarget,
     resolveSelectorTarget,
     resolveElementReference,

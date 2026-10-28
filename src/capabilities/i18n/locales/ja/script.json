@@ -29,5 +29,7 @@
   "script.forDataStoreProcessingFileGenerationOrPureJs": "data_store の処理、ファイル生成、純粋な JS 計算には target:\"inner\" を使い、空白ページを開かないでください。",
   "script.noReturnValue": "戻り値なし",
   "script.theScriptRanWithoutAReturnValueOrReturned": "スクリプトは実行されましたが、戻り値がないか undefined を返しました。",
-  "script.runCode": "コードを実行"
+  "script.runCode": "コードを実行",
+  "script.scriptToolAccessUnavailable": "この呼び出しではツールアクセスが有効ではなく、自動再実行も行われませんでした。",
+  "script.scriptToolAccessRecovery": "まずページの状態を確認してください。ツールを呼び出すには、コード内に tools.name(...) を明示的に記述して、新しい呼び出しを送信してください。"
 }

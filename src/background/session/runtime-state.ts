@@ -55,8 +55,12 @@ export function createSessionRuntimeState({
   if (typeof normalizeSessionId !== "function") throw new TypeError("normalizeSessionId is required");
 
   let followUpResumeTimer: ReturnType<typeof setTimeout> | null = null;
+  // Execution events can overlap; only the selected tool is persisted and projected to clients.
+  const activeTools = new Map<string, Map<string, NonNullable<ReturnType<typeof normalizeCurrentTool>>>>();
+  const toolKey = (tool: Fields) => String(tool.toolCallId || tool.spanId || tool.toolName || tool.name || "tool");
 
   async function hydrate() {
+    activeTools.clear();
     try {
       await repository.migrateLegacyRuntime();
       const sessions = await getSessions();
@@ -160,6 +164,10 @@ export function createSessionRuntimeState({
     const id = normalizeSessionId(sessionId);
     const previous = supervisor.getRuntime(id) || {};
     const normalizedPatch = normalizePatch(patch);
+    if (patch.currentTool === null || patch.running === false
+      || (Object.prototype.hasOwnProperty.call(patch, "runId") && patch.runId !== previous.runId)) {
+      activeTools.delete(id);
+    }
     const next = supervisor.setRuntime(id, {
       ...previous,
       sessionId: id,
@@ -179,6 +187,7 @@ export function createSessionRuntimeState({
 
   function remove(sessionId: string) {
     const id = normalizeSessionId(sessionId);
+    activeTools.delete(id);
     supervisor.deleteRuntime(id);
     repository.deleteRuntime(id).catch(error => logger?.warn?.("[轻舟] remove session runtime failed:", error));
     scheduleTabGroupSync(id);
@@ -187,9 +196,25 @@ export function createSessionRuntimeState({
   function recordEvent(sessionId: string, event: Fields = {}) {
     const id = normalizeSessionId(sessionId);
     const previous = supervisor.getRuntime(id) || {};
-    const currentTool = ["tool_execution_start", "tool_execution_update"].includes(String(event.type))
-      ? currentToolFromEvent(event, previous)
-      : undefined;
+    let currentTool: ReturnType<typeof normalizeCurrentTool> | undefined;
+    if (["tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(String(event.type))) {
+      if (event.runId && previous.runId && event.runId !== previous.runId) return;
+      let tools = activeTools.get(id);
+      if (!tools) {
+        tools = new Map();
+        const restored = normalizeCurrentTool(previous.currentTool);
+        if (restored) tools.set(toolKey(restored), restored);
+        activeTools.set(id, tools);
+      }
+      const key = toolKey(event);
+      const previousTool = tools.get(key);
+      tools.delete(key);
+      if (event.type !== "tool_execution_end") {
+        const tool = currentToolFromEvent(event, event.type === "tool_execution_start" ? null : previousTool);
+        if (tool) tools.set(key, tool);
+      }
+      currentTool = [...tools.values()].at(-1) || null;
+    }
     const patch = reduceSessionRuntimePatch(previous, event, { now: now(), currentTool });
     if (patch) set(id, patch);
   }
@@ -302,11 +327,9 @@ export function createSessionRuntimeState({
     return next;
   }
 
-  function currentToolFromEvent(event: Fields = {}, previous: Fields = {}) {
+  function currentToolFromEvent(event: Fields, previous: unknown) {
     const currentTime = now();
-    const previousTool = normalizeCurrentTool(previous.currentTool);
-    if (event.type === "tool_execution_end") return null;
-    if (!["tool_execution_start", "tool_execution_update"].includes(String(event.type))) return previousTool;
+    const previousTool = normalizeCurrentTool(previous);
     const identity = normalizeToolIdentitySnapshot(event, previousTool || { name: "tool" });
     return normalizeCurrentTool({
       ...identity,
@@ -318,7 +341,7 @@ export function createSessionRuntimeState({
       statusDetail: event.statusDetail != null ? event.statusDetail : (previousTool?.statusDetail || ""),
       startedAt: previousTool?.startedAt || currentTime,
       updatedAt: currentTime,
-      rateLimit: event.rateLimit || previousTool?.rateLimit || null,
+      rateLimit: event.rateLimit !== undefined ? event.rateLimit : previousTool?.rateLimit || null,
     });
   }
 
@@ -335,6 +358,7 @@ export function createSessionRuntimeState({
       title: identity.title,
       familyId: identity.familyId,
       familyTitle: identity.familyTitle,
+      ...(identity.rendererId ? { rendererId: identity.rendererId } : {}),
       toolCallId,
       spanId,
       phase: String(tool.phase || "running").trim() || "running",

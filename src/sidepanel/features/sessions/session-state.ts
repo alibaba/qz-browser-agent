@@ -536,48 +536,37 @@ function reduceRuntime(previous: ClientRuntime, event: SessionViewEvent, now: st
     next.waitForm = null;
   }
 
-  if (event.type === "tool_call_update") {
-    const identity = normalizeToolIdentitySnapshot(event, previous.currentTool || { name: "tool" });
-    next.currentTool = normalizeSessionCurrentTool({
-      ...(previous.currentTool || {}),
-      ...identity,
-      name: identity.name || "tool",
-      title: identity.title || event.toolTitle || event.title || previous.currentTool?.title || "",
-      toolCallId: event.toolCallId || previous.currentTool?.toolCallId || "",
-      spanId: event.spanId || previous.currentTool?.spanId || "",
-      phase: event.phase || previous.currentTool?.phase || "preparing",
-      statusText: event.statusText ?? previous.currentTool?.statusText ?? "",
-      statusDetail: event.statusDetail ?? previous.currentTool?.statusDetail ?? "",
-      startedAt: previous.currentTool?.startedAt || now,
-      updatedAt: now,
-      rateLimit: event.rateLimit || previous.currentTool?.rateLimit || null,
-    });
-    next.currentToolName = next.currentTool?.name || "";
-    next.currentToolStartedAt = next.currentTool?.startedAt || "";
-  } else if (event.type === "tool_execution_start" || event.type === "tool_execution_update") {
-    const identity = normalizeToolIdentitySnapshot(event, source.currentTool || previous.currentTool || { name: "tool" });
-    next.currentTool = normalizeSessionCurrentTool({
-      ...(previous.currentTool || {}),
-      ...fields(source.currentTool),
-      ...identity,
-      name: identity.name || "tool",
-      title: identity.title || event.toolTitle || event.title || fields(source.currentTool).title || previous.currentTool?.title || "",
-      toolCallId: event.toolCallId || fields(source.currentTool).toolCallId || previous.currentTool?.toolCallId || "",
-      spanId: event.spanId || fields(source.currentTool).spanId || previous.currentTool?.spanId || "",
-      phase: event.phase || fields(source.currentTool).phase || previous.currentTool?.phase || "running",
-      statusText: event.statusText ?? fields(source.currentTool).statusText ?? previous.currentTool?.statusText ?? "",
-      statusDetail: event.statusDetail ?? fields(source.currentTool).statusDetail ?? previous.currentTool?.statusDetail ?? "",
-      startedAt: previous.currentTool?.startedAt || fields(source.currentTool).startedAt || now,
-      updatedAt: now,
-      rateLimit: event.rateLimit || fields(source.currentTool).rateLimit || previous.currentTool?.rateLimit || null,
-    });
-    next.currentToolName = next.currentTool?.name || "";
-    next.currentToolStartedAt = next.currentTool?.startedAt || "";
-  } else if (isRunStartEvent(event) || event.type === "tool_execution_end" || terminal || !next.running) {
+  const executionEvent = ["tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type);
+  if (isRunStartEvent(event) || terminal || !next.running) {
     next.currentTool = null;
-    next.currentToolName = "";
-    next.currentToolStartedAt = "";
+  } else if (executionEvent && Object.prototype.hasOwnProperty.call(source, "currentTool")) {
+    // Background owns the active calls and selects the surviving tool after an ordered end.
+    next.currentTool = normalizeSessionCurrentTool(source.currentTool);
+  } else if (event.type === "tool_call_update" || event.type === "tool_execution_start" || event.type === "tool_execution_update") {
+    const sameTool = event.toolCallId ? event.toolCallId === previous.currentTool?.toolCallId
+      : event.spanId ? event.spanId === previous.currentTool?.spanId
+      : event.toolName && event.toolName === previous.currentTool?.name;
+    const previousTool = event.type !== "tool_execution_start" && sameTool ? previous.currentTool : null;
+    const identity = normalizeToolIdentitySnapshot(event, previousTool || { name: "tool" });
+    next.currentTool = normalizeSessionCurrentTool({
+      ...(previousTool || {}),
+      ...identity,
+      name: identity.name || "tool",
+      toolCallId: event.toolCallId || previousTool?.toolCallId || "",
+      spanId: event.spanId || previousTool?.spanId || "",
+      phase: event.phase || previousTool?.phase || (event.type === "tool_call_update" ? "preparing" : "running"),
+      statusText: event.statusText ?? previousTool?.statusText ?? "",
+      statusDetail: event.statusDetail ?? previousTool?.statusDetail ?? "",
+      startedAt: previousTool?.startedAt || now,
+      updatedAt: now,
+      rateLimit: event.rateLimit !== undefined ? event.rateLimit : previousTool?.rateLimit || null,
+    });
+  } else if (event.type === "tool_execution_end"
+    && (!event.toolCallId || event.toolCallId === previous.currentTool?.toolCallId)) {
+    next.currentTool = null;
   }
+  next.currentToolName = next.currentTool?.name || "";
+  next.currentToolStartedAt = next.currentTool?.startedAt || "";
 
   if (terminal || !next.running) {
     next.running = false;

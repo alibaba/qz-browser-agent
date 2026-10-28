@@ -208,8 +208,11 @@ export function createSidepanelEventRouter(options: RouterOptions) {
         runController.makeLive(event);
         runController.showStatus(event.statusText || t("callingTool", { tool: getToolDisplayName(event.toolName) }));
         break;
-      case "tool_execution_end":
+      case "tool_execution_end": {
+        const tool = sessionState.getRuntime(event.sessionId).currentTool;
+        if (tool) runController.showStatus(tool.statusText || t("callingTool", { tool: getToolDisplayName(tool.name) }));
         break;
+      }
       case "turn_start":
         runController.makeLive(event);
         if (!runController.accept(event)) break;

@@ -93,9 +93,16 @@ export function createToolRegistry() {
         const runtime = materialize(definition);
         const { description, parameters } = runtime;
         const normalizedParameters = withCommonToolParameters(parameters);
+        if (runtime.page && parameters.properties.tabId) {
+          normalizedParameters.properties = { ...normalizedParameters.properties, tabRef: { type: "string", description: t("tabRef") } };
+        }
         if (runtime.model?.noImages?.omitParameters?.some(field => normalizedParameters.required?.includes(field))) {
           throw new TypeError(`Tool ${name}: noImages may only omit optional parameters`);
         }
+        // A batch reference supplies tabId before runtime validation; keep that validation strict.
+        const modelParameters = normalizedParameters.properties.tabRef && normalizedParameters.required?.includes("tabId")
+          ? { ...normalizedParameters, required: normalizedParameters.required.filter(field => field !== "tabId") }
+          : normalizedParameters;
         const identity = toolIdentity({ name, title: runtime.title, familyId: runtime.familyId, rendererId: runtime.rendererId });
         const presentation = getCoreToolMetadata(identity.capabilityId);
         return [name, materialize({
@@ -113,7 +120,7 @@ export function createToolRegistry() {
           runtime: "core",
           hidden: definition.hidden === true,
           parameters: normalizedParameters,
-          schema: { type: "function", function: { name, description, parameters: normalizedParameters } },
+          schema: { type: "function", function: { name, description, parameters: modelParameters } },
         } satisfies RegisteredTool)];
     })));
     const result: CoreToolSnapshot = Object.freeze({ language, get: (name: string) => localized.get(name), entries: () => localized.entries() });

@@ -1,4 +1,5 @@
 import { runSessionManagementCases } from "./session-management-cases.mjs";
+import { runPageBatchCase } from "./page-batch-case.mjs";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -107,6 +108,9 @@ try {
       ? await runSelected("skillSelection", () => assertSkillSelection(page)) : { skipped: true };
 
     const editRerun = await runSelected("editRerun", () => assertEditAndRerun(page));
+    const pageBatch = String(process.env.QINGZHOU_LIVE_CASES || "").split(",").includes("pageBatch")
+      ? await runSelected("pageBatch", () => runPageBatchCase({ page, createSession, deleteSession, runPrompt, historyMessages,
+        recordEvidence: evidence => { report.scenarios.pageBatch = evidence; } })) : { skipped: true };
 
 
     const unexpected = diagnostics.filter(message => !isExpectedDiagnostic(message));
@@ -129,6 +133,7 @@ try {
         userWait,
         skillSelection,
         editRerun,
+        pageBatch,
       },
     }, null, 2));
   }

@@ -57,8 +57,32 @@ export interface ToolModelPolicy {
   projectResult?(result: unknown): unknown;
 }
 
+/** Derived from a trusted registration for one model response's tab dependency plan. */
+export type ToolBatchTabPolicy =
+  | { kind: "create"; parallel?: boolean }
+  /** `tabId` is the resolved lane for uid-targeted calls: the tab the referenced elements belong to. */
+  | { kind: "target"; implicit: boolean; observation: boolean; parallel?: boolean; tabId?: number }
+  | { kind: "barrier" };
+
 /** Build-time behavior only. External manifests and tool results cannot grant these roles. */
 export interface ToolBehavior {
+  /** Evaluated once during batch planning. True (or a thrown predicate) overrides parallel roles and waits for preceding commits. */
+  barrier?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
+  /** Pure observations eligible for bounded execution on distinct explicit tabs. */
+  parallelRead?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
+  /** Provisional creation; Session state is published at ordered Agent settlement. */
+  parallelOpen?: boolean;
+  /** Tab-local actions can overlap other lanes; implicit/global targets remain barriers. */
+  parallelTab?: boolean;
+  /**
+   * Arguments that may carry element uid references beyond the singular `target`/`selector`/`root`
+   * fields. A uid pins its registered tab: the runtime must not substitute the working tab for it,
+   * and the batch planner schedules the call on the uids' shared tab. Return non-uid targets too
+   * so mixed calls remain serialized. A throwing extractor falls back to the singular fields.
+   */
+  uidTargets?: (args: Readonly<Record<string, unknown>>) => readonly unknown[];
+  /** Trusted hard-timeout fallback; the runtime owns cancellation and revalidation. */
+  timeoutResult?: { kind: "read" | "action" | "navigation"; pending: string };
   /** Reject actions that may unload the page hosting a nested script. */
   mayUnloadPage?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Promote the tool's image into the enclosing script's latest observation. */

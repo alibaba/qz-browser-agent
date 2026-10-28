@@ -22,9 +22,20 @@ function fixture(evaluateCdpScript) {
   createScriptTools({ registerTool: definition => definitions.set(definition.name, definition), ToolExecutionError,
     skills: { loadScript: async () => null }, scriptTimeoutProperty: { type: 'number' }, evaluateCdpScript });
   const run = definitions.get('run_script').execute;
-  return (tabId = 7, signal, context = {}) => run({ code: '42', timeout: 5, tabId }, signal, { sessionId: 'task', runId: 'run', ...context });
+  return (tabId = 7, signal, context = {}, args = {}) => run({ code: '42', timeout: 5, tabId, ...args }, signal, { sessionId: 'task', runId: 'run', ...context });
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('a deferred tab-local invocation cannot escalate to the tool bridge', async () => {
+  let evaluations = 0;
+  const run = fixture(async () => { evaluations++; return {}; });
+  await assert.rejects(run(7, undefined, { deferToolCommit: true }, { code: 'tools.$list()' }), error => {
+    assert.equal(error.code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
+    assert.equal(error.details.executed, false); assert.equal(error.details.automaticReplay, false);
+    return true;
+  });
+  assert.equal(evaluations, 0);
+});
 
 test('page results preserve large structured values and diagnostic envelopes', async () => {
   const value = { text: 'large'.repeat(20000), rows: Array.from({ length: 1200 }, (_, id) => ({ id })) };
@@ -36,6 +47,47 @@ test('page results preserve large structured values and diagnostic envelopes', a
   assert.deepEqual(result.diagnostic.lastTrace, ['trace: selected 0']);
   assert.equal(result._image, 'data:image/png;base64,eA==');
   assert.equal(result.__runScriptEnvelope, undefined);
+});
+
+test('compile-only return recovery retains input args without adding a bridge', async () => {
+  let calls = 0;
+  const run = fixture(async (_id, { expression }) => {
+    if (++calls === 1) return { exceptionDetails: { text: 'SyntaxError: Illegal return statement' } };
+    assert.match(expression, /const input = \{"value":12\}/);
+    return { result: { type: 'number', value: 12 } };
+  });
+  const result = await run(7, undefined, {}, { code: 'return input.value', args: { value: 12 } });
+  assert.equal(result.result, 12); assert.equal(calls, 2);
+});
+
+test('missing-tool errors from the debugger return guidance without retrying', async () => {
+  for (const message of ['ReferenceError: tool is not defined', "ReferenceError: Can't find variable: tools"]) {
+    let calls = 0;
+    const run = fixture(async () => { calls++; throw new Error(message); });
+    const result = await run();
+    assert.equal(result.code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
+    assert.equal(result.details.automaticReplay, false); assert.equal(calls, 1);
+    assert.match(result.diagnostic.suggestedNextStep, /tools\.name/);
+  }
+});
+
+test('a missing-tool exception takes precedence over return-shape recovery', async () => {
+  let calls = 0;
+  const run = fixture(async () => { calls++; return { exceptionDetails: { text: 'ReferenceError: tools is not defined (Illegal return statement)' } }; });
+  assert.equal((await run()).code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
+  assert.equal(calls, 1);
+});
+
+test('native runtime exceptions are not mistaken for compile-only shape recovery', async () => {
+  for (const exceptionDetails of [
+    { text: 'Error: Illegal return statement' },
+    { text: 'SyntaxError: Illegal return statement', stackTrace: { callFrames: [{ functionName: 'pageCallback' }] } },
+    { text: 'SyntaxError: Illegal return statement\n    at pageCallback' },
+  ]) {
+    let calls = 0;
+    const run = fixture(async () => { calls++; return { exceptionDetails }; });
+    assert.equal((await run()).ok, false); assert.equal(calls, 1);
+  }
 });
 
 test('same tab serializes, other tabs proceed, cancellation releases queued work', async () => {

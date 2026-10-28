@@ -239,15 +239,25 @@ Fragment navigation can keep the same document.
 
 The old-document probe has a 100 ms deadline. If it expires or fails, the fallback also requires a
 `tabs.onUpdated` completion event. Polls run 50 ms apart; every awaited Chrome operation races
-against cancellation. Timeout and stop release the gate and permit new-tab cleanup. New tabs are
+against cancellation. Timeout releases the gate and retains a claimed tab with its current URL,
+loading state and `incomplete` marker. Stop and navigation failures retain new-tab cleanup. New tabs are
 claimed while blank, configured for mobile mode or network capture, then navigated through this
 gate.
 
 Read-only page tools also wait for an initial pending navigation to leave `about:blank`, within
-their timeout and cancellation signal. They recheck access after waiting. Content injection uses
-Chrome's `document_idle` timing; explicit UID bridge recovery injects immediately and validates the
-document again. Dynamic page content can require an explicit element or network
-wait.
+their timeout and cancellation signal. They recheck access after waiting. Content reads inject
+immediately into the main frame. The initial presence ping has a short probe budget; installation
+and its acknowledgement use the call's existing deadline and cancellation signal. The installed bridge
+is idempotent. A presence ping also reports whether DOMContentLoaded has fired. Content reads wait
+for that document event before extracting, so a heavy head cannot produce a successful empty body.
+Screenshots use an immediate main-frame document gate before capturing. Both paths use the
+[self-contained readiness function](../src/shared/document-readiness.ts): Content calls it directly
+for presence probes and its cached event wait; screenshots serialize it through `executeScript`,
+without installing the Content bundle or adding a probe. Both gates share the tool's hard deadline
+and cancellation, exclude subresource/child-frame load, and do no late extraction or
+capture after cancellation. Readiness has its own phase counter. Explicit UID bridge recovery
+initializes frames immediately and validates the selected document again. Dynamic page content can
+require an explicit element or network wait.
 
 Element clicks and form submission capture a navigation baseline immediately before input. They
 allow 180 ms for navigation to start, then wait up to 10 seconds while new navigation evidence
@@ -366,6 +376,15 @@ while public reads and exports resolve the original inline data. Gallery GC cann
 images. Session deletion sweeps unreferenced history assets behind a repository write barrier,
 including prepared but not yet committed conversations in the live reference set.
 
+Ordinary screenshot CSS measurement injects immediately with a 150 ms probe budget. An unavailable
+measurement leaves an observation image without coordinates. Native capture fallback serializes
+activation, capture and focus restoration per window. A call-local accumulator records injection,
+extraction, CDP, measurement, normalization and result postprocessing counts and cumulative durations.
+Tool settlement emits one `tool_phase` diagnostic row with the call ID, including work still pending at
+settlement. Concurrent phase durations may overlap; these are not a wall-clock breakdown. Late work
+cannot change the closed summary. CDP commands emit no individual phase rows, and timing stays out of
+model-visible results.
+
 Actionable screenshots register coordinates from the final encoded dimensions. Capture reads page
 identity and viewport geometry, takes the image, waits 200 ms, then compares the current state. A
 changed frame triggers one retry. Requested screenshots and post-action observations use the same
@@ -376,11 +395,102 @@ path, including the retry delay. Coordinate actions require a valid screenshot. 
 
 The [tool runtime](../src/background/tools/runtime.ts) checks the catalog, arguments, ownership,
 safety, and rate limits before execution. It normalizes results and applies authorized effects.
-Argument validation precedes target resolution. [Effect tickets](../src/background/tools/effects.ts)
+Argument validation precedes target resolution. A model response can contain multiple tool calls.
+The Agent executes ready data-flow nodes with one shared limit of ten in-flight calls. Creators,
+explicit observations, and declared tab-local actions share that budget. Each tab has an execution
+lane: a navigation or element action waits for earlier work on its tab while independent tabs advance.
+UID calls use their registered tab lane when all targets share one known tab and the definition grants
+a parallel role. `behavior.uidTargets` extends the singular target fields; mixed, unknown and cross-tab
+target sets retain commit barriers, as do implicit targets and undeclared/global operations.
+Capability definitions can set `behavior.barrier` to a boolean or synchronous argument predicate.
+The runtime evaluates it once per call during planning; true or a thrown predicate overrides
+`parallelOpen`, `parallelTab` and `parallelRead`. The Agent reuses this decision for execution.
+Projection preserves target metadata for `tabRef`, and the same graph builder adds preceding-commit
+and following-execution dependencies. No tool-name branch in the scheduler selects this behavior.
+
+`run_script` declares `parallelTab: true` with a barrier predicate for inner mode or potential tool
+API use. An omitted target means page. The capability's [classifier](../src/capabilities/script/tool-access.ts)
+uses the pinned JavaScript parser to distinguish comments, quoted strings and ordinary member
+properties from tool references, template expressions and dynamic access. Parse failures, tool
+references and dynamic constructs remain barriers. This is conservative scheduling analysis, not a
+JavaScript sandbox or proof that arbitrary page functions have no external side effects.
+
+No-tools page scripts use tab lanes regardless of `mutatesPage`, which continues to control effects.
+Input/args bindings are injected without a bridge. A tab-local execution cannot install the tool
+bridge, even if a later classification disagrees. Missing tool access returns
+`RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE`, with inspection/recovery guidance and no automatic replay.
+Only a native return-shape syntax error without an execution stack can use the existing no-bridge
+shape recovery; runtime error envelopes never trigger it. Tool-using page scripts retain their existing nested-tool scope and are barriers.
+`run_skill_script`, inner execution, and all Skill/plugin tools remain barriers; plugin resolution
+overrides host predicates with literal true. Permission, ownership, deadlines and run checks still apply.
+Tool start and progress events publish during execution, including flow-control waits. A separate
+cursor publishes tool-owned Session state, effects, alias bindings, final tool events and model
+messages in the original call order. Completed execution frees a slot immediately, even while its
+result awaits publication. Progress stops when execution settles or cancellation revokes the call.
+The Background runtime tracks overlapping calls and projects the most recently active tool; ending
+one call preserves other active tools.
+
+Execution-time permission checks are read-only, including nested CDP checks and browser-context
+collection. Working-tab selection occurs at commit, following the same order as serial execution.
+An earlier numeric or UID-resolved page target forms a window-anchor dependency for subsequent creators. Each
+call has its own cancellation signal derived from the run. Stop launches no further work, revokes
+uncommitted state/effects and closes uncommitted creations. The ledger retains the committed prefix
+and returns ordered cancellation records for the remainder, including calls that were never started.
+Parallel `read_article`, `find_elements` and `get_ax_tree` do not scroll, focus or activate tabs.
+They observe the current mode and skip
+mobile-preference restoration that could reload a disconnected page. Sequential preparation keeps
+its existing restoration behavior.
+For known URLs, the model can include `open_tab({url,tabAlias:"a"})` and
+`read_article({tabRef:"a",limit:4000})` in the same assistant message's `tool_calls` array.
+Place each creator before its consumers. The [tab batch planner](../src/background/tools/tab-batch.ts)
+builds execution edges without reordering publication. Independent `open_tab` calls execute concurrently,
+including creation, page-mode/network preparation and navigation to commit. Each finished creator
+makes its private numeric target available to its own readers immediately; a slow sibling opening
+creates no read barrier. Document readiness stays inside the reading tool's existing deadline.
+
+New tabs receive opaque execution-only permits in `SessionTabs`. They stay outside Session ownership,
+working-tab state and visited sites until ordered commit. Only the originating runtime/session/run
+can use the original result identity to authorize a dependent observation. A JSON copy grants no
+permission. Actions await published ownership. Commit checks run authority, live tab availability and
+security again, then publishes ownership and selection together. Failed or cancelled uncommitted
+creations are closed; terminal cleanup also retries outstanding permits. A navigation timeout retains
+its loading tab only if its ordered commit is still authorized, and supplies no alias binding.
+
+Only trusted core registrations declare scheduling authority. References expire at the array boundary;
+subsequent messages use returned numeric IDs. Multiple opens require explicit page targets. Duplicate,
+invalid, forward and ambiguous references return `BATCH_TAB_REFERENCE_ERROR`. Failed, incomplete or
+effect-failed producers yield `BATCH_TAB_DEPENDENCY_FAILED` for their consumers, including observations
+that executed speculatively before the producer's commit failed. Independent pages continue. Browser
+operations already issued may still finish after cancellation; closed provisional tabs and revoked
+run authority prevent their late publication.
+
+[Effect tickets](../src/background/tools/effects.ts)
 come from trusted registrations. Shared [security
 guards](../src/background/security-guardrails-runtime.ts) check navigation, fetch, scripts, Skills,
 and MCP; user grants apply to the named target. See [permissions](permissions.md) for browser access
 and recovery behavior.
+
+Tools can publish completed stages into a call-local partial-result slot. Only the existing hard
+deadline reads that slot: it aborts the call and returns the saved content with
+`incomplete: { reason: "timeout", pending }`. Only the hard-timeout fallback samples
+`pageState.readyState`, URL and title. Successful Content reads reuse the presence acknowledgement's
+readiness flag; their document-event gate is separate from timeout state sampling. A busy
+renderer can retain an observation supplied by the partial result and its timestamp; an unavailable
+observation reports `unknown`. Changed documents discard obsolete partial content.
+Safety rejection, a closed tab and user cancellation remain errors. Tools without a partial retain
+`TOOL_TIMEOUT`.
+
+The Content overview ranks every action candidate using semantic eligibility and geometry, then
+computes labels and unique selectors for retained actions. Unnamed-role candidates still use their
+labels when determining eligibility. This preserves selection and snapshot output while avoiding
+whole-document selector/label queries for thousands of discarded links.
+AX snapshots cache ancestor descriptions within one read and fetch up to four child frames at once,
+merging in frame order. A timed-out AX read retains the main document and completed children. Until
+viewport geometry completes, this partial explicitly uses `scope:"full"` and lists filtering in
+`pending`; successful output retains the requested scope. Screenshot partials use normalized images
+without coordinates. Action timeouts remain localized `TOOL_TIMEOUT` errors, with an unconfirmed
+outcome that may already have taken effect. They issue no success effects or working-tab update;
+the runtime preserves the attempt without replaying it.
 
 [Skill tools](../src/background/skills/skill-tool-runtime.ts) use the same execution and identity
 protocols. Embedded content and trusted `skillHosts` have separate contributions and validated

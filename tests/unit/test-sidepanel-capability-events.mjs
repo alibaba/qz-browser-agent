@@ -57,6 +57,33 @@ function fixture({ current = "visible", listen, reconcile = false } = {}) {
 const event = (type, sessionId = "visible", fields = {}) => ({ type, sessionId, runId: "new", ...fields });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test("tool status uses the surviving runtime tool and keeps unrelated progress isolated", () => {
+  const f = fixture();
+  f.router.handle(event("agent_start"));
+  f.router.handle(event("tool_execution_start", "visible", { toolCallId: "a", toolName: "open_tab" }));
+  f.router.handle(event("tool_execution_update", "visible", {
+    toolCallId: "a", phase: "queued", statusText: "A queued", rateLimit: { waitMs: 10 },
+  }));
+  f.router.handle(event("tool_execution_start", "visible", { toolCallId: "b", toolName: "read_article" }));
+  const b = f.state.getRuntime("visible").currentTool;
+  assert.equal(b.phase, "running");
+  assert.equal(b.statusText, "");
+  assert.equal(b.rateLimit, null);
+  f.router.handle(event("tool_execution_end", "visible", { toolCallId: "a" }));
+  assert.deepEqual(f.state.getRuntime("visible").currentTool, b);
+  const surviving = { ...b, toolCallId: "c", statusText: "C queued", phase: "queued" };
+  f.router.handle(event("tool_execution_end", "visible", {
+    toolCallId: "b", runtime: { status: "running", running: true, currentTool: surviving },
+  }));
+  assert.deepEqual(f.state.getRuntime("visible").currentTool, surviving);
+  assert.equal(f.calls.filter(call => call.name === "status").at(-1).args[0], "C queued");
+  f.router.handle(event("tool_execution_end", "visible", {
+    toolCallId: "c", runtime: { status: "running", running: true, currentTool: null },
+  }));
+  assert.equal(f.state.getRuntime("visible").currentTool, null);
+  f.ui.dispose();
+});
+
 test("terminal status alone does not mark stored history as loaded", () => {
   for (const status of ["aborted", "interrupted"]) {
     const state = createSessionState();

@@ -3,6 +3,7 @@ import test from "node:test";
 import { createSessionRuntimeState } from "../../src/background/session/runtime-state.js";
 import { createSessionSupervisor } from "../../src/background/session/supervisor.js";
 import { OWNED_TAB_SCHEMA_VERSION } from "../../src/background/session/tabs.js";
+import { createSessionState } from "../../src/sidepanel/features/sessions/session-state.js";
 
 const runtimes = new Map();
 const writes = [];
@@ -142,6 +143,47 @@ assert.ok(removals.includes("s1"));
 assert.deepEqual(groupSyncs, ["s1", "s1"]);
 
 console.log("session runtime state tests passed");
+
+test("overlapping tool events isolate progress and project the surviving call through reconnects", () => {
+  const id = "parallel-tools", client = createSessionState();
+  const emit = (type, toolCallId, fields = {}) => {
+    const event = { type, sessionId: id, runId: "parallel-run", toolCallId, ...fields };
+    state.recordEvent(id, event);
+    client.applyEvent({ ...event, runtime: structuredClone(runtimes.get(id)) });
+    assert.deepEqual(client.getRuntime(id).currentTool, runtimes.get(id).currentTool);
+    return runtimes.get(id).currentTool;
+  };
+  emit("agent_start");
+  emit("tool_execution_start", "a", { toolName: "open_tab", toolTitle: "Open A" });
+  const a = emit("tool_execution_update", "a", { phase: "queued", statusText: "A queued", rateLimit: { waitMs: 1000 } });
+  const b = emit("tool_execution_start", "b", { toolName: "read_article", toolTitle: "Read B", toolRendererId: "article" });
+  assert.equal(b.phase, "running");
+  assert.equal(b.statusText, "");
+  assert.equal(b.rateLimit, null);
+  assert.equal(b.title, "Read B");
+  assert.equal(b.rendererId, "article");
+  assert.notEqual(b.startedAt, a.startedAt);
+  assert.deepEqual(emit("tool_execution_end", "a"), b, "ending an older tool preserves the current one");
+  emit("tool_execution_start", "c", { toolName: "open_tab" });
+  const c = emit("tool_execution_update", "c", { phase: "queued", statusText: "C queued", rateLimit: { waitMs: 500 } });
+  const resumedB = emit("tool_execution_update", "b", { statusText: "B reading" });
+  assert.equal(resumedB.startedAt, b.startedAt);
+  assert.equal(resumedB.phase, "running");
+  assert.equal(resumedB.rateLimit, null);
+  assert.equal(resumedB.rendererId, "article");
+  const reconnected = createSessionState();
+  reconnected.applyEvent({ type: "state", sessionId: id, runtime: structuredClone(runtimes.get(id)) });
+  assert.deepEqual(reconnected.getRuntime(id).currentTool, resumedB);
+  assert.deepEqual(emit("tool_execution_end", "b"), c, "ending the selected tool restores another active tool");
+  assert.equal(emit("tool_execution_end", "c"), null);
+  emit("tool_execution_start", "old", { toolName: "open_tab" });
+  emit("agent_start", undefined, { runId: "replacement" });
+  emit("tool_execution_update", "old", { statusText: "stale" });
+  assert.equal(runtimes.get(id).currentTool, null, "stale runs cannot restore old progress");
+  emit("tool_execution_start", "new", { runId: "replacement", toolName: "read_article" });
+  assert.equal(emit("tool_execution_end", "new", { runId: "replacement" }), null, "run restart clears all old active tools");
+  state.remove(id);
+});
 
 for (const failingStep of ["migration", "read", "write"]) {
   test(`runtime hydration recovers after ${failingStep} failure without restoring legacy tab ownership`, async () => {

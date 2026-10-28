@@ -140,8 +140,16 @@ export function reduceSessionRuntimePatch(previous: Partial<SessionRuntime> = {}
         currentTool: isPlainObject(tool) ? clonePlain(tool) : null,
       };
     }
-    case "tool_execution_end":
-      return { currentToolName: "", currentToolStartedAt: "", currentTool: null };
+    case "tool_execution_end": {
+      const tool = currentTool === undefined
+        ? (event.toolCallId && record(previous.currentTool).toolCallId !== event.toolCallId ? previous.currentTool : null)
+        : currentTool;
+      return {
+        currentToolName: record(tool).name || "",
+        currentToolStartedAt: record(tool).startedAt || "",
+        currentTool: isPlainObject(tool) ? clonePlain(tool) : null,
+      };
+    }
     case "context_usage":
       return {
         contextUsage: event.usage || previous.contextUsage || {},

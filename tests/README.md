@@ -77,6 +77,27 @@ other browser entries accept `CHROME_EXECUTABLE`. Keep the browser version fixed
 Session exchange runs headless by default; set `SESSION_EXCHANGE_HEADLESS=0` to open a browser
 window for debugging.
 
+## Tool data-flow scheduling
+
+Run `npm test -- unit --match tool-dataflow` for the Agent/runtime/Session transaction fixture and
+`npm test -- unit --match agent-tool-scheduler` for the shared ten-call budget. The fixtures hold
+individual opens and actions, prove that ready readers advance before unrelated openings finish,
+and compare serial/parallel ownership, working tab, effects, ordered final events and model messages. Start/progress tests assert live publication and
+per-call isolation while execution is still blocked.
+Failure, duplicate aliases, cancellation, private permit identity and cleanup retries are included.
+The data-flow fixture retains production script declarations while controlling their execution:
+no-tools page scripts overlap across tabs and serialize within a tab; tool-using, inner and hidden
+Skill scripts remain barriers. `npm test -- unit --match tool-behavior` verifies barrier predicate
+precedence, single evaluation, throwing predicates, new capability tool names and plugin barriers.
+`npm test -- unit --match script-tool-access` covers static classification; `--match script-runtime`
+checks actual generated page expressions, input bindings and no-replay errors.
+`npm test -- playwright tests/browser/script-dataflow.spec.mjs` serves six local pages, compares
+serial budget 1 with data-flow budget 10 for three alternating trials, and attaches timings. It also
+checks same-tab serialization, real nested `tools.read_article` barriers and one-shot failure after
+a DOM side effect. No public sites or model providers are involved.
+`npm test -- playwright tests/browser/tab-navigation.spec.mjs` repeats the independent-read check
+with a withheld HTTP response, real Content readiness and Network watching both enabled and disabled.
+
 ## Add a test at the right boundary
 
 | Behavior being changed | Where to put the evidence |
@@ -314,6 +335,14 @@ variants. Keep the initial reports alongside any rerun reports. Use `agent --cas
 navigation_readiness_plain,navigation_readiness_watched` for immediate article reads after delayed
 opens, navigation, same-URL reloads and redirects. These cases require every first read immediately
 after navigation to return the new document.
+
+To check model-generated opening and reading in one tool batch, run
+`QINGZHOU_LIVE_CASES=pageBatch npm test -- live deepseek`. Three isolated Sessions read two local
+pages with distinct product codes. Each trial verifies both answers and a single `tool_calls` array
+containing two `open_tab` aliases and their two `read_article` references. The report records actual
+model/tool turns and elapsed time, including any additional verification calls. Set
+`QZ_PAGE_BATCH_EXPECT_BINDINGS=0` when measuring an older extension without this contract; answer
+checks remain enabled. This case is selected explicitly and uses the normal live credential rules.
 
 For the extended session-management checks, run `live deepseek` with
 `QINGZHOU_LIVE_SESSION_MANAGEMENT=1 QINGZHOU_LIVE_SESSION_MANAGEMENT_EXTENDED=1`. The ordinary

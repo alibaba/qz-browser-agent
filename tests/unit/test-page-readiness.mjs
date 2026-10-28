@@ -4,6 +4,8 @@ import { test } from "node:test";
 const targetUrl = "https://example.test/gallery";
 let tab, closed, denied, reads, resolves, polls;
 let contentReady = true;
+let documentReady = true, completeDocument;
+let ackDelay = 0;
 let completeInjection;
 const injections = [];
 globalThis.chrome = {
@@ -12,7 +14,11 @@ globalThis.chrome = {
   tabs: {
     async get() { polls++; if (closed) throw new Error("No tab with id: 1"); return { ...tab }; },
     async sendMessage(_tabId, message) {
-      if (message.action === "ping") return { ok: contentReady };
+      if (message.action === "ping") {
+        if (contentReady && ackDelay) await pause(ackDelay);
+        return { ok: contentReady, documentReady };
+      }
+      if (message.action === 'awaitDocument') return new Promise(resolve => { completeDocument = () => { documentReady = true; resolve({ ok: true }); }; });
       reads++;
       assert.equal(tab.url, targetUrl, "must never read the initial blank document");
       return { text: "Loaded article", images: [], scanned: 0 };
@@ -65,11 +71,19 @@ for (const name of ["read_article", "list_images"]) {
           assert.equal(reads, 1);
           assert.ok(resolves >= 2, "access must be checked again after waiting");
         } else {
-          assert.ok(settled.error, `${outcome} must fail`);
-          if (outcome !== "closed") assert.equal(settled.error.code, {
-            cancelled: "OPERATION_ABORTED", timeout: "TOOL_TIMEOUT", "access-revoked": "SESSION_TAB_UNAVAILABLE",
-            "blocked-redirect": "SECURITY_GUARDRAIL_BLOCKED",
-          }[outcome]);
+          if (outcome === "timeout" && name === "read_article") {
+            assert.equal(settled.error, undefined);
+            assert.equal(settled.value.incomplete.reason, "timeout");
+            assert.equal(settled.value.pageState.url, "about:blank");
+            assert.equal(settled.value.pageState.pendingUrl, targetUrl);
+            assert.equal(settled.value.pageState.readyState, "unknown", "tab loading does not imply document readiness");
+          } else {
+            assert.ok(settled.error, `${outcome} must fail`);
+            if (outcome !== "closed") assert.equal(settled.error.code, {
+              cancelled: "OPERATION_ABORTED", timeout: "TOOL_TIMEOUT", "access-revoked": "SESSION_TAB_UNAVAILABLE",
+              "blocked-redirect": "SECURITY_GUARDRAIL_BLOCKED",
+            }[outcome]);
+          }
           closed = false;
           load();
           await pause(70);
@@ -84,7 +98,30 @@ for (const name of ["read_article", "list_images"]) {
   }
 }
 
-test("ordinary Content initialization waits for document_idle before reading", async () => {
+for (const outcome of ['ready', 'cancelled', 'timeout']) test(`a parsed-document gate protects late-body reads: ${outcome}`, async () => {
+  load(); closed = denied = false; reads = 0; contentReady = true; documentReady = false; completeDocument = undefined;
+  const controller = new AbortController();
+  let done = false;
+  const pending = runtime.execute('read_article', { tabId: 1, limit: 1200, timeout: 1 }, controller.signal, context)
+    .then(value => ({ value }), error => ({ error })).finally(() => { done = true; });
+  try {
+    for (let attempt = 0; !completeDocument && attempt < 100; attempt++) await pause(2);
+    assert.equal(typeof completeDocument, 'function');
+    assert.equal(done, false); assert.equal(reads, 0);
+    if (outcome === 'ready') completeDocument();
+    if (outcome === 'cancelled') controller.abort();
+    const result = await pending;
+    if (outcome === 'ready') { assert.equal(result.value.text, 'Loaded article'); assert.equal(reads, 1); }
+    else {
+      if (outcome === 'cancelled') assert.equal(result.error.code, 'OPERATION_ABORTED');
+      else assert.equal(result.value.incomplete.reason, 'timeout');
+      completeDocument(); await pause(20);
+      assert.equal(reads, 0, 'late DOM readiness never revives cancelled extraction');
+    }
+  } finally { controller.abort(); completeDocument?.(); documentReady = true; await pending; }
+});
+
+test("ordinary Content initialization immediately targets the main frame and reuses its bridge", async () => {
   closed = denied = false;
   reads = 0;
   contentReady = false;
@@ -94,8 +131,8 @@ test("ordinary Content initialization waits for document_idle before reading", a
     for (let attempt = 0; !completeInjection && attempt < 100; attempt++) await pause(2);
     assert.equal(typeof completeInjection, "function", "a missing Content script must be initialized");
     assert.deepEqual(injections, [{
-      target: { tabId: 1, allFrames: true }, world: "ISOLATED",
-      files: ["content/article-extractor.js", "content/content-script.js"], injectImmediately: false,
+      target: { tabId: 1, frameIds: [0] }, world: "ISOLATED",
+      files: ["content/article-extractor.js", "content/content-script.js"], injectImmediately: true,
     }]);
     assert.equal(reads, 0, "the page read must wait for injection to finish");
     completeInjection();
@@ -107,4 +144,42 @@ test("ordinary Content initialization waits for document_idle before reading", a
     completeInjection?.();
     await pending;
   }
+});
+
+test("slow Content installation and acknowledgement can finish within the tool deadline", async () => {
+  closed = denied = false;
+  reads = 0; contentReady = false; completeInjection = undefined; ackDelay = 200;
+  load();
+  let settled = false;
+  const pending = runtime.execute("read_article", { tabId: 1, limit: 1200, timeout: 5 }, undefined, context)
+    .then(value => ({ value }), error => ({ error })).then(result => { settled = true; return result; });
+  try {
+    for (let attempt = 0; !completeInjection && attempt < 100; attempt++) await pause(2);
+    assert.equal(typeof completeInjection, "function");
+    await pause(1600);
+    assert.equal(settled, false, "installation has no independent 1500ms cutoff");
+    completeInjection();
+    const result = await pending;
+    assert.equal(result.error, undefined);
+    assert.equal(result.value.text, "Loaded article");
+    assert.equal(reads, 1, "a slow post-install ack still permits the read");
+  } finally { ackDelay = 0; completeInjection?.(); await pending; }
+});
+
+test("cancelled Content installation cannot dispatch a late page read", async () => {
+  closed = denied = false;
+  reads = 0; contentReady = false; completeInjection = undefined;
+  load();
+  const controller = new AbortController();
+  const pending = runtime.execute("read_article", { tabId: 1, limit: 1200 }, controller.signal, context);
+  const rejected = assert.rejects(pending, { code: "OPERATION_ABORTED" });
+  try {
+    for (let attempt = 0; !completeInjection && attempt < 100; attempt++) await pause(2);
+    assert.equal(typeof completeInjection, "function");
+    controller.abort();
+    await rejected;
+    completeInjection();
+    await pause(20);
+    assert.equal(reads, 0);
+  } finally { controller.abort(); completeInjection?.(); await rejected; }
 });

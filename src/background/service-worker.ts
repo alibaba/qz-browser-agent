@@ -405,7 +405,7 @@ const sessionAgentHost = createSessionAgentHost({
   getToolRuntime: () => toolRuntime,
   getSupervisor: () => sessionSupervisor,
   getCommands: () => sessionCommands,
-  getWorkingTabContext: (...args) => sessionTabs.getWorkingTabContext(...args),
+  getWorkingTabContext: sessionId => sessionTabs.getWorkingTabContext(sessionId, { readOnly: true }),
   recordTranscriptEvent: (...args) => sessionTranscript.recordEvent(...args),
   recordRuntimeEvent: (...args) => sessionRuntimeState.recordEvent(...args),
   persistRuntime: (...args) => sessionRuntimeState.persist(...args),
@@ -485,7 +485,7 @@ const sessionBrowserContext = createSessionBrowserContextCollector({
   getOwnedTabContexts: sessionTabs.getOwnedTabContexts,
   findOwnedTabOwner: sessionTabs.findOwner,
   ownsTab: sessionTabs.owns,
-  getWorkingTabContext: sessionTabs.getWorkingTabContext,
+  getWorkingTabContext: sessionId => sessionTabs.getWorkingTabContext(sessionId, { readOnly: true }),
   getRuntime: (...args) => sessionCommands.getSessionRuntimeState(...args),
 });
 const collectBrowserContext = sessionBrowserContext.collect;
@@ -715,6 +715,9 @@ toolRuntime = createToolRuntime({
     deleteAutomation: automationRuntime.remove,
     runAutomation: automationRuntime.run,
     listAutomationRuns: automationRuntime.listRuns,
+    reserveCreatedTab: sessionTabs.reserveCreatedTab,
+    commitCreatedTab: sessionTabs.commitCreatedTab,
+    discardCreatedTab: sessionTabs.discardCreatedTab,
     updateWorkingTab: sessionTabs.updateWorkingTab,
     clearWorkingTab: sessionTabs.clearWorkingTab,
     resolveTargetTab: sessionTabs.resolveTargetTab,

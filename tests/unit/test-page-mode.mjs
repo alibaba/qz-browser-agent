@@ -143,6 +143,21 @@ test("a released or reconnected lease never reports mobile; only the owning sess
   assert.equal(f.runtime.describePage(1).pageMode, "desktop", "explicit desktop cancels the stored mobile preference");
 });
 
+test("parallel page observations never restore a disconnected mode or reload the document", async () => {
+  const f = fixture();
+  await f.runtime.change(1, "mobile", undefined, context);
+  f.connections.delete(1);
+  const before = f.calls.length;
+  for (const name of ["read_article", "find_elements", "get_ax_tree"]) {
+    await f.runtime.preparePage(1, name, undefined, { ...context, preserveWorkingTab: true });
+  }
+  assert.equal(f.calls.length, before);
+  assert.equal(f.reloads(), 1);
+  assert.equal(f.runtime.describePage(1).pageMode, "desktop");
+  await f.runtime.preparePage(1, "read_article", undefined, context);
+  assert.equal(f.reloads(), 2, "sequential reads retain the existing restoration behavior");
+});
+
 test("failed desktop switch preserves mobile; closed tabs discard their preference", async () => {
   const f = fixture();
   await f.runtime.change(1, "mobile", undefined, context);

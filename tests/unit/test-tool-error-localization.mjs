@@ -149,3 +149,41 @@ assert.equal(localizeToolFailurePayload({ ok: true, value: 42 }).value, 42);
 assert.equal(localizeToolFailureText("Failed to fetch", { code: "CDP_COMMAND_FAILED" }), "网络请求失败。");
 assert.equal(localizeToolFailureText("custom", { code: "DOCUMENT_TABLE_NOT_FOUND" }),
   "未找到指定的文档表格，请使用解析摘要或正文结果返回的 tableId。");
+
+{
+  const payload = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_DEPENDENCY_FAILED", details: { tabRef: "a" } });
+  assert.equal(payload.codeLabel, "前置 open_tab 失败");
+  assert.equal(payload.error, "tabAlias「a」对应的 open_tab 没有成功，已跳过这次页面调用。请先看该 open_tab 的报错，再用返回的 tabId 重试。");
+}
+
+{
+  const payload = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_DEPENDENCY_FAILED", details: {} });
+  assert.equal(payload.error, "tabAlias「（未知）」对应的 open_tab 没有成功，已跳过这次页面调用。请先看该 open_tab 的报错，再用返回的 tabId 重试。");
+}
+
+{
+  const messages = {}, labels = {};
+  for (const reason of ["unknown_reference", "duplicate_alias", "forward_reference", "invalid_alias", "invalid_reference", "ambiguous_target", "outside_batch"]) {
+    const payload = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_REFERENCE_ERROR", details: { reason, tabRef: "a" } });
+    messages[reason] = payload.error;
+    labels[reason] = payload.codeLabel;
+    assert.ok(!payload.error.includes("{tabRef}"), `${reason} interpolates tabRef`);
+    assert.ok(payload.codeLabel && !payload.codeLabel.includes("BATCH_TAB"), `${reason} label stays human-readable`);
+  }
+  assert.equal(new Set(Object.values(messages)).size, 7, "every reference reason owns its message");
+  assert.equal(new Set(Object.values(labels)).size, 7, "every reference reason owns its label");
+  assert.equal(messages.unknown_reference, "本批没有 tabAlias「a」对应的 open_tab。请先添加对应的 open_tab，或改用已返回的 tabId。");
+  assert.equal(labels.duplicate_alias, "tabAlias 重复");
+  const generic = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_REFERENCE_ERROR", details: { tabRef: "a" } });
+  assert.equal(generic.codeLabel, "批次标签页引用无法解析");
+  assert.equal(generic.error, "本批标签页引用无法解析。请为 open_tab 设置唯一 tabAlias，并在页面调用中提供对应 tabRef 或明确的 tabId；将依赖的打开调用放在页面操作之前。");
+}
+
+{
+  const err = new Error("ignored");
+  err.code = "BATCH_TAB_REFERENCE_ERROR";
+  err.details = { reason: "forward_reference", tabRef: "b" };
+  const localized = localizeToolFailureError(err);
+  assert.equal(localized.codeLabel, "open_tab 顺序错误");
+  assert.equal(localized.message, "tabAlias「b」的 open_tab 必须排在引用它的页面调用之前。请调整本批中的调用顺序。");
+}

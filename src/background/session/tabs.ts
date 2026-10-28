@@ -33,8 +33,8 @@ interface SessionTabsOptions {
 }
 interface TabClaim { source?: string; toolName?: string; action?: string; explicitClaim?: boolean; createdTab?: boolean; clonedTab?: boolean }
 interface RunAuthority { runId?: string | null; signal?: AbortSignal }
-interface WorkingTabUpdate extends TabClaim, RunAuthority { sessionId?: unknown; tab?: unknown; owned?: boolean; claim?: boolean }
-interface TargetTabOptions extends RunAuthority { sessionId?: unknown; tabId?: unknown; source?: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean }
+interface WorkingTabUpdate extends TabClaim, RunAuthority { sessionId?: unknown; tab?: unknown; owned?: boolean; claim?: boolean; createdTabReservation?: object }
+interface TargetTabOptions extends RunAuthority { sessionId?: unknown; tabId?: unknown; source?: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean; createdTabReservation?: object }
 type RestoreFailure = { ok: false; index: number; code: string; reason: string; error?: string };
 type RestoreSuccess = { ok: true; index: number; portable: PortableSessionTab; tab: WorkingTab };
 const object = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
@@ -88,6 +88,7 @@ export function createSessionTabs({
     throw new TypeError("session tabs require runtime persistence commands");
   }
 
+  const pendingTabs = new Map<number, { token: object; sessionId: string; runId?: string | null; tab: WorkingTab }>();
   const groupSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const timestamp = () => String(now?.() || "");
 
@@ -110,6 +111,49 @@ export function createSessionTabs({
     return getOwnedTabIds(supervisor.getRuntime(id)).includes(target);
   }
 
+  async function reserveCreatedTab({ sessionId, runId, signal, tab }: Pick<WorkingTabUpdate, "sessionId" | "runId" | "signal" | "tab">) {
+    const id = normalizeSessionId(sessionId);
+    if (signal?.aborted || (runId && !supervisor.isRunCurrent(id, runId))) return { ok: false, code: "OPERATION_ABORTED" };
+    const created = normalizeWorkingTab(tab);
+    if (!id || !created) return { ok: false, code: "SESSION_TAB_UNAVAILABLE" };
+    if (findOwner(created.id) || pendingTabs.has(created.id)) return { ok: false, code: "SESSION_TAB_FOREIGN" };
+    const token = Object.freeze({});
+    pendingTabs.set(created.id, { token, sessionId: id, runId, tab: created });
+    return { ok: true, reservation: token };
+  }
+
+  async function discardCreatedTab(reservation: object) {
+    const pending = [...pendingTabs.values()].find(entry => entry.token === reservation);
+    if (!pending) return;
+    // Keep the reservation while closing so another task cannot claim an uncommitted tab.
+    try { await tabsApi.remove(pending.tab.id); } catch {
+      let exists = false;
+      try { await tabsApi.get(pending.tab.id); exists = true; } catch { /* Already closed. */ }
+      if (exists) await tabsApi.remove(pending.tab.id); // Retry a transient failure; retain the permit if closing still fails.
+    }
+    if (pendingTabs.get(pending.tab.id) === pending) pendingTabs.delete(pending.tab.id);
+  }
+
+  async function commitCreatedTab({ sessionId, runId, signal, reservation }: RunAuthority & { sessionId: string; reservation: object }) {
+    const pending = [...pendingTabs.values()].find(entry => entry.token === reservation);
+    const id = normalizeSessionId(sessionId);
+    const current = () => !signal?.aborted && (!runId || supervisor.isRunCurrent(id, runId));
+    if (!pending || pending.sessionId !== id || pending.runId !== runId) return { ok: false, code: "SESSION_TAB_UNAVAILABLE" };
+    if (!current()) return { ok: false, code: "OPERATION_ABORTED" };
+    let tab;
+    try { tab = await tabsApi.get(pending.tab.id); } catch { return { ok: false, code: "SESSION_TAB_UNAVAILABLE" }; }
+    if (!current()) return { ok: false, code: "OPERATION_ABORTED" };
+    if (pendingTabs.get(pending.tab.id) !== pending || findOwner(pending.tab.id)) return { ok: false, code: "SESSION_TAB_FOREIGN" };
+    // A navigation timeout retains its blank tab under the originally validated destination.
+    const publication = updateWorkingTab({ sessionId: id, runId, signal,
+      tab: isPageTab(tab) ? tab : { ...tab, url: pending.tab.url },
+      source: "tool:open_tab", toolName: "open_tab", createdTab: true, claim: true, createdTabReservation: reservation });
+    // The runtime patch is synchronous. Retire its cleanup permit before yielding to stop/delete.
+    if (owns(id, pending.tab.id)) pendingTabs.delete(pending.tab.id);
+    await publication;
+    return owns(id, pending.tab.id) ? { ok: true } : { ok: false, code: current() ? "SESSION_TAB_UNAVAILABLE" : "OPERATION_ABORTED" };
+  }
+
   async function updateWorkingTab({
     sessionId,
     runId,
@@ -121,11 +165,14 @@ export function createSessionTabs({
     action = "",
     createdTab = false,
     claim = undefined,
+    createdTabReservation,
   }: WorkingTabUpdate = {}) {
     const id = normalizeSessionId(sessionId);
     if (signal?.aborted || (runId && !supervisor.isRunCurrent(id, runId))) return supervisor.getRuntime(id);
     const workingTab = normalizeWorkingTab(tab);
     if (!workingTab) return null;
+    const reservation = pendingTabs.get(workingTab.id);
+    if (reservation && reservation.token !== createdTabReservation) return null;
     const explicitClaim = claim === true || owned === true;
     const ownership = shouldClaimTabForTask({
       source,
@@ -171,6 +218,7 @@ export function createSessionTabs({
     readOnly = false,
     tabOnly = false,
     allowPreNavigationBlank = false,
+    createdTabReservation,
   }: TargetTabOptions = {}) {
     const id = normalizeSessionId(sessionId);
     const isCurrent = () => !signal?.aborted && (!runId || supervisor.isRunCurrent(id, runId));
@@ -210,12 +258,15 @@ export function createSessionTabs({
     }
 
     if (!isCurrent()) return aborted();
+    const pending = pendingTabs.get(targetTabId);
+    if (pending && (pending.token !== createdTabReservation || pending.sessionId !== id || pending.runId !== runId))
+      return { ok: false, code: "SESSION_TAB_UNAVAILABLE", reason: "pending_creation", sessionId: id, tabId: targetTabId };
     const owner = findOwner(targetTabId);
     const formatted = formatTab(tab, { titleLimit: 120 });
     const tabUrl = String(tab?.url || tab?.pendingUrl || "").trim();
     const isOwnedPreNavigationBlank = allowPreNavigationBlank === true
       && tabUrl === "about:blank"
-      && owner?.sessionId === id;
+      && (owner?.sessionId === id || Boolean(pending));
     if (!isPageTab(tab) && !isOwnedPreNavigationBlank && !(tabOnly && owner?.sessionId === id)) {
       return {
         ok: false,
@@ -237,6 +288,7 @@ export function createSessionTabs({
       if (!isCurrent()) return aborted();
     }
 
+    if (pending) return { ok: true, sessionId: id, tabId: targetTabId, tab: formatted, ownedByCurrentTask: true };
     if (!owner) {
       if (tabOnly) return { ok: false, code: "SESSION_TAB_UNOWNED", reason: "tab_not_owned_by_current_session",
         error: t("browser.tabUnowned"), sessionId: id, tabId: targetTabId };
@@ -570,7 +622,13 @@ export function createSessionTabs({
     };
   }
 
+  async function discardPendingTabs(sessionId: unknown) {
+    const id = normalizeSessionId(sessionId);
+    for (const pending of pendingTabs.values()) if (pending.sessionId === id) await discardCreatedTab(pending.token);
+  }
+
   async function closeOwnedTabsAfterTerminal(sessionId: unknown, source = "terminal") {
+    await discardPendingTabs(sessionId);
     if (!(await shouldAutoCloseOwnedTabs(sessionId))) return { closed: [], skipped: true };
     return closeOwnedTabs(sessionId, { source });
   }
@@ -585,6 +643,7 @@ export function createSessionTabs({
   }
 
   async function closeOwnedTabs(sessionId: unknown, { source = "" } = {}) {
+    await discardPendingTabs(sessionId);
     const id = normalizeSessionId(sessionId);
     const runtime = supervisor.getRuntime(id) || {};
     const ownedTabIds = getOwnedTabIds(runtime);
@@ -621,7 +680,7 @@ export function createSessionTabs({
     return { closed, skipped: false };
   }
 
-  async function getWorkingTabContext(sessionId: unknown) {
+  async function getWorkingTabContext(sessionId: unknown, { readOnly = false } = {}) {
     await ready();
     const id = normalizeSessionId(sessionId);
     const persisted = supervisor.getRuntime(id) || {};
@@ -638,13 +697,14 @@ export function createSessionTabs({
 
     if (Number.isFinite(tabId) && tabId > 0) {
       if (!owns(id, tabId)) {
-        await clearWorkingTab({ sessionId: id, tabId, source: "working_tab_not_owned" });
+        if (!readOnly) await clearWorkingTab({ sessionId: id, tabId, source: "working_tab_not_owned" });
         return null;
       }
       try {
         const tab = await tabsApi.get(tabId);
         if (isPageTab(tab)) {
           const formatted = formatTab(tab, { titleLimit: 120 });
+          if (readOnly) return formatted;
           const runtime = await updateWorkingTab({
             sessionId: id,
             tab: formatted,
@@ -921,6 +981,9 @@ export function createSessionTabs({
   }
 
   return Object.freeze({
+    reserveCreatedTab,
+    commitCreatedTab,
+    discardCreatedTab,
     updateWorkingTab,
     resolveTargetTab,
     clearWorkingTab,

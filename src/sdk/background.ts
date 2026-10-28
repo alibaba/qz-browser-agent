@@ -3,11 +3,30 @@ import type { SkillActivationContext } from "../shared/skills/skill-manifest.js"
 import type { ToolDefinition, ToolSchema } from "../shared/contracts/tool.js";
 export type { ToolSchema, ToolArguments, ToolParameter } from "../shared/contracts/tool.js";
 
+export type ToolExecutionPhase = "injection" | "readiness" | "extraction" | "cdp" | "measurement" | "normalization" | "postprocess";
+
 export interface ToolContext extends SkillActivationContext {
   dynamicContext?: SkillActivationContext | null;
   skillExecution?: { plugin: import("../shared/skills/skill-manifest.js").SkillManifest; config?: Record<string, unknown> };
   sessionId?: string;
   runId?: string | null;
+  /** Call-scoped cancellation, including the tool deadline. */
+  signal?: AbortSignal;
+  /** Observation execution preserves the working tab; ordered commit may select the observed tab. */
+  preserveWorkingTab?: boolean;
+  /** Trusted batch creators publish ownership and working-tab state only at ordered settlement. */
+  deferCreatedTabSelection?: boolean;
+  /** Stage tool-owned Session changes for the Agent's ordered commit cursor. */
+  deferToolCommit?: boolean;
+  /** Private parent result identity; a JSON copy carries no execution authority. */
+  createdTabResult?: unknown;
+  onToolUpdate?(event: Record<string, unknown>): void;
+  /** Host-only execution permit for a new tab; never serialized into a tool result. */
+  prepareCreatedTab?(tab: import("../shared/tab-utils.js").TabReference): Promise<ToolContext>;
+  /** Publish an immutable completed stage for this call's existing hard deadline. */
+  reportPartial?(result: Record<string, unknown>, pending: string): void;
+  /** Call-local diagnostic accumulator. End the measurement in a finally block. */
+  measurePhase?(phase: ToolExecutionPhase): () => void;
   /** Captured by the run. Registry references are in-memory capabilities, never wire data. */
   language?: string;
   toolRegistrySnapshot?: unknown;
@@ -82,7 +101,7 @@ export interface ToolExtensionAPI extends Omit<PageNavigationHost, "commitObserv
   assertTabAllowed(tabId: number, details: Fields): Promise<unknown>;
   assertPageUrlAccessible(url: string): Promise<void>;
   assertUrlAllowed(url: string, guardrails: SecurityGuardrails, details: Fields): void;
-  sendToContent(tabId: number | undefined, action: string, args: Fields): Promise<unknown>;
+  sendToContent(tabId: number | undefined, action: string, args: Fields, context?: ToolContext): Promise<unknown>;
   getTabPageState(tabId: unknown): Promise<{ url: string; title: string }>;
   commitObservedPageNavigation(input: { pageBefore?: PageState; pageAfter?: PageState; prepared?: PreparedNavigation | null;
     guardrails?: Partial<SecurityGuardrails>; toolName?: string; tabId?: unknown }): object | null;

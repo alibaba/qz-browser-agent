@@ -20,6 +20,8 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   LOCATION_PANEL_UNAVAILABLE: { label: "locationPanelUnavailableLabel", message: "locationPanelUnavailable" },
   LOCATION_RESPONSE_TIMEOUT: { label: "locationResponseTimeoutLabel", message: "locationResponseTimeout" },
   ABORTED: { label: "toolError.ABORTED.label", message: "toolError.ABORTED.message" },
+  BATCH_TAB_REFERENCE_ERROR: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.message" },
+  BATCH_TAB_DEPENDENCY_FAILED: { label: "toolError.BATCH_TAB_DEPENDENCY_FAILED.label", message: "toolError.BATCH_TAB_DEPENDENCY_FAILED.message" },
   AGENT_ALREADY_RUNNING: { label: "toolError.AGENT_ALREADY_RUNNING.label" },
   SESSION_PERSIST_FAILED: { label: "toolError.SESSION_PERSIST_FAILED.label" },
   STALE_AGENT_LEASE: { label: "toolError.STALE_AGENT_LEASE.label" },
@@ -307,6 +309,31 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   WAIT_UNTIL_TOO_FAR: { label: "toolError.WAIT_UNTIL_TOO_FAR.label" },
 });
 
+// Batch tab reference failures refine their label and message through details.reason.
+const BATCH_TAB_REFERENCE_REASONS: Readonly<Record<string, { label: BackendMessageKey; message: BackendMessageKey }>> = Object.freeze({
+  unknown_reference: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.unknownReference.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.unknownReference.message" },
+  duplicate_alias: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.duplicateAlias.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.duplicateAlias.message" },
+  forward_reference: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.forwardReference.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.forwardReference.message" },
+  invalid_alias: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.invalidAlias.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.invalidAlias.message" },
+  invalid_reference: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.invalidReference.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.invalidReference.message" },
+  ambiguous_target: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.ambiguousTarget.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.ambiguousTarget.message" },
+  outside_batch: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.outsideBatch.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.outsideBatch.message" },
+});
+
+function batchTabReferenceReason(details: Record<string, unknown> = {}) {
+  return BATCH_TAB_REFERENCE_REASONS[String(details.reason || "")] || null;
+}
+
+/** Catalog messages interpolate scalar detail fields such as {tabRef}; a missing reference stays readable. */
+function detailParameters(details: Record<string, unknown> = {}) {
+  const parameters: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(details)) {
+    if (typeof value === "string" || typeof value === "number") parameters[key] = value;
+  }
+  if (parameters.tabRef === undefined) parameters.tabRef = getLanguage() === "zh-CN" ? "（未知）" : "unknown";
+  return parameters;
+}
+
 const DIAGNOSTIC_CATEGORY_LABELS: Readonly<Record<string, BackendMessageKey>> = Object.freeze({
   page_context: "toolFailure.pageContext",
   page_lifecycle: "toolFailure.pageLifecycle",
@@ -319,9 +346,11 @@ const DIAGNOSTIC_CATEGORY_LABELS: Readonly<Record<string, BackendMessageKey>> = 
   unknown: "toolFailure.unknown",
 });
 
-export function localizeToolFailureCode(code: unknown = "") {
+export function localizeToolFailureCode(code: unknown = "", details: unknown = {}) {
   const value = String(code || "").trim().toUpperCase();
   if (!value) return "";
+  const reason = value === "BATCH_TAB_REFERENCE_ERROR" ? batchTabReferenceReason(objectValue(details)) : null;
+  if (reason) return t(reason.label);
   if (ERROR_CATALOG[value]) return t(ERROR_CATALOG[value].label);
   if (!UPPER_ERROR_CODE_RE.test(value)) return "";
   return t("toolFailure.toolFailed");
@@ -351,7 +380,7 @@ export function localizeToolFailureError(value: unknown, context: FailureContext
       }
     } catch (_e) {}
   }
-  const codeLabel = localizeToolFailureCode(originalCode);
+  const codeLabel = localizeToolFailureCode(originalCode, err.details || context.details);
   if (codeLabel) {
     try {
       err.codeLabel = codeLabel;
@@ -375,7 +404,7 @@ export function localizeToolFailurePayload(payload: unknown, context: FailureCon
     code,
     details,
   };
-  const codeLabel = localizeToolFailureCode(code);
+  const codeLabel = localizeToolFailureCode(code, details);
   if (codeLabel) {
     out.codeLabel = codeLabel;
     out.details = { ...details, originalCode: details.originalCode || code };
@@ -421,7 +450,7 @@ export function localizeToolFailureText(message: unknown = "", context: FailureC
   if (!text) return t("toolFailure.toolFailedSentence");
   if (getLanguage() === "zh-CN" && CJK_RE.test(text)) return localizeMixedChineseText(text);
   if (ERROR_CATALOG[code]) {
-    return getLanguage() === "en" && !CJK_RE.test(text) ? text : localizeToolFailureCode(code);
+    return getLanguage() === "en" && !CJK_RE.test(text) ? text : localizeToolFailureCode(code, details);
   }
   return t("toolFailure.toolFailedSentence");
 }
@@ -445,7 +474,10 @@ function isFailurePayload(payload: Record<string, unknown>, context: FailureCont
 
 function localizeByCode(code: string, details: Record<string, unknown> = {}) {
   const message = ERROR_CATALOG[code]?.message;
-  if (message) return t(message);
+  if (message) {
+    const reason = code === "BATCH_TAB_REFERENCE_ERROR" ? batchTabReferenceReason(details) : null;
+    return t(reason?.message || message, detailParameters(details));
+  }
   const tool = details.toolName || details.tool || details.name || t("toolFailure.thisTool");
   const action = details.action || "";
   const tabId = details.tabId || details.refTabId || "";

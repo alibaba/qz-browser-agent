@@ -2,7 +2,7 @@ import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import type { ToolContext } from "#sdk/background";
-import { ensurePageSurface, type ElementReference, type ElementTarget, type PageObservationHost, type Screenshot, type ScreenshotOptions } from "#sdk/background/browser";
+import { ensurePageSurface, waitForParsedDocument, type ElementReference, type ElementTarget, type PageObservationHost, type Screenshot, type ScreenshotOptions } from "#sdk/background/browser";
 import type { ImageAssetRecord } from "#sdk/shared/data";
 import { bytesToBase64 } from "#sdk/shared/format";
 import { normalizeImage, readImageInput, readImageResponse, parseImageDataUrlHeader, IMAGE_MAX_EDGE, IMAGE_INPUT_MAX_BYTES, compactImageSource, ImageLimitError } from "#sdk/shared/images";
@@ -175,7 +175,8 @@ function emitDataChanged(payload: Fields, context: ToolContext = {}) {
 
 registerTool({
   name: "screenshot",
-  behavior: { nestedObservation: true },
+  behavior: { nestedObservation: true, parallelRead: args => args.actionable !== true && !String(args.destination || "").trim(),
+    timeoutResult: { kind: "read", pending: "screenshot capture" } },
   requires: { images: true },
   get description() { return toolT("screenshotDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
   get parameters() { return {
@@ -202,6 +203,7 @@ registerTool({
     let screenCapture = null;
 
     if (hasElementTarget) {
+      if (tabId) await waitForParsedDocument(tabId, context);
       ref = await resolveElementReference(tabId, { target, index }, context);
       shot = await captureElementScreenshot(ref.tabId!, ref, {
         format,
@@ -222,9 +224,11 @@ registerTool({
       shot = await captureTabScreenshot(tabId, { format, quality, maxWidth, maxHeight }, context);
     }
 
+    signal?.throwIfAborted();
     const effectiveTabId = ref?.tabId || tabId;
     let collection = null;
     if (String(destination || "").trim()) {
+      context.reportPartial?.({ tabId: effectiveTabId, _image: shot.dataUrl, method: shot.method, actionable: false }, "image collection save confirmation");
       collection = await saveScreenshotToImageCollection({
         shot,
         destination,
@@ -282,7 +286,8 @@ registerTool({
 
 registerTool({
   name: "act_on_screen",
-  behavior: { nestedObservation: args => args.returnScreenshot === true, timeoutTrace: "screen_action_trace" },
+  behavior: { nestedObservation: args => args.returnScreenshot === true, timeoutTrace: "screen_action_trace",
+    timeoutResult: { kind: "action", pending: "screen action outcome confirmation" } },
   requires: { images: true },
   effects: (_args, result) => record(result).urlChanged === true ? [{ type: "context.siteChanged" }] : [],
   get description() { return toolT("actOnScreenDescription"); },
@@ -394,6 +399,9 @@ async function resolveSelectedImageTarget(selectedTarget: string, tabId: number 
     target: selectedTarget,
     index: 0,
   }, context);
+  // Mixed UID/CSS calls keep tabId unset globally. The runtime checks the CSS
+  // default's ownership; apply that default only to the selector target here.
+  if (!ref.uid && !ref.tabId) ref.tabId = Number(context.workingTabId) || undefined;
   if (!ref.tabId) {
     throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "collect_images" });
   }
@@ -464,6 +472,7 @@ function assertSelectedImageSource(candidate: ImageMetadata = {}, observed: Imag
 
 registerTool({
   name: "collect_images",
+  behavior: { parallelTab: true, uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) },
   get description() { return toolT("collectImagesDescription"); },
   get parameters() { return {
     type: "object",
@@ -1733,9 +1742,9 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
       clip,
     });
   }
-  const normalized = await resizeDataUrlToMaxSize(`data:image/${format};base64,${result.data}`, {
+  const normalized = await normalizeScreenshot(`data:image/${format};base64,${result.data}`, {
     maxWidth, maxHeight, format, quality: normalizeImageQuality(quality),
-  });
+  }, context);
   return {
     dataUrl: normalized.dataUrl,
     method: `cdp_element_${boundsInfo.method || "box_model"}`,
@@ -1931,10 +1940,31 @@ function toFiniteNumber(value: unknown, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
-async function screenshotCssSize(tabId: number, native = false): Promise<Pick<Screenshot, "cssWidth" | "cssHeight">> {
+async function normalizeScreenshot(dataUrl: string, options: Parameters<typeof resizeDataUrlToMaxSize>[1], context: ToolContext) {
+  const finishPhase = context.measurePhase?.("normalization");
+  try { return await resizeDataUrlToMaxSize(dataUrl, options); }
+  finally { finishPhase?.(); }
+}
+
+async function screenshotCssSize(tabId: number, native = false, context: ToolContext = {}): Promise<Pick<Screenshot, "cssWidth" | "cssHeight">> {
+  const finishPhase = context.measurePhase?.("measurement");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      measureScreenshotCssSize(tabId, native),
+      new Promise<Pick<Screenshot, "cssWidth" | "cssHeight">>(resolve => { timer = setTimeout(() => resolve({}), 150); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    finishPhase?.();
+  }
+}
+
+async function measureScreenshotCssSize(tabId: number, native: boolean): Promise<Pick<Screenshot, "cssWidth" | "cssHeight">> {
   try {
     const [frame] = await chrome.scripting.executeScript({
       target: { tabId },
+      injectImmediately: true,
       args: [getPageContext(tabId).pageMode === "mobile"],
       func: (mobile: boolean) => {
         const view = globalThis as unknown as {
@@ -1965,6 +1995,22 @@ async function screenshotCssSize(tabId: number, native = false): Promise<Pick<Sc
   }
 }
 
+const visibleCaptureQueues = new Map<number, Promise<void>>();
+
+async function withVisibleCapture<T>(windowId: number, fn: () => Promise<T>): Promise<T> {
+  const previous = visibleCaptureQueues.get(windowId) || Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const tail = previous.then(() => gate);
+  visibleCaptureQueues.set(windowId, tail);
+  await previous;
+  try { return await fn(); }
+  finally {
+    release();
+    if (visibleCaptureQueues.get(windowId) === tail) visibleCaptureQueues.delete(windowId);
+  }
+}
+
 async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg", quality = 70, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE }: ScreenshotOptions = {}, context: ToolContext = {}) {
   if (!tabId) throw new ToolExecutionError("MISSING_TAB_ID", t("screenshotRequiresTabid"));
   let phaseStartedAt = Date.now();
@@ -1972,10 +2018,12 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
   recordScreenCaptureTrace("guardrails.started", tabId, context);
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "screenshot", source: "tab" });
   recordScreenCaptureTrace("guardrails.done", tabId, context, { elapsedMs: Date.now() - phaseStartedAt });
+  await waitForParsedDocument(tabId, context);
+  await assertTabAllowedBySecurityGuardrails(tabId, { tool: "screenshot", source: "document_ready" });
   await ensurePageSurface(tabId, (method, params) => sendCdp(tabId, method, params || {}, context));
 
   try {
-    const cssSize = await screenshotCssSize(tabId);
+    const cssSizePending = screenshotCssSize(tabId, false, context);
     const params: Fields = {
       format,
       fromSurface: true,
@@ -1994,12 +2042,12 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
       phaseStartedAt = Date.now();
       currentPhase = "normalize";
       recordScreenCaptureTrace("normalize.started", tabId, context, { source: "cdp" });
-      const normalized = await resizeDataUrlToMaxSize(`data:image/${format};base64,${result.data}`, {
+      const normalized = await normalizeScreenshot(`data:image/${format};base64,${result.data}`, {
         maxWidth,
         maxHeight,
         format,
         quality: normalizeImageQuality(quality),
-      });
+      }, context);
       recordScreenCaptureTrace("normalize.done", tabId, context, {
         source: "cdp",
         elapsedMs: Date.now() - phaseStartedAt,
@@ -2007,6 +2055,9 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
         width: normalized.width,
         height: normalized.height,
       });
+      context.signal?.throwIfAborted();
+      context.reportPartial?.({ tabId, _image: normalized.dataUrl, method: "cdp", actionable: false }, "screenshot dimensions and coordinate validation");
+      const cssSize = await cssSizePending;
       return {
         ...cssSize,
         dataUrl: normalized.dataUrl,
@@ -2025,11 +2076,13 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
       code: errorCode(error) || "",
       error: record(error).message || String(error),
     });
-    if (error instanceof ImageLimitError || isCdpFallbackForbiddenError(error)) throw error;
+    if (context.signal?.aborted || error instanceof ImageLimitError || isCdpFallbackForbiddenError(error)) throw error;
     // captureVisibleTab fallback below handles pages/CDP states that cannot be captured.
   }
 
   const targetTab = await chrome.tabs.get(tabId);
+  return withVisibleCapture(targetTab.windowId, async () => {
+  context.signal?.throwIfAborted();
   const previousTabs = await chrome.tabs.query({ windowId: targetTab.windowId, active: true });
   const previousActiveTabId = previousTabs[0]?.id;
 
@@ -2043,7 +2096,8 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
     }
     phaseStartedAt = Date.now();
     recordScreenCaptureTrace("visible_tab.started", tabId, context, { format });
-    const cssSize = await screenshotCssSize(tabId, true);
+    const cssSizePending = screenshotCssSize(tabId, true, context);
+    context.signal?.throwIfAborted();
     const dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, {
       format,
       quality: format === "jpeg" ? quality : undefined,
@@ -2054,12 +2108,12 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
     });
     phaseStartedAt = Date.now();
     recordScreenCaptureTrace("normalize.started", tabId, context, { source: "visible_tab" });
-    const normalized = await resizeDataUrlToMaxSize(dataUrl, {
+    const normalized = await normalizeScreenshot(dataUrl, {
       maxWidth,
       maxHeight,
       format,
       quality: normalizeImageQuality(quality),
-    });
+    }, context);
     recordScreenCaptureTrace("normalize.done", tabId, context, {
       source: "visible_tab",
       elapsedMs: Date.now() - phaseStartedAt,
@@ -2067,6 +2121,9 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
       width: normalized.width,
       height: normalized.height,
     });
+    context.signal?.throwIfAborted();
+    context.reportPartial?.({ tabId, _image: normalized.dataUrl, method: "visible_tab", actionable: false }, "screenshot dimensions and coordinate validation");
+    const cssSize = await cssSizePending;
     return {
       ...cssSize,
       dataUrl: normalized.dataUrl,
@@ -2083,6 +2140,7 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
       try { await chrome.tabs.update(previousActiveTabId, { active: true }); } catch(_e) {}
     }
   }
+  });
 }
 
 function recordScreenCaptureTrace(phase: string, tabId: number, context: ToolContext = {}, fields: Fields = {}) {

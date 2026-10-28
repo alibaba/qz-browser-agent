@@ -29,5 +29,7 @@
   "script.forDataStoreProcessingFileGenerationOrPureJs": "data_store प्रोसेसिंग, फ़ाइल बनाने या केवल JS गणना के लिए खाली पेज खोले बिना target:\"inner\" इस्तेमाल करें।",
   "script.noReturnValue": "कोई रिटर्न वैल्यू नहीं",
   "script.theScriptRanWithoutAReturnValueOrReturned": "स्क्रिप्ट चली, लेकिन उसने कोई वैल्यू नहीं लौटाई या undefined लौटाया।",
-  "script.runCode": "कोड चलाएँ"
+  "script.runCode": "कोड चलाएँ",
+  "script.scriptToolAccessUnavailable": "इस कॉल में टूल एक्सेस सक्षम नहीं था और इसे अपने आप दोबारा नहीं चलाया गया.",
+  "script.scriptToolAccessRecovery": "पहले पेज की स्थिति जांचें. टूल कॉल करने के लिए कोड में स्पष्ट रूप से tools.name(...) लिखें और नया कॉल सबमिट करें."
 }

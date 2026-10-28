@@ -29,5 +29,7 @@
   "script.forDataStoreProcessingFileGenerationOrPureJs": "Para processar data_store, gerar arquivos ou fazer cálculos JS puros, use target:\"inner\" sem abrir uma página em branco.",
   "script.noReturnValue": "Sem valor de retorno",
   "script.theScriptRanWithoutAReturnValueOrReturned": "O script executou sem valor de retorno ou retornou undefined.",
-  "script.runCode": "Executar código"
+  "script.runCode": "Executar código",
+  "script.scriptToolAccessUnavailable": "Esta invocação não tem acesso a ferramentas e não foi reexecutada automaticamente.",
+  "script.scriptToolAccessRecovery": "Inspecione primeiro o estado da página. Para chamar ferramentas, escreva tools.name(...) explicitamente no código e envie uma nova invocação."
 }

@@ -29,5 +29,7 @@
   "script.forDataStoreProcessingFileGenerationOrPureJs": "لمعالجة data_store أو إنشاء الملفات أو حسابات JS فقط، استخدم target:\"inner\" دون فتح صفحة فارغة.",
   "script.noReturnValue": "لا توجد قيمة مُعادة",
   "script.theScriptRanWithoutAReturnValueOrReturned": "نُفّذ البرنامج النصي دون قيمة مُعادة، أو أعاد undefined.",
-  "script.runCode": "تشغيل الكود"
+  "script.runCode": "تشغيل الكود",
+  "script.scriptToolAccessUnavailable": "هذا الاستدعاء لا يملك وصولاً إلى الأدوات ولم تتم إعادة تشغيله تلقائيًا.",
+  "script.scriptToolAccessRecovery": "افحص حالة الصفحة أولاً. لاستدعاء الأدوات، اكتب tools.name(...) صراحةً في الشيفرة ثم أرسل استدعاءً جديدًا."
 }
