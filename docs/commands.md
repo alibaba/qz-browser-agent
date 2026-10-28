@@ -5,16 +5,21 @@ versions in the lockfile. Build, test, and benchmark commands accept `--help`.
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Watch source files and rebuild `dist/extension/` |
-| `npm run build` | Type-check and build the extension |
+| `npm run dev` | Watch source files and rebuild the Chrome package in `dist/extension/` |
+| `npm run dev:firefox` | Watch source files and rebuild the Firefox package in `dist/extension-firefox/` |
+| `npm run build` | Type-check and build the Chrome package in `dist/extension/` |
+| `npm run build:firefox` | Type-check and build the Firefox package in `dist/extension-firefox/` |
 | `npm run typecheck` | Check TypeScript without a production build |
 | `npm test` | Run unit, contract, service, and browser tests |
-| `npm run verify` | Run type checking, all automated test suites, and coverage checks |
-| `npm run verify:quick` | Run type checking and all automated test suites, omitting coverage gates |
+| `npm run verify` | Type-check and run the shared suites: `unit`, `contracts`, and `services` |
+| `npm run verify:chrome` | Run the Chrome package suites: `browser`, `e2e`, `release`, and `visual`. They load `dist/extension/` |
+| `npm run verify:firefox` | Type-check, build `dist/extension-firefox/`, run the Firefox unit tests, and run Playwright in Firefox |
+| `npm run verify:coverage` | Type-check and run the shared suites plus the Chrome package suites with coverage gates |
 | `npm run benchmark` | Measure conversation rendering; arguments select other benchmarks |
 | `npm run docs` | Generate the API reference at `dist/docs/api.md` |
 | `npm run doctor` | Check the local tools, dependencies, and test browser |
-| `npm run release` | Build a versioned ZIP locally |
+| `npm run release` | Build a versioned Chrome ZIP locally. The default target is `manual` |
+| `npm run release:firefox` | Build a versioned unsigned Firefox `.xpi` locally. Same as `npm run release -- --target firefox` |
 | `npm run qz -- --help` | Show the local CLI commands for tasks, resources, and MCP |
 
 For npm installation and installed CLI usage, see the
@@ -30,14 +35,55 @@ npm run build
 Load `dist/extension/` from Chrome's **Load unpacked** button. For development, run `npm run dev`
 and reload the extension after each rebuild. Stop the watcher before running `build`; both use the
 same output directory. If you need them at the same time, use `--output-dir` to choose another
-directory. `npm run build -- --help` lists build options; `--json` emits metadata for scripts. On
-failure, the last successful output stays available. A watcher owns its output until it exits; stale
-locks are recovered only after confirming the owner is gone. Restart `dev` after changing build
-scripts.
+directory. Firefox day-to-day uses the paired commands `npm run dev:firefox` and
+`npm run build:firefox`. They write `dist/extension-firefox/` and can run while the Chrome watcher
+is using `dist/extension/`. `npm run build -- --help` lists build options; `--json` emits metadata
+for scripts. On failure, the last successful output stays available. A watcher owns its output
+until it exits; stale locks are recovered only after confirming the owner is gone. Restart `dev`
+after changing build scripts.
 
 The public `key` in [`src/manifest.json`](../src/manifest.json) fixes the unpacked extension ID to
 `ghbaodmonhcgkfeejcpffknlggbjhjgj` across checkout and installation paths. Preserve this key across
 builds and releases. See Chrome's [manifest key reference](https://developer.chrome.com/docs/extensions/reference/manifest/key).
+
+## Load temporarily in Firefox
+
+```bash
+npm run build:firefox
+```
+
+`npm run dev:firefox` watches `dist/extension-firefox/` and rebuilds while you work, the same role
+`npm run dev` has for Chrome. `npm run build:firefox` type-checks and writes the production package
+in that directory. `npm run dev -- --browser firefox` and `npm run build -- --browser firefox` are
+the same commands.
+Pass `--output-dir` when that directory must stay separate from another watcher. `dist/extension/`
+stays the Chrome package from `npm run dev` and `npm run build`.
+
+The Firefox add-on id is `qz-browser-agent@heleifz.github.io`. The Chrome `key` is omitted from
+this package. The unpacked Chrome id `ghbaodmonhcgkfeejcpffknlggbjhjgj` comes from the `key` in
+[`src/manifest.json`](../src/manifest.json) and stays on `dist/extension/`. The two ids do not
+share storage or an update channel. `npm run release:firefox` writes
+`dist/releases/<version>/firefox/qz-browser-agent-firefox-<version>.xpi`. Load
+`dist/extension-firefox/manifest.json` for a temporary add-on. The archive layout is in
+[Firefox packaging](firefox-packaging.md).
+
+Firefox 154 or later is required. The package reuses the Chrome module graph and rewrites the
+manifest: the background starts from `background/firefox-boot.js`, the side panel page is a
+sidebar, and permission names Firefox rejects are omitted. The toolbar button and `Ctrl+Shift+K`
+open the sidebar. Firefox chooses the side and shows one sidebar. Remaining differences are in
+[Firefox differences from Chrome](firefox-differences.md). The API survey is in
+[Firefox capability gap](firefox-capability-gap.md).
+
+1. Open `about:debugging#/runtime/this-firefox`.
+2. Click **Load Temporary Add-on**.
+3. Select `dist/extension-firefox/manifest.json`.
+4. Click the toolbar button, or open Firefox's sidebar and choose qz.
+
+Reload the temporary add-on after a rebuild. Temporary add-ons are removed when Firefox exits.
+
+The CLI is one daemon for both packages. It lives in `services/mcp-bridge` and is omitted from
+`dist/extension/` and `dist/extension-firefox/`. Pairing steps are in
+[Load qz in Firefox](cli.md#load-qz-in-firefox).
 
 ## Run tests
 
@@ -62,16 +108,87 @@ npm test -- playwright renderer-lifecycle.spec.mjs --workers 1
 npm test -- grid
 ```
 
-The suites are `unit`, `contracts`, `services`, `browser`, `e2e`, `release`, and `visual`. `--match`
-filters unit filenames or suite commands. `--list` shows what would run. `browser` includes
-Playwright, Python page smoke tests, and Data Grid tests; `playwright` runs only Playwright and
-accepts its own options.
+`npm run verify` runs `unit`, `contracts`, and `services` after typecheck. Those suites are shared:
+they do not load `dist/extension/` or `dist/extension-firefox/` as the package under test.
+`npm run verify:chrome` runs `browser`, `e2e`, `release`, and `visual`. Those suites load the Chrome
+package. `npm test` still defaults to `unit`, `contracts`, `services`, and `browser`. `--all` selects
+the shared suites plus the Chrome package suites. `--match` filters unit filenames or suite commands.
+`--list` shows what would run. `browser` includes Chromium Playwright, Python page smoke tests, and
+Data Grid tests. `playwright` runs only that Chromium Playwright config and accepts its own options.
+`npm test`, `npm run verify`, and `npm run verify:chrome` do not select the Firefox suite and do not
+launch Firefox.
 
-Before submitting ordinary code changes, run `npm run verify:quick` and set
-`QINGZHOU_PLAYWRIGHT_WORKERS` to the available core count (`$(nproc)` on Linux). Run `npm run verify`
-for packaging, releases, and coverage gates. For documentation changes, check commands, links, and
-examples. For narrower coverage checks, use `npm test -- unit --coverage`. On a busy machine,
-`npm test -- --all --jobs 1` runs suites sequentially.
+### Firefox package
+
+`npm run verify:firefox` is the Firefox package suite. It type-checks, builds
+`dist/extension-firefox/` in development mode, runs `tests/unit/test-firefox-*.mjs`, and runs
+Playwright against that directory in Mozilla Firefox. `npm run build:firefox` writes the production
+package and does not run the suite. The Firefox tests run from `npm run verify:firefox` or
+`npm test -- firefox`. `npm run verify` and `npm run verify:chrome` do not launch Firefox.
+
+Ordinary changes finish on typecheck plus focused tests. When a change carries broad or
+browser-specific risk, this table shows which suite covers it:
+
+| Change at risk | Suite |
+| --- | --- |
+| Shared runtime, manifest, locales, content scripts, or `scripts/build-extension.mjs` | `npm run verify`; add `npm run verify:firefox` when Firefox behavior is at risk |
+| Chrome side panel, Playwright, e2e, release, or visual behavior loaded from `dist/extension/` | `npm run verify:chrome` |
+| `src/background/firefox/**`, `src/sidepanel/firefox/**`, `firefox-boot.ts`, `scripts/firefox-manifest.mjs`, `tests/firefox/**`, `tests/unit/test-firefox-*.mjs` | `npm test -- unit --match firefox`; `npm run verify:firefox` when the Firefox package is at risk |
+
+Install Mozilla Firefox 154 or newer, including its system libraries:
+
+```bash
+npx playwright install firefox
+npx playwright install-deps firefox
+```
+
+The suite launches that binary headless on Firefox's WebDriver BiDi channel (`moz-firefox`) and
+passes `executablePath`. It does not launch Chromium. Set `FIREFOX_EXECUTABLE` to choose a binary.
+Otherwise the locator uses `firefox` on `PATH`, then a Firefox build from `npx playwright install
+firefox` whose `--version` prints `Mozilla Firefox` 139 or newer, then
+`/tmp/ff/firefox/firefox`, `/usr/bin/firefox`, and `/snap/bin/firefox`. A missing binary stops the
+suite with those install commands in the error. Set `QINGZHOU_FIREFOX_HEADED=1` to show the window.
+`QINGZHOU_FIREFOX_PLAYWRIGHT_WORKERS` bounds that Playwright process; it does not read
+`QINGZHOU_PLAYWRIGHT_WORKERS`.
+
+```bash
+npm run verify:firefox
+npm test -- firefox
+```
+
+The Playwright file temporarily installs `dist/extension-firefox/`. It checks that the toolbar
+button and the `_execute_sidebar_action` shortcut open Firefox's sidebar, and that no tab is
+`moz-extension://…/sidepanel.html`. In light, dark, a macOS accent, and a temporary theme add-on,
+it measures text contrast of at least 4.5:1 and icon and focus-ring contrast of at least 3:1 in
+each control state, and checks the disabled primary and send buttons. It checks horizontal overflow
+at 320 and 400 pixels and `notifications.create` with and without `requireInteraction`. A
+`sidePanel.open()` call outside a user gesture must log Firefox's error and set the `!` badge and
+the hint notification. A notification click must not create a second notification, and opening
+the sidebar by shortcut, switcher, or toolbar must clear the badge.
+
+Reports go to `tests/results/playwright-firefox/` and `tests/results/firefox-suite.json`. The JSON
+record names `browser=firefox` and `package=dist/extension-firefox`. The Chromium Playwright report
+stays in `tests/results/playwright-report/`. A log line at the start of each suite names the browser
+and package. `QINGZHOU_PLAYWRIGHT_CHANNEL` cannot point the Chromium suites at Firefox.
+
+Choose checks by the size of the change:
+
+- Small changes (copy and i18n text, timeouts, thresholds, gates, small fixes, documentation) run
+  no test suites. Run `npm run typecheck` when TypeScript changed and it is cheap.
+- Ordinary feature and bug work runs `npm run typecheck` plus focused tests for the touched area,
+  such as `npm test -- unit --match <area>` or `npm test -- playwright <spec files>`. It does not
+  finish with a full suite run.
+- Broad changes to shared contracts, or a task that asks for it, run `npm run verify`. Add
+  `npm run verify:chrome` or `npm run verify:firefox` only for risky changes specific to that
+  package. For a Chrome run, set `QINGZHOU_PLAYWRIGHT_WORKERS` to the available core count
+  (`$(nproc)` on Linux).
+- `npm run verify:coverage` runs for releases or an explicit request for coverage gates. For
+  narrower coverage checks, use `npm test -- unit --coverage`.
+
+Capture a long run's output and exit code on the first run, for example
+`npm run verify:chrome > /tmp/verify-chrome.log 2>&1; echo EXIT:$?`, and cite that log instead of
+rerunning. On a busy machine,
+`npm test -- --all --jobs 1` runs the shared and Chrome suites sequentially.
 
 Reports go to `tests/results/`. Use `npm test -- report` to open the Playwright report, or `npm test
 -- behavior --journey H03,A07` to run the tests linked to those entries in the [behavior
@@ -79,9 +196,12 @@ index](../tests/BEHAVIOR_INDEX.md). See [tests/README.md](../tests/README.md) fo
 
 ### Continuous integration
 
-[GitHub Actions](../.github/workflows/ci.yml) runs type-checked builds and focused Tool and Renderer
-browser contract tests on Linux, macOS and Windows. Run `npm run verify` locally for the full
-test suites and coverage gates.
+[GitHub Actions](../.github/workflows/ci.yml) runs two browser gates. The portable build job
+type-checks, builds the Chrome package, and runs the focused Tool and Renderer contracts in
+Chromium on Linux, macOS, and Windows. The Firefox job installs Firefox with `npx playwright install firefox` and
+`npx playwright install-deps firefox`, builds `dist/extension-firefox/`, and runs
+`npm run verify:firefox` on Linux. `npm run verify:coverage` runs the shared suites, the Chrome
+package suites, and coverage gates locally; `npm run verify:firefox` runs the Firefox package suite.
 
 ## Run against a real model
 
@@ -132,6 +252,9 @@ preserves the source manifest and writes the ZIP, README, and metadata to
 `dist/releases/<version>/`. The install archive is `qz-browser-agent-extension-<version>.zip`,
 with the extension under `qz-browser-agent-extension/`. The debug archive is
 `qz-browser-agent-extension-<version>.debug.zip`. Distribution and Git tags are separate maintainer steps.
+Temporary Firefox loading uses `dist/extension-firefox/` from `npm run dev:firefox` and
+`npm run build:firefox`. The Firefox archive is below. The split is described in
+[Firefox packaging](firefox-packaging.md).
 
 For a Chrome Web Store upload, select the `webstore` target:
 
@@ -143,21 +266,41 @@ This writes `dist/releases/<version>/webstore/qz-browser-agent-extension-<versio
 with `manifest.json` at the ZIP root. Upload this ZIP in the Chrome Developer Dashboard.
 The Web Store target removes `key` from the packaged manifest. Source and manual packages retain
 their public key to keep a stable extension ID during local development.
-Both targets use the same runtime files. The default `manual` target keeps the installation folder;
+The manual and webstore archives use the same runtime files. The default `manual` target keeps the installation folder;
 each target has its own metadata and debug archive. The Web Store ZIP contains runtime files and
 licenses; its release metadata and source maps stay alongside it. Packaging checks the single root manifest,
 its referenced resources, ZIP integrity, upload size, and separation of development files.
 
+For an unsigned Firefox archive:
+
+```bash
+npm run release:firefox -- --version 0.0.0.1
+```
+
+`npm run release -- --version 0.0.0.1 --target firefox` is the same command. It compiles with
+`build-extension.mjs --browser firefox`, the production path `npm run build:firefox` uses, and writes:
+
+```text
+dist/releases/<version>/firefox/qz-browser-agent-firefox-<version>.xpi
+dist/releases/<version>/firefox/qz-browser-agent-firefox-<version>.debug.zip
+dist/releases/<version>/firefox/version.json
+```
+
+The `.xpi` is a zip of the Firefox extension files. `manifest.json` is at the archive root, which
+is the layout Add-ons Manager requires. `version.json` records `browser: "firefox"` and `geckoId`.
+The package is unsigned; Add-ons Manager signs it on upload. The debug zip stays local. Chrome
+`manual` and `webstore` paths are unchanged.
+
 JavaScript uses standard Terser minification, including variable shortening. `--no-minify` disables
 the final Terser pass for diagnostics. Build-time script compilation retains its production settings.
-Store review also covers runtime behavior, permissions, and data disclosures; this target validates
-the upload package.
+Store review also covers runtime behavior, permissions, and data disclosures; the webstore target
+validates the upload package.
 
 Use `--source worktree` to preview local edits, or `--git-ref` for another commit containing the
 packaging toolchain. Scripts and dependencies come from the selected source.
 
 Before distributing a version, obtain authorization for it, confirm the intended commit and an
-unused Chrome-compatible numeric version, then run `npm ci`, `npm run doctor`, and `npm run verify`.
+unused Chrome-compatible numeric version, then run `npm ci`, `npm run doctor`, and `npm run verify:coverage`.
 Package the committed source and check the output:
 
 - `version.json` records `source: "git"` and the intended `gitCommit`.
@@ -223,6 +366,10 @@ npm run qz -- automations
 npm run qz -- stop
 ```
 
+`npm run qz` starts the same daemon as the published `qz` command. Firefox load steps are
+[above](#load-temporarily-in-firefox). Pairing detail is in
+[Load qz in Firefox](cli.md#load-qz-in-firefox).
+
 `connect` starts the local service and opens its connection page for first pairing. The first
 browser is named `default`; repeating the command reuses an online connection. `status` shows the
 actual service address and `mcp` prints its MCP URL. The default port is 18765, with a free-port
@@ -262,8 +409,8 @@ Pending output includes the full request, field IDs, option values, and a submis
 read the request again, answer fields with `submit`, continue a confirmation with
 `approve`, or decline it with `reject`. Responses bind to the current wait; `--wait-id ID` selects a
 specific request. `submit`, `approve`, and `reject` also accept `--wait` and `--stream`. Review the displayed
-application consent notice before approving. Native Chrome permissions require a click in the
-side panel; the CLI preserves the wait and tells you where to confirm. Respond in the side panel or
+application consent notice before approving. A permission dialog the browser itself shows needs a click in the
+side panel or sidebar; the CLI preserves the wait and tells you where to confirm. Respond in the side panel, the sidebar, or
 another terminal while the original command keeps watching. `watch` follows an existing task with
 the same completion condition. Task failure or stopping ends observation.
 Task observation has no default time limit. Add `--timeout SECONDS` to set a total deadline,

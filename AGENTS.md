@@ -15,6 +15,7 @@ These rules apply throughout the repository. Capability changes also follow
 | Languages and interface copy | [Localization](docs/localization.md) |
 | Tests and performance | [Tests](tests/README.md), [benchmarks](docs/benchmarks.md) |
 | Local MCP service | [MCP bridge](services/mcp-bridge/README.md) |
+| Firefox and Chrome packages | [Firefox packaging](docs/firefox-packaging.md) |
 
 Use Node.js 24 LTS and locked dependencies installed with `npm ci`. Source lives in `src/`; Chrome
 loads the compiled extension from `dist/extension/`.
@@ -73,7 +74,8 @@ loads the compiled extension from `dist/extension/`.
   assembles the selected theme and module styles; HTML exports embed the active skin.
 - Follow the [CSS contract](docs/design-system.md), implemented by `src/themes/default/`. Keep Tailwind's
   `theme → base → vendor → components → utilities` layers and import its utilities with the project theme.
-  Use complete static `qz:` class names. Visual migrations compare actual old/new DOM with zero pixel difference.
+  Use complete static `qz:` class names. A deliberate visual migration, when the task asks for one,
+  compares actual old/new DOM with zero pixel difference; ordinary UI and copy changes skip this.
 
 ## Source layout
 
@@ -125,13 +127,12 @@ loads the compiled extension from `dist/extension/`.
    capabilities access the framework through `#sdk/*`.
 3. Make the smallest complete change that preserves these boundaries. Re-read files before editing
    in a shared tree and preserve other contributors' changes.
-4. Add tests proportional to risk and type-check TypeScript. State, concurrency, persistence, and
-   cross-context messages require failure and recovery coverage.
-5. Run the fast loop in [Commands and validation](#commands-and-validation). Focused checks satisfy
-   the minimum-verification table during iteration. Finish an ordinary coding task, including
-   cloud-agent work, with `npm run verify:quick` and `QINGZHOU_PLAYWRIGHT_WORKERS` set to the
-   available core count. Reserve full `npm run verify` for packaging, releases, or when the user
-   asks for coverage gates. Review the final status and diff.
+4. Add tests proportional to risk and type-check TypeScript. When a change alters state,
+   concurrency, persistence, or cross-context message behavior, use judgment to add failure and
+   recovery tests for that behavior.
+5. Verify by tier, as described in [Commands and validation](#commands-and-validation). Small changes
+   run no tests; ordinary feature and bug work runs typecheck plus focused tests for the touched
+   area. Review the final status and diff.
 6. Stage, commit, and push only when the task requires it or the user requests it. Publish or change
    tags only when the user requests it. Use reversible Git operations and preserve unrelated work.
    Author, trailer, and pull-request limits are in [Git and commits](#git-and-commits).
@@ -151,31 +152,42 @@ and coverage. Prefer existing suite/scenario selectors. Live-provider tests requ
 `npm test -- live <scenario>` invocation, a task requiring real-provider behavior, and effects
 isolated from user Sessions.
 
-During implementation, never run full `npm run verify` on every change. Use this fast loop:
+Choose the verification tier from the size of the change:
 
-1. `npm run typecheck`
-2. `npm test -- unit --match <area>` for the touched units
-3. `npm test -- playwright <spec files>` for the affected browser specs. `--match` filters unit
-   paths or suite command labels when a spec file list is the wrong selector.
+- **Small changes** (copy and i18n text, timeouts, thresholds, gates, small fixes, documentation):
+  run no test suites. Make the change, run `npm run typecheck` when TypeScript changed and it is
+  cheap, then commit and push.
+- **Ordinary feature and bug work**: run the fast loop for the touched area and stop there. Do not
+  end ordinary or cloud-agent tasks with a full suite run.
+  1. `npm run typecheck`
+  2. `npm test -- unit --match <area>` for the touched units (`--match firefox` for Firefox adapter work)
+  3. `npm test -- playwright <spec files>` for affected browser specs, only when browser behavior
+     changed. `--match` filters unit paths or suite command labels when a spec file list is the
+     wrong selector.
+- **Broad changes**: run `npm run verify` (typecheck, then `unit`, `contracts`, and `services`) only
+  when a change touches shared contracts broadly or the task asks for it. Add `npm run verify:chrome`
+  (`browser`, `e2e`, `release`, and `visual` on `dist/extension/`) or `npm run verify:firefox` (the
+  Firefox package suite) only for risky changes specific to that browser package.
+- **Coverage**: run `npm run verify:coverage` (typecheck and `npm test -- --all --coverage`) only
+  for releases or when the user explicitly asks. `--all` does not select Firefox.
 
-The table below is the minimum bar for the change. Focused checks from that table satisfy it during
-iteration, including the E2E, release, visual, or service rows when the change calls for them.
+For a full Chrome browser run, set `QINGZHOU_PLAYWRIGHT_WORKERS` to the available core count
+(`$(nproc)` on Linux). The default worker count is `ceil(availableParallelism() / 3)`, capped at 4.
+An explicit value is clamped to 1-16.
 
-At the end of an ordinary coding task, including cloud-agent work, run `npm run verify:quick`.
-That script is `npm run typecheck && npm test -- --all` and omits `--coverage`. Set
-`QINGZHOU_PLAYWRIGHT_WORKERS` to the available core count (`$(nproc)` on Linux) for that run and
-for any full browser run. The default worker count is `ceil(availableParallelism() / 3)`, capped
-at 4. An explicit value is clamped to 1-16.
-
-Reserve `npm run verify` for packaging, releases, and an explicit request for coverage gates. It
-runs the same type check and suites with `--coverage`.
+When a long run is needed, capture its output and exit code on the first run, for example
+`npm run verify:chrome > /tmp/verify-chrome.log 2>&1; echo EXIT:$?`, and cite that log instead of
+rerunning.
 
 The runner stops at the first failing command. When a known baseline failure would stop the run
 before later suites finish, run each unfinished suite on its own (`npm test -- e2e`,
 `npm test -- release`, `npm test -- visual`). Skip suites that already passed. Do not repeat a
 suite that failed for the same failure.
 
-| Change | Minimum verification |
+When a change needs tests, pick the narrowest relevant check from this table. It is a menu, not a
+checklist to run in full; small changes skip it.
+
+| Change | Relevant checks |
 | --- | --- |
 | Shared protocol/storage | Unit + contracts + affected producers and consumers |
 | Background Session/Agent/tool runtime | Unit + contracts; E2E for user-visible workflows |
@@ -185,11 +197,13 @@ suite that failed for the same failure.
 | CSS | Relevant browser/visual fixtures in both color schemes |
 | Packaging/installation | Release suite + local package/loading checks and trace assertions |
 | Documentation | Commands, local file and heading links, branch-specific behavior, and executable examples |
+| Broad shared-graph change shipped in the Chrome and Firefox packages | `verify`; `verify:firefox` when Firefox behavior is at risk |
+| Risky Chrome package behavior loaded from `dist/extension/` | `verify:chrome` |
+| Firefox-only adapter, manifest rewrite, or Firefox tests | `npm test -- unit --match firefox`; `verify:firefox` when the Firefox package is at risk |
 
-Test observable behavior. Cover cancellation, restart, stale events, missing tabs, provider
-failures, malformed payloads, concurrent writes, deletion, and reconnection where relevant. Build
-checks cover fixed entries, deterministic output, independent assets, obsolete-file cleanup, source
-maps, and licenses. Side Panel splitting also checks deferred execution and relative resources.
+Test observable behavior. Add failure-path tests, such as cancellation or stale events, only where
+the change introduces that risk. Build checks cover fixed entries, deterministic output,
+independent assets, obsolete-file cleanup, source maps, and licenses. Side Panel splitting also checks deferred execution and relative resources.
 
 ## Versioned packages
 
@@ -198,7 +212,7 @@ publisher builds a local ZIP from that commit in a temporary directory. `--sourc
 a local preview. Uploading artifacts and creating tags require separate authorization.
 
 Before distribution, confirm the intended commit and a clean working tree. Run `npm ci`, `npm run
-doctor`, and `npm run verify`; inspect the ZIP and load it in an isolated Chrome profile.
+doctor`, and `npm run verify:coverage`; inspect the ZIP and load it in an isolated Chrome profile.
 
 Use Chrome-compatible numeric versions. Check the packaged source commit, file counts, sizes,
 SHA-256, licenses, and runtime entries. Keep the source manifest unchanged. Published tags and

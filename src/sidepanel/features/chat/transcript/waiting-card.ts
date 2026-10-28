@@ -1,5 +1,6 @@
 import { isToolBrowserPermission, type ToolBrowserPermission } from "../../../../shared/browser-permissions.js";
 import { debuggerDetachT } from "../../../../shared/debugger-detach.js";
+import { firefoxExtension } from "../../../../shared/product-text.js";
 import { requestBrowserPermission, permissionT } from "../../../ui/browser-permissions.js";
 import { t as backendT } from "../../../../shared/i18n/backend.js";
 import { t, tHtml } from "../../../i18n/index.js";
@@ -111,9 +112,17 @@ export function createWaitingCards(options: CardOptions) {
         if (!allowed) command.type = "cancel_wait";
       }
       if (type === "continue_task" && state.card.form.locationConsent) {
-        const response = await chrome.runtime.sendMessage({ type: "accept_location_consent", sessionId: state.sessionId, waitId: state.card.waitId });
-        if (!owns(el, state)) return;
-        if (!response?.ok || response.accepted !== true) throw new Error("Location consent was not saved");
+        // Firefox optional locationInfo must be granted before coordinates leave the browser.
+        if (firefoxExtension()) {
+          const allowed = await chrome.permissions.request({ data_collection: ["locationInfo"] } as chrome.permissions.Permissions);
+          if (!owns(el, state)) return;
+          if (!allowed) command.type = "cancel_wait";
+        }
+        if (command.type === "continue_task") {
+          const response = await chrome.runtime.sendMessage({ type: "accept_location_consent", sessionId: state.sessionId, waitId: state.card.waitId });
+          if (!owns(el, state)) return;
+          if (!response?.ok || response.accepted !== true) throw new Error("Location consent was not saved");
+        }
       }
       // Background acknowledges validation; accepted events still own the completed card.
       const response = record(await options.send(command));

@@ -1,4 +1,5 @@
 import type { CliConnectionInput, CliConnectionStatus } from "../../shared/mcp-connection.js";
+import { RECONNECT_ALARM } from "../../shared/reconnect-alarm.js";
 import {
   BRIDGE_STORAGE_KEY, RETRY_LIMIT, LEASE_WAIT_LIMIT, RETRY_DELAY_MS, connectionEndpoint, connectionName, connectionStatus,
   getConnectionConfig, updateConnectionConfig,
@@ -13,11 +14,26 @@ interface BridgeDependencies {
   trace?: (message: string) => void;
   fetch?: typeof fetch;
 }
-const RECONNECT_ALARM = "qingzhou-mcp-bridge-reconnect";
+export { RECONNECT_ALARM };
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const failure = (code: string, message: string) => Object.assign(new Error(message), { code });
 const cancelled = () => failure("MCP_CONNECTION_CANCELLED", "The connection was cancelled.");
 const permanent = new Set(["MCP_CONNECTION_INCOMPATIBLE", "MCP_CONNECTION_PAGE_CHANGED", "DATA_CONSENT_REQUIRED", "BRIDGE_NAME_INVALID", "BRIDGE_NAME_IN_USE", "BRIDGE_PAIRING_REQUIRED", "BRIDGE_PAIRING_INVALID"]);
+const BLOCKED_WAKE_RESUME = new Set([...permanent, "BRIDGE_CLIENT_IN_USE"]);
+interface FirefoxMcpWakeHandlers {
+  noteEnabled?(enabled: boolean): void;
+  onAlarm?(): void;
+  onSuspend?(): void;
+}
+interface FirefoxMcpWakeChrome {
+  qzFirefoxMcpWake?: boolean;
+  qzFirefoxMcpWakePending?: boolean;
+  qzFirefoxMcpWakeHandlers?: FirefoxMcpWakeHandlers;
+}
+function firefoxWakeChrome(): FirefoxMcpWakeChrome | undefined {
+  const host = (globalThis as { chrome?: FirefoxMcpWakeChrome }).chrome;
+  return host?.qzFirefoxMcpWake === true ? host : undefined;
+}
 const upgradeGuidance = "Wait for running tasks to finish, then run npx --yes qz-browser-agent@latest stop (disconnects ALL browsers). Update/reload the extension in each browser and run npx --yes qz-browser-agent@latest connect. Reconnect other browsers from Settings.";
 const newPairingToken = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
@@ -25,7 +41,7 @@ export function qingzhouMcpBridgeStorageKey() { return BRIDGE_STORAGE_KEY; }
 /** Management callers receive public configuration, never pairing credentials. */
 export async function getQingzhouMcpBridgeConfig() {
   const config = await getConnectionConfig();
-  const { pairingToken: _token, instanceId: _instance, authorizationId: _authorization, ...visible } = config;
+  const { pairingToken: _token, instanceId: _instance, authorizationId: _authorization, connectionId: _connection, ...visible } = config;
   return visible;
 }
 export async function getQingzhouMcpConnectionStatus() { return connectionStatus(await getConnectionConfig()); }
@@ -51,7 +67,7 @@ class QingzhouMcpBridgeRuntime {
   private started = false;
   private generation = 0;
   private authorizationId = "";
-  private connectionId = crypto.randomUUID();
+  private connectionId: string = crypto.randomUUID();
   private paired = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private controller = new AbortController();
@@ -79,6 +95,7 @@ class QingzhouMcpBridgeRuntime {
   start() {
     if (this.started) return this;
     this.started = true;
+    this.bindFirefoxWake();
     chrome.storage.onChanged.addListener(this.storageListener);
     chrome.alarms?.onAlarm?.addListener(this.alarmListener);
     this.initial = this.restore(this.generation).catch(() => {
@@ -93,6 +110,46 @@ class QingzhouMcpBridgeRuntime {
     this.revoke();
     chrome.storage.onChanged.removeListener(this.storageListener);
     chrome.alarms?.onAlarm?.removeListener(this.alarmListener);
+    this.noteFirefoxWake();
+  }
+  private bindFirefoxWake() {
+    const host = firefoxWakeChrome();
+    if (!host) return;
+    const handlers = host.qzFirefoxMcpWakeHandlers ??= {};
+    handlers.onAlarm = () => { if (this.started) void this.attempt(); };
+    handlers.onSuspend = () => { void this.flushLease(); };
+  }
+  private noteFirefoxWake() {
+    const host = firefoxWakeChrome();
+    if (!host) return;
+    const enabled = Boolean(this.started && this.config?.enabled && this.config.state !== "paused");
+    host.qzFirefoxMcpWakeHandlers?.noteEnabled?.(enabled);
+  }
+  private adoptLease(config: BridgeConfig) {
+    if (firefoxWakeChrome() && config.connectionId) this.connectionId = config.connectionId;
+  }
+  private leaseFields(): Partial<BridgeConfig> {
+    return firefoxWakeChrome() ? { connectionId: this.connectionId } : {};
+  }
+  private shouldResumeAfterSleep(config: BridgeConfig): boolean {
+    if (!firefoxWakeChrome() || !config.enabled) return false;
+    if (BLOCKED_WAKE_RESUME.has(config.lastError?.code || "")) return false;
+    return config.state === "paused" || config.attemptsRemaining <= 0;
+  }
+  private consumeWakePending() {
+    const host = firefoxWakeChrome();
+    if (!host?.qzFirefoxMcpWakePending) return;
+    host.qzFirefoxMcpWakePending = false;
+    if (this.started && this.config?.enabled && this.config.state !== "paused") void this.attempt();
+  }
+  private flushLease() {
+    if (!firefoxWakeChrome() || !this.started || !this.config?.enabled) return;
+    const connectionId = this.connectionId;
+    const authorizationId = this.authorizationId;
+    void updateConnectionConfig(current => {
+      if (!current.enabled || current.authorizationId !== authorizationId || current.connectionId === connectionId) return null;
+      return { ...current, connectionId };
+    }).catch(() => {});
   }
   private revoke() {
     this.generation++;
@@ -111,9 +168,16 @@ class QingzhouMcpBridgeRuntime {
   private async restore(generation: number) {
     let config = await getConnectionConfig();
     if (!this.current(generation)) return;
+    this.adoptLease(config);
     this.config = config;
     this.authorizationId = config.authorizationId;
-    if (config.enabled && config.attemptsRemaining <= 0 && config.state !== "paused") {
+    if (this.shouldResumeAfterSleep(config)) {
+      config = await this.persist(generation, {
+        state: config.connectedAt ? "reconnecting" : "connecting",
+        attemptsRemaining: RETRY_LIMIT,
+        ...(config.lastError ? { lastError: config.lastError } : {}),
+      });
+    } else if (config.enabled && config.attemptsRemaining <= 0 && config.state !== "paused") {
       config = await this.persist(generation, { state: "paused", lastError: config.lastError || {
         code: "MCP_CONNECTION_UNAVAILABLE", message: "Connection attempts are paused. Run qz connect or click Connect to retry.",
       } });
@@ -124,6 +188,7 @@ class QingzhouMcpBridgeRuntime {
     } else {
       await this.setAlarm(false);
     }
+    this.consumeWakePending();
   }
   async status(): Promise<CliConnectionStatus> {
     await this.initial;
@@ -160,6 +225,7 @@ class QingzhouMcpBridgeRuntime {
         pairingToken: current.pairingToken || newPairingToken(), instanceId: "",
         state: "connecting", attemptsRemaining: RETRY_LIMIT, leaseWaitRemaining: LEASE_WAIT_LIMIT, nextRetryAt: 0,
         lastError: undefined, connectedAt: undefined,
+        ...this.leaseFields(),
       };
       // Our storage listener must see this operation's authority before Chrome emits the change.
       this.config = next;
@@ -209,6 +275,7 @@ class QingzhouMcpBridgeRuntime {
     this.config = await updateConnectionConfig(current => {
       if (!this.current(generation)) return null;
       const next: BridgeConfig = { ...current, enabled: false, authorizationId: "", state: "disconnected", nextRetryAt: 0, lastError: undefined };
+      if (firefoxWakeChrome()) delete next.connectionId;
       this.config = next;
       return next;
     });
@@ -226,12 +293,14 @@ class QingzhouMcpBridgeRuntime {
   private emit() {
     if (this.config) this.deps.onStatus?.(connectionStatus(!this.paired && this.config.state === "connected"
       ? { ...this.config, state: "reconnecting" } : this.config));
+    this.noteFirefoxWake();
   }
   private async persist(generation: number, change: Partial<BridgeConfig> | (() => Partial<BridgeConfig>)) {
     const authorizationId = this.authorizationId;
     const config = await updateConnectionConfig(current => {
       if (!this.current(generation) || current.authorizationId !== authorizationId || !current.enabled) return null;
-      const next = { ...current, ...(typeof change === "function" ? change() : change) };
+      const patch = typeof change === "function" ? change() : change;
+      const next = { ...current, ...patch, ...this.leaseFields() };
       this.config = next;
       return next;
     });
@@ -339,10 +408,12 @@ class QingzhouMcpBridgeRuntime {
       const leaseWait = code === "BRIDGE_CLIENT_IN_USE" && (this.config?.leaseWaitRemaining || 0) > 0
         && Number.isFinite(retryAfterMs) && retryAfterMs >= 0 && retryAfterMs <= 120_000;
       const attemptsRemaining = (this.config?.attemptsRemaining || 0) + (leaseWait ? 1 : 0);
-      const paused = permanent.has(code) || attemptsRemaining <= 0;
+      const recoverSleep = Boolean(firefoxWakeChrome()) && !BLOCKED_WAKE_RESUME.has(code);
+      const paused = permanent.has(code) || (!recoverSleep && attemptsRemaining <= 0);
       await this.persist(recoveryGeneration, {
         state: paused ? "paused" : "reconnecting",
         ...(leaseWait ? { attemptsRemaining, leaseWaitRemaining: 0, nextRetryAt: Date.now() + Math.ceil(retryAfterMs) + 100 } : {}),
+        ...(recoverSleep && attemptsRemaining <= 0 ? { attemptsRemaining: RETRY_LIMIT, nextRetryAt: Date.now() + RETRY_DELAY_MS } : {}),
         lastError: { code, message: error instanceof Error ? error.message : "The local service is unavailable. Run qz connect to retry." },
       });
       if (paused) await this.setAlarm(false);

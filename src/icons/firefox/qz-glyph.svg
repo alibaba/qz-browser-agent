@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Firefox grants context paint only to Mozilla extensions; the fallback colors follow the light or dark theme. -->
+  <style>
+    path {
+      fill: context-fill #15141a;
+      fill-opacity: context-fill-opacity;
+    }
+    @media (prefers-color-scheme: dark) {
+      path { fill: context-fill #fbfbfe; }
+    }
+  </style>
+  <!-- The send button mark from sidepanel.html, centered at 60% scale. -->
+  <path transform="translate(-1.93 -.38) scale(.6) rotate(-11.5 16 16)" d="M10.3 3.9C16.6 5.8 21.4 9.6 23.8 14.7c2-1 4-2.2 6-3.8-2.1 4.6-5.7 8-10.2 10-4.8 2.1-10 1.4-15.8-2.1 4.4 1 8.4.8 12-.7-.4-5.3-2.2-10-5.5-14.2Z"/>
+</svg>

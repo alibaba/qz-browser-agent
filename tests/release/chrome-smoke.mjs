@@ -13,6 +13,7 @@ import { checkDependencyAssets } from "../../scripts/vendor/assets.mjs";
 import "../support/typescript-loader.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+console.log("browser=chromium package=chrome-release-zip suite=release-chrome-smoke");
 const executablePath = findChromeExecutable(chromium.executablePath());
 if (!executablePath) {
   throw new Error("Release Chrome smoke requires Chromium; run npx playwright install chromium or set CHROME_EXECUTABLE.");

@@ -44,8 +44,17 @@ function connectionUrl(value: string | undefined) {
 
 function failure(code: string, message: string) { return Object.assign(new Error(message), { code }); }
 
+function isMozExtensionPage(url: string): boolean {
+  const prefix = "moz-extension://";
+  if (!url.startsWith(prefix)) return false;
+  const slash = url.indexOf("/", prefix.length);
+  return slash > prefix.length;
+}
+
 export function assertMcpSettingsSender(sender: chrome.runtime.MessageSender, extensionId: string) {
-  if (sender.id !== extensionId || !sender.url?.startsWith(`chrome-extension://${extensionId}/`)) {
+  const url = sender.url ?? "";
+  const ownChromePage = url.startsWith(`chrome-extension://${extensionId}/`);
+  if (sender.id !== extensionId || (!ownChromePage && !isMozExtensionPage(url))) {
     throw failure("MCP_CONNECTION_PAGE_REQUIRED", "Manage the connection from qz Settings.");
   }
 }

@@ -2,6 +2,7 @@ import { ToolExecutionError } from "#sdk/background/tools";
 import type { ToolExtensionAPI } from "#sdk/background";
 import { isPageTabUrl } from "#sdk/shared/browser";
 import { t } from "./i18n.js";
+import { productText } from "#sdk/shared/product-text";
 
 /** Confirm the new main document using existing tabs/scripting permissions. */
 export async function navigateTab(tabId: number, url: string, assertTabAllowed: ToolExtensionAPI["assertTabAllowed"], signal?: AbortSignal) {
@@ -31,7 +32,7 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     const [result] = await wait(chrome.scripting.executeScript({
       target: { tabId, frameIds: [0] }, injectImmediately: true, func: () => null,
     }));
-    if (!result?.documentId) throw new Error("Chrome did not return a document ID");
+    if (!result?.documentId) throw new Error(productText("Chrome did not return a document ID", "Firefox did not return a document ID"));
     return result.documentId;
   };
   let baselineTimer: ReturnType<typeof setTimeout> | undefined;

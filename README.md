@@ -205,7 +205,17 @@ Presets include **OpenAI Codex**, **OpenRouter**, **DeepSeek**, **Kimi For Codin
 
 ### Does qz support Edge or Firefox?
 
-qz works in Chrome and Edge. Firefox is not supported.
+qz releases run in Chrome and Edge. A signed Firefox listing is not published yet. Temporary loading
+for development is in [Load temporarily in Firefox](docs/commands.md#load-temporarily-in-firefox).
+The CLI is the same daemon for both packages. Pairing is in
+[Load qz in Firefox](docs/cli.md#load-qz-in-firefox).
+The packaging convention is in [Firefox packaging](docs/firefox-packaging.md).
+`npm run dev` and `npm run build` write the Chrome package. `npm run dev:firefox` and
+`npm run build:firefox` write the Firefox package. `npm run release` writes the Chrome zip.
+`npm run release:firefox` writes an unsigned `.xpi` for a local check or an AMO upload.
+Remaining differences from Chrome are in
+[Firefox differences from Chrome](docs/firefox-differences.md). The API survey is in
+[Firefox capability gap](docs/firefox-capability-gap.md).
 
 ## Development
 
@@ -221,16 +231,20 @@ npm run build
 ```
 
 Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select
-`dist/extension/`.
+`dist/extension/`. To load the same sources in Firefox temporarily, follow
+[Load temporarily in Firefox](docs/commands.md#load-temporarily-in-firefox).
 
 ### Develop and test
 
 Set up the [test environment](docs/commands.md#run-tests), then use:
 
 ```bash
-npm run dev       # Rebuild on source changes
-npm test          # Run the default test suites
-npm run verify    # Type-check and run all automated suites with coverage
+npm run dev            # Rebuild the Chrome package on source changes
+npm run dev:firefox    # Rebuild the Firefox package on source changes
+npm test               # Run the default test suites
+npm run verify         # Type-check and run the shared suites
+npm run verify:chrome  # Chrome package suites on dist/extension
+npm run verify:coverage # Shared suites, Chrome package suites, and coverage gates
 ```
 
 After a rebuild, reload the extension at `chrome://extensions` and reopen the side panel.

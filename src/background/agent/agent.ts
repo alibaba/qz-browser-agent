@@ -20,7 +20,7 @@ import { isSessionFormatError } from "../../shared/session/session-format.js";
  */
 
 import { agentService } from "./services.js";
-import { buildCompactUserPrompt, getAgentPrompts } from "./prompts.js";
+import { buildCompactUserPrompt, getAgentPrompts, sessionAutomationPromptSuffix } from "./prompts.js";
 import { buildRunProfile, buildRunProfilePromptSection } from "./run-profile.js";
 import {
   buildCompactionPlan,
@@ -258,7 +258,7 @@ function buildSystemPrompt({ canManageSessions = true, runProfile = null, langua
       prompt = prompt.replace(prompts.GOAL_DRIVEN_RULE, prompts.RESTRICTED_GOAL_RULE);
       prompt += promptT("sessionRestriction");
     }
-    return prompt + buildRunProfilePromptSection(runProfile);
+    return prompt + buildRunProfilePromptSection(runProfile) + sessionAutomationPromptSuffix(language);
   });
 }
 

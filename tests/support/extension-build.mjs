@@ -1,3 +1,4 @@
+import { chromePackageError } from "./browser-package.mjs";
 import { benchmarkAsset } from "./benchmark-assets.mjs";
 import { build } from "esbuild";
 import { globSync, mkdtempSync, rmSync } from "node:fs";
@@ -19,6 +20,8 @@ export async function ensureTestExtension({ extensionDir = process.env.QINGZHOU_
     const directory = resolve(extensionDir);
     const manifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
     if (manifest.manifest_version !== 3) throw new Error(`Invalid test extension: ${directory}`);
+    const packageError = chromePackageError(manifest);
+    if (packageError) throw new Error(`${packageError} Directory: ${directory}`);
     await prepareExampleAssets();
     return directory;
   }

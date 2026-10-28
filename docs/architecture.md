@@ -3,6 +3,11 @@
 qz is a Manifest V3 Chrome extension. Background owns task state and persistence; Side Panel owns
 presentation. Chrome contexts communicate through explicit protocols. The optional [MCP
 bridge](../services/mcp-bridge/README.md) exposes extension operations to external clients.
+Firefox temporary loading is in [Commands](commands.md#load-temporarily-in-firefox). Remaining
+differences from Chrome are in [Firefox differences from Chrome](firefox-differences.md). The API
+survey is in [Firefox capability gap](firefox-capability-gap.md). How the packages are separated
+is in [Firefox packaging](firefox-packaging.md). The Chrome runtime below stays the
+source of the shared code.
 
 For a new tool, page, renderer, provider, or embedded Skill, start with the [capability
 guide](../src/capabilities/README.md). Development rules are in [AGENTS.md](../AGENTS.md).

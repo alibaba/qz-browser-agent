@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertChromiumChannel } from "./browser-package.mjs";
 import { ensureTestExtension } from "./extension-build.mjs";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -11,8 +12,10 @@ if (!scriptArgs.length) {
   process.exit(2);
 }
 
+assertChromiumChannel();
 const env = { ...process.env };
 env.QINGZHOU_TEST_EXTENSION_DIR = await ensureTestExtension();
+console.log(`browser=chromium package=dist/extension dir=${env.QINGZHOU_TEST_EXTENSION_DIR}`);
 env.PYTHONPATH = [join(root, "tests/support"), env.PYTHONPATH].filter(Boolean).join(delimiter);
 delete env.VIRTUAL_ENV;
 delete env.UV_INDEX_URL;

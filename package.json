@@ -7,16 +7,21 @@
   },
   "scripts": {
     "dev": "node scripts/build-extension.mjs --watch",
+    "dev:firefox": "node scripts/build-extension.mjs --watch --browser firefox",
     "build": "node scripts/build-extension.mjs --mode production --typecheck",
+    "build:firefox": "node scripts/build-extension.mjs --mode production --typecheck --browser firefox",
     "typecheck": "node scripts/typecheck.mjs",
     "test": "node --import tsx tests/run.mjs",
-    "verify": "npm run typecheck && npm test -- --all --coverage",
-    "verify:quick": "npm run typecheck && npm test -- --all",
+    "verify": "npm run typecheck && npm test -- unit contracts services",
+    "verify:chrome": "npm test -- browser e2e release visual",
+    "verify:firefox": "npm run typecheck && npm test -- firefox",
+    "verify:coverage": "npm run typecheck && npm test -- --all --coverage",
     "benchmark": "node --import tsx tests/benchmarks/run.mjs",
     "docs": "node scripts/docs-api.mjs",
     "doctor": "node --import tsx tests/doctor.mjs",
     "qz": "node services/mcp-bridge/src/bin.mjs",
-    "release": "python3 scripts/publish-release.py"
+    "release": "python3 scripts/publish-release.py",
+    "release:firefox": "python3 scripts/publish-release.py --target firefox"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",

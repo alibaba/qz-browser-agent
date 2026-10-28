@@ -4,6 +4,7 @@ import { isBuiltinSkill } from "../../shared/skills/builtin-skills.js";
 import { exportSkillsZip } from "../../shared/skills/skill-package.js";
 import { completeCustomProviderEndpoint } from "../../shared/models/custom-provider-endpoint.js";
 import { normalizeModelParameters } from "../../shared/models/model-parameters.js";
+import { productText } from "../../shared/product-text.js";
 
 type Fields = Record<string, unknown>;
 interface Field { key: string; type: string; description: string; values?: string[]; secret?: boolean }
@@ -62,7 +63,7 @@ export function createMcpManagementRuntime(options: Options) {
       ...(options.config.applyPreset ? [field("activePresetId", "string", "Apply a saved preset by ID; set it separately from other model settings.", {
         values: rows(config.presets).map(preset => text(preset.id)),
       })] : []),
-      ...(options.language ? [field("language", "string", "Interface language; reopen the side panel after changing it.", {
+      ...(options.language ? [field("language", "string", productText("Interface language; reopen the side panel after changing it.", "Interface language; reopen the sidebar after changing it."), {
         values: ["system", ...options.language.list().map(item => item.language)],
       })] : []),
     ];

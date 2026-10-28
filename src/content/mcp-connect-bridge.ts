@@ -1,3 +1,4 @@
+import { productText } from "../shared/product-text.js";
 import { requestRuntimeMessage } from "../shared/transport/runtime-request.js";
 
 // This packaged script only runs on the CLI's top-level local connection page.
@@ -15,7 +16,7 @@ if (window === window.top && location.protocol === "http:"
       }
       status.textContent = response.ok ? `Connected${connection.name ? ` as ${connection.name}` : ""}. You can close this tab.`
         : response.code === "DATA_CONSENT_REQUIRED"
-          ? "Open the qz side panel and complete first-time setup, then reload this page."
+          ? productText("Open the qz side panel and complete first-time setup, then reload this page.", "Open the qz sidebar and complete first-time setup, then reload this page.")
           : String(response.error || "Connection failed. Run qz connect to try again.");
     }).catch(() => {
       status.dataset.qzConnectionState = "error";

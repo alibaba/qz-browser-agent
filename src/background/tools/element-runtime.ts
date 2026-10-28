@@ -19,6 +19,7 @@ interface ElementRuntimeHost {
   initializeContentScript(tabId: number): Promise<void>;
 }
 import { isCdpFallbackForbiddenError } from "./cdp-runtime.js";
+import { ISOLATED_CONTENT_INVOKE, ISOLATED_CONTENT_PROBE } from "./isolated-page-calls.js";
 import { forgetIsolatedContexts, isolatedByTab, type IsolatedContext } from "./isolated-contexts.js";
 import { isElementReply } from "../../shared/contracts/page-content.js";
 import { getEffectiveTabUrl } from "../../shared/tab-utils.js";
@@ -589,11 +590,7 @@ async function contentContextId(tabId: number, send: CdpCommand, frameId: string
       try {
         const probe: Record<string, unknown> = {
           returnByValue: true,
-          expression: `(() => {
-            let extensionId = "";
-            try { extensionId = globalThis.chrome?.runtime?.id || ""; } catch {}
-            return { extensionId, bridge: typeof globalThis.__qzInvoke === "function" };
-          })()`,
+          expression: ISOLATED_CONTENT_PROBE,
         };
         // uniqueContextId is the context identity. A reused numeric id must not
         // satisfy this probe. Reports that omit uniqueId keep the numeric id.
@@ -634,7 +631,7 @@ async function contentContextId(tabId: number, send: CdpCommand, frameId: string
 async function invokeBound(send: CdpCommand, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string) {
   const remote = record(await send("Runtime.callFunctionOn", {
     objectId, objectGroup, awaitPromise: true, returnByValue: true,
-    functionDeclaration: "function(payload){return globalThis.__qzInvoke(this,payload)}",
+    functionDeclaration: ISOLATED_CONTENT_INVOKE,
     arguments: [{ value: { ...params, action } }],
   }));
   const details = record(remote.exceptionDetails);

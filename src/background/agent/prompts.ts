@@ -1,5 +1,6 @@
 import type { ModelMessage } from "../../shared/contracts/model-message.js";
 import { getLanguage, withLanguage, type Language } from "../../shared/i18n/index.js";
+import { sessionAutomationsEnabled } from "../../shared/session-automations.js";
 import * as zhCN from "./prompts/zh-CN.js";
 import * as en from "./prompts/en.js";
 import { t } from "./prompts/messages.js";
@@ -31,6 +32,11 @@ export const {
   RESTRICTED_GOAL_RULE,
   SYSTEM_PROMPT,
 } = getAgentPrompts();
+
+export function sessionAutomationPromptSuffix(language: Language = getLanguage()): string {
+  if (sessionAutomationsEnabled()) return "";
+  return `\n${getAgentPrompts(language).SESSION_AUTOMATIONS_DISABLED_PROMPT}`;
+}
 
 export function buildCompactUserPrompt(instruction = "", language = getLanguage()) {
   const base = getAgentPrompts(language).COMPACT_USER_PROMPT;

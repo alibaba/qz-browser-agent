@@ -24,6 +24,11 @@ DEFAULT_OUTPUT_DIR = REPO_DIR / "dist" / "releases"
 DEFAULT_TERSER_VERSION = "5.43.1"
 DEFAULT_BUILD_SCRIPT = REPO_DIR / "scripts" / "build-extension.mjs"
 PACKAGE_ROOT = "qz-browser-agent-extension"
+# Keep equal to FIREFOX_GECKO_ID in scripts/firefox-manifest.mjs.
+FIREFOX_GECKO_ID = "qz-browser-agent@heleifz.github.io"
+FIREFOX_PACKAGE_NAME = "qz-browser-agent-firefox"
+FIREFOX_KEPT_PERMISSIONS = ("webNavigation", "webRequest", "webRequestBlocking")
+FIREFOX_DATA_COLLECTION_REQUIRED = ("websiteContent", "browsingActivity")
 RELEASE_NOTICES = ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md")
 SKIP_DIRS = {
     ".git",
@@ -82,7 +87,11 @@ def main() -> int:
         source_manifest_version = str(manifest.get("version") or "").strip()
         manifest_version = sync_manifest_version(extension_dir, manifest, version)
 
-        extension_dir, bundling_summary = compile_extension_sources(extension_dir, bundle=not args.no_bundle)
+        extension_dir, bundling_summary = compile_extension_sources(
+            extension_dir,
+            bundle=not args.no_bundle,
+            browser="firefox" if args.target == "firefox" else "chrome",
+        )
         if args.target == "webstore":
             manifest_path = extension_dir / "manifest.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -119,6 +128,12 @@ def main() -> int:
             except (ValueError, zipfile.BadZipFile):
                 output.package.unlink(missing_ok=True)
                 raise
+        elif args.target == "firefox":
+            try:
+                validate_firefox_package(output.package)
+            except (ValueError, zipfile.BadZipFile):
+                output.package.unlink(missing_ok=True)
+                raise
         package_sha256 = sha256_file(output.package)
         write_debug_package(output, debug_files, extension_dir, version=version,
                             source=args.source, git_commit=git_commit, package_sha256=package_sha256)
@@ -139,8 +154,9 @@ def main() -> int:
                     "sourceManifestVersion": source_manifest_version,
                     "package": output.package.name,
                     "readme": output.readme.name,
-                    "packageRoot": "." if args.target == "webstore" else PACKAGE_ROOT,
+                    "packageRoot": "." if archive_uses_root_manifest(args.target) else PACKAGE_ROOT,
                     "target": args.target,
+                    **({"browser": "firefox", "geckoId": FIREFOX_GECKO_ID} if args.target == "firefox" else {}),
                     "source": args.source,
                     "gitRef": args.git_ref if args.source == "git" else "",
                     "gitCommit": git_commit,
@@ -184,8 +200,8 @@ def parse_args() -> argparse.Namespace:
         description="Build a local qz extension package from an isolated source snapshot.",
     )
     parser.add_argument("--version", required=True, help="Release version, for example 0.1.0.")
-    parser.add_argument("--target", choices=["manual", "webstore"], default="manual",
-                        help="manual keeps the installation folder; webstore places manifest.json at the ZIP root.")
+    parser.add_argument("--target", choices=["manual", "webstore", "firefox"], default="manual",
+                        help="manual keeps the Chrome installation folder; webstore places manifest.json at the ZIP root; firefox writes an unsigned .xpi with manifest.json at the archive root.")
     parser.add_argument(
         "--source",
         choices=["git", "worktree"],
@@ -370,17 +386,27 @@ def copy_extension_worktree(source_dir: Path, destination: Path) -> Path:
     return target
 
 
-def compile_extension_sources(extension_dir: Path, *, bundle: bool) -> tuple[Path, dict[str, object]]:
+def compile_extension_sources(extension_dir: Path, *, bundle: bool, browser: str = "chrome") -> tuple[Path, dict[str, object]]:
     node = shutil.which("node")
     if not node:
         raise SystemExit("release compilation requires Node.js")
     if not DEFAULT_BUILD_SCRIPT.is_file():
         raise SystemExit(f"build script does not exist: {DEFAULT_BUILD_SCRIPT}")
-    output_dir = extension_dir.parent / "compiled-extension"
+    if browser not in {"chrome", "firefox"}:
+        raise SystemExit(f"unknown browser: {browser}")
+    # Chrome keeps compiled-extension. Firefox writes compiled-extension-firefox.
+    output_dir = extension_dir.parent / ("compiled-extension-firefox" if browser == "firefox" else "compiled-extension")
+    command = [
+        node, str(DEFAULT_BUILD_SCRIPT), "--mode", "production", "--source-dir", str(extension_dir),
+        "--output-dir", str(output_dir), "--debug-maps", "--json",
+    ]
+    if browser == "firefox":
+        command.extend(["--browser", "firefox"])
+    if not bundle:
+        command.append("--no-bundle")
 
     result = subprocess.run(
-        [node, str(DEFAULT_BUILD_SCRIPT), "--mode", "production", "--source-dir", str(extension_dir),
-         "--output-dir", str(output_dir), "--debug-maps", "--json", *([] if bundle else ["--no-bundle"])],
+        command,
         cwd=REPO_DIR,
         check=False,
         text=True,
@@ -509,18 +535,29 @@ def run_git(args: list[str]) -> str:
 
 
 
+def archive_uses_root_manifest(target: str) -> bool:
+    """Chrome Web Store and Firefox both require manifest.json as a direct child of the archive."""
+    return target in {"webstore", "firefox"}
+
+
 def release_paths(output_dir: Path, version: str, target: str = "manual") -> ReleasePaths:
     directory = output_dir / version
     suffix = ""
+    package_name = PACKAGE_ROOT
+    package_extension = ".zip"
     if target == "webstore":
         directory /= "webstore"
         suffix = ".webstore"
+    elif target == "firefox":
+        directory /= "firefox"
+        package_name = FIREFOX_PACKAGE_NAME
+        package_extension = ".xpi"
     return ReleasePaths(
         directory=directory,
-        package=directory / f"{PACKAGE_ROOT}-{version}{suffix}.zip",
+        package=directory / f"{package_name}-{version}{suffix}{package_extension}",
         readme=directory / "README.md",
         version_json=directory / "version.json",
-        debug=directory / f"{PACKAGE_ROOT}-{version}{suffix}.debug.zip",
+        debug=directory / f"{package_name}-{version}{suffix}.debug.zip",
     )
 
 
@@ -598,11 +635,12 @@ def make_package_zip(
     target: str = "manual",
 ) -> None:
     zip_path.unlink(missing_ok=True)
+    root_manifest = archive_uses_root_manifest(target)
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for path in sorted(files, key=lambda item: item.relative_to(extension_dir).as_posix()):
             rel = path.relative_to(extension_dir).as_posix()
-            write_zip_entry(zf, rel if target == "webstore" else f"{PACKAGE_ROOT}/{rel}", path.read_bytes())
-        if target == "webstore":
+            write_zip_entry(zf, rel if root_manifest else f"{PACKAGE_ROOT}/{rel}", path.read_bytes())
+        if root_manifest:
             return
         version_bytes = json.dumps(
             {
@@ -670,6 +708,86 @@ def validate_webstore_package(path: Path) -> None:
             raise ValueError(f"missing Web Store package resources: {sorted(missing)}")
         if corrupt := archive.testzip():
             raise ValueError(f"corrupt Web Store ZIP entry: {corrupt}")
+
+
+def validate_firefox_package(path: Path) -> None:
+    """Check the unsigned Add-ons Manager archive after compilation and debug-file separation.
+
+    AMO accepts a zip of the extension files. manifest.json is a direct child of the archive.
+    The package stays unsigned; Add-ons Manager adds META-INF when it signs the upload.
+    """
+    if path.suffix != ".xpi":
+        raise ValueError("Firefox package must use the .xpi extension")
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        files = set(names)
+        if len(files) != len(names):
+            raise ValueError("duplicate Firefox ZIP entries")
+        for name in names:
+            if "\\" in name or ":" in name or any(part in {"", ".", "..", *SKIP_DIRS} for part in name.split("/")):
+                raise ValueError(f"invalid Firefox ZIP path: {name}")
+            lowered = name.lower()
+            if lowered.startswith("meta-inf/") or "/meta-inf/" in lowered:
+                raise ValueError(f"pre-signed file in Firefox ZIP: {name}")
+            if name.endswith("/manifest.json"):
+                raise ValueError(f"extra manifest in Firefox ZIP: {name}")
+            if name.endswith((".map", ".ts", ".tsx", ".debug.zip")) or any(
+                part.startswith((".qingzhou-", ".env")) for part in name.split("/")
+            ):
+                raise ValueError(f"development file in Firefox ZIP: {name}")
+        if "manifest.json" not in files:
+            raise ValueError("Firefox ZIP requires manifest.json at its root")
+        if "version.json" in files:
+            raise ValueError("Firefox ZIP must contain extension files only")
+        manifest = json.loads(archive.read("manifest.json"))
+        if not isinstance(manifest, dict) or manifest.get("manifest_version") != 3:
+            raise ValueError("Firefox ZIP requires Manifest V3")
+        if "key" in manifest:
+            raise ValueError("Firefox manifest must not contain key")
+        gecko = manifest.get("browser_specific_settings", {})
+        gecko = gecko.get("gecko", {}) if isinstance(gecko, dict) else {}
+        if not isinstance(gecko, dict) or gecko.get("id") != FIREFOX_GECKO_ID:
+            raise ValueError(f"Firefox manifest must keep browser_specific_settings.gecko.id {FIREFOX_GECKO_ID}")
+        if not str(gecko.get("strict_min_version") or "").strip():
+            raise ValueError("Firefox manifest must keep gecko.strict_min_version")
+        required_collection = gecko.get("data_collection_permissions", {})
+        required_collection = required_collection.get("required", []) if isinstance(required_collection, dict) else []
+        for name in FIREFOX_DATA_COLLECTION_REQUIRED:
+            if name not in required_collection:
+                raise ValueError(f"Firefox manifest must keep data collection permission {name}")
+        permissions = manifest.get("permissions") or []
+        for name in FIREFOX_KEPT_PERMISSIONS:
+            if name not in permissions:
+                raise ValueError(f"Firefox manifest must keep permission {name}")
+        version = manifest.get("version", "")
+        try:
+            if normalize_version(version) != version:
+                raise ValueError("Firefox manifest requires a numeric version")
+        except SystemExit as error:
+            raise ValueError(str(error)) from error
+        required = set(RELEASE_NOTICES)
+        required.update(manifest.get("icons", {}).values())
+        required.update(manifest.get("sandbox", {}).get("pages", []))
+        required.update(manifest.get("background", {}).get("scripts", []))
+        sidebar = manifest.get("sidebar_action", {})
+        if isinstance(sidebar, dict):
+            if panel := sidebar.get("default_panel"):
+                required.add(panel)
+            icons = sidebar.get("default_icon", {})
+            required.update([icons] if isinstance(icons, str) else icons.values())
+        action_icons = manifest.get("action", {}).get("default_icon", {})
+        required.update([action_icons] if isinstance(action_icons, str) else action_icons.values())
+        for script in manifest.get("content_scripts", []):
+            required.update(script.get("js", []))
+            required.update(script.get("css", []))
+        required.update(rule["path"] for rule in manifest.get("declarative_net_request", {}).get("rule_resources", []))
+        if locale := manifest.get("default_locale"):
+            required.add(f"_locales/{locale}/messages.json")
+        missing = required - files
+        if missing:
+            raise ValueError(f"missing Firefox package resources: {sorted(missing)}")
+        if corrupt := archive.testzip():
+            raise ValueError(f"corrupt Firefox ZIP entry: {corrupt}")
 
 
 def write_zip_entry(archive: zipfile.ZipFile, name: str, contents: bytes) -> None:

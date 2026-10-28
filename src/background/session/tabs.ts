@@ -1,4 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
+import { productText } from "../../shared/product-text.js";
 import type { StorageAdapter } from "../internal/storage.js";
 import type { TabReference } from "../../shared/tab-utils.js";
 import type { PortableSessionTab } from "../../shared/session/session-exchange.js";
@@ -541,7 +542,7 @@ export function createSessionTabs({
         title: opened?.title || portable.title,
         url: opened?.url || opened?.pendingUrl || portable.url,
       });
-      if (!tab) throw new Error("Chrome did not return a restorable web tab");
+      if (!tab) throw new Error(productText("Chrome did not return a restorable web tab", "Firefox did not return a restorable web tab"));
       return { ok: true, index, portable, tab };
     } catch (error) {
       await closeImportedTab(opened?.id);

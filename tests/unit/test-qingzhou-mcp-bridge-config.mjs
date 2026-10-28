@@ -518,3 +518,112 @@ test("changing endpoint revokes an in-flight and queued name change without touc
   assert.equal(f.calls.some(c => c.body?.name === "queued"), false);
   assert.equal((await r.status()).endpoint, "http://127.0.0.1:23002");
 });
+
+const UUID = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
+const RECONNECT = "qingzhou-mcp-bridge-reconnect";
+
+test("chrome bridge restarts keep a fresh lease id out of storage", async t => {
+  const f = setup(t);
+  assert.notEqual(globalThis.chrome.qzFirefoxMcpWake, true);
+  let r = f.start(); await drain(); await r.connect();
+  const first = f.calls.find(c => c.path.endsWith("/pair")).body.connectionId;
+  assert.equal(f.data[KEY].connectionId, undefined);
+  assert.equal("connectionId" in await getQingzhouMcpBridgeConfig(), false);
+  r.stop(); r = f.start(); await drain(); await f.tick(0);
+  await until(() => f.calls.filter(c => c.path.endsWith("/pair")).length >= 2);
+  const second = f.calls.filter(c => c.path.endsWith("/pair")).at(-1).body.connectionId;
+  assert.notEqual(second, first);
+  assert.equal(f.data[KEY].connectionId, undefined);
+  assert.equal(f.alarms.has(RECONNECT), true);
+});
+
+test("firefox wake reuses the stored lease and refills transport retries", async t => {
+  const f = setup(t);
+  globalThis.chrome.qzFirefoxMcpWake = true;
+  let r = f.start(); await drain(); await r.connect({ name: "firefox" });
+  const lease = f.data[KEY].connectionId;
+  const token = f.data[KEY].pairingToken;
+  assert.match(lease, UUID);
+  assert.equal("connectionId" in await getQingzhouMcpBridgeConfig(), false);
+  assert.equal(f.alarms.has(RECONNECT), true);
+  r.stop(); f.calls.length = 0;
+  r = f.start(); await drain(); await f.tick(0);
+  await until(() => f.data[KEY].state === "connected");
+  const resumed = f.calls.find(c => c.path.endsWith("/pair")).body;
+  assert.equal(resumed.connectionId, lease);
+  assert.equal(resumed.pairingToken, token);
+  assert.equal(f.alarms.has(RECONNECT), true);
+
+  r.stop();
+  f.data[KEY] = { ...f.data[KEY], state: "paused", attemptsRemaining: 0, nextRetryAt: Date.now() + 30000,
+    lastError: { code: "MCP_CONNECTION_UNAVAILABLE", message: "suspended" } };
+  f.calls.length = 0;
+  r = f.start(); await drain();
+  assert.equal(f.data[KEY].state, "reconnecting");
+  assert.equal(f.data[KEY].attemptsRemaining, 3);
+  assert.equal(f.data[KEY].connectionId, lease);
+  assert.equal(f.alarms.has(RECONNECT), true);
+  await f.tick(30000);
+  await until(() => f.data[KEY].state === "connected");
+  assert.equal(f.calls.find(c => c.path.endsWith("/pair")).body.connectionId, lease);
+
+  await r.disconnect();
+  assert.equal(f.data[KEY].connectionId, undefined);
+  assert.equal(f.data[KEY].enabled, false);
+  assert.equal(f.alarms.has(RECONNECT), false);
+});
+
+test("firefox transport failures keep the reconnect alarm armed", async t => {
+  const f = setup(t);
+  globalThis.chrome.qzFirefoxMcpWake = true;
+  f.setResponder(() => { throw new Error("offline"); });
+  const r = f.start(); await drain(); await r.connect();
+  assert.equal(f.data[KEY].state, "reconnecting");
+  assert.equal(f.alarms.has(RECONNECT), true);
+  await f.tick(30000);
+  await until(() => f.data[KEY].attemptsRemaining === 1);
+  await f.tick(30000);
+  await until(() => f.data[KEY].attemptsRemaining === 3);
+  assert.equal(f.data[KEY].state, "reconnecting");
+  assert.equal(f.alarms.has(RECONNECT), true);
+  const before = f.calls.length;
+  f.setResponder(undefined);
+  await f.tick(30000);
+  await until(() => f.data[KEY].state === "connected");
+  assert.ok(f.calls.length > before);
+  assert.equal(f.alarms.has(RECONNECT), true);
+});
+
+test("firefox still pauses a live foreign lease", async t => {
+  const foreign = setup(t);
+  globalThis.chrome.qzFirefoxMcpWake = true;
+  foreign.setResponder(path => path.endsWith("/pair") ? Response.json({ code: "BRIDGE_CLIENT_IN_USE", error: "healthy original remains connected", retryAfterMs: 40000 }, { status: 409 }) : undefined);
+  let runtime = foreign.start(); await drain();
+  await runtime.connect();
+  assert.equal(foreign.data[KEY].leaseWaitRemaining, 0);
+  for (let i = 0; i < 3; i++) {
+    runtime.stop(); runtime = foreign.start(); await drain();
+    await foreign.tick(i === 0 ? 40100 : 30000);
+    await until(() => foreign.data[KEY].attemptsRemaining === 2 - i);
+    await drain();
+  }
+  assert.equal((await runtime.status()).state, "paused");
+  assert.equal(foreign.alarms.size, 0);
+  const held = foreign.calls.length;
+  await foreign.tick(300000); await foreign.fireAlarm();
+  assert.equal(foreign.calls.length, held);
+});
+
+test("firefox keeps an incompatible bridge paused", async t => {
+  const incompatible = setup(t);
+  globalThis.chrome.qzFirefoxMcpWake = true;
+  incompatible.setResponder(path => path === "/health" ? Response.json({ service: "qz-browser-agent", protocolVersion: 1, instanceId: "old" }) : undefined);
+  const paused = incompatible.start(); await drain();
+  assert.equal((await paused.connect()).state, "paused");
+  assert.equal(incompatible.data[KEY].lastError.code, "MCP_CONNECTION_INCOMPATIBLE");
+  paused.stop();
+  const again = incompatible.start(); await drain(); await incompatible.tick(300000); await incompatible.fireAlarm();
+  assert.equal(incompatible.calls.length, 1);
+  assert.equal(incompatible.alarms.size, 0);
+  assert.equal((await again.status()).state, "paused");
+});

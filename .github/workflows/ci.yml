@@ -41,11 +41,48 @@ jobs:
       - run: npx playwright install chromium
       - if: runner.os == 'Linux'
         run: npm exec playwright install-deps chromium
-      - name: Tool and Renderer browser contracts
+      - name: Chromium Playwright contracts (package dist/extension)
         run: npm test -- playwright renderer-lifecycle.spec.mjs typescript-tool.spec.mjs extension-example.spec.mjs --workers 1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
-          name: browser-failure-${{ matrix.os }}
+          name: chromium-dist-extension-failure-${{ matrix.os }}
           path: qz-browser-agent/tests/results/playwright/
+          retention-days: 7
+
+  firefox-package:
+    name: Firefox package (dist/extension-firefox)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: qz-browser-agent
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: qz-browser-agent/.nvmrc
+          cache: npm
+          cache-dependency-path: qz-browser-agent/package-lock.json
+      - run: npm ci
+      - name: Install Mozilla Firefox
+        run: |
+          curl -fsSL -o /tmp/firefox.tar.xz "https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US"
+          mkdir -p "$RUNNER_TEMP/firefox"
+          tar -xJf /tmp/firefox.tar.xz -C "$RUNNER_TEMP/firefox"
+          echo "FIREFOX_EXECUTABLE=$RUNNER_TEMP/firefox/firefox/firefox" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/firefox/firefox/firefox" --version
+      - name: Playwright Firefox and system libraries
+        run: |
+          npx playwright install firefox
+          npm exec playwright install-deps firefox
+      - name: Firefox unit tests and Playwright (package dist/extension-firefox)
+        run: npm run verify:firefox
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: firefox-dist-extension-firefox-failure
+          path: |
+            qz-browser-agent/tests/results/playwright-firefox/
+            qz-browser-agent/tests/results/firefox-suite.json
           retention-days: 7

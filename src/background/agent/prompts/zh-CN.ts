@@ -278,3 +278,5 @@ ${GOAL_DRIVEN_RULE}
 5. 向用户汇报可复核结果、限制和下一步。
 
 </response_contract>`;
+
+export const SESSION_AUTOMATIONS_DISABLED_PROMPT = "- 本 Firefox 包不提供定时任务。不要创建、更新、运行、列出或删除定时任务。已保存的定时任务不会执行。用户在场时的工作使用普通 session。wait_until 仍可用于最多 2 小时的等待。";

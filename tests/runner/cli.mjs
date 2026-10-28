@@ -69,13 +69,21 @@ export function printHelp(defaultTestJobs) {
   npm test -- browser --list
   npm test -- unit --coverage           # unit coverage + background gate
   npm test -- --all --coverage          # full coverage + runtime gates
-  npm test -- playwright [arguments]    # native Playwright options
+  npm test -- firefox                   # Firefox package only; not part of --all
+  npm test -- playwright [arguments]    # Chromium Playwright options for dist/extension
   npm test -- report [arguments]        # open the Playwright HTML report
   npm test -- behavior [arguments]      # indexed product journeys
   npm test -- grid                      # standalone extension Data Grid test
   npm test -- live [target] [arguments]  # explicit real-model tests
 
 Suites: ${AUTOMATED_SUITES.join(", ")}
+Firefox package suite: firefox
+  browser=firefox package=dist/extension-firefox
+  npm run verify            typecheck plus unit, contracts, and services
+  npm run verify:chrome     browser, e2e, release, and visual on dist/extension
+  npm run verify:firefox    builds that package, then runs its unit tests and Playwright in Firefox
+  npm run verify:coverage   typecheck plus --all with coverage gates
+  npm test and --all stay on Chromium and the Chrome package. They do not select firefox.
 Live targets: agent, realworld, deepseek, rate, cli-mcp, cli-mcp-supplement, multi-browser, pi-multi-browser, pi-concurrent-browsers
   (no target: deepseek + realworld)
 
@@ -83,7 +91,7 @@ Options:
   --match <text>    filter unit paths or suite commands
   --jobs <1..4>     bound resource-aware concurrent jobs (default: ${defaultTestJobs})
   --list           list the plan without building or running tests
-  --all            select every unattended suite; excludes live tests
+  --all            select the shared suites and the Chrome package suites; excludes firefox and live tests
   --coverage       collect once and apply gates; requires unit or --all without --match
   --help, -h       show help; append to a direct command for its options
 `);

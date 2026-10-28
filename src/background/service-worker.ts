@@ -1,4 +1,5 @@
 import { initializeLanguage, whenLanguageReady, readLanguagePreference, saveLanguagePreference, getAvailableLanguages } from "../shared/i18n/index.js";
+import { firefoxExtension } from "../shared/product-text.js";
 import { matchConfiguredModelCapabilities } from "../shared/models/model-capabilities.js";
 import { createContentLanguageSnapshot } from "../shared/i18n/content.js";
 import { createSessionImportLabels } from "./services/session-import-labels.js";
@@ -1058,3 +1059,24 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
       }
     });
   });
+
+/** Firefox end-to-end checks call page tools in this background page. */
+export function installFirefoxPageToolHarness(): void {
+  if (!firefoxExtension()) return;
+  const root = globalThis as typeof globalThis & { __qzFirefoxPageTools?: ReturnType<typeof createToolRuntime> };
+  if (root.__qzFirefoxPageTools) return;
+  root.__qzFirefoxPageTools = createToolRuntime({
+    sessions: {
+      isRunCurrent: () => true,
+      async resolveTargetTab({ tabId }) {
+        const tab = await chrome.tabs.get(tabId);
+        return { ok: true, tabId: Number(tab?.id || tabId), tab, ownedByCurrentTask: true };
+      },
+      updateWorkingTab: async () => undefined,
+      clearWorkingTab: async () => undefined,
+      listOwnedTabIds: () => [],
+    },
+  });
+}
+
+installFirefoxPageToolHarness();

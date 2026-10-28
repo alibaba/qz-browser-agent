@@ -1,3 +1,5 @@
+import { productText } from "../../shared/product-text.js";
+
 export interface OffscreenOptions {
   offscreen?: Pick<typeof chrome.offscreen, "createDocument"> & Partial<Pick<typeof chrome.offscreen, "hasDocument" | "Reason">>;
   runtime?: Pick<typeof chrome.runtime, "getURL">;
@@ -13,7 +15,7 @@ export function ensureOffscreenDocument({
   clients = (globalThis as { clients?: OffscreenOptions["clients"] }).clients,
   documentPath = "offscreen.html",
 }: OffscreenOptions = {}): Promise<OffscreenDocument> {
-  if (!offscreen?.createDocument) return Promise.reject(new Error("Chrome offscreen documents are not available."));
+  if (!offscreen?.createDocument) return Promise.reject(new Error(productText("Chrome offscreen documents are not available.", "Firefox offscreen documents are not available.")));
   const existing = pending.get(offscreen);
   if (existing) return existing;
   const exists = async () => {

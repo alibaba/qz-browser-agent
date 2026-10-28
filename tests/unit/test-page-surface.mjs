@@ -252,6 +252,56 @@ for (const delayedExecution of [false, true]) test(`a timed-out arm leaves no pe
   }
 });
 
+test("firefox counts marked extension events and chrome still requires a trusted event", async () => {
+  const previousRuntime = chrome.runtime;
+  try {
+    chrome.runtime = { getURL: () => "moz-extension://uuid/" };
+    const seen = {};
+    runInPage = options => {
+      seen.world = options.world;
+      seen.accept = options.args[3];
+      return options.func(...options.args);
+    };
+    const page = installPage();
+    const id = await armPageInputReceipt(11);
+    assert.equal(seen.world, "ISOLATED");
+    assert.equal(seen.accept, true);
+    const listener = page.listeners.find(item => item.type === "pointerdown");
+    const untrusted = { isTrusted: false };
+    listener.listener(untrusted);
+    assert.equal(page.document.__qzInputReceiptsV2.ops[id].n, 0);
+    const marked = new WeakSet();
+    globalThis.__qzExtensionInputEvents = marked;
+    listener.listener(untrusted);
+    assert.equal(page.document.__qzInputReceiptsV2.ops[id].n, 0);
+    marked.add(untrusted);
+    listener.listener(untrusted);
+    assert.ok(page.document.__qzInputReceiptsV2.ops[id].n > 0);
+    assert.ok(await readPageInputReceipt(11, id) > 0);
+
+    chrome.runtime = { getURL: () => "chrome-extension://id/" };
+    const chromePage = installPage();
+    const chromeId = await armPageInputReceipt(12);
+    assert.equal(seen.world, "MAIN");
+    assert.equal(seen.accept, false);
+    const chromeListener = chromePage.listeners.find(item => item.type === "pointerdown");
+    const extensionEvent = { isTrusted: false };
+    marked.add(extensionEvent);
+    chromeListener.listener(extensionEvent);
+    assert.equal(chromePage.document.__qzInputReceiptsV2.ops[chromeId].n, 0);
+    chromeListener.listener({ isTrusted: true });
+    assert.ok(chromePage.document.__qzInputReceiptsV2.ops[chromeId].n > 0);
+    assert.ok(await readPageInputReceipt(12, chromeId) > 0);
+  } finally {
+    if (previousRuntime === undefined) delete chrome.runtime;
+    else chrome.runtime = previousRuntime;
+    delete globalThis.__qzExtensionInputEvents;
+    runInPage = null;
+    delete globalThis.document;
+    delete globalThis.addEventListener;
+  }
+});
+
 async function withFrames(results, run) {
   const original = chrome.scripting.executeScript;
   chrome.scripting.executeScript = async () => {

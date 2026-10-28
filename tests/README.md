@@ -8,7 +8,8 @@ runner options.
 
 Install the locked browser binaries with `npx playwright install chromium`. Playwright and extension
 tests use Chromium; standalone page fixtures also use Chromium Headless Shell. Python browser tests
-use `tests/python/uv.lock` through uv. Missing dependencies fail the run.
+use `tests/python/uv.lock` through uv. Missing dependencies fail the run. The Firefox suite needs
+Mozilla Firefox 154 or newer: `npx playwright install firefox` and `npx playwright install-deps firefox`.
 
 ```bash
 npm test -- unit contracts
@@ -16,6 +17,8 @@ npm test -- unit --match session
 npm test -- browser --list
 npm test -- playwright renderer-lifecycle.spec.mjs --workers 1
 npm run verify
+npm run verify:chrome
+npm run verify:firefox
 ```
 
 | Suite | What it checks |
@@ -26,10 +29,18 @@ npm run verify
 | `browser` | Playwright, Python page smoke tests and Data Grid behavior |
 | `e2e` | The loaded extension, Session exchange, documents and tool timelines |
 | `release` | Deterministic builds, ZIP contents and the packaged extension |
-| `visual` | Tool timelines and conversation streaming |
+| `visual` | Tool timelines and conversation streaming in Chromium |
+| `firefox` | Firefox unit tests and Playwright in Mozilla Firefox against `dist/extension-firefox/` |
 
-`npm test` selects `unit contracts services browser`; `--all` also selects E2E, release and visual.
-`verify:quick` adds type checking to `--all` and omits coverage gates. `verify` adds those gates.
+`firefox` is not part of `npm test` or `--all`. `npm run verify:firefox` runs it. `browser`, `e2e`,
+`release`, and `visual` load the Chrome package. `npm run build:firefox` writes the production package
+in `dist/extension-firefox/` and does not run this suite.
+
+`npm test` selects `unit contracts services browser`. `--all` selects those shared suites plus `e2e`,
+`release`, and `visual`. `npm run verify` type-checks and runs `unit`, `contracts`, and `services`.
+`npm run verify:chrome` runs the Chrome package suites. `npm run verify && npm run verify:chrome`
+type-checks and runs the shared suites plus the Chrome package suites. `npm run verify:coverage`
+type-checks and runs `--all` with coverage gates.
 `--list` prints the selected commands. `--match` filters unit filenames or suite commands; the
 `playwright` entry accepts Playwright options directly.
 
@@ -56,7 +67,10 @@ alongside Playwright. Each extension check owns its profile; timing measurements
 `QINGZHOU_TEST_CONCURRENCY` and `QINGZHOU_PLAYWRIGHT_WORKERS` override their respective pools; suite
 ownership stays in [`runner/suites.mjs`](runner/suites.mjs).
 
-The runner uses the locked Chromium, including its full headless mode for Playwright page tests.
+The Chromium runner uses the locked Chromium, including its full headless mode for Playwright page tests.
+The Firefox suite uses Mozilla Firefox selected by `FIREFOX_EXECUTABLE`, `PATH`, or
+`npx playwright install firefox`, and does not reuse that Chromium. `npx playwright install-deps firefox`
+installs the system libraries. The suite is headless unless `QINGZHOU_FIREFOX_HEADED=1`.
 Native keyboard, clipboard and control fixtures retain Chromium Headless Shell.
 Page tests can select `QINGZHOU_PLAYWRIGHT_CHANNEL=chrome`;
 other browser entries accept `CHROME_EXECUTABLE`. Keep the browser version fixed for comparisons.
@@ -415,7 +429,7 @@ paths. See [package commands](../docs/commands.md#package-a-version) for source 
 
 ## Coverage
 
-`verify` collects Node V8 and Playwright coverage during the same full test run, then checks module
+`verify:coverage` collects Node V8 and Playwright coverage during the same full test run, then checks module
 thresholds. `--coverage` requires unfiltered `unit` or `--all`:
 
 ```bash

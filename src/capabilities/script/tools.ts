@@ -1,3 +1,4 @@
+import { productText } from "#sdk/shared/product-text";
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
@@ -486,7 +487,7 @@ async function runPageScriptExclusive<T>(tabId: number, signal: AbortSignal | un
 
 async function ensureRunScriptOffscreenDocument() {
   if (!chrome.offscreen?.createDocument) {
-    throw new ToolExecutionError("INNER_RUNNER_UNAVAILABLE", "Chrome offscreen documents are not available.", {
+    throw new ToolExecutionError("INNER_RUNNER_UNAVAILABLE", productText("Chrome offscreen documents are not available.", "Firefox offscreen documents are not available."), {
       engine: "offscreen_inner",
     });
   }

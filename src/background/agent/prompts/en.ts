@@ -276,3 +276,5 @@ ${GOAL_DRIVEN_RULE}
 5. Report verifiable results, limitations, and next steps.
 
 </response_contract>`;
+
+export const SESSION_AUTOMATIONS_DISABLED_PROMPT = "- Session automations are unavailable in this Firefox package. Do not create, update, run, list, or delete scheduled tasks. Stored automations do not run. Use an ordinary session for work while the user is here. wait_until still covers waits of at most 2 hours.";

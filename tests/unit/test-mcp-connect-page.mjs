@@ -79,6 +79,11 @@ test("Settings messages use local status/connect/disconnect routes with validate
   const rejected = await new Promise(resolve => transport.listener({ type: "mcp_connection_connect" }, sender, resolve));
   assert.equal(rejected.code, "MCP_CONNECTION_PAGE_REQUIRED");
   for (const invalid of [{ ...source, id: "other" }, { ...source, url: "chrome-extension://extension.evil/settings" }, { ...source, url: undefined }]) assert.throws(() => assertMcpSettingsSender(invalid, "extension"));
+  const firefoxPage = { id: "extension", url: "moz-extension://7588e7cb-5098-45b0-89ae-e96209ae9f67/sidepanel/sidepanel.html" };
+  assertMcpSettingsSender(firefoxPage, "extension");
+  assert.throws(() => assertMcpSettingsSender({ ...firefoxPage, id: "other" }, "extension"));
+  assert.throws(() => assertMcpSettingsSender({ id: "extension", url: "moz-extension://sidepanel.html" }, "extension"));
+  assert.throws(() => assertMcpSettingsSender({ id: "extension", url: "https://example.com/sidepanel.html" }, "extension"));
 });
 
 test("Settings port requests preserve sender validation and the result envelope", async () => {

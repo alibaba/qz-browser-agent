@@ -1,4 +1,5 @@
 import { DATA_CONSENT_VERSION } from "../../shared/data-consent.js";
+import { productText } from "../../shared/product-text.js";
 
 type Fields = Record<string, unknown>;
 interface WaitIdentity { sessionId: string; waitId: string; runId: string }
@@ -23,7 +24,10 @@ interface Input extends WaitIdentity {
   requiresUserAction?: true;
 }
 
-const browserPermissionInstructions = "Open this task in the qz side panel, click Allow and continue, and approve Chrome's permission prompt.";
+const browserPermissionInstructions = () => productText(
+  "Open this task in the qz side panel, click Allow and continue, and approve Chrome's permission prompt.",
+  "Open this task in the qz sidebar, click Allow and continue, and approve Firefox's permission prompt.",
+);
 
 /** Commands share the supervisor's live wait, never a persisted UI snapshot alone. */
 export function createSessionUserInput(options: Options) {
@@ -41,7 +45,7 @@ export function createSessionUserInput(options: Options) {
       title: String(runtime.waitTitle || form.title || ""), message: String(runtime.waitMessage || ""),
       form: structuredClone(form), actions: [kind === "form" ? "submit" : "approve", "reject"],
       ...consent,
-      instructions: kind === "browser_permission" ? browserPermissionInstructions : kind === "form"
+      instructions: kind === "browser_permission" ? browserPermissionInstructions() : kind === "form"
         ? "Fill responseTemplate.answers with the user's answers. Keys are field IDs; choices use option values, and multi_choice uses an array. Send the completed template to qingzhou_respond_to_user_input."
         : "Show this request to the user. After approval, send responseTemplate to qingzhou_respond_to_user_input; to decline, use action reject with this sessionId and waitId.",
       ...(kind === "browser_permission" ? { requiresUserAction: true as const } : {
@@ -92,7 +96,7 @@ export function createSessionUserInput(options: Options) {
         try { granted = await options.hasBrowserPermission(String(input.form.browserPermission)); } catch { /* Keep the wait pending on a failed permission check. */ }
         signal?.throwIfAborted();
         if (!stillCurrent()) return stale();
-        if (!granted) return fail("BROWSER_PERMISSION_REQUIRED", `The task is paused. ${browserPermissionInstructions}`, { requiresUserAction: true });
+        if (!granted) return fail("BROWSER_PERMISSION_REQUIRED", `The task is paused. ${browserPermissionInstructions()}`, { requiresUserAction: true });
       }
       if (input.kind === "location_consent") {
         try {

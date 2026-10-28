@@ -1,6 +1,7 @@
 import { createPortTransport } from "../../shared/transport/port-transport.js";
 import { transportFailure, TransportError } from "../../shared/transport/message-codec.js";
 import { backgroundReceiveBudget, backgroundTransferBudget } from "./transfer-budget.js";
+import { productText } from "../../shared/product-text.js";
 import { ToolExecutionError } from "../tools/arguments.js";
 
 type Fields = Record<string, unknown>;
@@ -161,17 +162,17 @@ export function createSidepanelChannel({
   function requestLocation({ timeoutMs = 12_000, windowId = null, signal }: { timeoutMs?: number; windowId?: number | null; signal?: AbortSignal } = {}) {
     if (signal?.aborted) return Promise.resolve(null);
     const port = [...ports].find(port => windowId == null || portWindowIds.get(port) === windowId);
-    if (!port) return Promise.reject(new ToolExecutionError("LOCATION_PANEL_UNAVAILABLE", "No side panel is connected to the task window"));
+    if (!port) return Promise.reject(new ToolExecutionError("LOCATION_PANEL_UNAVAILABLE", productText("No side panel is connected to the task window", "No sidebar is connected to the task window")));
     const requestId = `ctx_${++dynamicContextSeq}`;
     return new Promise<Fields | null>((resolve, reject) => {
       function cleanup() { clearTimeout(timer); signal?.removeEventListener("abort", cancel); dynamicContextRequests.delete(requestId); }
       function cancel() { cleanup(); resolve(null); }
       function fail(code: string, message: string, details: Fields = {}) { cleanup(); reject(new ToolExecutionError(code, message, details)); }
-      const timer = setTimeout(() => fail("LOCATION_RESPONSE_TIMEOUT", "The side panel did not return a location result", { timeoutMs }), timeoutMs);
+      const timer = setTimeout(() => fail("LOCATION_RESPONSE_TIMEOUT", productText("The side panel did not return a location result", "The sidebar did not return a location result"), { timeoutMs }), timeoutMs);
       signal?.addEventListener("abort", cancel, { once: true });
       dynamicContextRequests.set(requestId, {
         port,
-        disconnect: () => fail("LOCATION_PANEL_UNAVAILABLE", "The side panel disconnected during location lookup"),
+        disconnect: () => fail("LOCATION_PANEL_UNAVAILABLE", productText("The side panel disconnected during location lookup", "The sidebar disconnected during location lookup")),
         resolve(value) {
           cleanup();
           const error = object(object(value).locationError);
@@ -189,7 +190,7 @@ export function createSidepanelChannel({
         },
       });
       void send(port, { type: "dynamic_context_request", requestId, fields: ["location"] })
-        .catch(() => { if (dynamicContextRequests.has(requestId)) fail("LOCATION_PANEL_UNAVAILABLE", "Could not send the location request to the side panel"); });
+        .catch(() => { if (dynamicContextRequests.has(requestId)) fail("LOCATION_PANEL_UNAVAILABLE", productText("Could not send the location request to the side panel", "Could not send the location request to the sidebar")); });
     });
   }
 

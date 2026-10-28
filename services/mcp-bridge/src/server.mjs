@@ -15,6 +15,14 @@ function sendJson(response, status, body, headers = {}) {
   response.end(JSON.stringify(body));
 }
 
+// Chrome origins stay `chrome-extension://` plus 32 characters from a-p.
+// Firefox origins are `moz-extension://` plus the lowercase UUID stored for the
+// gecko id in `extensions.webextensions.uuids`. The pairing token authenticates the profile.
+export function isExtensionBridgeOrigin(origin) {
+  return /^chrome-extension:\/\/[a-p]{32}$/.test(origin)
+    || /^moz-extension:\/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(origin);
+}
+
 async function readJson(request) {
   let length = 0;
   const chunks = [];
@@ -86,8 +94,9 @@ export async function startBridge({ host = "127.0.0.1", port = 18765, instanceId
       }
       const path = new URL(request.url, state.endpoint).pathname;
       const origin = String(request.headers.origin || "");
-      // Browser sites cannot call the bridge. Only extension origins use poll/result routes.
-      if (origin && (path === "/mcp" || !/^chrome-extension:\/\/[a-p]{32}$/.test(origin))) {
+      // Browser sites cannot call the bridge. Extension origins may use poll/result routes.
+      // /mcp stays closed to every Origin so a page cannot open an MCP session.
+      if (origin && (path === "/mcp" || !isExtensionBridgeOrigin(origin))) {
         return sendJson(response, 403, { error: "invalid bridge origin" });
       }
       cors = origin ? {
