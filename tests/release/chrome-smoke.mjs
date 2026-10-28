@@ -1,5 +1,6 @@
 import { acceptDataDisclosure } from "../support/data-consent.mjs";
 import { assertPublicReleasePackage } from "./public-package.mjs";
+import { verifyStaticEngines } from "./static-engines.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
@@ -82,8 +83,8 @@ try {
     tabulator: typeof globalThis.Tabulator === "function",
   }));
   assert.deepEqual(globals, { marked: false, mathjax: true, tabulator: false });
-  assert.equal(scripts.some(url => /tex-svg-full|chunk-data-grid-vendor-|chunk-xlsx/u.test(url)), false,
-    "the minified panel must not load heavy features during ordinary navigation");
+  assert.equal(scripts.some(url => /\/vendor\/mathjax\/|chunk-data-grid-vendor-|chunk-xlsx/u.test(url)), false,
+    "the readable panel must not load heavy features during ordinary navigation");
   // SheetJS mini also publishes a compatibility global; the application must use its module import.
   await page.evaluate(() => { delete globalThis.XLSX; });
   const workbook = XLSX.utils.book_new();
@@ -99,6 +100,8 @@ try {
   assert.equal(scripts.filter(url => /chunk-xlsx/u.test(url)).length, 1);
   assert.equal(scripts.filter(url => /chunk-data-grid-vendor-/u.test(url)).length, 1);
   await page.waitForTimeout(300);
+  assert.deepEqual(pageErrors, []);
+  const staticEngines = await verifyStaticEngines({ context, page, worker });
   assert.deepEqual(pageErrors, []);
 
   await context.close();
@@ -155,6 +158,7 @@ try {
     sidepanel: true,
     dependencyGlobals: globals,
     excelImportAndGrid: true,
+    staticEngines,
     backgroundScenarios: backgroundE2e.scenarios,
   }));
 } finally {

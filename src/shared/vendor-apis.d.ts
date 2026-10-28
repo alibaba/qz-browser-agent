@@ -1,8 +1,8 @@
 /** Upstream declarations omit these distributed subpaths; the public API remains authoritative. */
-declare module 'pdfjs-dist/legacy/build/pdf.mjs' {
+declare module 'pdfjs-dist/build/pdf.mjs' {
   export * from 'pdfjs-dist';
 }
-declare module 'pdfjs-dist/legacy/build/pdf.worker.mjs' {
+declare module 'pdfjs-dist/build/pdf.worker.mjs' {
   export { WorkerMessageHandler } from 'pdfjs-dist/types/src/core/worker.js';
 }
 declare module "turndown-plugin-gfm" {

@@ -526,8 +526,9 @@ Heavy UI libraries load on demand and update the instance that requested them.
 
 [Session export](../src/sidepanel/features/export/session-export-feature.ts) uses one Background
 exchange payload and synchronous `renderStatic` projections. It embeds the active skin and a
-standalone [export runtime](../src/sidepanel/features/export/session-export-runtime.ts). Text and
-tables work offline; formulas use deferred MathJax from a CDN. Each import creates an independent
+standalone [export runtime](../src/sidepanel/features/export/session-export-runtime.ts). Text,
+tables, and formulas work offline: each formula is embedded as a self-contained SVG from the local
+MathJax components. Each import creates an independent
 Session, including repeated imports of the same file. Import restores safe URLs into newly owned,
 inactive tabs. See [design system](design-system.md) and [localization](localization.md) for
 export presentation.

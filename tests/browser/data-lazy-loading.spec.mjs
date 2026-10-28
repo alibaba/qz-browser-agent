@@ -1,8 +1,8 @@
 import { expect, test } from "./fixtures.mjs";
-import xlsx from "xlsx/dist/xlsx.mini.min.js";
+import xlsx from "xlsx";
 
 const gridVendor = "**/capabilities/data/workspace/data-grid-vendor.js";
-const excelChunk = /\/deps\/chunks\/xlsx\.mini\.min-[^/]+\.js$/;
+const excelChunk = /\/deps\/chunks\/xlsx-[^/]+\.js$/;
 
 function spreadsheetFile() {
   const workbook = xlsx.utils.book_new();

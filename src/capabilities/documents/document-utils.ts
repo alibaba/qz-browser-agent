@@ -1,8 +1,8 @@
 import { t } from "./i18n.js";
 export { bytesToBase64, base64ToBytes } from "#sdk/shared/format";
 import { createZipBytes, openZip } from "#sdk/shared/format";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
-import { WorkerMessageHandler as pdfJsWorkerMessageHandler } from "pdfjs-dist/legacy/build/pdf.worker.mjs";
+import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
+import { WorkerMessageHandler as pdfJsWorkerMessageHandler } from "pdfjs-dist/build/pdf.worker.mjs";
 import { CODE_FILENAMES, isCodeDocumentExtension, isCodeDocumentMime } from "#sdk/shared/documents";
 import {
   buildDocumentContentChunks,
@@ -270,10 +270,8 @@ function documentAborted() {
 
 function configurePdfJs() {
   const host = globalThis as typeof globalThis & { pdfjsWorker?: { WorkerMessageHandler: typeof pdfJsWorkerMessageHandler } };
+  // The packaged PDF engine accepts this local handler only; it has no Worker URL fallback.
   host.pdfjsWorker ||= { WorkerMessageHandler: pdfJsWorkerMessageHandler };
-  if (pdfjsLib.GlobalWorkerOptions) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc ||= "../../../shared/pdf.worker.mjs";
-  }
 }
 
 function pdfTextItemsToLines(items: readonly PdfTextItem[] = [], pageNumber = 1) {

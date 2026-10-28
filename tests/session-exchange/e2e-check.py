@@ -19,7 +19,6 @@ from extension_assets import LoopbackHTTPServer, extension_directory
 
 ROOT = Path(__file__).resolve().parents[2]
 EXTENSION = extension_directory()
-MATHJAX_SCRIPT = (EXTENSION / "vendor/mathjax/tex-svg-full.js").read_text(encoding="utf-8")
 HTML_PATH = Path("/tmp/轻舟-两篇论文关系分析.html")
 SCREENSHOT_PATH = Path("/tmp/qingzhou-session-export-smoke.png")
 NIGHT_SCREENSHOT_PATH = Path("/tmp/qingzhou-session-export-smoke-night.png")
@@ -120,10 +119,7 @@ def open_routed_export(context, html):
             body=html,
         ),
     )
-    page.route(
-        "https://registry.npmmirror.com/**",
-        lambda route: route.fulfill(status=200, content_type="application/javascript", body=""),
-    )
+    page.route("https://registry.npmmirror.com/**", lambda route: route.abort())
     return page
 
 
@@ -366,9 +362,15 @@ def run():
             exported_document = page.evaluate(
                 "() => window.qingzhouConversationBenchmark.renderSessionDocument(window.__sessionExchangeFixture)",
             )
-            assert heavy_requests == [], f"Static export must not load panel-only libraries: {heavy_requests}"
+            unexpected_heavy = [url for url in heavy_requests if "/vendor/mathjax/" not in url]
+            assert unexpected_heavy == [], f"Static export loaded non-math panel libraries: {unexpected_heavy}"
+            assert any("/vendor/mathjax/startup.js" in url for url in heavy_requests), heavy_requests
             html = exported_document["html"]
-            assert 'registry.npmmirror.com/mathjax/' in html
+            assert "registry.npmmirror.com/mathjax/" not in html
+            assert "chrome-extension://" not in html
+            assert "moz-extension://" not in html
+            assert "<script src" not in html.lower()
+            assert "<svg" in html
             assert 'id="qingzhou-session-exchange"' in html
             assert 'id="messages"' in html
             assert 'class="msg msg-user"' in html
@@ -479,10 +481,7 @@ def run():
 
             with serve_export_html(html) as bridge_url:
                 bridge = context.new_page()
-                bridge.route(
-                    "https://registry.npmmirror.com/**",
-                    lambda route: route.fulfill(status=200, content_type="application/javascript", body=""),
-                )
+                bridge.route("https://registry.npmmirror.com/**", lambda route: route.abort())
                 bridge_errors = []
                 bridge.on("pageerror", lambda error: bridge_errors.append(str(error)))
                 bridge.on("console", lambda message: bridge_errors.append(message.text) if message.type == "error" else None)
@@ -522,7 +521,6 @@ def run():
             exported.add_init_script(
                 """(() => {
                   window.__qzCtaReadyAt = null;
-                  window.__qzMathJaxLoadedAt = null;
                   const recordCta = () => {
                     const cta = document.getElementById('qingzhou-session-cta');
                     if (cta?.hasAttribute('data-qingzhou-session-import') && window.__qzCtaReadyAt == null) {
@@ -535,34 +533,19 @@ def run():
                     attributes: true,
                     attributeFilter: ['data-qingzhou-session-import'],
                   });
-                  document.addEventListener('load', event => {
-                    if (event.target instanceof HTMLScriptElement
-                        && event.target.src.includes('registry.npmmirror.com/mathjax/')) {
-                      window.__qzMathJaxLoadedAt = performance.now();
-                    }
-                  }, true);
                 })();"""
             )
-
-            def fulfill_delayed_mathjax(route):
-                time.sleep(2)
-                route.fulfill(status=200, content_type="application/javascript", body=MATHJAX_SCRIPT)
-
-            exported.route("https://registry.npmmirror.com/**", fulfill_delayed_mathjax)
+            exported.route("https://registry.npmmirror.com/**", lambda route: route.abort())
             file_access_allowed = page.evaluate(
                 "() => new Promise(resolve => chrome.extension.isAllowedFileSchemeAccess(resolve))"
             )
             assert file_access_allowed is True
             exported.goto(HTML_PATH.as_uri(), wait_until="domcontentloaded")
             exported.wait_for_selector("#qingzhou-session-cta[data-qingzhou-session-import]", timeout=10000)
-            bridge_timing = exported.evaluate(
-                "() => ({ cta: window.__qzCtaReadyAt, mathjax: window.__qzMathJaxLoadedAt })"
-            )
-            assert bridge_timing["cta"] is not None, bridge_timing
-            assert bridge_timing["mathjax"] is not None, bridge_timing
-            assert bridge_timing["cta"] < bridge_timing["mathjax"], bridge_timing
-            exported.wait_for_selector("mjx-container svg", timeout=10000)
-            assert exported.locator("mjx-container").count() >= 1
+            bridge_timing = exported.evaluate("() => window.__qzCtaReadyAt")
+            assert bridge_timing is not None, bridge_timing
+            assert exported.locator("#messages svg").count() >= 1
+            assert exported.locator("script[src]").count() == 0
 
             exported_cta = exported.locator("#qingzhou-session-cta")
             assert exported_cta.text_content() == expected_import_label(exported)

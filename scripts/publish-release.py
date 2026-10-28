@@ -21,7 +21,6 @@ from typing import Iterable
 REPO_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_EXTENSION_DIR = REPO_DIR / "src"
 DEFAULT_OUTPUT_DIR = REPO_DIR / "dist" / "releases"
-DEFAULT_TERSER_VERSION = "5.43.1"
 DEFAULT_BUILD_SCRIPT = REPO_DIR / "scripts" / "build-extension.mjs"
 PACKAGE_ROOT = "qz-browser-agent-extension"
 # Keep equal to FIREFOX_GECKO_ID in scripts/firefox-manifest.mjs.
@@ -41,13 +40,6 @@ SKIP_FILENAMES = {
     "README.md",
     "Thumbs.db",
 }
-SKIP_MINIFY_PREFIXES = (
-    "vendor/",
-    ".qingzhou-debug/",
-)
-SKIP_MINIFY_SUFFIXES = (
-    ".min.js",
-)
 
 
 @dataclass(frozen=True)
@@ -100,8 +92,7 @@ def main() -> int:
         for name, contents in release_notices.items():
             (extension_dir / name).write_bytes(contents)
 
-        if not args.no_minify:
-            minification_summary = minify_extension_sources(extension_dir, args.terser_version)
+        # Store reviewers receive the same readable code as local builds. Never mangle or compress.
 
         output = release_paths(args.output_dir.resolve(), version, args.target)
         output.directory.mkdir(parents=True, exist_ok=True)
@@ -112,6 +103,8 @@ def main() -> int:
             raise SystemExit(f"no extension files found under {extension_dir}")
         file_count = len(files)
         uncompressed_size = sum(path.stat().st_size for path in files)
+        assert_no_remote_code(extension_dir)
+        audit_reviewable_code(extension_dir)
 
         make_package_zip(
             extension_dir,
@@ -125,7 +118,15 @@ def main() -> int:
         if args.target == "webstore":
             try:
                 validate_webstore_package(output.package)
-            except (ValueError, zipfile.BadZipFile):
+                # Audit the actual upload bytes, not just the pre-ZIP staging directory.
+                with tempfile.TemporaryDirectory(prefix="qingzhou-store-audit-") as audit_tmp:
+                    with zipfile.ZipFile(output.package) as archive:
+                        archive.extractall(audit_tmp)
+                    assert_no_remote_code(Path(audit_tmp))
+                    audit = audit_reviewable_code(Path(audit_tmp))
+                    (output.directory / "code-audit.json").write_text(audit, encoding="utf-8")
+                check_store_package(output.package, output.directory / "storecheck.json")
+            except (ValueError, zipfile.BadZipFile, SystemExit):
                 output.package.unlink(missing_ok=True)
                 raise
         elif args.target == "firefox":
@@ -216,8 +217,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--feature", dest="features", action="append", default=[], help="Feature bullet. Can repeat.")
     parser.add_argument("--notes", default="", help="Additional markdown appended to README.")
     parser.add_argument("--no-bundle", action="store_true", help="Disable release-only background/sidepanel bundling.")
-    parser.add_argument("--no-minify", action="store_true", help="Disable release JS minification.")
-    parser.add_argument("--terser-version", default=DEFAULT_TERSER_VERSION, help="Must match the locked, locally installed Terser version.")
+    parser.add_argument("--no-minify", action="store_true", help="Compatibility flag; all releases are unminified.")
     parser.add_argument("--prepared-package-source", dest="prepared_source", type=Path, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--prepared-commit", default="", help=argparse.SUPPRESS)
     parser.add_argument("--origin-repo", type=Path, default=REPO_DIR, help=argparse.SUPPRESS)
@@ -427,7 +427,7 @@ def compile_extension_sources(extension_dir: Path, *, bundle: bool, browser: str
 
 
 def refresh_dependency_provenance(extension_dir: Path, minification: dict[str, object]) -> None:
-    # Capture final installed bytes after Terser and debug-map extraction; upstream assets stay immutable.
+    # Capture final installed bytes after debug-map extraction; vendor builds stay immutable.
     result = subprocess.run(
         [shutil.which("node") or "node", str(REPO_DIR / "scripts/vendor/assets.mjs"), "--refresh",
          "--extension-dir", str(extension_dir), "--transform", str(minification.get("tool") or "release")],
@@ -435,90 +435,6 @@ def refresh_dependency_provenance(extension_dir: Path, minification: dict[str, o
     )
     if result.returncode:
         raise SystemExit(f"failed to audit packaged dependencies: {result.stderr.strip() or result.stdout.strip()}")
-
-
-def minify_extension_sources(extension_dir: Path, terser_version: str) -> dict[str, object]:
-    node, terser_cli = resolve_terser_cli(terser_version)
-    # The compiler owns script format; an ESM entry may contain only top-level await and no exports.
-    build = json.loads((extension_dir / ".qingzhou-build.json").read_text(encoding="utf-8"))
-    classic_entries = {entry["path"] for entry in build["entries"] if entry["format"] == "iife"}
-    candidates = [
-        path for path in sorted(extension_dir.rglob("*.js"))
-        if should_minify_js(path.relative_to(extension_dir).as_posix())
-    ]
-    for path in candidates:
-        minify_js_file(path, node=node, terser_cli=terser_cli,
-                          module=path.relative_to(extension_dir).as_posix() not in classic_entries)
-    return {
-        "enabled": True,
-        "files": len(candidates),
-        "tool": f"terser@{terser_version}",
-        "scope": "own-js",
-    }
-
-
-def should_minify_js(relative_path: str) -> bool:
-    lower = relative_path.lower()
-    if any(lower.startswith(prefix) for prefix in SKIP_MINIFY_PREFIXES):
-        return False
-    if any(lower.endswith(suffix) for suffix in SKIP_MINIFY_SUFFIXES):
-        return False
-    return True
-
-
-def resolve_terser_cli(terser_version: str) -> tuple[str, Path]:
-    node = shutil.which("node")
-    if not node:
-        raise SystemExit("release minification requires Node.js")
-    try:
-        lock = json.loads((REPO_DIR / "package-lock.json").read_text(encoding="utf-8"))
-        installed = json.loads((REPO_DIR / "node_modules" / "terser" / "package.json").read_text(encoding="utf-8"))
-        locked_version = lock["packages"]["node_modules/terser"]["version"]
-    except (OSError, KeyError, json.JSONDecodeError) as exc:
-        raise SystemExit("locked Terser is unavailable; run npm ci before building a release") from exc
-    if terser_version != locked_version or installed.get("version") != locked_version:
-        raise SystemExit(f"Terser must match package-lock.json ({locked_version}); run npm ci")
-    cli = REPO_DIR / "node_modules" / "terser" / "bin" / "terser"
-    if not cli.is_file():
-        raise SystemExit("locked Terser CLI is unavailable; run npm ci")
-    return node, cli
-
-
-def minify_js_file(path: Path, *, node: str, terser_cli: Path, module: bool) -> None:
-    module_args = ["--module"] if module else []
-    output = path.with_suffix(path.suffix + ".tmp")
-    source_map = path.with_suffix(path.suffix + ".map")
-    output_map = output.with_suffix(output.suffix + ".map")
-    map_args = ["--source-map", f"content={json.dumps(str(source_map))},filename={json.dumps(path.name)},includeSources"] if source_map.is_file() else []
-    command = [
-        node,
-        str(terser_cli),
-        str(path),
-        *module_args,
-        *map_args,
-        "--ecma",
-        "2020",
-        "--compress",
-        "passes=2",
-        "--mangle",
-        "--comments",
-        "false",
-        "-o",
-        str(output),
-    ]
-    try:
-        subprocess.run(command, cwd=REPO_DIR, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if source_map.is_file():
-            output_map.replace(source_map)
-        output.replace(path)
-    except subprocess.CalledProcessError as exc:
-        output.unlink(missing_ok=True)
-        rel = path.relative_to(REPO_DIR) if path.is_relative_to(REPO_DIR) else path
-        detail = exc.stderr.strip() or exc.stdout.strip()
-        raise SystemExit(f"failed to minify {rel}: {detail}") from exc
-    finally:
-        output.unlink(missing_ok=True)
-        output_map.unlink(missing_ok=True)
 
 
 def run_git(args: list[str]) -> str:
@@ -622,6 +538,44 @@ def iter_extension_files(extension_dir: Path) -> Iterable[Path]:
         if path.name in SKIP_FILENAMES or path.suffix == ".pyc":
             continue
         yield path
+
+
+def assert_no_remote_code(extension_dir: Path) -> None:
+    script = REPO_DIR / "scripts" / "check-no-remote-code.mjs"
+    node = shutil.which("node")
+    if not node:
+        raise SystemExit("remote-code check requires Node.js")
+    result = subprocess.run(
+        [node, str(script), str(extension_dir)],
+        cwd=REPO_DIR,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise SystemExit(detail or "extension contains remotely hosted code")
+
+
+def check_store_package(package: Path, report: Path) -> None:
+    result = subprocess.run(
+        [shutil.which("node") or "node", str(REPO_DIR / "scripts/check-store.mjs"), str(package), str(report)],
+        cwd=REPO_DIR, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        raise SystemExit(f"storecheck blocked the Web Store package; see {report}:\n{result.stderr or result.stdout}")
+
+
+def audit_reviewable_code(extension_dir: Path) -> str:
+    result = subprocess.run(
+        [shutil.which("node") or "node", str(REPO_DIR / "scripts/check-reviewable-code.mjs"),
+         "--json", str(extension_dir)], cwd=REPO_DIR, check=False, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        raise SystemExit(result.stderr.strip() or "extension contains unreviewable code")
+    return result.stdout
 
 
 def make_package_zip(

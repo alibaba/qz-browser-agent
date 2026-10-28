@@ -250,14 +250,22 @@ export async function testSessionExportFeature() {
     assert.ok(exportCtaIndex < exchangePayloadIndex);
     assert.ok(exchangePayloadIndex < exportBridgeIndex);
     assert.ok(exportBridgeIndex < messagesIndex, "export import bridge must initialize before the transcript body");
-    assert.doesNotMatch(documentResult.html, /registry\.npmmirror\.com\/mathjax/u);
+    assert.doesNotMatch(documentResult.html, /registry\.npmmirror\.com|chrome-extension:|moz-extension:|<script\s[^>]*\bsrc=/iu);
     const mathDocument = buildSessionExportHtml(
       { title: "公式导出" },
       documentResult.payload,
-      { chatHtml: '<span class="math-formula math-inline">\\(E=mc^2\\)</span>' },
+      {
+        chatHtml: '<span class="math-formula math-inline">\\(E=mc^2\\)</span>',
+        stylesheet: '.welcome-icon{background:url("../icons/logo-day.png") center / contain no-repeat}',
+        brandAssets: { day: "data:image/png;base64,DAY", night: "data:image/png;base64,NIGHT", favicon: "data:image/png;base64,ICON" },
+      },
     );
-    assert.match(mathDocument, /registry\.npmmirror\.com\/mathjax\/3\.2\.2/u);
-    assert.match(mathDocument, /fontCache:\s*"none"/u);
+    assert.doesNotMatch(mathDocument, /registry\.npmmirror\.com|cdn\.jsdelivr\.net|<script\s[^>]*\bsrc=|chrome-extension:|moz-extension:|logo-day\.png/iu);
+    assert.match(mathDocument, /url\("data:image\/png;base64,DAY"\)/u);
+    assert.match(mathDocument, /\\\(E=mc\^2\\\)/u);
+    assert.match(mathDocument, /id="qingzhou-session-exchange"/u);
+    assert.match(mathDocument, /"format":"qingzhou\.session"/u);
+    assert.match(mathDocument, /"version":1/u);
     assert.equal(documentResult.payload.app.version, "0.3.6");
 
     skinLink.href = "https://extension.test/sidepanel/sidepanel-custom.css";

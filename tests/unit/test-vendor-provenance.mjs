@@ -50,7 +50,15 @@ try {
   assert.equal(manifest.components["zod-to-json-schema"].license, "ISC");
   assert.ok(manifest.assets["deps/runtime.js"].components.includes("zod-to-json-schema"));
   assert.ok(manifest.assets["deps/runtime.js"].components.some(key => key.endsWith("eventsource-parser")));
-  assert.deepEqual(await readFile(join(output, "vendor/pdf.mjs")), await readFile(join(root, "node_modules/pdfjs-dist/legacy/build/pdf.mjs")));
+  const pdf = await readFile(join(output, "vendor/pdf.mjs"), "utf8");
+  assert.match(pdf, /Local PDF worker is not registered/);
+  assert.doesNotMatch(pdf, /new Function|LT \+ SCRIPT|createCDNWrapper/);
+  assert.equal(manifest.staticEngines.mathjax.source, "mathjax-full/ts");
+  assert.equal(manifest.components["mathjax-full"].version, "3.2.2");
+  assert.doesNotMatch(sdkSource, /new Function|ajv\/dist/);
+  await assert.rejects(async () => recordDependencyBuild(createDependencyGraph(), {
+    inputs: { "node_modules/xlsx/dist/xlsx.mini.min.js": {} }, outputs: {},
+  }, root, output), /minified dependency input/);
   const manifestPath = join(output, "vendor/provenance.json");
   const writeManifest = value => writeFile(manifestPath, JSON.stringify(value));
   const code = await readFile(join(output, "deps/runtime.js"));

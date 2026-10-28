@@ -246,7 +246,27 @@ test("release publisher packages bundles and records auditable metadata", async 
   assert.equal(await fileDigest(zipPath), metadata.sha256, "full release ZIP must be reproducible");
 });
 
-test("publisher compiles TS even when bundling is disabled and requires locked Terser", async t => {
+test("Web Store publisher removes the upload ZIP when storecheck rejects CSP", async t => {
+  const work = await mkdtemp(join(tmpdir(), "qingzhou-store-gate-"));
+  t.after(() => rm(work, { recursive: true, force: true }));
+  const source = join(work, "source");
+  await cp(SOURCE_EXTENSION, source, { recursive: true });
+  const manifest = JSON.parse(await readFile(join(source, "manifest.json"), "utf8"));
+  manifest.content_security_policy.extension_pages = "script-src 'self' 'unsafe-eval'; object-src 'self';";
+  await writeFile(join(source, "manifest.json"), JSON.stringify(manifest));
+  const version = "0.0.0.948";
+  const result = spawnSync("python3", [join(ROOT, "scripts/publish-release.py"), "--version", version,
+    "--source", "worktree", "--target", "webstore", "--extension-dir", source, "--output-dir", work],
+  { cwd: ROOT, encoding: "utf8", timeout: 120_000 });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /storecheck blocked/);
+  const output = join(work, version, "webstore");
+  await assert.rejects(stat(join(output, `qz-browser-agent-extension-${version}.webstore.zip`)), { code: "ENOENT" });
+  const report = JSON.parse(await readFile(join(output, "storecheck.json"), "utf8"));
+  assert.ok(report.blocking.some(finding => finding.ruleId === "csp/unsafe-eval"));
+});
+
+test("publisher compiles TS without bundling and rejects obsolete minifier configuration", async t => {
   const work = await mkdtemp(join(tmpdir(), "qingzhou-compile-release-"));
   t.after(() => rm(work, { recursive: true, force: true }));
   const source = join(work, "source");
@@ -261,7 +281,8 @@ test("publisher compiles TS even when bundling is disabled and requires locked T
   assert.equal(entries.some(path => path.endsWith(".map") || (!path.includes("/vendor/") && path.endsWith(".ts"))), false);
   const mismatch = spawnSync("python3", [...args, "--terser-version", "0.0.0"], { cwd: ROOT, encoding: "utf8" });
   assert.notEqual(mismatch.status, 0);
-  assert.match(mismatch.stderr, /Terser must match package-lock.json/);
+  assert.match(mismatch.stderr, /unrecognized arguments: --terser-version/);
+  assert.equal(JSON.parse(await readFile(join(work, "0.0.0.943/version.json"), "utf8")).minification.enabled, false);
   await writeFile(join(work, "outside.js"), "globalThis.externalSource = true;");
   await symlink(join(work, "outside.js"), join(source, "shared/external-source.js"));
   const unsafe = spawnSync("python3", [...args, "--no-minify"], { cwd: ROOT, encoding: "utf8" });
@@ -269,7 +290,7 @@ test("publisher compiles TS even when bundling is disabled and requires locked T
   assert.match(unsafe.stderr, /must not be symlinks/);
 });
 
-test("release debug maps trace minified bundles from Unicode and spaced checkouts", async t => {
+test("release debug maps trace readable bundles from Unicode and spaced checkouts", async t => {
   const work = await mkdtemp(join(tmpdir(), "qingzhou-debug-release-"));
   t.after(() => rm(work, { recursive: true, force: true }));
   const repo = join(work, "checkout 开发 100% #");
@@ -304,12 +325,14 @@ test("release debug maps trace minified bundles from Unicode and spaced checkout
   }
   assert.equal(installed.some(path => path.endsWith(".map")), false);
   for (const [asset, upstream] of [
-    ["vendor/pdf.mjs", "pdfjs-dist/legacy/build/pdf.mjs"],
-    ["vendor/pdf.worker.mjs", "pdfjs-dist/legacy/build/pdf.worker.mjs"],
     ["vendor/tabulator/tabulator.min.css", "tabulator-tables/dist/css/tabulator.min.css"],
   ]) {
     assert.deepEqual(zipBytes(zip, `qz-browser-agent-extension/${asset}`), await readFile(join(ROOT, "node_modules", upstream)));
     assert.deepEqual(zipBytes(debug, `maps/${asset}.map`), await readFile(join(ROOT, "node_modules", `${upstream}.map`)));
+  }
+  for (const asset of ["vendor/pdf.mjs", "vendor/pdf.worker.mjs", "vendor/mathjax/startup.js"]) {
+    assert.ok(zipJson(debug, `maps/${asset}.map`).sourcesContent.length > 0, `${asset} retains its reviewed build inputs`);
+    assert.doesNotMatch(zipBytes(zip, `qz-browser-agent-extension/${asset}`).toString(), /new Function\s*\(|LT \+ SCRIPT/);
   }
   const provenance = zipJson(zip, "qz-browser-agent-extension/vendor/provenance.json");
   assert.equal(Object.keys(provenance.assets).some(path => path.endsWith(".map")), false);
@@ -325,14 +348,14 @@ test("release debug maps trace minified bundles from Unicode and spaced checkout
   const map = zipJson(debug, `maps/${runtime}.map`);
   const entry = new SourceMap(map).findEntry(before.length - 1, before.at(-1).length);
   assert.equal(entry.originalSource, `qingzhou://extension/${sourcePath}`);
-  assert.equal(entry.originalLine + 1, sourceLine, "Terser and bundle maps must retain the original TS line");
+  assert.equal(entry.originalLine + 1, sourceLine, "bundle maps must retain the original TS line");
   assert.ok(map.sourcesContent.some(contents => contents?.includes(probe.trim())));
   const build = zipJson(debug, "build.json");
   const worker = build.embeddedDebugScripts.find(script => script.entry === "workers/inner-runner.ts");
   const workerCode = readZip(debug, `debug/${worker.artifact.replace(/^\.qingzhou-debug\//, "")}`).toString();
   const sandbox = readZip(zip, "qz-browser-agent-extension/runner-sandbox.js").toString();
   const strings = [...tokenizer(sandbox, { ecmaVersion: "latest", sourceType: "module" })]
-    .filter(token => token.type.label === "string").map(token => token.value);
+    .filter(token => ["string", "template"].includes(token.type.label)).map(token => token.value);
   assert.ok(strings.includes(workerCode), "embedded debug source must remain byte-for-byte identical to the running Worker");
   for (const file of metadata.files) {
     const bytes = readZip(debug, file.path);
@@ -361,6 +384,10 @@ with tempfile.TemporaryDirectory() as temporary:
     (scripts/'check-no-remote-code.mjs').write_bytes(path.with_name('check-no-remote-code.mjs').read_bytes())
     module.compile_extension_sources=lambda source,**kwargs:(source,{'enabled':False})
     module.refresh_dependency_provenance=lambda *args:None
+    # This fixture isolates archive I/O; actual gates run in the package and Chrome tests.
+    module.assert_no_remote_code=lambda *args:None
+    module.audit_reviewable_code=lambda *args:'[]'
+    module.check_store_package=lambda *args:None
     original_run=module.subprocess.run
     def local_read(command,**kwargs):
         script=command[1] if len(command)>1 else ''

@@ -13,6 +13,7 @@ versions in the lockfile. Build, test, and benchmark commands accept `--help`.
 | `npm test` | Run unit, contract, service, and browser tests |
 | `npm run verify` | Type-check and run the shared suites: `unit`, `contracts`, and `services` |
 | `npm run verify:chrome` | Run the Chrome package suites: `browser`, `e2e`, `release`, and `visual`. They load `dist/extension/` |
+| `npm run verify:store` | Build readable production code and run the code audit plus pinned storecheck |
 | `npm run verify:firefox` | Type-check, build `dist/extension-firefox/`, run the Firefox unit tests, and run Playwright in Firefox |
 | `npm run verify:coverage` | Type-check and run the shared suites plus the Chrome package suites with coverage gates |
 | `npm run benchmark` | Measure conversation rendering; arguments select other benchmarks |
@@ -291,10 +292,11 @@ is the layout Add-ons Manager requires. `version.json` records `browser: "firefo
 The package is unsigned; Add-ons Manager signs it on upload. The debug zip stays local. Chrome
 `manual` and `webstore` paths are unchanged.
 
-JavaScript uses standard Terser minification, including variable shortening. `--no-minify` disables
-the final Terser pass for diagnostics. Build-time script compilation retains its production settings.
-Store review also covers runtime behavior, permissions, and data disclosures; the webstore target
-validates the upload package.
+JavaScript bundles and embedded scripts are readable and unminified. `--no-minify` is a compatibility
+no-op; the publisher has no minification pass. The Web Store target audits the extracted ZIP and
+runs pinned storecheck against the ZIP. Errors, failed rules and unresolved Red Titanium/Blue Argon
+warnings remove the upload ZIP. Audit reports remain beside it. See the [code audit guide](store-code-audit.md)
+for dependency reductions, the exact sandbox exception, and checks that still require human review.
 
 Use `--source worktree` to preview local edits, or `--git-ref` for another commit containing the
 packaging toolchain. Scripts and dependencies come from the selected source.
@@ -304,8 +306,8 @@ unused Chrome-compatible numeric version, then run `npm ci`, `npm run doctor`, a
 Package the committed source and check the output:
 
 - `version.json` records `source: "git"` and the intended `gitCommit`.
-- `target` and `packageRoot` identify the archive layout; `minification` records the Terser pass.
-- Bundling and minification are enabled; runtime entries, assets, and licenses are complete.
+- `target` and `packageRoot` identify the archive layout; `minification.enabled` is `false`.
+- Bundling is enabled; runtime entries, readable assets, and licenses are complete.
 - File counts, sizes, and SHA-256 match the package.
 - The install ZIP contains compiled runtime files, licenses, and notices. Source maps are in the debug archive.
 
@@ -314,20 +316,23 @@ local `.debug.zip` with the release: it contains source maps and matching runtim
 those hashes before loading maps and review the source before sharing the archive.
 
 `npm test -- release` checks deterministic output, resource integrity, obsolete-file cleanup,
-license notices, and the actual minified ZIP in isolated Chrome. Fix failures with the normal
-bundling and minification enabled, then rerun the affected gates. Release corrections under a new
+license notices, and the actual readable ZIP in isolated Chrome, including formula display, offline
+formula export and compressed-PDF upload/readback. Fix failures with bundling and both audit gates
+enabled, then rerun the affected gates. Release corrections under a new
 patch version; published artifacts and tags remain immutable.
 
 ## Dependencies and static resources
 
 Import npm dependencies from TypeScript and pin them in the root lockfile. Ordinary dependencies are
-bundled with their Chrome runtime. PDF.js, MathJax and other resources loaded by URL are copied by
-[vendor/assets.mjs](../scripts/vendor/assets.mjs), together with their licenses and source maps.
+bundled with their Chrome runtime. [vendor/assets.mjs](../scripts/vendor/assets.mjs) builds readable,
+static PDF.js and MathJax resources and copies CSS, licenses and source maps. See the
+[code audit guide](store-code-audit.md#readable-static-dependencies) for reviewed source transformations.
 
 Each build records actual compiler inputs, including transitive dependencies, in
 `vendor/provenance.json`. It contains package versions, upstream integrity and output hashes. Build
-and release checks verify those hashes; copied assets and licenses must remain byte-for-byte
-upstream copies. Bundling/minification only refresh provenance for compiler-owned files. Release
+and release checks verify those hashes; copied CSS and licenses remain byte-for-byte upstream copies.
+Reviewed engine builds record their transformations and upstream input hashes. Later bundling only
+refreshes provenance for compiler-owned application files. Release
 moves maps to the debug archive and removes their entries from installed provenance. See
 [third-party notices](../THIRD_PARTY_NOTICES.md).
 
