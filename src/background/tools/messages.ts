@@ -48,12 +48,12 @@ const messages = defineMessages("tool-runtime", {
     en: "The action may have taken effect; its final state is unconfirmed. The system preserves this attempt. Read the page state to confirm the outcome.",
   },
   timeout: {
-    "zh-CN": "工具硬超时，单位秒。不填时系统按工具类型给出默认值。",
-    en: "Hard timeout in seconds. If omitted, the runtime uses the default for this tool type.",
+    "zh-CN": "超时秒数；省略时用默认超时。",
+    en: "Timeout in seconds; defaults to the tool default.",
   },
   elementReference: {
-    "zh-CN": "元素机器引用，格式：{grammar}。element_uid 必须来自 get_ax_tree/find_elements/list_images 返回的 uid；css_selector 必须能被当前页面 querySelector/querySelectorAll 匹配。示例：{examples}。不要传按钮文案、页面标题、URL 或自然语言。",
-    en: "Machine-readable element reference: {grammar}. element_uid must be a uid returned by get_ax_tree/find_elements/list_images; css_selector must match the current page via querySelector/querySelectorAll. Examples: {examples}. Do not pass button text, page titles, URLs, or natural-language descriptions.",
+    "zh-CN": "元素引用（{grammar}）。element_uid 取自 get_ax_tree/find_elements/list_images 的 uid；css_selector 须能被 querySelector/querySelectorAll 匹配（例：{examples}）。禁止传按钮文案、标题、URL 或自然语言。",
+    en: "Element reference ({grammar}). element_uid comes from get_ax_tree/find_elements/list_images; css_selector must match via querySelector/querySelectorAll (e.g. {examples}). Never pass button text, titles, URLs, or natural language.",
   },
   nextPageSelector: { "zh-CN": "下一页", en: "Next page" },
   commentSelector: { "zh-CN": "评论", en: "Comment" },

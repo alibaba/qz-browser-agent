@@ -4,76 +4,76 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model documentation is separate from the eager UI translation catalog. */
 const messages = defineMessages("data-model", {
   dataStore: {
-    "zh-CN": "读写浏览器本地 Data 表。适合文本、链接、商品、文章等结构化采集；图片或视觉素材先用 list_images 选择候选，再把选中候选的 target 或 URL 交给 collect_images 建图集，不要只把图片 URL 写进普通 Data 表。图集也是一种特殊 Data 表：collect_images 会创建 kind=image_collection / assetKind=image 的表；action=tables 可列出全部普通表和图集，过滤该 metadata 可获取图集列表；读取图集行仍使用 action=list，行内 assetId 可交给 read_image_asset 做单图视觉分析。每个 table 是逻辑表；row/data 是行内容，columns 是字段结构和导出顺序。需要先建空表头时，用 create_table + table + columns；写数据时再用 insert/upsert，且 rows/row 必须包含真实行。改单个字段用 update，整行替换用 replace，改字段结构用 add_column/rename_column/delete_column。内部行句柄 rowId 永远由系统自动分配，insert/upsert 时不要传 rowId；row.id 只是普通业务字段，可以保存，也可以作为 dedupField。rowId 是不透明值，只能原样使用最近一次 list/get 返回的 rowId；不要拼接、解析、URL 编解码或从 table/业务 id 推导。list/get 返回的是行对象，形如 {rowId, order, data, createdAt, updatedAt, revision}，业务字段在 data 内（如 row.data[\"标题\"]），不要用 row[\"标题\"] 取业务字段，写入 row/rows/data 时只传业务字段对象；table 在外层返回，不重复放进行对象。update 修改单个字段时传 rowId、field、value、expectedValue；expectedValue 是读取时看到的旧值，若旧字段不存在才省略。replace 整行替换时传 rowId、revision、data；revision 来自 list/get，当前 revision 不匹配会拒绝写入。delete 只支持按单条 rowId 删除，可同时传 table 做防误删校验，不支持按条件批量删或清空表。系统时间列 createdAt/updatedAt 统一使用北京时间 yyyy-mm-dd HH:MM:SS；业务时间字段也应使用同一格式。列顺序会按 create_table 的 columns 或 rows 字段首次出现顺序保存，用户可在 Data tab 导出 Excel。直接调用 data_store 只适合少量 rows（约 20 行以内）；大批量结构化采集必须在 run_script 内部 await tools.data_store(...) 分批落库，避免 LLM 输出巨大 tool arguments。采集任务应优先使用 action=upsert + rows + dedupField 批量落库，不要只 insert 单条样例。",
-    en: "Read and write local Data tables in the browser for structured collections such as text, links, products, and articles. For images or visual assets, use list_images to select candidates, then pass their target or URL to collect_images to create an image collection; do not merely store image URLs in a regular Data table. Image collections are specialized Data tables: collect_images creates tables with kind=image_collection / assetKind=image. action=tables lists both regular tables and collections; filter this metadata to find collections. Use action=list to read collection rows and pass a row's assetId to read_image_asset for visual analysis. Each table is a logical table; row/data contains business fields, and columns defines the schema and export order. To create empty headers, use create_table + table + columns; then use insert/upsert with actual rows/row. Use update for one field, replace for a whole row, and add_column/rename_column/delete_column for schema changes. The system always assigns the internal rowId; do not provide it for insert/upsert. row.id is an ordinary business field and may also be used as dedupField. rowId is opaque: copy it exactly from the latest list/get result. Never construct, parse, URL-encode/decode, or derive it from a table or business ID. list/get returns row objects shaped as {rowId, order, data, createdAt, updatedAt, revision}; business fields are inside data (for example, row.data[\"title\"], not row[\"title\"]). Pass only business fields in row/rows/data. table appears in the outer result, not each row. For update, provide rowId, field, value, and expectedValue. expectedValue is the value you read; omit it only when the field did not exist. For replace, provide rowId, revision, and data; use revision from list/get. A revision mismatch rejects the write. delete removes exactly one rowId; optionally provide table to verify ownership. Conditional bulk deletion and clearing tables are unsupported. System timestamps createdAt/updatedAt use Beijing time in yyyy-mm-dd HH:MM:SS format; use the same format for business timestamps. Column order follows create_table columns or the order in which fields first appear in rows. Users can export Excel from the Data tab. Call data_store directly only for small batches (about 20 rows or fewer). For large collections, call await tools.data_store(...) in batches inside run_script to avoid huge model-generated tool arguments. Prefer action=upsert + rows + dedupField for collection tasks; do not insert only a single sample row.",
+    "zh-CN": "读写浏览器本地结构化 Data 表（文本、链接、商品、文章等；图片资产请用 list_images + collect_images 写入图集表 kind=image_collection，读取图集行仍用 action=list，行内 assetId 可传给 read_image_asset）。需要先建空表头时，用 create_table + table + columns；写数据时用 insert/upsert（采集任务优先用 upsert + rows + dedupField；超过 20 行的批量写入在 run_script 内部分批调用 await tools.data_store）。list/get 返回的是行对象 {rowId, order, data, createdAt, updatedAt, revision}，table 在外层返回；业务字段在 data 内（如 row.data[\"标题\"]，不要用 row[\"标题\"]），写入 row/rows/data 时只传业务字段对象。rowId 是不透明值（系统分配，insert/upsert 不传 rowId；row.id 只是普通业务字段，可作 dedupField），后续 get/update/replace/delete 只能原样复制最近一次 list/get 返回的 rowId。update 修改单个字段需传 rowId、field、value、expectedValue（旧字段不存在时省略 expectedValue）；replace 整行替换需传 rowId、revision、data；delete 只支持按单条 rowId 删除（不支持批量或清空表）；改表结构用 add_column/rename_column/delete_column。时间字段统一用北京时间 yyyy-mm-dd HH:MM:SS。",
+    en: "Read and write browser-local structured Data tables (text, links, products, articles; for images, use list_images + collect_images to create an image_collection table, read its rows with action=list, and pass assetId to read_image_asset). To create empty headers, call create_table with table + columns; write records with insert/upsert (prefer upsert + rows + dedupField for collection tasks; for batches over 20 rows, call await tools.data_store in batches inside run_script). list/get returns row objects {rowId, order, data, createdAt, updatedAt, revision} with table at the outer level; business fields live inside data (e.g. row.data[\"title\"], not row[\"title\"]), and row/rows/data writes accept business fields only. rowId is a system-assigned opaque handle (do not pass rowId to insert/upsert; row.id is an ordinary business field and may be used as dedupField)—copy rowId verbatim from the latest list/get result for get/update/replace/delete. update modifies one field using rowId, field, value, and expectedValue (omit expectedValue only if the field did not exist); replace overwrites a whole row using rowId, revision, and data; delete removes one row by rowId (bulk delete and clear are unsupported); modify columns with add_column/rename_column/delete_column. Format timestamps as Beijing time yyyy-mm-dd HH:MM:SS.",
   },
   dataAction: {
-    "zh-CN": "操作类型。分支必填：create_table 需 table + columns；insert/upsert 需 table + rows/row；list/schema 需 table；get/delete 需 rowId；update 需 rowId + field + value；replace 需 rowId + revision + data；add_column/delete_column 需 table + column；rename_column 需 table + column + newColumn；tables 无需 table。schema 只返回当前字段顺序。delete 只删除一条 rowId 指定的数据，不支持 clear 或条件批量删除。",
-    en: "Operation. Required by action: create_table needs table + columns; insert/upsert needs table + rows/row; list/schema needs table; get/delete needs rowId; update needs rowId + field + value; replace needs rowId + revision + data; add_column/delete_column needs table + column; rename_column needs table + column + newColumn. tables needs no table. schema returns only the current column order. delete removes one rowId; clear and conditional bulk deletion are unsupported.",
+    "zh-CN": "操作类型。必填项：create_table 需 table + columns；insert/upsert 需 table + (rows 或 row)；list/schema 需 table（schema 只返回当前字段顺序）；get/delete 需 rowId；update 需 rowId + field + value；replace 需 rowId + revision + data；add_column/delete_column 需 table + column；rename_column 需 table + column + newColumn；tables 无需参数。",
+    en: "Action. Required fields: create_table needs table + columns; insert/upsert needs table + (rows or row); list/schema needs table (schema returns current column order only); get/delete needs rowId; update needs rowId + field + value; replace needs rowId + revision + data; add_column/delete_column needs table + column; rename_column needs table + column + newColumn; tables needs no arguments.",
   },
   dataTable: {
-    "zh-CN": "逻辑表名。create_table/insert/upsert/list/schema/add_column/rename_column/delete_column 需要，必须在 row/rows/data 之前确定；delete 时可选，用于校验目标 rowId 是否属于该表。",
-    en: "Logical table name. Required for create_table/insert/upsert/list/schema/add_column/rename_column/delete_column; determine it before row/rows/data. Optional for delete, to verify that the rowId belongs to this table.",
+    "zh-CN": "逻辑表名（create_table/insert/upsert/list/schema/add_column/rename_column/delete_column 必填，先于 row/rows/data 填写；delete 可选用于归属校验）。",
+    en: "Logical table name (required for create_table/insert/upsert/list/schema/add_column/rename_column/delete_column, supplied before row/rows/data; optional for delete to verify ownership).",
   },
   dataRowId: {
-    "zh-CN": "不透明的内部行句柄。get/update/replace/delete 时，原样复制最近一次 list/get 返回的 rowId；禁止拼接、解析、URL 编解码或从 table/业务 id 推导。insert/upsert 不传 rowId，也不要写入 row/rows 或作为 dedupField。",
-    en: "Opaque internal row handle. For get/update/replace/delete, copy rowId exactly from the latest list/get result. Never construct, parse, URL-encode/decode, or derive it from table/business IDs. Do not provide rowId for insert/upsert, put it in row/rows, or use it as dedupField.",
+    "zh-CN": "不透明内部行句柄。get/update/replace/delete 时原样复制最近一次 list/get 返回的 rowId，禁止拼接、解析、URL 编解码或推导；insert/upsert 不传 rowId。",
+    en: "Opaque internal row handle. Copy rowId verbatim from the latest list/get result for get/update/replace/delete (never construct, parse, URL-encode/decode, or derive it); do not pass rowId for insert/upsert.",
   },
   dataField: {
-    "zh-CN": "update 的字段名。update 一次只改一个字段；批量字段清洗请在 run_script 内多次调用 update，或在确认完整行数据时用 replace。",
-    en: "Field to update. update changes one field at a time. For bulk cleanup, call update repeatedly inside run_script, or use replace when you have verified the complete row.",
+    "zh-CN": "update 要修改的单个业务字段名。",
+    en: "Single business field name to modify with update.",
   },
   dataValue: {
-    "zh-CN": "update 写入的新字段值。可以是 string/number/boolean/null/object/array；若要清空字段可传 null。该字段可能较长，填写 action/rowId/field/expectedValue 后最后填写。",
-    en: "New field value for update. Accepts string, number, boolean, null, object, or array; use null to clear a value. This field may be long; provide it last, after action/rowId/field/expectedValue.",
+    "zh-CN": "update 写入的新字段值（支持 string/number/boolean/null/object/array，传 null 清空；长内容放最后填写）。",
+    en: "New field value for update (string/number/boolean/null/object/array; pass null to clear; supply long values last).",
   },
   dataExpectedValue: {
-    "zh-CN": "update 的字段级并发保护：填写读取时看到的旧值。只有 row.data[field] 仍等于 expectedValue 时才写入；若旧字段不存在才省略 expectedValue。",
-    en: "Field-level concurrency check for update: provide the old value you read. The write succeeds only if row.data[field] still equals expectedValue. Omit expectedValue only when the field did not exist.",
+    "zh-CN": "update 的并发校验旧值（填 list/get 读取到的 row.data[field]；仅旧字段不存在时省略）。",
+    en: "Concurrency check for update: pass the previous row.data[field] value from list/get (omit only if the field did not exist).",
   },
   dataRevision: {
-    "zh-CN": "replace 的整行并发保护。来自 list/get 返回的 row.revision；只有当前 revision 仍匹配时才整行替换。",
-    en: "Whole-row concurrency check for replace. Use row.revision from list/get; the row is replaced only if its current revision still matches.",
+    "zh-CN": "replace 的并发校验版本号（填 list/get 返回的 row.revision）。",
+    en: "Concurrency check revision for replace (pass row.revision from list/get).",
   },
   dataColumn: {
-    "zh-CN": "字段名。add_column/delete_column 使用该字段；rename_column 中表示旧字段名。",
+    "zh-CN": "字段名（用于 add_column/delete_column，或 rename_column 的原字段名）。",
     en: "Column name for add_column/delete_column, or the old column name for rename_column.",
   },
   dataNewColumn: {
-    "zh-CN": "rename_column 的新字段名。字段重命名会保持原字段位置不变。",
-    en: "New column name for rename_column. Renaming preserves the column's position.",
+    "zh-CN": "rename_column 的新字段名（保持原列顺序不变）。",
+    en: "New column name for rename_column (preserves column position).",
   },
   dataDedupField: {
-    "zh-CN": "upsert 去重字段。采集网页数据通常用 url；若业务唯一键叫 id，也可以用 dedupField:\"id\"；禁止使用 rowId。去重只在当前 table 内生效；不传 dedupField 时 upsert 会插入新行。",
-    en: "Deduplication field for upsert. Usually url for web collection; if the business key is id, dedupField:\"id\" is also valid. Never use rowId. Deduplication is scoped to this table; omitting dedupField causes upsert to insert new rows.",
+    "zh-CN": "upsert 的表内去重业务字段名（如 url、id；禁止传 rowId；省略时等价于 insert）。",
+    en: "Business field name for within-table upsert deduplication (e.g. url, id; never rowId; omitting inserts new rows).",
   },
   dataColumns: {
-    "zh-CN": "字段顺序。create_table 必填且必须非空；insert/upsert 可选，若来自网页表头或 Excel/CSV 表头，请按原始顺序传入；不传则按 rows 字段首次出现顺序追加。",
-    en: "Column order. Required and nonempty for create_table; optional for insert/upsert. Preserve the source order for web, Excel, or CSV headers. If omitted, new columns are appended in the order their fields first appear in rows.",
+    "zh-CN": "字段顺序数组（create_table 必填且非空；insert/upsert 可选，省略时按首次出现顺序追加）。",
+    en: "Column order array (required and non-empty for create_table; optional for insert/upsert, otherwise appended in first-seen order).",
   },
   dataFilter: {
-    "zh-CN": "list 的精确匹配过滤，如 {\"name\":\"x\"}。",
-    en: "Exact-match filter for list, for example {\"name\":\"x\"}.",
+    "zh-CN": "list 的精确匹配过滤对象，如 {\"status\":\"open\"}。",
+    en: "Exact-match filter object for list, such as {\"status\":\"open\"}.",
   },
   dataLimit: {
-    "zh-CN": "list 返回条数，默认 100，最大 1000。",
-    en: "Maximum rows returned by list. Default: 100; maximum: 1000.",
+    "zh-CN": "list 最大返回行数，默认 100，范围 1–1000。",
+    en: "Maximum rows returned by list. Default: 100; range: 1–1000.",
   },
   dataOffset: {
-    "zh-CN": "list offset，默认 0。",
+    "zh-CN": "list 起始行偏移，默认 0。",
     en: "Row offset for list. Default: 0.",
   },
   dataRow: {
-    "zh-CN": "单条待写入 JSON object。只适合确实只有一条记录的场景；采集任务不要用 row 写样例；其中 id 字段只是业务字段，不是主键。该字段可能较长，最后填写。",
-    en: "One JSON object to write. Use only when there is genuinely one record; do not write a sample row for a collection task. Its id is a business field, not the internal primary key. This field may be long; provide it last.",
+    "zh-CN": "单条写入的业务字段对象（仅用于单条记录；采集任务请用 rows；放最后填写）。",
+    en: "Single business-fields object to write (for single-record writes only; use rows for collection tasks; supply last).",
   },
   dataRows: {
-    "zh-CN": "多条待写入 JSON object。采集任务必须优先用 rows 批量写入；每条记录的 rowId 由系统生成，rows[].id 只是业务字段。insert/upsert 不接受空 rows；建空表头请用 create_table。该字段可能很长，填写 action/table/dedupField/columns 后最后填写。",
-    en: "JSON objects to write in a batch. Prefer rows for collection tasks. The system generates each rowId; rows[].id is a business field. insert/upsert rejects empty rows; use create_table for empty headers. This field may be long; provide it last, after action/table/dedupField/columns.",
+    "zh-CN": "批量写入的业务字段对象数组（非空；建空表头用 create_table；先填 action/table/dedupField/columns，最后填 rows）。",
+    en: "Non-empty array of business-field objects for batch writes (use create_table for empty headers; supply last after action/table/dedupField/columns).",
   },
   dataReplacement: {
-    "zh-CN": "replace 的完整行 JSON object。会替换整行业务 data，不是 patch；不要包含 rowId/revision/createdAt/updatedAt。该字段可能较长，填写 action/rowId/revision 后最后填写。",
-    en: "Complete row JSON object for replace. Replaces all business data, rather than applying a patch. Exclude rowId/revision/createdAt/updatedAt. This field may be long; provide it last, after action/rowId/revision.",
+    "zh-CN": "replace 的完整行业务字段对象（整行覆盖，不含 rowId/revision/createdAt/updatedAt；最后填写）。",
+    en: "Complete row business-fields object for replace (full-row overwrite, excluding rowId/revision/createdAt/updatedAt; supply last).",
   },
   tableSchemaCreated: {
     "zh-CN": "表结构已创建或更新。后续写入数据请使用 upsert + rows + dedupField，或 insert + rows。",

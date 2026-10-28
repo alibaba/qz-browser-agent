@@ -4,96 +4,96 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model documentation is separate from the eager UI translation catalog. */
 const messages = defineMessages("mcp-model", {
   mcpInspectServer: {
-    "zh-CN": "探测尚未注册到 skill 的远程 HTTP MCP server，读取 serverInfo、capabilities 和 tools/list 等 metadata。默认使用本地 metadata cache；cache miss 或 refresh=true 时才请求远端。不会注册 server，不支持本地 stdio。",
-    en: "Inspect an unregistered remote HTTP MCP server for metadata such as serverInfo, capabilities, and tools/list. Uses the local metadata cache unless it is missing or refresh=true. Does not register the server. Local stdio is unsupported.",
+    "zh-CN": "探测尚未注册到 Skill 的远程 HTTP MCP server，读取 serverInfo、capabilities 和 tools/list（不支持本地 stdio，也不会自动注册 server）。",
+    en: "Inspect an unregistered remote HTTP MCP server for serverInfo, capabilities, and tools/list (local stdio is unsupported; does not register the server).",
   },
   mcpUrl: {
-    "zh-CN": "远程 HTTP MCP endpoint URL，例如 https://example.com/mcp。只支持 http(s)，不支持本地 stdio。",
-    en: "Remote HTTP MCP endpoint URL, for example https://example.com/mcp. Only http(s) is supported; local stdio is unsupported.",
+    "zh-CN": "必填。远程 HTTP(S) MCP endpoint URL（如 https://example.com/mcp）。",
+    en: "Required remote HTTP(S) MCP endpoint URL (e.g. https://example.com/mcp).",
   },
   mcpName: {
-    "zh-CN": "可选临时名称，用于结果展示和缓存 key；不填时使用 adhoc。",
-    en: "Optional temporary name for display and the cache key. Default: adhoc.",
+    "zh-CN": "可选临时标识名，默认 adhoc。",
+    en: "Optional temporary server name. Default: adhoc.",
   },
   mcpHeaders: {
-    "zh-CN": "可选请求头，例如 Authorization 或 API key。",
-    en: "Optional request headers, such as Authorization or an API key.",
+    "zh-CN": "可选 HTTP 请求头对象（如 Authorization）。",
+    en: "Optional HTTP request headers object (e.g. Authorization).",
   },
   mcpRefreshMetadata: {
-    "zh-CN": "是否绕过 metadata cache，强制重新 initialize 并执行 tools/list。",
-    en: "Bypass the metadata cache, initialize again, and run tools/list.",
+    "zh-CN": "是否强制重新请求远端元数据，默认 false。",
+    en: "Force a fresh metadata request to the remote server. Default: false.",
   },
   mcpIncludeResources: {
-    "zh-CN": "是否尝试读取 resources/list 和 resource templates；仅在 server capabilities 声明支持时执行。",
-    en: "Attempt resources/list and resource templates only if the server declares support in its capabilities.",
+    "zh-CN": "当 server 支持时是否一并读取 resources/list 与模板，默认 false。",
+    en: "Read resources/list and resource templates when supported by the server. Default: false.",
   },
   mcpIncludePrompts: {
-    "zh-CN": "是否尝试读取 prompts/list；仅在 server capabilities 声明支持时执行。",
-    en: "Attempt prompts/list only if the server declares support in its capabilities.",
+    "zh-CN": "当 server 支持时是否一并读取 prompts/list，默认 false。",
+    en: "Read prompts/list when supported by the server. Default: false.",
   },
   mcpMetadataLimit: {
-    "zh-CN": "tools/resources/prompts 最多返回多少项，默认 100。",
-    en: "Maximum tools/resources/prompts to return. Default: 100.",
+    "zh-CN": "tools/resources/prompts 各自最多返回项数，默认 100。",
+    en: "Maximum items returned per list (tools/resources/prompts). Default: 100.",
   },
   mcpListTools: {
-    "zh-CN": "列出所有 skill/plugin.json 汇总出的虚拟全局 MCP registry。结果里的 pluginTool.name 是已注册 MCP 的正式调用入口；应先 load_skill(skillName)，再调用该 Skill 工具名。若只看当前页面或本会话已加载 skill 激活的 MCP，传 activeOnly=true。",
-    en: "List the virtual global MCP registry assembled from all skill/plugin.json manifests. pluginTool.name in each result is the registered invocation entry point. Call load_skill(skillName) first, then use that Skill tool name. Set activeOnly=true to include only MCP tools activated by the current page or Skills loaded in this session.",
+    "zh-CN": "列出所有 Skill plugin.json 声明的虚拟全局 MCP 注册表。结果中的 pluginTool.name 是已注册 MCP 的正式调用入口：先调用 load_skill(skillName) 激活所属 Skill，再调用 pluginTool.name。",
+    en: "List the virtual global MCP registry declared across all Skill plugin.json manifests. pluginTool.name in each entry is the formal invocation entry point: call load_skill(skillName) first, then invoke pluginTool.name.",
   },
   mcpServerFilter: {
-    "zh-CN": "可选 MCP server 引用，如 pluginId:serverId 或 serverId；不填时列出虚拟 registry 中所有 MCP server。",
-    en: "Optional MCP server reference, such as pluginId:serverId or serverId. If omitted, lists every server in the virtual registry.",
+    "zh-CN": "可选 MCP server 过滤引用（如 pluginId:serverId 或 serverId）；省略时列出全部。",
+    en: "Optional MCP server filter reference (e.g. pluginId:serverId or serverId); lists all servers if omitted.",
   },
   mcpRefreshTools: {
-    "zh-CN": "是否绕过本地 MCP 工具缓存，重新向远程 server 执行 tools/list。",
-    en: "Bypass the local MCP tool cache and request tools/list from the remote server again.",
+    "zh-CN": "是否强制重新请求远端 tools/list，默认 false。",
+    en: "Force a fresh tools/list request to the remote server. Default: false.",
   },
   mcpListActiveOnly: {
-    "zh-CN": "是否只包含当前页面或已 load_skill 激活的 Skill MCP。默认 false，即全局列出所有 skill 声明的 MCP。",
-    en: "Include only Skill MCP tools activated by the current page or load_skill. Default: false, which lists MCP tools declared by all Skills.",
+    "zh-CN": "是否仅列出当前页面或本会话已 load_skill 激活的 MCP 工具，默认 false。",
+    en: "Include only MCP tools activated by the current page or load_skill in this session. Default: false.",
   },
   mcpToolLimit: {
-    "zh-CN": "最多返回多少个工具，默认 50。",
+    "zh-CN": "最多返回工具数，默认 50。",
     en: "Maximum tools to return. Default: 50.",
   },
   mcpSearchTools: {
-    "zh-CN": "搜索所有 skill/plugin.json 汇总出的虚拟全局 MCP registry。结果里的 pluginTool.name 是已注册 MCP 的正式调用入口；应先 load_skill(skillName)，再调用该 Skill 工具名。若只搜索当前页面或本会话已加载 skill 激活的 MCP，传 activeOnly=true。",
-    en: "Search the virtual global MCP registry assembled from all skill/plugin.json manifests. pluginTool.name in each result is the registered invocation entry point. Call load_skill(skillName) first, then use that Skill tool name. Set activeOnly=true to search only MCP tools activated by the current page or Skills loaded in this session.",
+    "zh-CN": "按关键词搜索所有 Skill plugin.json 声明的虚拟全局 MCP 注册表。先调用 load_skill(skillName) 激活所属 Skill，再调用返回的 pluginTool.name。",
+    en: "Search the virtual global MCP registry declared across all Skill plugin.json manifests by keyword. Call load_skill(skillName) first, then invoke the returned pluginTool.name.",
   },
   mcpQuery: {
-    "zh-CN": "搜索关键词，可以是工具名、能力描述、serverId、pluginId 或 skill 名。",
-    en: "Search terms: a tool name, capability description, serverId, pluginId, or Skill name.",
+    "zh-CN": "必填。搜索关键词（匹配工具名、描述、serverId、pluginId 或 skillName）。",
+    en: "Required search query (matches tool name, description, serverId, pluginId, or skillName).",
   },
   mcpServerReference: {
-    "zh-CN": "可选 MCP server 引用，如 pluginId:serverId 或 serverId。",
-    en: "Optional MCP server reference, such as pluginId:serverId or serverId.",
+    "zh-CN": "可选 MCP server 过滤引用（如 pluginId:serverId 或 serverId）。",
+    en: "Optional MCP server filter reference (e.g. pluginId:serverId or serverId).",
   },
   mcpRefreshSearch: {
-    "zh-CN": "是否重新向远程 server 执行 tools/list。",
-    en: "Request tools/list from the remote server again.",
+    "zh-CN": "是否强制重新请求远端 tools/list，默认 false。",
+    en: "Force a fresh tools/list request to the remote server. Default: false.",
   },
   mcpSearchActiveOnly: {
-    "zh-CN": "是否只包含当前页面或已 load_skill 激活的 Skill MCP。默认 false，即全局搜索所有 skill 声明的 MCP。",
-    en: "Search only Skill MCP tools activated by the current page or load_skill. Default: false, which searches MCP tools declared by all Skills.",
+    "zh-CN": "是否仅搜索当前页面或本会话已 load_skill 激活的 MCP 工具，默认 false。",
+    en: "Search only MCP tools activated by the current page or load_skill in this session. Default: false.",
   },
   mcpCallTool: {
-    "zh-CN": "直接按 URL 调用尚未注册到 skill 的远程 HTTP MCP tool，用于开发期一次性验证或轻量请求。已注册 MCP 必须先 load_skill(skillName)，再调用 registry 返回的 Skill 工具名 pluginTool.name；不要用本工具绕过 Skill 工具层。建议先探测 inputSchema；默认不重复执行 tools/list。不会注册 server，不支持本地 stdio。",
-    en: "Call an unregistered remote HTTP MCP tool directly by URL for a one-off request or development check. For registered MCP tools, first load_skill(skillName), then invoke pluginTool.name from the registry. Do not bypass the Skill tool layer with this tool. Inspect inputSchema first. Does not repeat tools/list by default or register the server. Local stdio is unsupported.",
+    "zh-CN": "按 URL 调用尚未注册到 Skill 的远程 HTTP MCP 工具（仅用于一次性验证；已注册到 Skill 的 MCP 必须先 load_skill(skillName) 再调用对应的 Skill 工具名 pluginTool.name）。调用前先用 mcp_inspect_server 确认工具名与 inputSchema。",
+    en: "Directly invoke an unregistered remote HTTP MCP tool by URL for one-off testing (for registered MCP tools, call load_skill(skillName) and invoke the Skill tool name pluginTool.name instead). Inspect the server with mcp_inspect_server first to confirm tool name and inputSchema.",
   },
   mcpToolName: {
-    "zh-CN": "远程 MCP tool 原始名称。建议来自 qingzhou_mcp__mcp_inspect_server 返回的 tools[].name。",
-    en: "Original remote MCP tool name. Prefer tools[].name returned by qingzhou_mcp__mcp_inspect_server.",
+    "zh-CN": "必填。远程 MCP 工具原始名称（取自 mcp_inspect_server 返回的 tools[].name）。",
+    en: "Required remote MCP tool name (from tools[].name in mcp_inspect_server).",
   },
   mcpArguments: {
-    "zh-CN": "传给远程 MCP tool 的 JSON 参数对象。",
-    en: "JSON argument object to pass to the remote MCP tool.",
+    "zh-CN": "传给远程 MCP 工具的 JSON 参数对象。",
+    en: "JSON arguments object passed to the remote MCP tool.",
   },
   mcpValidate: {
-    "zh-CN": "调用前是否用 tools/list 校验 tool 存在。默认 false；传 true 时使用 metadata cache，refresh=true 时强制刷新。",
-    en: "Check that the tool exists using tools/list before calling it. Default: false. When true, uses the metadata cache unless refresh=true.",
+    "zh-CN": "调用前是否先通过 tools/list 校验工具存在，默认 false。",
+    en: "Verify that the tool exists in tools/list before calling. Default: false.",
   },
   mcpRefreshCall: {
-    "zh-CN": "validate=true 时是否绕过 metadata cache，强制重新执行 tools/list。",
-    en: "When validate=true, bypass the metadata cache and request tools/list again.",
+    "zh-CN": "validate=true 时是否强制刷新 tools/list，默认 false。",
+    en: "Force a fresh tools/list check when validate=true. Default: false.",
   },
   builtinContent: {
     "zh-CN": `# MCP 接入
