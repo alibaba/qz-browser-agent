@@ -1,5 +1,6 @@
 import { sessionIdText as normalizeSessionId } from "../../sessions/session-id.js";
 import type { TranscriptEntry } from "../../../tools/renderer-input.js";
+import { collectSessionImageReferences, resolveSessionImages } from "../../../../shared/session/session-image-assets.js";
 interface ReconcileEvent {
   type?: string; hasHistory?: boolean; isStreaming?: boolean;
   status?: unknown; runtime?: { status?: unknown };
@@ -28,6 +29,7 @@ export function createTranscriptReconcileFeature<Runtime>(options: ReconcileOpti
   const reconcileTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const reconcileLastAt = new Map<string, number>();
   const watchdogLastAt = new Map<string, number>();
+  const storageHydrations = new Map<string, object>();
   const minIntervalMs = Math.max(0, Number(options.minIntervalMs) || 2500);
   const watchdogStaleMs = Math.max(0, Number(options.watchdogStaleMs) || 1600);
   const watchdogMinIntervalMs = Math.max(0, Number(options.watchdogMinIntervalMs) || 1800);
@@ -122,6 +124,7 @@ export function createTranscriptReconcileFeature<Runtime>(options: ReconcileOpti
     reconcileTimers.delete(id);
     reconcileLastAt.delete(id);
     watchdogLastAt.delete(id);
+    storageHydrations.delete(id);
   }
 
   function reset() {
@@ -129,6 +132,7 @@ export function createTranscriptReconcileFeature<Runtime>(options: ReconcileOpti
     reconcileTimers.clear();
     reconcileLastAt.clear();
     watchdogLastAt.clear();
+    storageHydrations.clear();
   }
 
   function handleStorageChange(changes: Record<string, chrome.storage.StorageChange>, areaName: string) {
@@ -138,17 +142,33 @@ export function createTranscriptReconcileFeature<Runtime>(options: ReconcileOpti
       if (!prefix || !key.startsWith(prefix)) continue;
       const sessionId = normalizeSessionId(key.slice(prefix.length));
       if (!sessionId || options.isDeletedSession?.(sessionId)) continue;
-      hydrateFromActiveConversation(sessionId, change.newValue);
+      void Promise.resolve(hydrateFromActiveConversation(sessionId, change.newValue))
+        .catch(() => { if (started) schedule(sessionId, { force: true, delay: 0 }); });
     }
   }
 
   function hydrateFromActiveConversation(sessionId: string, conversation: unknown) {
-    if (options.getTranscriptCount?.(sessionId)) return false;
-    const transcript = options.transcriptFromConversation?.(conversation) || [];
-    const changed = options.seedTranscript?.(sessionId, transcript) === true;
-    options.renderUpdatedTranscript?.(sessionId, changed);
-    if (changed) options.scheduleSessionsRefresh?.();
-    return changed;
+    const authority = {};
+    storageHydrations.set(sessionId, authority);
+    const commit = (resolved: unknown) => {
+      if (storageHydrations.get(sessionId) !== authority) return false;
+      storageHydrations.delete(sessionId);
+      if (options.isDeletedSession?.(sessionId) || options.getTranscriptCount?.(sessionId)) return false;
+      const transcript = options.transcriptFromConversation?.(resolved) || [];
+      const changed = options.seedTranscript?.(sessionId, transcript) === true;
+      options.renderUpdatedTranscript?.(sessionId, changed);
+      if (changed) options.scheduleSessionsRefresh?.();
+      return changed;
+    };
+    if (options.getTranscriptCount?.(sessionId)) { storageHydrations.delete(sessionId); return false; }
+    return collectSessionImageReferences(conversation).size
+      ? resolveSessionImages(conversation).then(commit, error => {
+          if (storageHydrations.get(sessionId) === authority) throw error;
+          return false;
+        }).finally(() => {
+          if (storageHydrations.get(sessionId) === authority) storageHydrations.delete(sessionId);
+        })
+      : commit(conversation);
   }
 
   return {

@@ -1,5 +1,7 @@
 /** Wrap JPEG bitmaps in one PDF. Each image is one page, sized in points from the bitmap. */
 
+export { bytesToBase64 } from "../../shared/bytes.js";
+
 const SOF_MARKERS = new Set([0xc0, 0xc1, 0xc2]);
 
 export function jpegSize(bytes: Uint8Array): { width: number; height: number } | null {
@@ -103,22 +105,6 @@ export function jpegsToPdf(images: readonly Uint8Array[], note = ""): Uint8Array
   for (const part of parts) {
     out.set(part, written);
     written += part.length;
-  }
-  return out;
-}
-
-export function bytesToBase64(bytes: Uint8Array): string {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  let out = "";
-  for (let index = 0; index < bytes.length; index += 3) {
-    const first = bytes[index];
-    const second = index + 1 < bytes.length ? bytes[index + 1] : 0;
-    const third = index + 2 < bytes.length ? bytes[index + 2] : 0;
-    const triple = (first << 16) | (second << 8) | third;
-    out += alphabet[(triple >> 18) & 63];
-    out += alphabet[(triple >> 12) & 63];
-    out += index + 1 < bytes.length ? alphabet[(triple >> 6) & 63] : "=";
-    out += index + 2 < bytes.length ? alphabet[triple & 63] : "=";
   }
   return out;
 }

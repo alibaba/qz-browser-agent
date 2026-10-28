@@ -11,11 +11,14 @@ const PACKAGE_LABEL = "dist/extension-firefox";
 const SIDEBAR_URL = `moz-extension://${FIREFOX_EXTENSION_UUID}/sidepanel/sidepanel.html`;
 
 /** Launch stock Firefox, temporarily install the Firefox package, and leave the sidebar closed. */
-export async function openFirefoxSidebar({ extensionDir = process.env.QINGZHOU_FIREFOX_EXTENSION_DIR } = {}) {
+export async function openFirefoxSidebar({
+  extensionDir = process.env.QINGZHOU_FIREFOX_EXTENSION_DIR,
+  profile = mkdtempSync(join(tmpdir(), "qz-firefox-playwright-")),
+  firefoxUserPrefs = {},
+} = {}) {
   if (!extensionDir) throw new Error("Set QINGZHOU_FIREFOX_EXTENSION_DIR to dist/extension-firefox. npm run verify:firefox builds it.");
   const manifest = assertFirefoxPackage(JSON.parse(await readFile(join(extensionDir, "manifest.json"), "utf8")), extensionDir);
   const browser = resolveFirefoxExecutable();
-  const profile = mkdtempSync(join(tmpdir(), "qz-firefox-playwright-"));
   const context = await firefox.launchPersistentContext(profile, {
     channel: "moz-firefox",
     executablePath: browser.executablePath,
@@ -26,6 +29,7 @@ export async function openFirefoxSidebar({ extensionDir = process.env.QINGZHOU_F
       "browser.aboutwelcome.enabled": false,
       "datareporting.policy.dataSubmissionEnabled": false,
       "extensions.webextensions.uuids": JSON.stringify({ [FIREFOX_GECKO_ID]: FIREFOX_EXTENSION_UUID }),
+      ...firefoxUserPrefs,
     },
   });
   const pageErrors = [];

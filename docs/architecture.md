@@ -321,7 +321,11 @@ image-read screenshot fallbacks, share this conversion without changing the user
 The model gateway limits cumulative image bytes to 48 MiB and the final adapter request to 64 MiB.
 Over-budget requests return an explicit terminal error. Remote image references first pass through a
 safety-checked image-reading tool. The [asset store](../src/shared/asset-store.ts) defaults to 2000
-images and 1.5 GiB.
+images and 1.5 GiB for its gallery cache. Session image payloads use a separate durable,
+content-addressed store in that database; persisted conversations and transcripts carry references,
+while public reads and exports resolve the original inline data. Gallery GC cannot evict history
+images. Session deletion sweeps unreferenced history assets behind a repository write barrier,
+including prepared but not yet committed conversations in the live reference set.
 
 Actionable screenshots register coordinates from the final encoded dimensions. Capture reads page
 identity and viewport geometry, takes the image, waits 200 ms, then compares the current state. A

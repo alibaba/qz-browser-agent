@@ -49,7 +49,8 @@ import {
   normalizeParentSessionId,
   normalizeSessionId,
 } from "../../shared/session/session-store.js";
-import { createSessionRecord, createSessionTitle, normalizeTranscript } from "../../shared/session/session-codec.js";
+import { createSessionRecord, createSessionTitle, normalizeTranscript, serializeConversation } from "../../shared/session/session-codec.js";
+import { persistSessionImages, resolveSessionImages } from "../../shared/session/session-image-assets.js";
 import {
   createSessionListSummaryFromFirstMessage,
   normalizeSessionListSummary,
@@ -57,6 +58,7 @@ import {
 import { nowBeijingDateTime } from "../../shared/time-utils.js";
 import { createKeyedSerialQueue, createSerialQueue } from "../internal/serial-queue.js";
 import { requireStorage } from "../internal/storage.js";
+import { sessionImagePersistence } from "./image-persistence.js";
 import {
   SESSION_RUNTIME_SCHEMA_VERSION,
   normalizeSessionRuntime,
@@ -98,6 +100,7 @@ export function createSessionRepository({
   normalizeRuntime = normalizeRuntimeCheckpoint,
 }: RepositoryOptions = {}) {
   const storageArea = requireStorage(storage);
+  const imagePersistence = sessionImagePersistence(storageArea);
   const metadataQueue = createSerialQueue();
   const recordQueues = createKeyedSerialQueue();
   const conversationQueues = createKeyedSerialQueue();
@@ -238,6 +241,8 @@ export function createSessionRepository({
       ])).catch(error => console.warn("[轻舟] deleted Session record cleanup failed", error));
       await conversationQueues.run(id, () => storageArea.remove(activeConversationKey(id))).catch(error => console.warn("[轻舟] deleted Session conversation cleanup failed", error));
       await deleteRuntime(id).catch(error => console.warn("[轻舟] deleted Session runtime cleanup failed", error));
+      imagePersistence.forgetSession(id);
+      await imagePersistence.sweep().catch(error => console.warn("[轻舟] deleted Session image cleanup failed", error));
       return { sessionId: id, deleted: true, existed };
     }).catch(error => {
       deletedSessionIds.delete(id);
@@ -249,7 +254,7 @@ export function createSessionRepository({
     const id = requireSessionId(sessionId);
     const key = recordKey(id);
     const values = await storageArea.get([key, transcriptCheckpointKey(id)]);
-    return readCheckpointRecord(values[key], values[transcriptCheckpointKey(id)]);
+    return resolveSessionImages(readCheckpointRecord(values[key], values[transcriptCheckpointKey(id)]));
   }
 
   function writeRecord(sessionId: string, input: unknown, lease?: Lease, savedHistory?: readonly TranscriptEntry[]) {
@@ -270,16 +275,19 @@ export function createSessionRepository({
     if (base) transcriptBases.set(id, base);
     else transcriptBases.delete(id);
     transcriptPending.delete(id);
-    return recordQueues.run(id, async () => {
+    return recordQueues.run(id, () => imagePersistence.write(async () => {
       assertSessionWritable(id);
       if (lease !== undefined) assertLease(id, lease);
       assertSessionRecordReadable(input);
       await readCompatibleStorage(id);
       assertSessionWritable(id);
       if (lease !== undefined) assertLease(id, lease);
+      const stored = await persistSessionImages(input);
+      assertSessionWritable(id);
+      if (lease !== undefined) assertLease(id, lease);
       await storageArea.set({
-        [recordKey(id)]: input == null ? input : {
-          ...clone(record(input)), transcriptRevision: revision,
+        [recordKey(id)]: stored == null ? stored : {
+          ...clone(record(stored)), transcriptRevision: revision,
         },
       });
       if (base) {
@@ -290,7 +298,7 @@ export function createSessionRepository({
       if (lease !== undefined) assertLease(id, lease);
       // The new revision already invalidates the old current snapshot if cleanup fails.
       await storageArea.remove(transcriptCheckpointKey(id));
-    });
+    }));
   }
 
   function writeTranscriptCheckpoint(sessionId: string, snapshot: TranscriptSnapshot, lease: Lease) {
@@ -300,14 +308,14 @@ export function createSessionRepository({
     let base = transcriptBases.get(id);
     if (!base || base.history !== snapshot.history) {
       base = {
-        history: snapshot.history, transcript: clone(normalizeTranscript(snapshot.history)),
+        history: snapshot.history, transcript: snapshot.history.slice(),
         revision: crypto.randomUUID(), persisted: false,
       };
       transcriptBases.set(id, base);
     }
     const checkpoint: TranscriptCheckpoint = {
       version: 2, baseRevision: base.revision,
-      transcript: clone(normalizeTranscript(snapshot.current)),
+      transcript: snapshot.current.slice(),
     };
     const existing = transcriptPending.get(id);
     if (existing?.base === base && existing.lease === lease) {
@@ -316,7 +324,7 @@ export function createSessionRepository({
     }
     const queued: PendingTranscriptCheckpoint = {
       base, lease, checkpoint,
-      promise: recordQueues.run(id, async () => {
+      promise: recordQueues.run(id, () => imagePersistence.write(async () => {
         if (transcriptPending.get(id) === queued) transcriptPending.delete(id);
         assertSessionWritable(id);
         assertLease(id, queued.lease);
@@ -327,10 +335,16 @@ export function createSessionRepository({
           const saved = values[recordKey(id)] ?? createSessionRecord(values[activeConversationKey(id)] ?? [], []);
           // One key contains a complete history and current snapshot. Later
           // writes replace only current, so even the first checkpoint is complete.
+          const stored = await persistSessionImages({
+            ...record(saved), transcript: queued.base.transcript,
+            currentTranscript: queued.checkpoint.transcript, transcriptRevision: queued.base.revision,
+          });
+          assertSessionWritable(id);
+          assertLease(id, queued.lease);
           await storageArea.set({
             [recordKey(id)]: {
-              ...record(saved), transcript: queued.base.transcript,
-              currentTranscript: queued.checkpoint.transcript, transcriptRevision: queued.base.revision,
+              ...stored, transcript: normalizeTranscript(stored.transcript),
+              currentTranscript: normalizeTranscript(stored.currentTranscript),
             },
           });
           queued.base.persisted = true;
@@ -339,10 +353,15 @@ export function createSessionRepository({
           assertLease(id, queued.lease);
           return;
         }
-        await storageArea.set({ [transcriptCheckpointKey(id)]: queued.checkpoint });
+        const stored = await persistSessionImages(queued.checkpoint);
         assertSessionWritable(id);
         assertLease(id, queued.lease);
-      }),
+        await storageArea.set({
+          [transcriptCheckpointKey(id)]: { ...stored, transcript: normalizeTranscript(stored.transcript) },
+        });
+        assertSessionWritable(id);
+        assertLease(id, queued.lease);
+      })),
     };
     transcriptPending.set(id, queued);
     return queued.promise;
@@ -350,7 +369,7 @@ export function createSessionRepository({
 
   async function readActiveConversation(sessionId: string) {
     const id = requireSessionId(sessionId);
-    return (await readCompatibleStorage(id))[activeConversationKey(id)] ?? null;
+    return resolveSessionImages((await readCompatibleStorage(id))[activeConversationKey(id)] ?? null);
   }
 
   async function readCompatibleStorage(id: string) {
@@ -369,16 +388,19 @@ export function createSessionRepository({
     const id = requireSessionId(sessionId);
     assertSessionWritable(id);
     assertLease(id, lease);
-    return conversationQueues.run(id, async () => {
+    return conversationQueues.run(id, () => imagePersistence.write(async () => {
       assertSessionWritable(id);
       assertLease(id, lease);
       assertConversationReadable(conversation);
       await readCompatibleStorage(id);
       assertSessionWritable(id);
       assertLease(id, lease);
-      await storageArea.set({ [activeConversationKey(id)]: clone(conversation) });
+      const stored = await persistSessionImages(conversation);
+      assertSessionWritable(id);
+      assertLease(id, lease);
+      await storageArea.set({ [activeConversationKey(id)]: clone(stored) });
       return { sessionId: id, immediate: Boolean(immediate) };
-    });
+    }));
   }
 
   function clearActiveConversation(sessionId: string, lease: Lease) {
@@ -507,6 +529,19 @@ export function createSessionRepository({
     writeRecord,
     writeTranscriptCheckpoint,
     readActiveConversation,
+    async prepareConversation(sessionId: string, messages: unknown, lease: Lease) {
+      const id = requireSessionId(sessionId);
+      assertSessionWritable(id);
+      assertLease(id, lease);
+      return imagePersistence.write(async () => {
+        const stored = await persistSessionImages(messages);
+        assertSessionWritable(id);
+        assertLease(id, lease);
+        const conversation = serializeConversation(stored);
+        imagePersistence.pinPrepared(id, conversation);
+        return conversation;
+      });
+    },
     writeActiveConversation,
     clearActiveConversation,
     replaceActiveConversation,
@@ -529,11 +564,13 @@ export function createSessionRepository({
   function replaceActiveConversation(sessionId: string, conversation: unknown) {
     const id = requireSessionId(sessionId);
     assertSessionWritable(id);
-    return conversationQueues.run(id, async () => {
+    return conversationQueues.run(id, () => imagePersistence.write(async () => {
       assertSessionWritable(id);
-      await storageArea.set({ [activeConversationKey(id)]: clone(conversation) });
-      return clone(conversation);
-    });
+      const stored = await persistSessionImages(conversation);
+      assertSessionWritable(id);
+      await storageArea.set({ [activeConversationKey(id)]: clone(stored) });
+      return resolveSessionImages(stored);
+    }));
   }
 
   function removeActiveConversation(sessionId: string) {

@@ -35,6 +35,7 @@ import {
   serializeMessagesForCompaction,
 } from "./compaction.js";
 import { deserializeConversationWithRepair, serializeConversation } from "../../shared/session/session-codec.js";
+import { resolveSessionImages } from "../../shared/session/session-image-assets.js";
 import { repairToolMessageSequence } from "../../shared/tools/tool-message-protocol.js";
 import {
   extractUserMessageImages,
@@ -88,6 +89,7 @@ interface AgentToolPort {
 }
 interface ConversationLease {sessionId: string; isActive(): boolean}
 interface ConversationRepository {
+  prepareConversation?(sessionId: string, messages: unknown, lease: ConversationLease): Promise<unknown>;
   readActiveConversation(sessionId: string): Promise<unknown>;
   writeActiveConversation(sessionId: string, conversation: unknown, lease: ConversationLease): Promise<unknown>;
   clearActiveConversation(sessionId: string, lease: ConversationLease): Promise<unknown>;
@@ -430,13 +432,13 @@ export class Agent {
     try {
       const saved = await this._conversationStore.readActiveConversation(this.sessionId);
       if (saved) {
-        const hydrated = deserializeConversationWithRepair(saved, getAgentPrompts(this._runLanguage).SYSTEM_PROMPT);
+        const hydrated = deserializeConversationWithRepair(await resolveSessionImages(saved), getAgentPrompts(this._runLanguage).SYSTEM_PROMPT);
         this.messages = hydrated.messages;
         if (hydrated.repaired) await this._persistConversation();
         this._trace(`agent hydrated: session=${this.sessionId}, msgs=${this.messages.length}`);
       }
     } catch (err) {
-      if (isSessionFormatError(err)) throw err;
+      if (isSessionFormatError(err) || record(err).code === "SESSION_IMAGE_READ_FAILED") throw err;
       this._trace(`agent hydrate failed: session=${this.sessionId}, ${record(err).message}`);
     }
   }
@@ -582,7 +584,7 @@ export class Agent {
 
   async restoreSession(saved: unknown) {
     this._clearScheduledFollowUpRun();
-    this.messages = deserializeConversationWithRepair(saved, getAgentPrompts(this._runLanguage).SYSTEM_PROMPT).messages;
+    this.messages = deserializeConversationWithRepair(await resolveSessionImages(saved), getAgentPrompts(this._runLanguage).SYSTEM_PROMPT).messages;
     this.steeringQueue.clear();
     this.followUpQueue.clear();
     this._emitQueueUpdate();
@@ -1708,7 +1710,9 @@ export class Agent {
         attempt: `${attempt}/${attempts}`,
       });
       try {
-        conversation ||= serializeConversation(this.messages);
+        conversation ||= this._conversationStore.prepareConversation
+          ? await this._conversationStore.prepareConversation(this.sessionId, this.messages, this._conversationLease)
+          : serializeConversation(this.messages);
         await this._conversationStore.writeActiveConversation(
           this.sessionId,
           conversation,

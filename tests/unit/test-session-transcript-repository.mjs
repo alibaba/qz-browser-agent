@@ -8,6 +8,11 @@ import { createSessionRecord } from "../../src/shared/session/session-codec.js";
 import { SessionFormatError } from "../../src/shared/session/session-format.js";
 import { createMemoryStorage } from "../support/memory-storage.mjs";
 
+import { installImageAssetsFixture } from "../support/image-assets-fixture.mjs";
+import { resolveSessionImages } from "../../src/shared/session/session-image-assets.js";
+const assets = installImageAssetsFixture();
+test.after(() => assets.dispose());
+
 const id = "display-checkpoint";
 const baseKey = `_session_${id}`;
 const checkpointKey = `${SESSION_TRANSCRIPT_CHECKPOINT_PREFIX}${id}`;
@@ -55,7 +60,8 @@ test("current checkpoints retain rich history across restart without rewriting o
   const first = [answer("first partial")];
   await f.write(first);
   const base = f.storage.snapshot()[baseKey];
-  assert.deepEqual(base.transcript, f.initial.transcript);
+  assert.deepEqual(await resolveSessionImages(base.transcript), f.initial.transcript);
+  assert.ok(!JSON.stringify(base.transcript).includes("data:image/"));
   assert.deepEqual(base.currentTranscript, normalize(first));
   assert.equal(f.storage.snapshot()[checkpointKey], undefined, "the first complete snapshot uses one storage key");
   const before = f.storage.writes.length;

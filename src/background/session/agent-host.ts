@@ -19,7 +19,8 @@ interface HostCommands {
   commitSessionRecordRuntime(input: { sessionId: string; conversation: unknown }): Promise<unknown>;
 }
 interface AgentHostOptions {
-  repository: Pick<ReturnType<typeof createSessionRepository>, "readRecord" | "readActiveConversation" | "writeActiveConversation" | "clearActiveConversation" | "isWriteBlocked">;
+  repository: Pick<ReturnType<typeof createSessionRepository>, "readRecord" | "readActiveConversation" | "writeActiveConversation" | "clearActiveConversation" | "isWriteBlocked">
+    & Partial<Pick<ReturnType<typeof createSessionRepository>, "prepareConversation">>;
   normalizeSessionId(value: unknown): string;
   llm: AgentOptions["llm"]; agentServices?: AgentOptions["services"]; browserContext?: AgentOptions["browserContext"];
   ensureSkillToolRegistryReady?: AgentOptions["ensureSkillToolRegistryReady"];

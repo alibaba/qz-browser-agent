@@ -14,6 +14,10 @@ import { createSessionExchangePayload } from "../../src/shared/session/session-e
 import { normalizeSessionRuntimeStatus } from "../../src/shared/session/session-runtime-status.js";
 import { SESSION_RECORD_PREFIX } from "../../src/shared/session/session-store.js";
 
+import { installImageAssetsFixture } from "../support/image-assets-fixture.mjs";
+const assets = installImageAssetsFixture();
+test.after(() => assets.dispose());
+
 const noop = () => {};
 const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlqUAAAAASUVORK5CYII=";
 const user = { role: "user", content: [{ type: "text", text: "Remember fixture number 742 and this image" }, { type: "image_url", image_url: { url: image, detail: "auto" } }] };
@@ -77,7 +81,9 @@ test("opening a naturally imported conversation restores its complete model hist
   await navigation.switchToSession(id);
   await Promise.all(restores);
   assert.equal(restores.length, 1);
-  assert.deepEqual(sends.find(event => event.type === "restore_session"), { type: "restore_session", sessionId: id, session: record.conversation });
+  const restore = sends.find(event => event.type === "restore_session");
+  assert.deepEqual(restore, { type: "restore_session", sessionId: id, session: f.storage.snapshot()[`_session_${id}`].conversation });
+  assert.ok(!JSON.stringify(restore).includes("data:image/"), "the Agent resolves references without another image-sized IPC copy");
   assert.deepEqual(seeded[0], record.transcript);
   const history = await f.commands.getSessionHistoryRuntime(id);
   assert.deepEqual(history.messages.find(message => message.role === "user"), user);
@@ -130,6 +136,31 @@ test("reopening an interrupted follow-up restores the latest checkpoint to both 
   assert.deepEqual(history.messages.filter(message => message.role !== "system"), checkpoint.entries.map(entry => entry.message));
 });
 
+test("legacy exchange -> stored references -> new exchange -> independent image-preserving clone", async () => {
+  const f = fixture();
+  const legacy = createSessionExchangePayload({ session: { id: "legacy", title: "Image exchange" },
+    conversation: serializeConversation(messages), transcript: [{ type: "user", text: "image", images: [{ dataUrl: image }] }] });
+  const source = await f.commands.importSessionExchangeRuntime(JSON.parse(JSON.stringify(legacy)));
+  const sourceId = source.session.id;
+  assert.ok(!JSON.stringify(f.storage.snapshot()[`_session_${sourceId}`]).includes("data:image/"));
+  const exported = await f.commands.exportSessionExchangeRuntime(sourceId);
+  const file = JSON.stringify(exported);
+  assert.ok(file.includes(image));
+  assert.ok(!file.includes("qz-history-image:"));
+  // Export/import is the application's independent-copy operation; there is no
+  // separate fork/duplicate Session command in this branch.
+  const clone = await f.commands.importSessionExchangeRuntime(JSON.parse(file));
+  assert.notEqual(clone.session.id, sourceId);
+  await f.repository.deleteSession(sourceId);
+  const cloned = readSessionRecord(await f.repository.readRecord(clone.session.id));
+  assert.equal(cloned.transcript[0].images[0].dataUrl, image);
+  await f.commands.restoreSessionFromApi(clone.session.id, cloned.conversation);
+  const replay = await f.commands.getSessionHistoryRuntime(clone.session.id);
+  assert.deepEqual(replay.messages.find(message => message.role === "user" && Array.isArray(message.content)), user);
+  const exportedClone = await f.commands.exportSessionExchangeRuntime(clone.session.id);
+  assert.ok(JSON.stringify(exportedClone).includes(image));
+});
+
 for (const [stage, prefix] of [["runtime checkpoint", SESSION_RUNTIME_PREFIX], ["history record", SESSION_RECORD_PREFIX]]) {
   test(`a failed stop ${stage} rejects without retaining a new Session admission lock`, async () => {
     const f = fixture();
@@ -172,14 +203,15 @@ function fixture() {
   });
   const runtime = createSessionRuntimeState({ supervisor, repository, getSessions: repository.listMetadata,
     getAgentEntry: supervisor.getEntry, normalizeSessionId: normalizeId, logger: { warn: noop, debug: noop } });
+  const getLiveEntry = async id => { const entry = supervisor.peekEntry(id); return entry?.agent ? entry : null; };
   const transcript = createSessionTranscript({ repository, supervisor,
-    getLiveAgentEntry: async id => supervisor.peekEntry(id), normalizeSessionId: normalizeId,
+    getLiveAgentEntry: getLiveEntry, normalizeSessionId: normalizeId,
     resolveToolDefinition: () => null, getToolIdentity: () => ({}) });
   const commands = createSessionCommands({ runtime, transcript, sessionRuntimeReady: Promise.resolve(),
     sessionSupervisor: supervisor, sessionRepository: repository, normalizeSessionId: normalizeId,
     requireExplicitSessionId: normalizeId, normalizeRuntimeStatus: normalizeSessionRuntimeStatus,
     getSessions: repository.listMetadata, isAutomationSessionTree: () => false, broadcast: event => broadcasts.push(event),
-    agents: { getLiveEntry: async id => supervisor.peekEntry(id), getAgent: supervisor.getAgent,
+    agents: { getLiveEntry, getAgent: supervisor.getAgent,
       ensureConversationForHistoryMutation: async () => true, handleEvent: noop },
     artifacts: { clearListSummaryPatch: noop, clearSummaryRefresh: noop, buildListSummary: async () => ({}), collect: async () => ({}), empty: () => ({}) },
     tabs: { getOwnedTabContexts: async () => [], closeOwnedTabsAfterTerminal: async () => {} },

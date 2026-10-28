@@ -53,6 +53,8 @@ import {
   transcriptFromConversation,
 } from "../../../shared/session/session-codec.js";
 import { readSessionSnapshot } from "../../../shared/session/session-recovery.js";
+import { collectSessionImageReferences, resolveSessionImages } from "../../../shared/session/session-image-assets.js";
+import { getHistoryImage } from "../../../shared/asset-store.js";
 import {
   ACTIVE_CONVERSATION_PREFIX,
   genSessionId,
@@ -356,6 +358,10 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
       sameSession: wasCurrentSession,
     });
     let switchTraceError = "";
+    const assertCurrentSwitch = () => {
+      signal?.throwIfAborted();
+      if (!isLatestSwitch(switchEpoch, targetId)) throw new DOMException("Session switch superseded", "AbortError");
+    };
 
     try {
       if (wasCurrentSession) {
@@ -396,8 +402,19 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
       const key = storedSessionKey(targetId);
       const activeKey = `${ACTIVE_CONVERSATION_PREFIX}${targetId}`;
       const checkpointKey = transcriptCheckpointKey(targetId);
+      let referencedConversation: unknown;
       const savedRecord = await options.perfTraceAsync?.("session.switch.storageRecord", { sessionId: targetId }, () => {
-        return options.storage.local.get([key, activeKey, checkpointKey]);
+        return options.storage.local.get([key, activeKey, checkpointKey]).then(values => {
+          // Cached transcripts can reveal immediately. A later switch revokes
+          // this read too, before it loads more image payloads for a discarded view.
+          assertCurrentSwitch();
+          const storedConversation = values[activeKey] ?? fields(values[key]).conversation;
+          if (collectSessionImageReferences(storedConversation).size) referencedConversation = storedConversation;
+          return resolveSessionImages(values, reference => {
+            assertCurrentSwitch();
+            return getHistoryImage(reference);
+          });
+        });
       });
       if (signal?.aborted || !isLatestSwitch(switchEpoch, targetId)) return;
       const saved = savedRecord?.[key];
@@ -437,7 +454,9 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
         options.runController.finish({ render: false });
         if (conversation) {
           options.runController.beginRestore();
-          options.send?.({ type: "restore_session", sessionId: targetId, session: conversation });
+          // Agent.restoreSession resolves persisted references before decoding.
+          // Keep the UI hydrated, but avoid cloning all image bytes back over IPC.
+          options.send?.({ type: "restore_session", sessionId: targetId, session: referencedConversation ?? conversation });
         }
       }
     } catch (error) {
