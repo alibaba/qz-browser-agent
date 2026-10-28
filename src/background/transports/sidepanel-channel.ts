@@ -1,7 +1,7 @@
 import { createPortTransport } from "../../shared/transport/port-transport.js";
 import { transportFailure, TransportError } from "../../shared/transport/message-codec.js";
+import { t } from "../../shared/i18n/backend.js";
 import { backgroundReceiveBudget, backgroundTransferBudget } from "./transfer-budget.js";
-import { productText } from "../../shared/product-text.js";
 import { ToolExecutionError } from "../tools/arguments.js";
 
 type Fields = Record<string, unknown>;
@@ -12,6 +12,14 @@ interface ChannelOptions {
   trace?(message: string): unknown; streamTraceEnabled?: boolean;
 }
 const object = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
+
+/** GeolocationPositionError codes. Any other value stays the generic unavailable failure. */
+function locationBrowserFailure(code: unknown) {
+  if (code === 1) return { code: "LOCATION_PERMISSION_DENIED", message: "locationPermissionDenied" } as const;
+  if (code === 2) return { code: "LOCATION_POSITION_UNAVAILABLE", message: "locationPositionUnavailable" } as const;
+  if (code === 3) return { code: "LOCATION_TIMEOUT", message: "locationTimeout" } as const;
+  return { code: "LOCATION_UNAVAILABLE", message: "locationUnavailable" } as const;
+}
 const RUNTIME_EVENT_TYPES = new Set([
   "state",
   "session_pending",
@@ -159,28 +167,26 @@ export function createSidepanelChannel({
     return true;
   }
 
-  function requestLocation({ timeoutMs = 12_000, windowId = null, signal }: { timeoutMs?: number; windowId?: number | null; signal?: AbortSignal } = {}) {
+  function requestLocation({ timeoutMs = 6_000, windowId = null, signal }: { timeoutMs?: number; windowId?: number | null; signal?: AbortSignal } = {}) {
     if (signal?.aborted) return Promise.resolve(null);
     const port = [...ports].find(port => windowId == null || portWindowIds.get(port) === windowId);
-    if (!port) return Promise.reject(new ToolExecutionError("LOCATION_PANEL_UNAVAILABLE", productText("No side panel is connected to the task window", "No sidebar is connected to the task window")));
+    if (!port) return Promise.reject(new ToolExecutionError("LOCATION_PANEL_UNAVAILABLE", t("locationPanelUnavailable")));
     const requestId = `ctx_${++dynamicContextSeq}`;
     return new Promise<Fields | null>((resolve, reject) => {
       function cleanup() { clearTimeout(timer); signal?.removeEventListener("abort", cancel); dynamicContextRequests.delete(requestId); }
       function cancel() { cleanup(); resolve(null); }
       function fail(code: string, message: string, details: Fields = {}) { cleanup(); reject(new ToolExecutionError(code, message, details)); }
-      const timer = setTimeout(() => fail("LOCATION_RESPONSE_TIMEOUT", productText("The side panel did not return a location result", "The sidebar did not return a location result"), { timeoutMs }), timeoutMs);
+      const timer = setTimeout(() => fail("LOCATION_RESPONSE_TIMEOUT", t("locationResponseTimeout"), { timeoutMs }), timeoutMs);
       signal?.addEventListener("abort", cancel, { once: true });
       dynamicContextRequests.set(requestId, {
         port,
-        disconnect: () => fail("LOCATION_PANEL_UNAVAILABLE", productText("The side panel disconnected during location lookup", "The sidebar disconnected during location lookup")),
+        disconnect: () => fail("LOCATION_PANEL_UNAVAILABLE", t("locationPanelUnavailable")),
         resolve(value) {
           cleanup();
           const error = object(object(value).locationError);
           if (Object.keys(error).length) {
-            const code = error.code === 1 ? "LOCATION_PERMISSION_DENIED"
-              : error.code === 2 ? "LOCATION_POSITION_UNAVAILABLE"
-                : error.code === 3 ? "LOCATION_TIMEOUT" : "LOCATION_UNAVAILABLE";
-            reject(new ToolExecutionError(code, "Browser location lookup failed", {
+            const failure = locationBrowserFailure(error.code);
+            reject(new ToolExecutionError(failure.code, t(failure.message), {
               browserCode: error.code, browserMessage: String(error.message || ""),
             }));
             return;
@@ -190,7 +196,7 @@ export function createSidepanelChannel({
         },
       });
       void send(port, { type: "dynamic_context_request", requestId, fields: ["location"] })
-        .catch(() => { if (dynamicContextRequests.has(requestId)) fail("LOCATION_PANEL_UNAVAILABLE", productText("Could not send the location request to the side panel", "Could not send the location request to the sidebar")); });
+        .catch(() => { if (dynamicContextRequests.has(requestId)) fail("LOCATION_PANEL_UNAVAILABLE", t("locationPanelUnavailable")); });
     });
   }
 

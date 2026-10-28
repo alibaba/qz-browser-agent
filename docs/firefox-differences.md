@@ -192,6 +192,11 @@ the Mozilla-signed path, and the comment there marks the option as not standardi
 
 ## Accessibility tree
 
+Viewport AX filtering uses the internal `DOM.getNodeRects` command. It resolves the requested
+backend ids and measures their rectangles in one `scripting.executeScript` call per document.
+Missing or detached nodes are omitted from the batch response and remain unmeasured; they do not
+trigger individual injection retries. The shared Chromium path uses DOMSnapshot and box-model reads.
+
 `Accessibility.getFullAXTree` walks the DOM and ARIA attributes in the isolated world. An open
 shadow root is entered. A same-origin iframe's `contentDocument.documentElement` is entered.
 Firefox 158 has no `accessibility` namespace in the extension schemas, and no experiment-free

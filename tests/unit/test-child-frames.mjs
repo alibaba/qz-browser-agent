@@ -19,7 +19,7 @@ const { ToolExecutionError } = await import("../../src/background/tools/argument
 const calls = [];
 let echo = false;
 let remotePresent = true;
-let overviewActions = [{ selector: "#parent", role: "button", text: "Parent" }];
+let overviewActions = [{ selector: "#parent", role: "button", text: "Parent", rect: { x: 12, y: 34, w: 100, h: 50 } }];
 let scopedActions = [];
 let boundIds = [3];
 let ancestorNodes = {};
@@ -137,7 +137,7 @@ registerAccessibilityTools({
     return { loaderId: scope?.loaderId || "main-loader", ids: boundIds };
   },
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),
-  sendToContent: async () => ({ title: "Page", url: "https://example.com/forms/post", actions: overviewActions }),
+  sendToContent: async () => ({ title: "Page", url: "https://example.com/forms/post", viewport: { height: 600 }, actions: overviewActions }),
   callElement: async () => ({ title: "Child", url: "https://child.example.com/", actions: scopedActions }),
   readMainDocumentId: async () => "",
   withDebugger: async (_id, fn) => fn({}, send),
@@ -211,7 +211,7 @@ assert.match(isolated.snapshot, /^ target=uid:\S+ button "Parent"/m, "the missin
 // Anonymous actions also belong to the overview document, even when their name
 // matches a child-frame control exactly.
 boundIds = [0];
-overviewActions = [{ role: "button", text: "Remote" }];
+overviewActions = [{ role: "button", text: "Remote", rect: { x: 12, y: 34, w: 100, h: 50 } }];
 isolated = await definition.execute({ tabId: 8, limit: 80 }, null, context);
 const remoteLines = isolated.snapshot.split("\n").filter(line => line.includes('button "Remote"'));
 assert.equal(remoteLines.length, 2);
@@ -220,7 +220,7 @@ assert.ok(remoteLines.some(line => line.includes("target=uid:")), "the real fram
 
 // A child-root overview must bind its selectors in that child's document. Its
 // DOM-only actions remain available even when the child AX tree omits them.
-overviewActions = [{ selector: "#parent", role: "button", text: "Parent" }];
+overviewActions = [{ selector: "#parent", role: "button", text: "Parent", rect: { x: 12, y: 34, w: 100, h: 50 } }];
 scopedActions = [{ selector: "#parent", role: "button", text: "Child-only" }];
 boundIds = [77];
 ancestorNodes = {};

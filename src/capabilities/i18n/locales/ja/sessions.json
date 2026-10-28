@@ -220,5 +220,10 @@
   "sessions.goalTrackingShort": "目標の追跡",
   "sessions.latestMessagesShort": "最新のメッセージ",
   "sessions.getLocation": "位置情報を取得",
-  "sessions.locationUnavailable": "位置情報を取得できませんでした。サイドパネルを開いて端末の位置情報設定を確認するか、都市や地域を指定してください。"
+  "sessions.locationUnavailable": "位置情報を取得できませんでした。サイドパネルを開いて位置情報の許可を確認するか、都市や地域を教えてください。",
+  "sessions.locationPermissionDenied": "位置情報が拒否されました。ブラウザーの確認で許可し、システムの位置情報サービスを確認するか、都市や地域を教えてください。",
+  "sessions.locationPositionUnavailable": "現在地を特定できませんでした。ネットワークと位置情報サービスを確認するか、都市や地域を教えてください。",
+  "sessions.locationTimeout": "位置情報の取得がタイムアウトしました。サイドパネルを開いたまま、ブラウザーの位置情報を許可するか、都市や地域を教えてください。",
+  "sessions.locationPanelUnavailable": "サイドパネルが接続されていません。このウィンドウで開いて再試行するか、都市や地域を教えてください。",
+  "sessions.locationResponseTimeout": "位置情報の取得がタイムアウトしました。ブラウザーの位置情報を許可し、システムの位置情報サービスをオンにするか、都市や地域を教えてください。"
 }

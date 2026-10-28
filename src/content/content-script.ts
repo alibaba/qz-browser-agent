@@ -1,3 +1,4 @@
+import { elementAriaRole } from "./implicit-aria-role.js";
 import { refreshContentLanguage, t } from "./i18n.js";
 import { normalizeImage } from "../shared/images/normalize.js";
 import { assertImageDimensions, IMAGE_MAX_EDGE } from "../shared/images/policy.js";
@@ -6,6 +7,7 @@ import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import { finder, attr as finderAttribute } from "@medv/finder";
 import type { ArticleExtractor, ExtractedArticle } from './article-types.js';
+import { eachElementWithinOpenShadow, firstElementMatchingOpenShadow, graftOpenShadows, openShadowRoot } from './open-shadow.js';
 import type { PageOverview, PageAction, PagePoint } from '../shared/contracts/page-content.js';
 
 interface Article { mode: string; title: string; byline: string; siteName: string; publishedTime: string; excerpt: string; content: string; text: string; sourceSelector: string }
@@ -40,7 +42,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-10-22-iframe-frame";
+  const QZ_CONTENT_VERSION = "2026-10-28-open-shadow";
   const imageSourceIdentities = new WeakMap<HTMLImageElement, { source: string; identity: string }>();
   const imageSourceScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let imageSourceSequence = 0;
@@ -153,6 +155,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function articleFromElement(element: Element, mode: string): Article {
     const clone = element.cloneNode(true) as Element;
+    // Materialize open shadow trees onto the clone so text, tables, and outline
+    // use the existing light-DOM walk. Closed roots are not copied.
+    graftOpenShadows(element, clone);
     clone.querySelectorAll("script, style, svg, canvas, iframe, nav, header, footer, aside, form, button").forEach(el => el.remove());
     return {
       mode,
@@ -275,6 +280,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       if (!(node instanceof Element)) return;
       const before = lines.length;
       for (const child of node.childNodes) walk(child);
+      const shadow = openShadowRoot(node);
+      if (shadow) for (const child of shadow.childNodes) walk(child);
       if (blockTags.has(node.tagName) && lines.length > before) lines.push("\n");
     }
 
@@ -894,6 +901,26 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       };
     }
     return { element };
+  }
+
+  /**
+   * find_elements scope. Light DOM wins when it matches. A selector that only
+   * exists inside an open shadow is still accepted. Invalid selectors keep the
+   * original error.
+   */
+  function queryOpenShadowScope(selector: unknown) {
+    const found = queryOne(selector);
+    if (!found.error) return found;
+    if (found.error.code !== "ELEMENT_NOT_FOUND" || typeof selector !== "string" || !document.documentElement) return found;
+    const locator = parseElementLocator(selector);
+    if (locator.type !== "css") return found;
+    try {
+      const match = firstElementMatchingOpenShadow(document.documentElement, locator.value);
+      if (!match) return found;
+      return { element: match };
+    } catch {
+      return found;
+    }
   }
 
   async function readImageElement({ selector, index = 0, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE, format = "png", quality = 0.88 }: Partial<ContentRequest>) {
@@ -1674,8 +1701,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     // -- Element selection --
 
     findElements({ pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], limit = 20, includeHidden = false }) {
-      const rootResult = queryOne(selector);
-      if (rootResult.error) return rootResult.error;
+      const rootResult = queryOpenShadowScope(selector);
+      if (rootResult.error || !rootResult.element) return rootResult.error;
       const maxResults = clampNumber(limit, 1, 100, 20);
 
       const patternText = String(pattern || "").trim();
@@ -1691,7 +1718,10 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const roleSet = new Set((roles || []).map(v => String(v).toLowerCase()));
       const tagSet = new Set((tags || []).map(v => String(v).toLowerCase()));
       const typeSet = new Set((types || []).map(v => String(v).toLowerCase()));
-      const candidates = [rootResult.element, ...rootResult.element.querySelectorAll("*")];
+      const scope = rootResult.element;
+      const candidates: Element[] = [];
+      // A light-DOM scope still includes descendants inside nested open shadows.
+      eachElementWithinOpenShadow(scope, (element) => { candidates.push(element); });
       const matches = [];
 
       for (let order = 0; order < candidates.length; order += 1) {
@@ -2174,11 +2204,15 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     // -- Interaction --
 
     scrollPage({ direction = "down", pixels = 500, selector }) {
+      // Hidden tabs do not produce frames, so a smooth scroll never moves.
+      const behavior = document.visibilityState === "hidden" ? "instant" : "smooth";
       if (selector) {
         const query = queryOne(selector);
         if (query.error) return query.error;
-        query.element.scrollIntoView({ behavior: "smooth", block: "center" });
-        return { scrolledTo: selector };
+        query.element.scrollIntoView({ behavior, block: "center" });
+        return behavior === "instant"
+          ? { scrolledTo: selector, scrollY: window.scrollY }
+          : { scrolledTo: selector };
       }
 
       const map: Record<string, number> = {
@@ -2187,10 +2221,18 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         top: -document.documentElement.scrollHeight,
         bottom: document.documentElement.scrollHeight,
       };
-      window.scrollBy({ top: map[direction] ?? pixels, behavior: "smooth" });
+      const top = map[direction] ?? pixels;
+      const scroller = document.scrollingElement || document.documentElement;
+      const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      const target = Math.min(max, Math.max(0, scroller.scrollTop + top));
+      const start = window.scrollY;
+      window.scrollBy({ top, behavior });
+      // Foreground smooth scrolling settles over later frames. Report the clamped
+      // destination immediately so the receipt is not the pre-scroll offset.
+      const scrollY = behavior === "instant" || window.scrollY !== start ? window.scrollY : target;
       return {
         direction,
-        scrollY: window.scrollY,
+        scrollY,
         scrollHeight: document.documentElement.scrollHeight,
       };
     },
@@ -2698,31 +2740,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function getElementRole(el: Element) {
-    const explicit = el.getAttribute("role");
-    if (explicit) return explicit.toLowerCase();
-    const tag = el.tagName.toLowerCase();
-    if (tag === "a" && el.hasAttribute("href")) return "link";
-    if (tag === "button") return "button";
-    if (tag === "summary") return "button";
-    if (tag === "details") return "group";
-    if (tag === "option") return "option";
-    if (tag === "label") return "label";
-    if (tag === "img") return "img";
-    if (tag === "progress") return "progressbar";
-    if (tag === "meter") return "meter";
-    if (tag === "input") {
-      const type = (el.getAttribute("type") || "text").toLowerCase();
-      if (["button", "submit", "reset"].includes(type)) return "button";
-      if (type === "file") return "button";
-      if (["checkbox", "radio"].includes(type)) return type;
-      if (type === "search") return "searchbox";
-      if (type === "range") return "slider";
-      return "textbox";
-    }
-    if (tag === "textarea") return "textbox";
-    if (el instanceof HTMLSelectElement) return el.multiple || Number(el.size || 0) > 1 ? "listbox" : "combobox";
-    if (el instanceof HTMLElement && el.isContentEditable) return "textbox";
-    return "";
+    return elementAriaRole(el);
   }
 
   function getAccessibleName(el: Element) {

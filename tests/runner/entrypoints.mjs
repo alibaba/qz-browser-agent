@@ -19,6 +19,8 @@ export function directEntrypoint(argv) {
     "live agent": { command: [agent], help: "Options: --suite base|journeys|journeys-vision|realworld|all, --cases <ids>, --provider <name>, --model <name>, --ak-file <path>, --concurrency <1..12>, --repetitions <1..10>, --bridge-timeout <30..600>, --report <path>, --capture-dir <path>, --vision, --window-target-probe." },
     "live realworld": { command: [agent, "--suite", "realworld"], help: "Agent options as in live agent, except --suite (fixed to realworld)." },
     "live deepseek": { command: [deepseek], fixed: true, help: "Environment: QINGZHOU_DEEPSEEK_MODEL, QINGZHOU_DEEPSEEK_AK_FILE, QINGZHOU_LIVE_HEADLESS=1, QINGZHOU_LIVE_CASES, QINGZHOU_LIVE_SESSION_MANAGEMENT=1, QINGZHOU_LIVE_SESSION_MANAGEMENT_EXTENDED=1. No test arguments." },
+    "live ax-viewport": { command: ["tests/live/ax-viewport.mjs"], fixed: true, help: "Paired baseline/viewport DeepSeek flash tasks using production AX and Content handlers in isolated Chromium. Requires sourced DEEPSEEK_API_KEY; QZ_AX_OUTPUT selects evidence directory. Minimal tool loop, not full extension Agent E2E." },
+    "live ax-viewport-public": { command: ["tests/live/ax-viewport-public.mjs"], help: "Paired public-site DeepSeek AX comparison. Requires sourced DEEPSEEK_API_KEY. Options: --cases site-or-task-ids, --output directory, --concurrency 1..3, --trials 1..3, --pause-ms 0..60000, --repeat-all. Failed pairs and preflight-flaky sites receive three trials; all attempts are retained." },
     "live rate": { command: ["tests/live/deepseek-rate-governor.mjs"], fixed: true, help: "Environment: QINGZHOU_DEEPSEEK_MODEL, QINGZHOU_DEEPSEEK_AK_FILE. No test arguments." },
     "live cli-mcp-supplement": { command: ["tests/live/deepseek-cli-mcp-supplement.mjs"], help: "Additional real CLI input and MCP resource coverage against an active isolated soak. Required: --report <live-soak-report.json>." },
     "live cli-mcp": { command: ["tests/live/deepseek-cli-mcp-soak.mjs"], help: "Real DeepSeek CLI/MCP soak. Options: --duration-seconds 1800, --task-timeout-seconds 360, --cases id,id. Requires DEEPSEEK_API_KEY; QINGZHOU_DEEPSEEK_MODEL selects the model." },
@@ -27,7 +29,7 @@ export function directEntrypoint(argv) {
     "live pi-concurrent-browsers": { command: ["tests/live/pi-concurrent-browsers.mjs"], fixed: true, help: "Three independent Pi processes pair three named Chrome Profiles, then two Pi processes share one Profile. Five real DeepSeek tasks each receive a follow-up. Requires Pi, a graphical session, QINGZHOU_TEST_EXTENSION_DIR pointing to a production build, and a DeepSeek key. No test arguments." },
   };
   const route = routes[name];
-  if (!route) throw new Error(`Unknown live target: ${name.slice(5)}. Available: agent, realworld, deepseek, rate, cli-mcp, cli-mcp-supplement, multi-browser, pi-multi-browser, pi-concurrent-browsers`);
+  if (!route) throw new Error(`Unknown live target: ${name.slice(5)}. Available: agent, realworld, deepseek, rate, ax-viewport, ax-viewport-public, cli-mcp, cli-mcp-supplement, multi-browser, pi-multi-browser, pi-concurrent-browsers`);
   if (name !== "behavior" && args.some(arg => arg === "--coverage" || arg.startsWith("--coverage="))) {
     throw new Error("--coverage is only available for unattended unit or --all suites");
   }

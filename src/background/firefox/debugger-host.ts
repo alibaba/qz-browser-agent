@@ -92,6 +92,8 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     if (method === "DOM.describeNode") return run(tabId, frameId, { op: "describe", nodeId: numberValue(params.nodeId), backendNodeId: numberValue(params.backendNodeId) });
     if (method === "DOM.pushNodesByBackendIdsToFrontend") return run(tabId, frameId, { op: "push", backendNodeIds: numberList(params.backendNodeIds) });
     if (method === "DOM.getBoxModel") return run(tabId, frameId, { op: "box", backendNodeId: numberValue(params.backendNodeId) });
+    // Internal batch geometry contract; avoids one executeScript per AX node.
+    if (method === "DOM.getNodeRects") return run(tabId, frameId, { op: "rects", backendNodeIds: numberList(params.backendNodeIds) });
     if (method === "DOM.resolveNode") return run(tabId, frameId, { op: "resolve", backendNodeId: numberValue(params.backendNodeId), objectGroup: String(params.objectGroup || "") });
     if (method === "Runtime.enable") return enableRuntime(tabId);
     if (method === "Runtime.evaluate") return evaluate(tabId, frameId, params);

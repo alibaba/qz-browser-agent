@@ -14,6 +14,8 @@ import { createContentLanguageSnapshot } from "../../src/shared/i18n/content.ts"
 import { t as panelText } from "../../src/sidepanel/i18n/index.ts";
 import { localizeToolFailurePayload } from "../../src/shared/tools/tool-error-localization.ts";
 import packs from "../../src/capabilities/i18n/locales.ts";
+import sessionMessages from "../../src/capabilities/sessions/messages.ts";
+import { backendMessages } from "../../src/shared/i18n/backend-messages.ts";
 import uiCatalogs from "#capabilities/translations";
 import { describeAutomationSchedule, computeNextRunAt } from "../../src/shared/automation-store.ts";
 import { listProviderSummaries } from "../../src/background/llm/provider-catalog.ts";
@@ -185,6 +187,35 @@ test("untranslated third-party messages use their authored English fallback with
 test("a third-party capability can supply its own optional translation without editing the language capability", () => {
   const t = createTranslator(defineMessages("self-contained", { saved: { en: "Saved {name}", "zh-CN": "已保存 {name}", ja: "{name}を保存しました" } }));
   withPack(packs.find(pack => pack.language === "ja"), () => assert.equal(t("saved", { name: "User data" }), "User dataを保存しました"));
+});
+
+test("location recovery text is short and translated in every shipped language pack", () => {
+  const keys = [
+    "locationUnavailable",
+    "locationPermissionDenied",
+    "locationPositionUnavailable",
+    "locationTimeout",
+    "locationPanelUnavailable",
+    "locationResponseTimeout",
+  ];
+  for (const key of keys) {
+    for (const language of ["en", "zh-CN"]) {
+      assert.equal(sessionMessages.messages[key][language], backendMessages.messages[key][language], `${language} ${key}`);
+    }
+  }
+  for (const pack of packs.filter(pack => pack.catalog)) {
+    const messages = nativePack(pack);
+    for (const key of keys) {
+      const backendKey = `backend.${key}`;
+      const sessionsKey = `sessions.${key}`;
+      const backend = decodeChromeMessage(messages[chromeMessageId(backendKey)]);
+      const sessions = decodeChromeMessage(messages[chromeMessageId(sessionsKey)]);
+      assert.equal(backend, sessions, `${pack.language} ${key}`);
+      assert.equal(/Chrome|Firefox/i.test(backend), false, `${pack.language} ${key}`);
+      assert.notEqual(backend, baseline.get(backendKey), `${pack.language} ${key} is translated`);
+      assert.ok(backend.length <= 220, `${pack.language} ${key} stays short (${backend.length})`);
+    }
+  }
 });
 
 test("built-in skill cards and tool titles use each language pack while identifiers and user-authored text stay stable", t => {

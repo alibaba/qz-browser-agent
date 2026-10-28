@@ -305,6 +305,45 @@ surface. Preparation failure ends the operation before input is sent.
 bridge](../src/background/tools/run-script-bridge.ts) check page and inner-script access. The inner
 Worker calls tools and fetch through the host; its runtime contains only Worker APIs.
 
+## Accessibility snapshots
+
+Use `get_ax_tree({scope:"viewport"})` for the current vertical viewport band, or
+`get_ax_tree({scope:"full"})` for the document range. The page root defaults to viewport;
+explicit `uid:`/`css:` roots default to full subtree scope. Both retain depth and BFS limits.
+
+The [accessibility capability](../src/capabilities/accessibility/tools.ts) filters raw AX nodes
+by positive Y overlap before semantic pruning, depth limits, redundant-text removal and BFS.
+Horizontal overflow stays eligible. Zero-height boxes are in-band when their Y coordinate is within
+`[0, viewportHeight)`. The same filter also retains bounded off-screen headings, regions/landmarks,
+lists and longer named links in their original tree positions, with UIDs for subtree reads. Other
+off-band ancestors remain structural. Guaranteed actions are filtered too; unmatched actions need
+an in-band rectangle before they can receive a target.
+
+Global `↑`/`↓` markers (only when nonzero) and `viewportOmitted.above/below` count raw AX nodes
+dropped, including text fragments that semantic formatting may later merge or remove. Retained
+structure and ancestors are excluded. Local fold markers sit before/after each retained container's
+remaining children and count folded semantic branches, not repeated text descendants. A list's
+`items` attribute counts its existing direct AX list items, excluding nested lists. Markers give
+`scope:"full"` and UID-root read targets. Depth and node budgets are documented in the tool's
+parameter descriptions; markers report omissions without repeating those definitions.
+
+A conservative 1800-character allowance bounds additional off-screen structure and its ancestors;
+selection samples both document ends. These are ordinary tree nodes, not a separate outline. A
+heading's nearest content-bearing wrapper can remain as a subtree entry so its sibling content
+is addressable. The existing BFS/depth limits still apply, and off-screen value/URL/flag details
+remain folded.
+These counts are independent of BFS leftovers and cover only the browser's existing AX/DOM set;
+unloaded lazy/virtual items and browser-adapter collection caps are outside that set. The default
+BFS budget remains 120 optional nodes (maximum 300), plus guaranteed actions and their ancestors.
+
+[Geometry collection](../src/capabilities/accessibility/viewport.ts) uses Chromium's batched
+`DOMSnapshot.captureSnapshot`, then box-model reads for missing boxes. Firefox uses the internal
+`DOM.getNodeRects` adapter to read all requested rectangles in one isolated-world page injection,
+because it lacks DOMSnapshot. Inline fragments without DOM ids inherit
+the parent box classification. Unmeasurable nodes remain eligible and are reported separately;
+geometry failures do not silently discard content. Direct child frame boxes are translated into
+the root viewport. This is a vertical band filter, not an occlusion or nested-scroll clipping test.
+
 ## Images and screenshots
 
 The shared [image policy](../src/shared/images/policy.ts) and

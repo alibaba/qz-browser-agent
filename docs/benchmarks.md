@@ -16,6 +16,65 @@ benchmark -- <target> --help` prints the common options. For specialized article
 the linked argument parser before invoking them. Keep generated evidence under ignored
 `tests/results/` or outside the checkout.
 
+## AX viewport and BFS budgets
+
+Measure snapshot sizes on four synthetic pages and the public Wikipedia River article:
+
+```bash
+node tests/benchmarks/ax-viewport.mjs
+```
+
+The isolated Chromium harness runs the production AX tool and Content handlers at 1280×720.
+It compares full/viewport scope with BFS budgets 120, 300 and a measurement-only high limit.
+Depth 16 and normal text pruning remain enabled. The public tool still caps `limit` at 300.
+`tests/results/viewport-ax/sizes.json` records node counts, snapshot characters, characters/4
+estimates, raw omission counts, truncation and elapsed time; adjacent text files preserve snapshots.
+Live-page errors are recorded without discarding fixture results.
+
+For an explicitly authorized real-provider comparison, export `DEEPSEEK_API_KEY` securely and run:
+
+```bash
+npm test -- live ax-viewport
+```
+
+This runs six short tasks per variant with `deepseek-flash`, a 1M context budget and image support.
+The baseline compiles the AX tool/messages from Git commit `cbac588`; the prototype uses the current
+worktree. It uses a minimal tool loop, not the full extension Agent lifecycle or CLI/MCP. Production
+Content handlers execute actions and scrolling; DOM state checks answers and side effects.
+`tests/results/viewport-ax/live/` contains transcripts, provider usage and pass/fail results.
+`QZ_AX_OUTPUT` selects another evidence directory. No user profile or stored settings are changed.
+
+For the public-site matrix, use the same isolated AX/Content harness:
+
+```bash
+npm test -- live ax-viewport-public --trials 2 --output tests/results/viewport-ax/round3
+npm test -- live ax-viewport-public --cases github,mdn --output tests/results/viewport-ax/follow-up
+```
+
+The matrix declares two tasks on each of 13 public sites. Before calling the model, each run records
+an independent rendered-DOM oracle and checks that the target starts in or outside the viewport as
+specified. Access challenges, HTTP errors, missing facts and invalid initial geometry are retained
+as precondition failures, not model failures. Read tasks do not submit forms or follow external
+links; the two fill tasks use synthetic text without submitting. No login or purchase is performed.
+
+Baseline/prototype order alternates by task and trial. `--trials` sets the minimum paired trials
+(default1, range1–3). Any failure raises that task to three paired trials; Baidu and PyPI always
+receive three because preflight found intermittent challenges. Every attempt,
+including provider errors, stays in `results.json` and its transcript. The runner continues after
+failures so later sites still produce evidence; exit zero means the matrix completed, not that all
+tasks passed. `--concurrency` defaults to 2 and supports 1–3; `--repeat-all` runs three paired trials
+for every selected task. `--pause-ms` adds a per-lane cooldown between attempts (0–60000ms,
+default0); combine it with `--concurrency 1` for availability follow-ups without request bursts.
+Existing result directories are rejected to preserve earlier attempts.
+Read tasks also capture a final DOM oracle to distinguish source changes from wrong answers;
+the initial-oracle score is retained even when the page changes. The harness uses one document
+handle for unique-selector binding and supports selector-only UIDs for subtree reads and actions,
+matching the production element runtime's fallback route.
+
+The matrix also measures six scope/BFS combinations per reachable site and compares fixed/sticky
+control names in full versus viewport high-budget snapshots after each prototype task. These audit
+reads are not sent to the model and are excluded from task tool-call/character/token totals.
+
 ## Replay a conversation
 
 The runner measures compiled Side Panel rendering with simulated Chrome APIs and recorded data.

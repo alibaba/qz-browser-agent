@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createSidepanelChannel } from "../../src/background/transports/sidepanel-channel.js";
+import { backendMessages } from "../../src/shared/i18n/backend-messages.js";
+import { getLanguage } from "../../src/shared/i18n/index.js";
 
 const runtime = { onConnect: makeEvent() };
 const dispatched = [];
@@ -90,22 +92,39 @@ first.onPosted = message => {
 };
 assert.deepEqual(await channel.requestLocation({ timeoutMs: 100 }), { href: "https://example.test/" });
 first.onPosted = null;
-await assert.rejects(channel.requestLocation({ timeoutMs: 5 }), { code: "LOCATION_RESPONSE_TIMEOUT" });
+const locationText = key => backendMessages.messages[key][getLanguage() === "zh-CN" ? "zh-CN" : "en"];
+await assert.rejects(channel.requestLocation({ timeoutMs: 5 }), error => {
+  assert.equal(error.code, "LOCATION_RESPONSE_TIMEOUT");
+  assert.equal(error.message, locationText("locationResponseTimeout"));
+  assert.equal(error.message.includes("LOCATION_RESPONSE_TIMEOUT"), false);
+  assert.equal(error.details.timeoutMs, 5);
+  return true;
+});
 const timedOutId = first.sent.at(-1).requestId;
 assert.equal(channel.acceptDynamicContextResponse({ requestId: timedOutId, context: { location: { latitude: 1 } } }), false);
-await assert.rejects(channel.requestLocation({ windowId: 999 }), { code: "LOCATION_PANEL_UNAVAILABLE" });
+await assert.rejects(channel.requestLocation({ windowId: 999 }), error => {
+  assert.equal(error.code, "LOCATION_PANEL_UNAVAILABLE");
+  assert.equal(error.message, locationText("locationPanelUnavailable"));
+  return true;
+});
 const locationAbort = new AbortController();
 const pendingLocation = channel.requestLocation({ signal: locationAbort.signal });
 locationAbort.abort();
 assert.equal(await pendingLocation, null);
 assert.equal(await channel.requestLocation({ signal: locationAbort.signal }), null);
 
-for (const [browserCode, code] of [[1, "LOCATION_PERMISSION_DENIED"], [2, "LOCATION_POSITION_UNAVAILABLE"], [3, "LOCATION_TIMEOUT"], [0, "LOCATION_UNAVAILABLE"]]) {
+for (const [browserCode, code, messageKey] of [
+  [1, "LOCATION_PERMISSION_DENIED", "locationPermissionDenied"],
+  [2, "LOCATION_POSITION_UNAVAILABLE", "locationPositionUnavailable"],
+  [3, "LOCATION_TIMEOUT", "locationTimeout"],
+  [0, "LOCATION_UNAVAILABLE", "locationUnavailable"],
+]) {
   const pending = channel.requestLocation({ timeoutMs: 100 });
   const requestId = first.sent.at(-1).requestId;
   channel.acceptDynamicContextResponse({ requestId, context: { locationError: { code: browserCode, message: "Browser diagnostic" } } });
-  await assert.rejects(pending, error => error.code === code && error.details.browserCode === browserCode
-    && error.details.browserMessage === "Browser diagnostic");
+  await assert.rejects(pending, error => error.code === code && error.message === locationText(messageKey)
+    && error.details.browserCode === browserCode && error.details.browserMessage === "Browser diagnostic"
+    && !error.message.includes(code));
   assert.equal(channel.acceptDynamicContextResponse({ requestId }), false);
   const retry = channel.requestLocation({ timeoutMs: 100 });
   channel.acceptDynamicContextResponse({ requestId: first.sent.at(-1).requestId, context: { location: { latitude: 30.25 } } });

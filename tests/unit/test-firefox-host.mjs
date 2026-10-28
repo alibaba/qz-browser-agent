@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { installFirefoxDebugger } from "../../src/background/firefox/debugger-host.js";
+import { readViewportBands } from "../../src/capabilities/accessibility/viewport.js";
 import { ISOLATED_CONTENT_INVOKE, ISOLATED_CONTENT_PROBE } from "../../src/background/tools/isolated-page-calls.js";
 import { installInitiatorRewrite } from "../../src/background/firefox/dnr-initiator.js";
 import { installFirefoxHost } from "../../src/background/firefox/host.js";
@@ -1426,6 +1427,44 @@ test("firefox clicks mark extension events and toggle a checkbox the page left u
     await click();
     assert.equal(box.checked, true);
     assert.equal(events.slice(before).filter(event => event.type === "change").length, 0);
+  });
+});
+
+test("Firefox viewport geometry batches 4000 nodes in one page injection", async () => {
+  await withPage({ nodeType: 9, title: "Large geometry page" }, async () => {
+    const browser = debuggerBrowser();
+    let injections = 0;
+    const execute = browser.scripting.executeScript;
+    browser.scripting.executeScript = args => { injections += 1; return execute(args); };
+    installFirefoxDebugger(browser);
+    await browser.debugger.attach({ tabId: 9 }, "1.3");
+    const send = (method, params) => browser.debugger.sendCommand({ tabId: 9 }, method, params);
+    await send("DOM.getDocument");
+    const nodes = Array.from({ length: 4000 }, (_, index) => ({ nodeId: String(index + 1), backendDOMNodeId: index + 1 }));
+    for (const [index, node] of nodes.entries()) globalThis.__qzFirefoxPage.nodes.set(node.backendDOMNodeId, {
+      getBoundingClientRect: () => ({ x: 0, y: index * 12, width: 100, height: 10 }),
+    });
+    injections = 0;
+    let next = 0;
+    const start = performance.now();
+    await Promise.all(Array.from({ length: 8 }, async () => {
+      while (next < nodes.length) await send("DOM.getBoxModel", { backendNodeId: nodes[next++].backendDOMNodeId });
+    }));
+    const beforeMs = performance.now() - start;
+    assert.equal(injections, 4000);
+    injections = 0;
+    const batchStart = performance.now();
+    const bands = await readViewportBands(send, nodes, 600);
+    const afterMs = performance.now() - batchStart;
+    assert.equal(injections, 1, "geometry must use one scripting.executeScript, not one per node");
+    assert.equal(bands.size, 4000);
+    assert.equal([...bands.values()].filter(band => band === "inside").length, 50);
+    assert.equal(bands.get("4000"), "below");
+    console.log(JSON.stringify({ measurement: "Firefox host/page-command in Node", nodes: 4000, beforeInjections: 4000, afterInjections: 1, beforeMs, afterMs }));
+    globalThis.__qzFirefoxPage.nodes.set(4001, { getBoundingClientRect() { throw new Error("detached"); } });
+    globalThis.__qzFirefoxPage.nodes.set(4002, { getBoundingClientRect: () => ({ x: 0, y: 0, width: 0, height: 0 }) });
+    const partial = await send("DOM.getNodeRects", { backendNodeIds: [4001, 4002, 4002, 9999] });
+    assert.deepEqual(partial.rects, [{ backendNodeId: 4002, x: 0, y: 0, width: 0, height: 0 }]);
   });
 });
 

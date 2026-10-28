@@ -508,6 +508,18 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
         return described(command.backendNodeId ? nodeFor(command.backendNodeId) : nodeFor(Number(command.nodeId || 0)));
       case "push":
         return { nodeIds: (command.backendNodeIds || []).map(id => nodeFor(Number(id)) ? Number(id) : 0) };
+      case "rects": {
+        const rects = [];
+        for (const backendNodeId of new Set(command.backendNodeIds)) {
+          const node = nodeFor(backendNodeId);
+          if (!node?.getBoundingClientRect) continue;
+          try {
+            const { x, y, width, height } = quad(node);
+            if ([x, y, width, height].every(Number.isFinite)) rects.push({ backendNodeId, x, y, width, height });
+          } catch { /* Detached/unmeasurable nodes do not discard the rest of the batch. */ }
+        }
+        return { rects };
+      }
       case "box": {
         const node = nodeFor(command.backendNodeId);
         if (!node?.getBoundingClientRect) throw new Error("Node is not laid out");
@@ -683,6 +695,7 @@ export type PageCommand =
   | { op: "describe"; nodeId?: number; backendNodeId?: number }
   | { op: "push"; backendNodeIds: number[] }
   | { op: "box"; backendNodeId: number }
+  | { op: "rects"; backendNodeIds: number[] }
   | { op: "resolve"; backendNodeId: number; objectGroup?: string }
   | { op: "call"; objectId: string; functionDeclaration: string; arguments?: { value?: unknown }[]; awaitPromise?: boolean }
   | { op: "probe" }

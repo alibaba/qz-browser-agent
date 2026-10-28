@@ -107,7 +107,7 @@ requests access again when needed.
 ## Denial and recovery
 
 - Declining an optional permission cancels that action. Retry the feature to authorize it later.
-- A failed `get_location` call asks the user to check device settings or provide a city or area.
+- A failed `get_location` call keeps its error code and a short next step: allow browser location, turn on system Location Services, open the sidebar, or name a city or area. A disconnected sidebar asks them to open it in this window.
 - Disabled notifications make the reminder tool return `SEND_ALERT_PERMISSION_DENIED`. Completion notifications leave the task's final state intact.
 - Protected pages, closed tabs, and failed CDP attachment return tool errors. Select an authorized target before retrying.
 - Chrome controls screen selection. Canceling its picker ends the recording attempt.

@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>River Atlas — long article fixture</title>
+<style>body { margin: 24px; font: 16px/1.5 sans-serif; max-width: 850px } section { margin: 32px 0 }</style>
+<h1>River Atlas</h1>
+<p>Opening survey code: ATLAS-17</p>
+<nav><a href="#history">History</a> · <a href="#references">References</a></nav>
+<main id="article"></main>
+<footer id="references"><h2>References</h2><p>Final survey code: DELTA-93</p></footer>
+<script>
+  for (let i = 1; i <= 90; i++) {
+    const section = document.createElement('section');
+    section.id = i === 1 ? 'history' : `section-${i}`;
+    section.innerHTML = `<h2>River region ${i}</h2>` + Array.from({length: 4}, (_, j) => `<p>Survey ${i}.${j + 1}: The river crosses a broad floodplain. Seasonal rainfall supports wetlands, agriculture and navigation. <a href="#references">Source ${i}.${j + 1}</a> records changing water levels and sediment transport.</p>`).join('');
+    article.append(section);
+  }
+</script>

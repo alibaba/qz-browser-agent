@@ -220,5 +220,10 @@
   "sessions.goalTrackingShort": "Suivi d’objectif",
   "sessions.latestMessagesShort": "Derniers messages",
   "sessions.getLocation": "Obtenir la position",
-  "sessions.locationUnavailable": "Localisation impossible. Ouvrez le panneau latéral et vérifiez les paramètres de localisation de votre appareil, ou indiquez une ville ou une zone."
+  "sessions.locationUnavailable": "Impossible d’obtenir votre position. Ouvrez le panneau latéral et vérifiez les autorisations de localisation, ou indiquez simplement une ville ou une zone.",
+  "sessions.locationPermissionDenied": "La localisation a été bloquée. Autorisez-la lorsque le navigateur le demande, vérifiez les services de localisation du système, ou indiquez simplement une ville ou une zone.",
+  "sessions.locationPositionUnavailable": "Impossible de déterminer votre position. Vérifiez le réseau et les services de localisation, ou indiquez simplement une ville ou une zone.",
+  "sessions.locationTimeout": "Délai de localisation dépassé. Gardez le panneau latéral ouvert et autorisez la localisation du navigateur, ou indiquez simplement une ville ou une zone.",
+  "sessions.locationPanelUnavailable": "Le panneau latéral n’est pas connecté. Ouvrez-le dans cette fenêtre et réessayez, ou indiquez simplement une ville ou une zone.",
+  "sessions.locationResponseTimeout": "Délai de localisation dépassé. Autorisez la localisation dans le navigateur et activez les services de localisation du système, ou indiquez simplement une ville ou une zone."
 }

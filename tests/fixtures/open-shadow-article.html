@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Open shadow article</title>
+  <style>
+    body { margin: 16px; font: 16px/1.4 sans-serif; }
+    #single-host, #compat-host, #closed-host, #slot-host { display: block; }
+    table { border-collapse: collapse; }
+    td, th { padding: 4px 8px; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <article id="story">
+    <h1>Open shadow article</h1>
+    <section id="light-block">
+      <h2>Light section</h2>
+      <p>Light paragraph remains.</p>
+      <table>
+        <thead><tr><th>Light</th><th>Count</th></tr></thead>
+        <tbody><tr><td>Alpha</td><td>1</td></tr></tbody>
+      </table>
+    </section>
+    <section id="single-block">
+      <h2>Single shadow</h2>
+      <div id="single-host"></div>
+    </section>
+    <section id="compat-block">
+      <h2>Browser compatibility</h2>
+      <p>Version numbers live in the nested shadow table.</p>
+      <div id="compat-host"></div>
+    </section>
+    <section id="slot-block">
+      <h2>Slotted light text</h2>
+      <div id="slot-host"><p>SLOTTED-LIGHT-TEXT</p></div>
+    </section>
+    <section id="closed-block">
+      <h2>Closed shadow</h2>
+      <div id="closed-host"></div>
+    </section>
+    <p>The extraction pipeline keeps this report, its evidence, and the visible compatibility table together for the reader. Stable article prose keeps the main column identifiable when version data is rendered through open shadow roots.</p>
+  </article>
+  <script>
+    const single = document.querySelector("#single-host").attachShadow({ mode: "open" });
+    const singleParagraph = document.createElement("p");
+    singleParagraph.textContent = "SINGLE-OPEN-SHADOW";
+    single.append(singleParagraph);
+
+    const outer = document.querySelector("#compat-host").attachShadow({ mode: "open" });
+    const inner = document.createElement("div");
+    inner.id = "inner-host";
+    inner.style.display = "block";
+    outer.append(inner);
+    const innerRoot = inner.attachShadow({ mode: "open" });
+    const heading = document.createElement("h3");
+    heading.textContent = "Support matrix";
+    const table = document.createElement("table");
+    table.innerHTML = "<thead><tr><th>Browser</th><th>Release date</th><th>Support</th></tr></thead><tbody><tr><td>Chrome</td><td>2023-09-15</td><td>117</td></tr><tr><td>Firefox</td><td>2023-08-01</td><td>Full support</td></tr></tbody>";
+    const marker = document.createElement("p");
+    marker.textContent = "NESTED-SHADOW-117";
+    innerRoot.append(heading, table, marker);
+
+    const slotRoot = document.querySelector("#slot-host").attachShadow({ mode: "open" });
+    const frame = document.createElement("div");
+    frame.append(document.createElement("slot"));
+    slotRoot.append(frame);
+
+    const closed = document.querySelector("#closed-host").attachShadow({ mode: "closed" });
+    const secret = document.createElement("p");
+    secret.id = "closed-secret";
+    secret.textContent = "CLOSED-SHADOW-SECRET";
+    closed.append(secret);
+  </script>
+</body>
+</html>

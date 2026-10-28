@@ -220,5 +220,10 @@
   "sessions.goalTrackingShort": "Acompanhar meta",
   "sessions.latestMessagesShort": "Últimas mensagens",
   "sessions.getLocation": "Obter localização",
-  "sessions.locationUnavailable": "Não foi possível obter sua localização. Abra o painel lateral e confira as configurações de localização do dispositivo, ou informe uma cidade ou região."
+  "sessions.locationUnavailable": "Não foi possível obter sua localização. Abra a barra lateral e verifique as permissões de localização, ou diga uma cidade ou região.",
+  "sessions.locationPermissionDenied": "A localização foi bloqueada. Permita quando o navegador pedir, verifique os serviços de localização do sistema, ou diga uma cidade ou região.",
+  "sessions.locationPositionUnavailable": "Não foi possível determinar sua posição. Verifique a rede e os serviços de localização, ou diga uma cidade ou região.",
+  "sessions.locationTimeout": "Tempo de localização esgotado. Mantenha a barra lateral aberta e permita a localização do navegador, ou diga uma cidade ou região.",
+  "sessions.locationPanelUnavailable": "A barra lateral não está conectada. Abra-a nesta janela e tente de novo, ou diga uma cidade ou região.",
+  "sessions.locationResponseTimeout": "Tempo de localização esgotado. Permita a localização no navegador e ative os serviços de localização do sistema, ou diga uma cidade ou região."
 }

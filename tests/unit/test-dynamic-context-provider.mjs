@@ -8,7 +8,7 @@ test("location errors retain browser diagnostics and each request can recover", 
   const provider = createDynamicContextProvider({
     geolocation: { getCurrentPosition(success, reject, options) {
       calls++;
-      assert.deepEqual(options, { enableHighAccuracy: false, maximumAge: 300000, timeout: 10000 });
+      assert.deepEqual(options, { enableHighAccuracy: false, maximumAge: 300000, timeout: 5000 });
       if (failure) reject(failure);
       else success({ coords: { latitude: 30.25, longitude: 120.15, accuracy: 10 }, timestamp: Date.now() });
     } },

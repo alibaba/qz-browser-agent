@@ -34,7 +34,7 @@ export function createDynamicContextProvider(options: ContextOptions = {}) {
             timestamp: formatBeijingDateTime(position.timestamp),
           } }),
           error => resolve({ locationError: { code: error.code, message: error.message } }),
-          { enableHighAccuracy: false, maximumAge: 300000, timeout: 10_000 },
+          { enableHighAccuracy: false, maximumAge: 300000, timeout: 5_000 },
         );
       } catch (error) {
         resolve({ locationError: {

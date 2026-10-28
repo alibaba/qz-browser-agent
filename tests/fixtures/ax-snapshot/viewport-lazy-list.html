@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lazy inventory</title>
+<style>body { margin: 16px; font: 16px/1.4 sans-serif } li { height: 38px } button { margin-left: 12px }</style>
+<h1>Lazy inventory</h1>
+<p>5,000 total records; only the loaded slice exists in the DOM.</p>
+<ol id="rows"></ol>
+<button id="more">Load more records</button>
+<output id="receipt" aria-live="polite"></output>
+<script>
+  window.loaded = 0;
+  function appendRows() {
+    for (let end = loaded + 60; loaded < end; loaded++) {
+      const n = loaded + 1;
+      const li = document.createElement('li');
+      li.innerHTML = `Inventory record ${n}<button>Select record ${n}</button>`;
+      li.querySelector('button').onclick = () => { window.selected = n; receipt.textContent = `Selected ${n}`; };
+      rows.append(li);
+    }
+    receipt.textContent = `Loaded ${loaded} records`;
+  }
+  more.onclick = appendRows;
+  appendRows();
+</script>
