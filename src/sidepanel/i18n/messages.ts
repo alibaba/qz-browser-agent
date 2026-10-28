@@ -290,6 +290,8 @@ export default defineMessages("core", {
   textCharacters: { "zh-CN": "{count} 字符", en: "Characters: {count}" },
   partialArguments: { "zh-CN": "参数片段", en: "Partial arguments" },
   incomplete: { "zh-CN": "没有完成", en: "Incomplete" },
+  toolResultIncomplete: { "zh-CN": "等待超时，结果不完整", en: "Timed out; incomplete result" },
+  toolResultIncompleteShort: { "zh-CN": "未完成", en: "Incomplete" },
   preparingArgs: { "zh-CN": "准备参数", en: "Preparing tool call" },
   running: { "zh-CN": "运行中", en: "Running" },
   currentStep: { "zh-CN": "当前：{index}/{total} · {title}", en: "Current: {index}/{total} · {title}" },
@@ -389,4 +391,7 @@ export default defineMessages("core", {
   firstColumns: { "zh-CN": "显示前 {count} 列", en: "Showing the first {count} columns" },
   imageTotal: { "zh-CN": "{count} 张", en: "Images: {count}" },
   moreImages: { "zh-CN": "另 {count} 张", en: "{count} more images" },
+  storeReviewPrompt: { "zh-CN": "如果轻舟对你有帮助，欢迎在 Chrome 应用商店留个评价。", en: "If qz has been useful, a Chrome Web Store review helps." },
+  storeReviewAction: { "zh-CN": "去评价", en: "Leave a review" },
+  storeReviewDismiss: { "zh-CN": "不再显示", en: "Dismiss" },
 });

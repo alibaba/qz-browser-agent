@@ -6,6 +6,7 @@ import { createTestAgentOptions } from '../support/agent-services.mjs';
 import { localizeToolFailureCode } from '../../src/shared/tools/tool-error-localization.js';
 import { withLanguage } from '../../src/shared/i18n/index.js';
 import { clearTraceLog, getTraceLog } from '../../src/background/trace.js';
+import { resolveToolState } from '../../src/sidepanel/tools/tool-model.js';
 
 const never = () => new Promise(() => {});
 const context = { sessionId: 'partials', runId: 'run', workingTabId: 1 };
@@ -145,6 +146,7 @@ test('read_article and find_elements retain actual page state when synchronous e
     const result = await runtime.execute(name, { tabId: 1, limit: 100, timeout: 0.01 }, undefined, { ...context, preserveWorkingTab: true });
     assert.equal(result.incomplete.reason, 'timeout');
     assert.equal(result.pageState.readyState, 'interactive');
+    assert.equal(resolveToolState({ name, result }), 'incomplete');
     assert.equal(result.pageState.url, 'https://example.test/old');
     assert.equal(result.pageState.title, 'Article');
     assert.equal(result.text, undefined); assert.equal(contentCalls, 1); assert.equal(updates.length, 0);
@@ -155,6 +157,7 @@ test('open_tab and navigate retain a loading tab and its current URL on the exis
   for (const name of ['open_tab', 'navigate']) {
     reset();
     const result = await runtime.execute(name, { url: 'https://example.test/new', ...(name === 'navigate' ? { tabId: 1 } : {}), timeout: 0.01 }, undefined, context);
+    assert.equal(resolveToolState({ name, result }), 'incomplete');
     assert.equal(result.incomplete.reason, 'timeout'); assert.equal(result.loading, true);
     assert.equal(result.url, name === 'open_tab' ? 'about:blank' : 'https://example.test/old');
     assert.equal(result.pageState.pendingUrl, 'https://example.test/new');

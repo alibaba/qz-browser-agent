@@ -104,6 +104,8 @@ export function resolveToolState(tool: ToolEvent | null | undefined, ...values: 
   if (isToolAborted(tool, ...values)) return "aborted";
   if (tool?.isError || [tool?.result, ...values].some(isToolResultErrorLike)) return "error";
   if (tool?.argsIncomplete || tool?.phase === "preparing" || tool?.isRunning) return "running";
+  // Timeout metadata belongs to the outer result envelope, not page/script data.
+  if (record(record(tool?.result).incomplete).reason === "timeout") return "incomplete";
   return "success";
 }
 

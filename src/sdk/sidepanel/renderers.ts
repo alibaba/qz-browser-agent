@@ -7,7 +7,7 @@ export interface ToolView {
   readonly rendererId: string;
   readonly name: string;
   readonly title: string;
-  readonly state: "preparing" | "running" | "completed" | "error" | "aborted";
+  readonly state: "preparing" | "running" | "completed" | "incomplete" | "error" | "aborted";
   readonly args: Readonly<Record<string, unknown>>;
   readonly result: unknown;
   readonly originalResult: unknown;

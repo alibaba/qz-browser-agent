@@ -28,6 +28,7 @@ interface RuntimeStateOptions {
   normalizeSessionId(value: unknown): string;
   scheduleTabGroupSync?(sessionId: string): unknown;
   onCompleted?(sessionId: string): Promise<unknown>;
+  onTaskCompleted?(sessionId: string, runtime: Fields): unknown;
   logger?: Pick<Console, "warn" | "debug">;
   now?(): string;
 }
@@ -45,6 +46,7 @@ export function createSessionRuntimeState({
   normalizeSessionId,
   scheduleTabGroupSync = () => {},
   onCompleted = async () => {},
+  onTaskCompleted = () => {},
   logger = console,
   now = nowBeijingDateTime,
 }: RuntimeStateOptions) {
@@ -180,6 +182,10 @@ export function createSessionRuntimeState({
     if (shouldNotifyCompleted(previous, next, patch)) {
       onCompleted(id).catch(error => {
         logger?.debug?.("[轻舟] completion notification failed:", errorMessage(error));
+      });
+      // Same transition the completion notification uses. Repeats stay quiet; the review store keeps root sessions.
+      Promise.resolve(onTaskCompleted(id, next || {})).catch(error => {
+        logger?.debug?.("[轻舟] completed task count failed:", errorMessage(error));
       });
     }
     return next;

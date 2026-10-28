@@ -1,0 +1,44 @@
+/* Quiet ask in the transcript stream. It follows the compact status card, not a toast over the composer. */
+
+.store-review-card {
+  margin-top: 4px;
+}
+
+.store-review-card-body {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-elevated) 62%, transparent);
+  color: var(--text-secondary);
+}
+
+.store-review-copy {
+  margin: 0;
+  font-size: calc(12px * var(--chat-text-scale, 1));
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.store-review-store {
+  white-space: nowrap;
+}
+
+.store-review-chrome {
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  margin: 0 0.22em 0 0;
+  vertical-align: -0.16em;
+}
+
+.store-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}

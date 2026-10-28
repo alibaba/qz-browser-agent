@@ -602,6 +602,16 @@ function restoreViewportAnchor(anchor: ViewportAnchor | null | undefined) {
   if (!anchor || !anchorElement || !messagesEl.contains(anchorElement)) return;
   const nextRect = anchorElement.getBoundingClientRect();
   if (nextRect.height <= 0 || nextRect.width <= 0) return;
+  // A collapsed transcript that fits should return to normal flow. Keeping a
+  // formerly sticky summary pinned would hide earlier messages behind a spacer.
+  if (naturalChatMaxScrollTop() < 0.5) {
+    setViewportAnchorBeforeSpace(0);
+    setViewportAnchorAfterSpace(0);
+    performProgrammaticChatScroll(() => { messagesEl.scrollTop = 0; });
+    anchor.top = anchorElement.getBoundingClientRect().top;
+    anchor.scrollTop = 0;
+    return;
+  }
   const currentTop = messagesEl.scrollTop || 0;
   const expectedScrollTop = Math.max(0, Number(anchor.scrollTop) || 0);
   let elementDelta = nextRect.top - anchor.top;

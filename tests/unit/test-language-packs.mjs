@@ -218,6 +218,23 @@ test("location recovery text is short and translated in every shipped language p
   }
 });
 
+test("chrome store review copy is translated in every catalog and names the store", () => {
+  const mentions = ["Chrome Web Store", "Chrome 应用商店"];
+  for (const pack of packs.filter(pack => pack.catalog)) {
+    const messages = nativePack(pack);
+    const prompt = decodeChromeMessage(messages[chromeMessageId("core.storeReviewPrompt")]);
+    const action = decodeChromeMessage(messages[chromeMessageId("core.storeReviewAction")]);
+    const dismiss = decodeChromeMessage(messages[chromeMessageId("core.storeReviewDismiss")]);
+    assert.ok(prompt, pack.language);
+    assert.ok(action, pack.language);
+    assert.ok(dismiss, pack.language);
+    assert.ok(mentions.some(mention => prompt.includes(mention)), `${pack.language} prompt names the store: ${prompt}`);
+    assert.notEqual(prompt, baseline.get("core.storeReviewPrompt"), pack.language);
+    assert.notEqual(action, baseline.get("core.storeReviewAction"), pack.language);
+    assert.notEqual(dismiss, baseline.get("core.storeReviewDismiss"), pack.language);
+  }
+});
+
 test("built-in skill cards and tool titles use each language pack while identifiers and user-authored text stay stable", t => {
   const directory = mkdtempSync(join(tmpdir(), "qingzhou-locale-registrations-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

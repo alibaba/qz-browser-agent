@@ -71,6 +71,7 @@ import {
 import { createTranscriptScheduler } from "./scheduler.js";
 import { createMessageActions } from "./message-actions.js";
 import { createWaitingCards, isWaitingTranscriptActive } from "./waiting-card.js";
+import { createStoreReviewTranscriptCard } from "./store-review-card.js";
 
 const CODE_BLOCK_TAIL_RESUME_PX = 28;
 const TRANSCRIPT_CACHE_RENDER_INTERVAL_MS = 120;
@@ -146,6 +147,14 @@ export function createTranscriptRenderer(options: TranscriptOptions) {
     },
   });
   const waitingCards = createWaitingCards({ send: command => request(command.type, command), isCurrentSession });
+  const storeReview = createStoreReviewTranscriptCard({
+    messagesEl,
+    getSessionId: () => normalizeSessionId(getSessionId()) || "",
+    hasTranscript: () => currentTranscript().length > 0,
+    onPlaced() {
+      if (scroll.shouldFollowTail()) scroll.scrollToBottom();
+    },
+  });
   const toolPresentationState = createToolPresentationState();
   const assistantHighlightScopes = new WeakMap<HTMLElement, object>();
   const messageActions = createMessageActions({
@@ -421,6 +430,7 @@ function reconcileChatTranscriptDom(sessionId: unknown, history: TranscriptEntry
   }
   endRemove?.({ removed: removedCount });
 
+  storeReview.sync();
   if (shouldStick) scroll.scrollToBottom();
   else if (viewportAnchor) scroll.restoreAnchor(viewportAnchor);
   } catch (err) {
@@ -578,6 +588,7 @@ function patchLiveTranscriptDomTail(sessionId: unknown, visibleHistory: Transcri
       }
       cursor = el;
     }
+    storeReview.sync();
     if (shouldStick) scroll.scrollToBottom();
     else if (viewportAnchor) scroll.restoreAnchor(viewportAnchor);
     patched = true;
@@ -2107,7 +2118,10 @@ function appendSystemNote(message: string) {
     if (!id) return;
     scheduler.cancel(id);
     waitingCards.forgetSession(id);
-    if (isCurrentSession(id)) messageActions.reset();
+    if (isCurrentSession(id)) {
+      messageActions.reset();
+      storeReview.clear();
+    }
     transcriptPartialRenderBySessionId.delete(id);
     clearSessionPendingToolState(id);
     transcriptLastChangedAtBySessionId.delete(id);
@@ -2125,6 +2139,7 @@ function appendSystemNote(message: string) {
     extensions?.notify({ type: "ui_close_transient" });
     scroll.setFollowing(true);
     disposeRendererTree(messagesEl);
+    storeReview.clear();
     messagesEl.innerHTML = welcomeHTML;
     showWelcome();
     scroll.syncScrollPosition();
@@ -2140,6 +2155,7 @@ function appendSystemNote(message: string) {
     scheduler.cancel();
     waitingCards.reset();
     messageActions.reset();
+    storeReview.clear();
     transcriptPartialRenderBySessionId.clear();
     pendingToolCalls.clear();
     transcriptLastChangedAtBySessionId.clear();
