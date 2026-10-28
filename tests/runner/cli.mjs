@@ -84,7 +84,7 @@ Firefox package suite: firefox
   npm run verify:firefox    builds that package, then runs its unit tests and Playwright in Firefox
   npm run verify:coverage   typecheck plus --all with coverage gates
   npm test and --all stay on Chromium and the Chrome package. They do not select firefox.
-Live targets: agent, realworld, deepseek, rate, cli-mcp, cli-mcp-supplement, multi-browser, pi-multi-browser, pi-concurrent-browsers
+Live targets: agent, realworld, deepseek, firefox-ui, rate, cli-mcp, cli-mcp-supplement, multi-browser, pi-multi-browser, pi-concurrent-browsers
   (no target: deepseek + realworld)
 
 Options:

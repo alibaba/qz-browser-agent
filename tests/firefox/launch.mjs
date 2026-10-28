@@ -128,7 +128,7 @@ async function evaluateExtension(session, target, expression) {
       sendAsyncMessage(${JSON.stringify(message)}, { ok: false, error: String(error && error.message || error) });
     }
   })();`;
-  const dataUrl = `data:text/javascript,${encodeURIComponent(frameSource)}`;
+  const dataUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(frameSource)}`;
   const payload = await evaluateChrome(session, `
     const target = ${JSON.stringify(target)};
     const dataUrl = ${JSON.stringify(dataUrl)};

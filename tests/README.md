@@ -344,6 +344,16 @@ model/tool turns and elapsed time, including any additional verification calls. 
 `QZ_PAGE_BATCH_EXPECT_BINDINGS=0` when measuring an older extension without this contract; answer
 checks remain enabled. This case is selected explicitly and uses the normal live credential rules.
 
+`npm test -- live firefox-ui` runs real DeepSeek tasks in an isolated Firefox sidebar. It holds a
+local navigation until the tool returns a partial timeout, checks the incomplete indicator, and
+verifies a later read returns the page's random code without opening it again. A multi-page task
+tests repeated header/footer collapse while the next model request is paused, then checks the
+final answer. It also pairs the current CLI bridge and lists both tasks through the real CLI/MCP
+path. Set `QINGZHOU_FIREFOX_EXTENSION_DIR` to a built Firefox extension, `FIREFOX_EXECUTABLE` to
+a supported Firefox, and `QINGZHOU_LIVE_REPORT` for the JSON evidence. A test-only loopback
+forwarder uses Node's network configuration to reach DeepSeek, preserving request payloads and
+forwarding upstream SSE chunks. Production packages contain neither forwarding nor probe scripts.
+
 For the extended session-management checks, run `live deepseek` with
 `QINGZHOU_LIVE_SESSION_MANAGEMENT=1 QINGZHOU_LIVE_SESSION_MANAGEMENT_EXTENDED=1`. The ordinary
 lifecycle run and this management run use separate temporary profiles. Set `QINGZHOU_LIVE_REPORT` to
