@@ -4,13 +4,14 @@ import { fileURLToPath } from "node:url";
 import { expect, test, testAssetUrl } from "./fixtures.mjs";
 
 const html = readFileSync(join(dirname(dirname(fileURLToPath(import.meta.url))), "fixtures/open-shadow-article.html"), "utf8");
+const componentHtml = readFileSync(join(dirname(dirname(fileURLToPath(import.meta.url))), "fixtures/shadow-components-article.html"), "utf8");
 const contentScripts = [
   "extension/content/article-extractor.js",
   "extension/content/content-script.js",
 ];
 
-async function install(page) {
-  await page.setContent(html, { waitUntil: "load" });
+async function install(page, markup = html) {
+  await page.setContent(markup, { waitUntil: "load" });
   await page.evaluate(() => {
     document.querySelectorAll("script").forEach(script => script.remove());
     let listener = null;
@@ -81,3 +82,23 @@ test("read_article and find_elements see open shadow tables and skip closed root
   const closed = await call(page, "findElements", { selector: "#story", pattern: "CLOSED-SHADOW-SECRET" });
   expect(closed.matches).toBe(0);
 });
+
+for (const source of ['auto', 'selector', 'body']) {
+  test(`read_article preserves component content without lifecycle callbacks · ${source}`, async ({ page }) => {
+    await install(page, componentHtml);
+    const before = await page.evaluate(() => ({ calls: {...componentCalls}, html: document.body.innerHTML,
+      shadow: document.querySelector('#shadow-host').shadowRoot.innerHTML }));
+    const result = await call(page, 'readArticle', { source, selector: '#story', limit: 20000 });
+    const after = await page.evaluate(() => ({ calls: {...componentCalls}, html: document.body.innerHTML,
+      shadow: document.querySelector('#shadow-host').shadowRoot.innerHTML }));
+    expect(after).toEqual(before);
+    expect(result.code, result.error).toBeUndefined();
+    for (const marker of ['LIGHT-SLOT-EVIDENCE', 'NESTED-SLOT-EVIDENCE', 'DEEP-SLOT-EVIDENCE']) {
+      expect(result.text.match(new RegExp(marker, 'g')), result.text).toEqual([marker]);
+    }
+    expect(result.text.match(/FULL-117/g)).toHaveLength(3);
+    expect(result.text.match(/FULL-118/g)).toHaveLength(3);
+    expect(result.text).toContain('https://example.test/research/reference.html');
+    if (source === 'auto') expect(result.text).not.toMatch(/HIDDEN-(LIGHT|SHADOW)-SECRET/);
+  });
+}

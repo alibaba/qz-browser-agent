@@ -79,34 +79,37 @@ export function appendOpenShadowContent(source: Element, clone: Element, options
   const shadow = openShadowRoot(source);
   if (!shadow) return;
   for (const child of shadow.childNodes) {
-    const cloned = composeNode(child, options, true, false, new Set());
+    const cloned = composeNode(child, clone.ownerDocument, options, true, false, new Set());
     if (cloned) clone.append(cloned);
   }
 }
 
 function composeNode(
   node: Node,
+  targetDocument: Document,
   options: OpenShadowComposeOptions | undefined,
   insideShadow: boolean,
   projectSlots: boolean,
   stack: Set<Node>,
 ): Node | null {
-  if (node.nodeType === 3 || node.nodeType === 4 || node.nodeType === 8) return node.cloneNode(false);
+  if (node.nodeType === 3 || node.nodeType === 4 || node.nodeType === 8) return targetDocument.importNode(node, false);
   if (node.nodeType !== 1) return null;
   const element = node as Element;
   if (stack.has(element)) return null;
   if (insideShadow && element.tagName === "SLOT") {
     if (options?.includeElement && !options.includeElement(element)) return null;
-    return composeSlot(element as HTMLSlotElement, options, projectSlots, stack);
+    return composeSlot(element as HTMLSlotElement, targetDocument, options, projectSlots, stack);
   }
   if (options?.includeElement && !options.includeElement(element)) return null;
   stack.add(element);
   try {
-    const clone = element.cloneNode(false) as Element;
+    // Create the copy in the destination document so the source page's custom
+    // element registry cannot construct or adopt it while flattening shadows.
+    const clone = targetDocument.importNode(element, false);
     const shadow = openShadowRoot(element);
     if (shadow) {
       for (const child of shadow.childNodes) {
-        const cloned = composeNode(child, options, true, true, stack);
+        const cloned = composeNode(child, targetDocument, options, true, true, stack);
         if (cloned) clone.append(cloned);
       }
       return clone;
@@ -115,13 +118,13 @@ function composeNode(
       const content = (element as HTMLTemplateElement).content;
       const cloneContent = (clone as HTMLTemplateElement).content;
       for (const child of content.childNodes) {
-        const cloned = composeNode(child, options, insideShadow, projectSlots, stack);
+        const cloned = composeNode(child, cloneContent.ownerDocument, options, insideShadow, projectSlots, stack);
         if (cloned) cloneContent.append(cloned);
       }
       return clone;
     }
     for (const child of element.childNodes) {
-      const cloned = composeNode(child, options, insideShadow, projectSlots, stack);
+      const cloned = composeNode(child, targetDocument, options, insideShadow, projectSlots, stack);
       if (cloned) clone.append(cloned);
     }
     return clone;
@@ -132,6 +135,7 @@ function composeNode(
 
 function composeSlot(
   slot: HTMLSlotElement,
+  targetDocument: Document,
   options: OpenShadowComposeOptions | undefined,
   projectSlots: boolean,
   stack: Set<Node>,
@@ -144,10 +148,10 @@ function composeSlot(
   }
   if (assigned.length && !projectSlots) return null;
   const children = assigned.length ? assigned : [...slot.childNodes];
-  const fragment = slot.ownerDocument.createDocumentFragment();
+  const fragment = targetDocument.createDocumentFragment();
   const childInsideShadow = assigned.length === 0;
   for (const child of children) {
-    const cloned = composeNode(child, options, childInsideShadow, true, stack);
+    const cloned = composeNode(child, targetDocument, options, childInsideShadow, true, stack);
     if (cloned) fragment.append(cloned);
   }
   return fragment.childNodes.length ? fragment : null;

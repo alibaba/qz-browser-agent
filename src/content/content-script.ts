@@ -164,7 +164,13 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function articleFromElement(element: Element, mode: string): Article {
-    const clone = element.cloneNode(true) as Element;
+    // Import into an inert document before copying shadow content; cloning in
+    // the live document would construct the page's custom elements.
+    const snapshot = document.implementation.createHTMLDocument("");
+    const base = snapshot.createElement("base");
+    base.href = element.baseURI;
+    snapshot.head.append(base);
+    const clone = snapshot.importNode(element, true);
     // Materialize open shadow trees onto the clone so text, tables, and outline
     // use the existing light-DOM walk. Closed roots are not copied.
     graftOpenShadows(element, clone);
