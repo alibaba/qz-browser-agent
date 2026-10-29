@@ -384,6 +384,7 @@ export default defineMessages("core", {
   shownOf: { "zh-CN": "前 {shown} / {total}", en: "Showing {shown} of {total}" },
   affectedToolCount: { "zh-CN": "等 {count} 个", en: "{count} tools in total" },
   sourceGenerating: { "zh-CN": "来源 {label} 生成中", en: "Preparing source {label}" },
+  tableGenerating: { "zh-CN": "表格生成中… {count} 字", en: "Generating table… {count} characters" },
   sourceLabel: { "zh-CN": "来源 {label}", en: "Source: {label}" },
   elapsedTime: { "zh-CN": "耗时 {duration}", en: "Time: {duration}" },
   columnCount: { "zh-CN": "{count} 列", en: "Columns: {count}" },

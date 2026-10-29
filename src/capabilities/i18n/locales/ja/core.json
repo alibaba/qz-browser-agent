@@ -389,5 +389,8 @@
   "core.dataConsentDetails": "プライバシーと権限",
   "core.dataConsentAccept": "同意して続行",
   "core.dataConsentLater": "後で",
-  "core.dataConsentSaveFailed": "選択を保存できませんでした。もう一度お試しください。"
+  "core.dataConsentSaveFailed": "選択を保存できませんでした。もう一度お試しください。",
+  "core.toolResultIncomplete": "タイムアウトしました。結果は不完全です",
+  "core.toolResultIncompleteShort": "未完了",
+  "core.tableGenerating": "表を生成中… {count} 文字"
 }

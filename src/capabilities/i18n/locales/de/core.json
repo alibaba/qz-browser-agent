@@ -389,5 +389,8 @@
   "core.dataConsentDetails": "Datenschutz und Berechtigungen",
   "core.dataConsentAccept": "Zustimmen und fortfahren",
   "core.dataConsentLater": "Später",
-  "core.dataConsentSaveFailed": "Deine Auswahl konnte nicht gespeichert werden. Versuche es erneut."
+  "core.dataConsentSaveFailed": "Deine Auswahl konnte nicht gespeichert werden. Versuche es erneut.",
+  "core.toolResultIncomplete": "Zeitüberschreitung; unvollständiges Ergebnis",
+  "core.toolResultIncompleteShort": "Unvollständig",
+  "core.tableGenerating": "Tabelle wird erstellt… {count} Zeichen"
 }

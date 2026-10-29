@@ -389,5 +389,8 @@
   "core.dataConsentDetails": "الخصوصية والأذونات",
   "core.dataConsentAccept": "الموافقة والمتابعة",
   "core.dataConsentLater": "لاحقًا",
-  "core.dataConsentSaveFailed": "تعذّر حفظ اختيارك. حاول مرة أخرى."
+  "core.dataConsentSaveFailed": "تعذّر حفظ اختيارك. حاول مرة أخرى.",
+  "core.toolResultIncomplete": "انتهت المهلة؛ النتيجة غير مكتملة",
+  "core.toolResultIncompleteShort": "غير مكتمل",
+  "core.tableGenerating": "جارٍ إنشاء الجدول… {count} حرفًا"
 }

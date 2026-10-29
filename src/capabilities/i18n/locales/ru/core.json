@@ -389,5 +389,8 @@
   "core.dataConsentDetails": "Конфиденциальность и разрешения",
   "core.dataConsentAccept": "Принять и продолжить",
   "core.dataConsentLater": "Позже",
-  "core.dataConsentSaveFailed": "Не удалось сохранить ваш выбор. Повторите попытку."
+  "core.dataConsentSaveFailed": "Не удалось сохранить ваш выбор. Повторите попытку.",
+  "core.toolResultIncomplete": "Время ожидания истекло; результат неполный",
+  "core.toolResultIncompleteShort": "Не завершено",
+  "core.tableGenerating": "Создание таблицы… {count} символов"
 }

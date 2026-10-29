@@ -389,5 +389,8 @@
   "core.dataConsentDetails": "गोपनीयता और अनुमतियाँ",
   "core.dataConsentAccept": "सहमत होकर आगे बढ़ें",
   "core.dataConsentLater": "बाद में",
-  "core.dataConsentSaveFailed": "आपका विकल्प सेव नहीं हो सका। फिर से कोशिश करें।"
+  "core.dataConsentSaveFailed": "आपका विकल्प सेव नहीं हो सका। फिर से कोशिश करें।",
+  "core.toolResultIncomplete": "समय सीमा समाप्त; परिणाम अधूरा है",
+  "core.toolResultIncompleteShort": "अधूरा",
+  "core.tableGenerating": "तालिका बन रही है… {count} अक्षर"
 }

@@ -1408,7 +1408,8 @@ function renderAssistantPlaybackContent(el: HTMLElement, text: unknown, { math =
   if (hasActiveSelectionInsideNode(content)) return;
   const shouldStick = scroll.shouldFollowTail();
   const next = String(text || "");
-  if (el.dataset.content !== next) {
+  const markdownMode = math === "stream" ? "stream" : "complete";
+  if (el.dataset.content !== next || (el.dataset.markdownMode || "complete") !== markdownMode) {
     const codeBlockScrollState = captureMarkdownCodeBlockScrollState(content);
     setAssistantFailureClass(el, next);
     patchHtmlContent(content, renderAssistantContentHtml(next, {
@@ -1423,6 +1424,7 @@ function renderAssistantPlaybackContent(el: HTMLElement, text: unknown, { math =
       followNewBlocks: followCodeBlocks,
     });
     el.dataset.content = next;
+    el.dataset.markdownMode = markdownMode;
     if (math && !isAssistantFailureText(next)) mathRenderer.schedule(content);
   }
   if (shouldStick) scroll.scrollToBottom({ immediate: true, instant: true, force: true });

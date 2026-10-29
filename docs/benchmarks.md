@@ -119,6 +119,10 @@ animation restarts and missed tail resumption. Default anchor/pager drift is at 
 run adds reproducible wheel direction, distance and reading pauses; during settled pauses it samples
 completed visible cards every frame and rejects drift above 0.5 px, disappearing cards or empty
 coverage. Intentional scrolling is excluded. Preserve the seed and traces when reporting a failure.
+Tail resumption samples 24 frames and rejects backward movement above 0.5 px at unchanged viewport
+dimensions, even if the tail gap remains zero. The assistant viewport fuzz described in
+[Tests](../tests/README.md#benchmarks-and-visual-checks) watches the entire randomized Markdown
+stream through completion; short benchmark pauses alone do not provide that coverage.
 
 ```bash
 node --import tsx tests/benchmarks/conversation-render/run-stream-interaction.mjs

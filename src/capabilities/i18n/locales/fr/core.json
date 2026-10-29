@@ -389,5 +389,8 @@
   "core.dataConsentDetails": "Confidentialité et autorisations",
   "core.dataConsentAccept": "Accepter et continuer",
   "core.dataConsentLater": "Plus tard",
-  "core.dataConsentSaveFailed": "Impossible d’enregistrer votre choix. Réessayez."
+  "core.dataConsentSaveFailed": "Impossible d’enregistrer votre choix. Réessayez.",
+  "core.toolResultIncomplete": "Délai dépassé ; résultat incomplet",
+  "core.toolResultIncompleteShort": "Incomplet",
+  "core.tableGenerating": "Génération du tableau… {count} caractères"
 }

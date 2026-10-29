@@ -389,5 +389,8 @@
   "core.dataConsentDetails": "Privacidade e permissões",
   "core.dataConsentAccept": "Concordar e continuar",
   "core.dataConsentLater": "Mais tarde",
-  "core.dataConsentSaveFailed": "Não foi possível salvar sua escolha. Tente novamente."
+  "core.dataConsentSaveFailed": "Não foi possível salvar sua escolha. Tente novamente.",
+  "core.toolResultIncomplete": "Tempo esgotado; resultado incompleto",
+  "core.toolResultIncompleteShort": "Incompleto",
+  "core.tableGenerating": "Gerando tabela… {count} caracteres"
 }
