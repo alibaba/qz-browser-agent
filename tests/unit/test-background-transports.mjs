@@ -47,7 +47,10 @@ const api = createBackgroundApi({
       if (input.detachWindow) sidepanelWindowId = null;
       return { accepted: true, sessionId: input.sessionId };
     },
-    getDraft: async input => ({ sessionId: input.sessionId, draft: null }),
+    getDraft: async input => {
+      calls.push(["get_draft", input]);
+      return { sessionId: input.sessionId, draft: null };
+    },
     saveDraft: async input => {
       if (input.draft?.text === "fail-store") throw new Error("draft store unavailable");
       calls.push(["sync_draft", input]);
@@ -241,6 +244,10 @@ const responses = [];
 let sidepanelWindowId = 42;
 const sidepanel = createSidepanelTransport(api, { getWindowId: () => sidepanelWindowId });
 const port = { postMessage: message => responses.push(message) };
+await sidepanel.dispatch({ type: "get_composer_draft", requestId: "recover-draft", sessionId: "s1",
+  windowId: 999, afterQueuedMutation: true }, port);
+assert.deepEqual(calls.at(-1), ["get_draft", { sessionId: "s1", windowId: 42, afterQueuedMutation: true }]);
+assert.deepEqual(responses.pop(), { type: "get_composer_draft_result", requestId: "recover-draft", sessionId: "s1", draft: null });
 await sidepanel.dispatch({
   type: "create_ui_session",
   requestId: "create-draft",

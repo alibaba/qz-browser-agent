@@ -940,13 +940,16 @@ async function followUpSessionRuntime(params: PromptInput = {}, signal?: AbortSi
 async function getSessionComposerDraftRuntime(params: Fields = {}) {
   const sessionId = requireExplicitSessionId(params.sessionId, "get_composer_draft");
   const windowKey = composerWindowKey(params.windowId);
-  return composerDraftMutations.run(sessionId, async () => {
+  const read = () => composerDraftMutations.run(sessionId, async () => {
     await sessionRuntimeReady;
     return {
       sessionId,
       draft: normalizeComposerDraft(object(sessionSupervisor.getRuntime(sessionId)?.composerDrafts)[windowKey], sessionId),
     };
   });
+  // A recall may still be waiting to enter the composer queue after its caller times out.
+  // Recovery must follow that command through both queues before unlocking the editor.
+  return params.afterQueuedMutation === true ? sessionSupervisor.withRuntime(sessionId, read) : read();
 }
 
 async function saveSessionComposerDraftRuntime(params: Fields = {}) {

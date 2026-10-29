@@ -109,6 +109,15 @@ image/file restoration, editing and resending, merging an existing draft, Sessio
 persistence failure with retry in both color schemes. The fixture uses isolated local data and
 does not invoke a model provider.
 
+Use `--grep "extreme"` for blocked persistence, repeated cancellation, Enter and attachment
+removal during recall, in-flight Session switches, queue consumption and steering races,
+attachment-copy failures, lost replies with repeated disconnects, composition events, and
+attachment-only or long Unicode messages. The fixture uses the production Session supervisor
+to serialize commands. `npm test -- unit --match queued-message-recovery` adds competing-window
+admission, durable rollback and restart snapshots, cleanup failure, stale drafts, and recovery
+reads queued behind a Session command. Composer lifecycle tests check that reconnect recovery
+keeps editing locked, preserves Session ownership, and never replays the recall mutation.
+
 For seeded queue/composer interactions, run:
 
 ```bash

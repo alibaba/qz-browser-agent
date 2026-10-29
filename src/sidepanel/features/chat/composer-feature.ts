@@ -618,22 +618,42 @@ export function createComposerFeature(options: ComposerOptions) {
     draftSaveTimer = 0;
     draft.submitting = true;
     updateSendState();
+    const applyRecoveredDraft = (value: unknown) => {
+      if (!value || !isTrackedDraft(draft)) return;
+      const restored = createDraftState(value);
+      lastDraftUpdatedAt = Math.max(lastDraftUpdatedAt, restored.updatedAt);
+      Object.assign(draft, restored, { submitting: true });
+      if (isActiveDraft(draft)) {
+        slashMenu.close();
+        preserveViewportDuringDockLayout(() => activateDraft(draft));
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    };
     try {
       const result = await request("restore_queued_message", {
         sessionId, clientMessageId, queueKind, draft: serializeDraft(draft),
       });
-      if (result.restored && result.draft && isTrackedDraft(draft)) {
-        const restored = createDraftState(result.draft);
-        lastDraftUpdatedAt = Math.max(lastDraftUpdatedAt, restored.updatedAt);
-        Object.assign(draft, restored);
-        if (isActiveDraft(draft)) {
-          slashMenu.close();
-          preserveViewportDuringDockLayout(() => activateDraft(draft));
-          input.focus();
-          input.setSelectionRange(input.value.length, input.value.length);
+      if (result.restored) applyRecoveredDraft(result.draft);
+      return result;
+    } catch (error) {
+      // A disconnected/timed-out response does not mean the durable withdrawal failed.
+      // Keep editing paused until an ordered read settles that uncertainty; saving the
+      // stale local draft after unlocking could overwrite the recovered attachments.
+      const connectionFailure = (value: unknown) => /^(?:PORT_(?:DISCONNECTED|REQUEST_TIMEOUT)|TRANSPORT_(?:DISCONNECTED|TIMEOUT))$/.test(String(record(value).code || ""));
+      if (connectionFailure(error) || record(error).code === "COMPOSER_DRAFT_CHANGED") {
+        while (isTrackedDraft(draft)) {
+          try {
+            const saved = await request("get_composer_draft", { sessionId, afterQueuedMutation: true }, null);
+            if (Number(record(saved.draft).updatedAt) > draft.updatedAt) applyRecoveredDraft(saved.draft);
+            break;
+          } catch (readError) {
+            if (!connectionFailure(readError)) throw readError;
+            await new Promise(resolve => setTimeout(resolve, 300));
+          }
         }
       }
-      return result;
+      throw error;
     } finally {
       draft.submitting = false;
       if (isActiveDraft(draft)) {

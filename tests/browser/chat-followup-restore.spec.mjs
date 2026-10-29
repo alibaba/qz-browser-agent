@@ -37,7 +37,186 @@ for (const colorScheme of ["light", "dark"]) {
         expect(sent.documents[0]).toMatchObject({ filename: "notes.txt", messageId: sent.clientMessageId, sessionId: "recall" });
         expect(await page.evaluate(async ref => (await window.__recall.store.getDocumentFile(ref.fileId)).base64, sent.documents[0])).toBe(btoa("original notes"));
       });
+
+      test(`extreme ${queueKind}: a blocked durable write resists repeated clicks, Enter and attachment removal`, async ({ page }) => {
+        await seed(page, { queueKind, existingDraft: true });
+        await page.evaluate(() => {
+          const b = window.__recall;
+          b.persistHook = async () => {
+            b.persistHook = null;
+            b.writing = true;
+            await new Promise(resolve => { b.releaseWrite = resolve; });
+          };
+        });
+        const cancel = page.locator(".queued-followup-delete");
+        await cancel.click();
+        await page.waitForFunction(() => window.__recall.writing);
+        await expect(cancel).toBeDisabled();
+        await expect(page.locator("#input")).not.toBeEditable();
+        await page.locator("#input").press("Enter");
+        await page.evaluate(() => {
+          for (let i = 0; i < 40; i++) document.querySelector(".queued-followup-delete").click();
+          document.querySelector("[data-remove-document]")?.click();
+          document.querySelector("[data-remove-image]")?.click();
+        });
+        await expect(page.locator(".input-document-attachment")).toHaveCount(1);
+        expect(await page.evaluate(() => window.__recall.recallRequests)).toBe(1);
+        expect(await page.evaluate(() => window.__qzPostedMessages.filter(m => m.type === "prompt"))).toEqual([]);
+        await page.evaluate(() => window.__recall.releaseWrite());
+        await expect(page.locator("#input")).toHaveValue("Please inspect the screenshot and notes\n\nUnsent draft");
+        await expect(page.locator(".input-document-attachment.is-ready")).toHaveCount(2);
+        await expect(page.locator(".input-image-attachment")).toHaveCount(2);
+        await expect(page.locator("#queued-followups .queued-followup")).toHaveCount(0);
+        await assertDraftOwnership(page);
+      });
+
+      test(`extreme ${queueKind}: switching sessions during a blocked recall keeps both drafts isolated`, async ({ page }) => {
+        await seed(page, { queueKind, existingDraft: true });
+        await page.evaluate(() => { window.__recall.delayMs = 800; });
+        await page.locator(".queued-followup-delete").click();
+        await switchSession(page, "other");
+        await page.locator("#input").fill("另一会话的草稿 🐳");
+        await page.waitForFunction(() => !window.__recall.agent.findPendingUserMessage("queued"));
+        await expect(page.locator("#input")).toHaveValue("另一会话的草稿 🐳");
+        await expect(page.locator(".input-document-attachment")).toHaveCount(0);
+        await switchSession(page, "recall");
+        await expect(page.locator("#input")).toHaveValue("Please inspect the screenshot and notes\n\nUnsent draft");
+        await expect(page.locator(".input-document-attachment.is-ready")).toHaveCount(2);
+        await assertDraftOwnership(page);
+      });
+
+      test(`extreme ${queueKind}: consumption before the request arrives cannot duplicate the message`, async ({ page }) => {
+        await seed(page, { queueKind, existingDraft: true });
+        await page.evaluate(() => { window.__recall.delayMs = 700; });
+        await page.locator(".queued-followup-delete").click();
+        const consumed = await page.evaluate(kind => {
+          const b = window.__recall;
+          // The production queue drain is the handoff boundary; the UI request has not reached it yet.
+          const messages = (kind === "steering" ? b.agent.steeringQueue : b.agent.followUpQueue).drain();
+          b.agent._emitQueueUpdate();
+          return messages.map(message => message.clientMessageId);
+        }, queueKind);
+        expect(consumed).toEqual(["queued"]);
+        await expect(page.locator("#input")).toBeEditable();
+        await expect(page.locator("#input")).toHaveValue("Unsent draft");
+        await expect(page.locator(".input-document-attachment")).toHaveCount(1);
+        await expect(page.locator("#queued-followups .queued-followup")).toHaveCount(0);
+        expect(await page.evaluate(() => window.__qzPostedMessages.filter(m => m.type === "prompt"))).toEqual([]);
+      });
+
+      test(`extreme ${queueKind}: failed attachment copying preserves the queue, then one retry succeeds`, async ({ page }) => {
+        await seed(page, { queueKind, existingDraft: true });
+        await page.evaluate(() => { window.__recall.failCopy = true; });
+        await page.locator(".queued-followup-delete").click();
+        await expect(page.getByText("attachment transaction aborted", { exact: true })).toBeVisible();
+        await expect(page.locator("#input")).toHaveValue("Unsent draft");
+        await expect(page.locator("#queued-followups .queued-followup")).toHaveCount(1);
+        expect(await page.evaluate(async () => Boolean(await window.__recall.store.getDocumentFile("queued-file")))).toBe(true);
+        await page.evaluate(() => { window.__recall.failCopy = false; });
+        await page.locator(".queued-followup-delete").click();
+        await expect(page.locator(".input-document-attachment.is-ready")).toHaveCount(2);
+        await assertDraftOwnership(page);
+      });
+
+      test(`extreme ${queueKind}: a lost success response recovers the committed draft before further editing`, async ({ page }) => {
+        await seed(page, { queueKind, existingDraft: true });
+        await page.evaluate(() => { window.__recall.loseReply = true; window.__recall.failRecoveryReads = 2; });
+        await page.locator(".queued-followup-delete").click();
+        await expect(page.locator("#queued-followups .queued-followup")).toHaveCount(0);
+        await expect(page.locator("#input")).toHaveValue("Please inspect the screenshot and notes\n\nUnsent draft");
+        await expect(page.locator(".input-document-attachment.is-ready")).toHaveCount(2);
+        await page.locator("#input").press("ControlOrMeta+End");
+        await page.keyboard.insertText(" — 再补充");
+        await switchSession(page, "other");
+        await switchSession(page, "recall");
+        await expect(page.locator("#input")).toHaveValue("Please inspect the screenshot and notes\n\nUnsent draft — 再补充");
+        await assertDraftOwnership(page);
+      });
+
+      test(`extreme ${queueKind}: attachment-only and long Unicode messages retain their exact contents`, async ({ page }) => {
+        await seed(page, { queueKind, queuedText: "" });
+        const imagePrompt = await page.evaluate(() => [...window.__recall.agent.getPendingFollowUps(),
+          ...window.__recall.agent.getPendingSteerings()][0].text);
+        await page.locator(".queued-followup-delete").click();
+        // Image-only messages already carry the Agent's localized default prompt.
+        await expect(page.locator("#input")).toHaveValue(imagePrompt);
+        await expect(page.locator(".input-image-attachment")).toHaveCount(1);
+        await expect(page.locator(".input-document-attachment.is-ready")).toHaveCount(1);
+        await page.locator("#input").fill("");
+        const text = "京都 🐳 café e\u0301 | 表格\n".repeat(2048);
+        await page.evaluate(async ({ kind, text }) => {
+          await window.__recall.agent.followUp(text, [], "long");
+          if (kind === "steering") window.__recall.agent.steerFollowUp("long");
+        }, { kind: queueKind, text });
+        await page.locator('.queued-followup[data-client-message-id="long"] .queued-followup-delete').click();
+        await expect(page.locator("#input")).toHaveValue(text);
+        await page.locator("#btn-send").click();
+        await expect.poll(() => page.evaluate(() => window.__qzPostedMessages.filter(m => m.type === "prompt").length)).toBe(1);
+        const sent = await page.evaluate(() => window.__qzPostedMessages.find(m => m.type === "prompt"));
+        expect(sent.text).toBe(text.trim());
+        expect(sent.images).toHaveLength(1);
+        expect(sent.documents).toHaveLength(1);
+        expect(sent.documents[0].messageId).toBe(sent.clientMessageId);
+        expect(await page.evaluate(async ref => (await window.__recall.store.getDocumentFile(ref.fileId)).base64, sent.documents[0])).toBe(btoa("original notes"));
+      });
+
+      test(`extreme ${queueKind}: composition blocks recall until the input method finishes`, async ({ page }) => {
+        await seed(page, { queueKind, existingDraft: true });
+        await page.locator("#input").evaluate(input => input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
+        await page.locator(".queued-followup-delete").click();
+        await expect(page.locator(".queued-followup-delete")).toBeEnabled();
+        expect(await page.evaluate(() => window.__recall.recallRequests || 0)).toBe(0);
+        await expect(page.locator("#input")).toHaveValue("Unsent draft");
+        await page.locator("#input").evaluate(input => input.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })));
+        await page.locator(".queued-followup-delete").click();
+        await expect(page.locator(".input-document-attachment.is-ready")).toHaveCount(2);
+        await assertDraftOwnership(page);
+      });
     }
+
+    test("extreme followup: cancelling while conversion to steering is in flight never duplicates work", async ({ page }) => {
+      await seed(page, { existingDraft: true });
+      await page.evaluate(() => { window.__recall.delayMs = 800; });
+      await page.locator(".queued-followup-delete").click();
+      await page.locator("[data-steer-follow-up]").click();
+      await expect(page.locator(".queued-followup")).toHaveAttribute("data-queue-kind", "steering");
+      await expect(page.locator("#input")).toBeEditable();
+      await expect(page.locator("#input")).toHaveValue("Unsent draft");
+      expect(await page.evaluate(() => window.__recall.agent.getPendingSteerings().length)).toBe(1);
+      await page.evaluate(() => { window.__recall.delayMs = 0; });
+      await page.locator(".queued-followup-delete").click();
+      await expect(page.locator("#input")).toHaveValue("Please inspect the screenshot and notes\n\nUnsent draft");
+      await expect(page.locator("#queued-followups .queued-followup")).toHaveCount(0);
+      await assertDraftOwnership(page);
+    });
+
+    test("extreme followup: steering and a second cancel wait behind the first durable recall", async ({ page }) => {
+      await seed(page, { existingDraft: true });
+      await page.evaluate(async () => {
+        const b = window.__recall;
+        await b.agent.followUp("second message", [], "second");
+        b.persistHook = async () => {
+          b.persistHook = null;
+          b.writing = true;
+          await new Promise(resolve => { b.releaseWrite = resolve; });
+        };
+      });
+      const first = page.locator('.queued-followup[data-client-message-id="queued"]');
+      const second = page.locator('.queued-followup[data-client-message-id="second"]');
+      await first.locator(".queued-followup-delete").click();
+      await page.waitForFunction(() => window.__recall.writing);
+      await first.locator("[data-steer-follow-up]").click();
+      await second.locator(".queued-followup-delete").click();
+      await expect(second.locator(".queued-followup-delete")).toBeEnabled();
+      expect(await page.evaluate(() => window.__recall.recallRequests)).toBe(1);
+      await page.evaluate(() => window.__recall.releaseWrite());
+      await expect(page.locator("#input")).toHaveValue("Please inspect the screenshot and notes\n\nUnsent draft");
+      await expect(page.locator("#queued-followups .queued-followup")).toHaveCount(1);
+      await second.locator(".queued-followup-delete").click();
+      await expect(page.locator("#input")).toHaveValue("second message\n\nPlease inspect the screenshot and notes\n\nUnsent draft");
+      await expect(page.locator("#queued-followups .queued-followup")).toHaveCount(0);
+      await assertDraftOwnership(page);
+    });
 
     test("merges an existing draft and its attachments without reparsing or losing either file", async ({ page }) => {
       await seed(page, { existingDraft: true });
@@ -96,8 +275,8 @@ async function switchSession(page, sessionId) {
   }, sessionId);
 }
 
-async function seed(page, { queueKind = "followup", existingDraft = false } = {}) {
-  await page.evaluate(async ({ queueKind, existingDraft }) => {
+async function seed(page, { queueKind = "followup", existingDraft = false, queuedText = "Please inspect the screenshot and notes" } = {}) {
+  await page.evaluate(async ({ queueKind, existingDraft, queuedText }) => {
     const { agent, commands, store } = window.__recall;
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 16;
@@ -114,7 +293,7 @@ async function seed(page, { queueKind = "followup", existingDraft = false } = {}
       return ref;
     }
     const queuedDocument = await documentFor("queued", "original notes");
-    await agent.followUp("Please inspect the screenshot and notes", [image], "queued", [queuedDocument]);
+    await agent.followUp(queuedText, [image], "queued", [queuedDocument]);
     if (queueKind === "steering") agent.steerFollowUp("queued");
     if (existingDraft) {
       const document = await documentFor("existing", "existing notes");
@@ -123,7 +302,7 @@ async function seed(page, { queueKind = "followup", existingDraft = false } = {}
         images: [{ ...image, attachmentId: "existing-image" }], documents: [{ ...document, document, status: "ready" }],
       } });
     }
-  }, { queueKind, existingDraft });
+  }, { queueKind, existingDraft, queuedText });
   await switchSession(page, "recall");
   await page.evaluate(() => window.qingzhouConversationBenchmark.configureVisualState({ running: true,
     pendingFollowUps: window.__recall.agent.getPendingFollowUps(), pendingSteerings: window.__recall.agent.getPendingSteerings() }));
@@ -137,11 +316,20 @@ function installRecallTransport() {
     port.postMessage = message => {
       if (!window.__recallTransport || !["restore_queued_message", "steer_follow_up", "get_composer_draft", "sync_composer_draft", "delete_chat_document"].includes(message.type)) return post(message);
       Promise.resolve().then(async () => {
+        if (message.type === "get_composer_draft" && window.__recall.failRecoveryReads > 0) {
+          window.__recall.failRecoveryReads--;
+          throw Object.assign(new Error("recovery connection interrupted"), { code: "PORT_DISCONNECTED" });
+        }
         if (message.type === "restore_queued_message") {
           window.__recall.recallRequests = (window.__recall.recallRequests || 0) + 1;
           if (window.__recall.delayMs) await new Promise(resolve => setTimeout(resolve, window.__recall.delayMs));
         }
-        return window.__recallTransport.dispatch(message, { postMessage: value => window.__qzEmitPortMessage(value) });
+        return window.__recallTransport.dispatch(message, { postMessage: value => {
+          if (message.type === "restore_queued_message" && window.__recall.loseReply) {
+            window.__recall.loseReply = false;
+            window.__qzEmitPortMessage({ type: "error", requestId: message.requestId, code: "PORT_DISCONNECTED", message: "connection lost after commit" });
+          } else window.__qzEmitPortMessage(value);
+        } });
       })
         .catch(error => window.__qzEmitPortMessage({ type: "error", requestId: message.requestId, code: error.code || "TEST_FAILURE", message: error.message }));
     };
@@ -150,34 +338,67 @@ function installRecallTransport() {
 }
 
 async function installRecallBackend() {
-  const [{ Agent }, { createSessionCommands }, { createSidepanelTransport }, store] = await Promise.all([
+  const [{ Agent }, { createSessionCommands }, { createSidepanelTransport }, store, { createSessionSupervisor }] = await Promise.all([
     import("/extension/background/agent/agent.js"), import("/extension/background/session/commands.js"),
     import("/extension/background/transports/sidepanel.js"), import("/extension/shared/documents/document-store.js"),
+    import("/extension/background/session/supervisor.js"),
   ]);
   const backend = window.__recall = { runtime: {}, durable: null, failWrite: false, store };
-  const agent = backend.agent = new Agent("recall", { canStartQueuedRun: () => false });
+  const supervisor = backend.supervisor = createSessionSupervisor({
+    createAgent: lease => new Agent(lease.sessionId, { canStartQueuedRun: () => false, conversationLease: lease }),
+    onAgentEvent: (sessionId, event) => {
+      if (event.type !== "queue_update") return;
+      const runtime = { ...supervisor.getRuntime(sessionId), pendingFollowUps: event.pendingFollowUps, pendingSteerings: event.pendingSteerings,
+        pendingFollowUpMessages: event.pendingFollowUpMessages, pendingSteeringMessages: event.pendingSteeringMessages };
+      supervisor.setRuntime(sessionId, runtime);
+      if (sessionId === "recall") backend.runtime = runtime;
+      window.__qzEmitPortMessage({ ...event, sessionId });
+    },
+  });
+  backend.agent = await supervisor.getAgent("recall");
+  // This fixture streams an active run. Match that lifecycle in the real Supervisor,
+  // whose queue events otherwise correctly report an idle Agent as no longer running.
+  backend.agent._activeRun = new Promise(() => {});
   const commands = backend.commands = createSessionCommands({
-    runtime: { set: (_id, patch) => { backend.runtime = { ...backend.runtime, ...patch }; },
+    runtime: { set: (id, patch) => {
+        const runtime = { ...supervisor.getRuntime(id), ...patch };
+        supervisor.setRuntime(id, runtime);
+        if (id === "recall") backend.runtime = runtime;
+      },
       persist: async () => {
+        await backend.persistHook?.();
         if (backend.failWrite) throw new Error("recall persistence failed");
         backend.durable = structuredClone(backend.runtime);
       } },
-    sessionSupervisor: { getRuntime: id => id === "recall" ? backend.runtime : {}, withAgent: async (_id, operation) => operation(agent) },
+    sessionSupervisor: supervisor,
     sessionRepository: { getMetadata: async id => ({ id }) }, sessionRuntimeReady: Promise.resolve(),
     requireExplicitSessionId: id => { if (!id) throw new Error("missing session"); return id; },
-    copyChatMessageDocuments: store.copyMessageDocuments, removeChatMessageDocuments: store.deleteMessageDocuments,
+    copyChatMessageDocuments: params => {
+      if (backend.failCopy) throw new Error("attachment transaction aborted");
+      return store.copyMessageDocuments(params);
+    },
+    removeChatMessageDocuments: store.deleteMessageDocuments,
   });
   window.__recallTransport = createSidepanelTransport({
     system: { ready: async () => {} }, attachments: { remove: store.deleteMessageDocument },
     sessions: { restoreQueuedMessage: commands.restoreQueuedMessageRuntime, steerFollowUp: commands.steerSessionFollowUpRuntime,
       getDraft: commands.getSessionComposerDraftRuntime, saveDraft: commands.saveSessionComposerDraftRuntime },
   }, { getWindowId: () => 7 });
-  agent.subscribe(event => {
-    if (event.type !== "queue_update") return;
-    Object.assign(backend.runtime, { pendingFollowUps: event.pendingFollowUps, pendingSteerings: event.pendingSteerings,
-      pendingFollowUpMessages: event.pendingFollowUpMessages, pendingSteeringMessages: event.pendingSteeringMessages });
-    window.__qzEmitPortMessage({ ...event, sessionId: "recall" });
+}
+
+async function assertDraftOwnership(page) {
+  const data = await page.evaluate(async () => {
+    const { runtime, store } = window.__recall;
+    const draft = runtime.composerDrafts[7];
+    return Promise.all(draft.documents.map(async ref => {
+      const file = await store.getDocumentFile(ref.fileId), model = await store.getDocumentModel(ref.docModelId);
+      return { expected: draft.messageId, file: file?.messageId, model: model?.messageId,
+        bytes: file?.base64, linked: model?.fileId === file?.id };
+    }));
   });
+  expect(data).toHaveLength(2);
+  expect(data.every(x => x.file === x.expected && x.model === x.expected && x.linked)).toBe(true);
+  expect(data.map(x => x.bytes)).toEqual([btoa("original notes"), btoa("existing notes")]);
 }
 
 async function runQueuedRecallFuzz(page, testInfo, { width, colorScheme }) {

@@ -535,6 +535,10 @@ the queue withdrawal and the complete draft together before releasing queue admi
 draft text and attachments are retained; documents from a different message are copied with their
 parsed models into the draft's ownership before the queued originals are collected. A failed save
 keeps the message queued, and messages whose execution has already started cannot be recalled.
+If a recall response is lost, the composer stays locked while reconnecting and reads the saved
+draft after the original command in both the Session and composer queues. It adopts the newer
+snapshot before editing resumes, without replaying the withdrawal. A late response never updates
+a different or deleted Session.
 
 [Session export](../src/sidepanel/features/export/session-export-feature.ts) uses one Background
 exchange payload and synchronous `renderStatic` projections. It embeds the active skin and a
