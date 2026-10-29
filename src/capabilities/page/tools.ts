@@ -13,8 +13,11 @@ type PageElementHost = Pick<ToolExtensionAPI,
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
-import { armPageInputReceipt, beginPageNavigationObservation, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, readPageInputReceipt } from "#sdk/background/browser";
+import { armPageInputReceipt, beginPageNavigationObservation, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, openChildFrame, readPageInputReceipt } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
+
+interface PageViewport { width: number; height: number }
+interface FrameOrigin { x: number; y: number }
 
 /** Iframe content scripts report iframe-local points. Shift them by the iframe content origin only at dispatch. */
 async function framedPagePoint(send: CdpCommand, point: { x: number; y: number }, frameId: string) {
@@ -22,6 +25,74 @@ async function framedPagePoint(send: CdpCommand, point: { x: number; y: number }
   const origin = await frameContentOrigin(send, frameId);
   if (!origin) throw new Error("The iframe content origin is unavailable");
   return { x: point.x + origin.x, y: point.y + origin.y };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+/** Root layout viewport in CSS pixels, the same space as Input.dispatchMouseEvent. */
+async function readPageViewport(send: CdpCommand): Promise<PageViewport | null> {
+  try {
+    const metrics = asRecord(await send("Page.getLayoutMetrics"));
+    const viewport = asRecord(metrics.cssLayoutViewport || metrics.layoutViewport);
+    const width = Number(viewport.clientWidth);
+    const height = Number(viewport.clientHeight);
+    if (!(width > 0) || !(height > 0)) return null;
+    return { width, height };
+  } catch {
+    return null;
+  }
+}
+
+function readRect(value: unknown): { x: number; y: number; w: number; h: number } | null {
+  const box = asRecord(value);
+  const x = Number(box.x);
+  const y = Number(box.y);
+  const w = Number(box.w);
+  const h = Number(box.h);
+  if (![x, y, w, h].every(Number.isFinite)) return null;
+  return { x, y, w, h };
+}
+
+function pointInPageViewport(point: { x: number; y: number } | null | undefined, viewport: PageViewport): boolean {
+  return !!point && point.x >= 0 && point.y >= 0 && point.x <= viewport.width && point.y <= viewport.height;
+}
+
+function rectInPageViewport(rect: { x: number; y: number; w: number; h: number }, origin: FrameOrigin, viewport: PageViewport) {
+  const left = rect.x + origin.x;
+  const top = rect.y + origin.y;
+  return top + rect.h >= 0 && left + rect.w >= 0 && top <= viewport.height && left <= viewport.width;
+}
+
+/**
+ * Content scripts measure the iframe document. Callers that trust inViewport need the root page.
+ * A mouse point outside that viewport is not delivered to the framed element; dispatch can still
+ * hit the root document, so the input receipt must not turn that miss into success.
+ */
+function applyFramePageViewport(element: ElementReply, origin: FrameOrigin | null, viewport: PageViewport | null): ElementReply {
+  if (!element || element.error || !origin || !viewport) return element;
+  const rect = readRect(element.rect);
+  const local = element.clickablePoint;
+  const shifted = local ? { x: local.x + origin.x, y: local.y + origin.y } : null;
+  const clickablePointInViewport = pointInPageViewport(shifted, viewport);
+  // The click lands at the point. A point inside the page viewport is in view even when a rounded rect misses it.
+  const inViewport = clickablePointInViewport || (rect ? rectInPageViewport(rect, origin, viewport) : false);
+  element.inViewport = inViewport;
+  element.state = { ...(element.state || {}), inViewport, clickablePointInViewport };
+  return element;
+}
+
+function framePointMissesPage(element: ElementReply, origin: FrameOrigin | null, viewport: PageViewport | null) {
+  const point = element.clickablePoint;
+  if (!origin || !viewport || !point) return false;
+  return !pointInPageViewport({ x: point.x + origin.x, y: point.y + origin.y }, viewport);
+}
+
+/** Cross-site iframe input uses that frame's viewport, the same space as the content-script point. */
+async function remoteFrameInput(send: CdpCommand, frameId: string): Promise<CdpCommand | null> {
+  const opened = await openChildFrame(send, frameId);
+  return opened?.sessionId ? opened.send : null;
 }
 
 /** Registers page reading, element inspection/action, and scrolling tools. */
@@ -199,6 +270,16 @@ registerTool({
     const ref = await resolveElementReference(tabId, { target, index }, context);
     return readBound(ref, context, async call => {
       const inspection = await sendToContent(ref.tabId, "inspectElement", { selector: ref.selector, index: ref.index }, call, context);
+      const frameId = String(ref.ref?.frameId || "");
+      if (frameId && ref.tabId && !inspection.error) {
+        try {
+          await withDebugger(ref.tabId, async (_target, send) => {
+            applyFramePageViewport(inspection, await frameContentOrigin(send, frameId), await readPageViewport(send));
+          }, context);
+        } catch (error) {
+          if (isCdpFallbackForbiddenError(error)) throw error;
+        }
+      }
       return {
         ...inspection,
         tabId: ref.tabId,
@@ -388,32 +469,73 @@ registerTool({
       let touchInput = false;
       let delivered = false;
       let dispatched = false;
+      let frameFailure: ElementReply | null = null;
+      let frameViewportBlocked = false;
+      let movedFrameIntoPage = false;
       try {
         await withDebugger(tabId, async (_target, send) => {
           await ensurePageSurface(tabId, send, { frameId });
           const sameTarget = pointSelector === selector && pointIndex === index;
           const refreshed = await sendToContent(tabId, "inspectElement", { selector: pointSelector, index: pointIndex }, sameTarget ? bound : undefined, context);
           if (!refreshed.error && clickPointReady(refreshed)) current = refreshed;
+          if (frameId) {
+            const readGeometry = async () => ({
+              origin: await frameContentOrigin(send, frameId),
+              viewport: await readPageViewport(send),
+            });
+            let geometry = await readGeometry();
+            // The pre-scroll inspection stays on originalElement when the page has to move.
+            applyFramePageViewport(inspected, geometry.origin, geometry.viewport);
+            applyFramePageViewport(current, geometry.origin, geometry.viewport);
+            if (framePointMissesPage(current, geometry.origin, geometry.viewport)) {
+              const scrolled = await sendToContent(tabId, "scrollElementIntoView", { selector: pointSelector, index: pointIndex, block: "center" }, bound, context);
+              if (scrolled.error) { frameFailure = scrolled; return; }
+              current = scrolled;
+              movedFrameIntoPage = true;
+              geometry = await readGeometry();
+              applyFramePageViewport(current, geometry.origin, geometry.viewport);
+            }
+            if (framePointMissesPage(current, geometry.origin, geometry.viewport)) {
+              frameViewportBlocked = true;
+              return;
+            }
+          }
           if (!clickPointReady(current)) return;
+          // The preparatory capture can run while this frame is still outside the page viewport.
+          if (movedFrameIntoPage) await ensurePageSurface(tabId, send, { frameId });
           const point = await framedPagePoint(send, current.clickablePoint, frameId);
+          if (frameId) {
+            const viewport = await readPageViewport(send);
+            if (viewport && !pointInPageViewport(point, viewport)) {
+              current.inViewport = false;
+              current.state = { ...(current.state || {}), inViewport: false, clickablePointInViewport: false };
+              frameViewportBlocked = true;
+              return;
+            }
+          }
+          const localPoint = current.clickablePoint;
+          const remoteSend = movedFrameIntoPage && localPoint ? await remoteFrameInput(send, frameId) : null;
+          const dispatchSend = remoteSend || send;
+          const dispatchPoint = remoteSend && localPoint ? localPoint : point;
           touchInput = getPageContext(tabId).pageMode === "mobile";
           const receiptId = await armPageInputReceipt(tabId);
           try {
             observation = await beginPageNavigationObservation(tabId, _signal);
             if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
             dispatched = true;
-            if (touchInput) { await touch(send, point, { signal: _signal }); }
+            if (touchInput) { await touch(dispatchSend, dispatchPoint, { signal: _signal }); }
             else {
-              await send("Input.dispatchMouseEvent", {
-                type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1,
+              await dispatchSend("Input.dispatchMouseEvent", {
+                type: "mousePressed", x: dispatchPoint.x, y: dispatchPoint.y, button: "left", clickCount: 1,
               });
-              await send("Input.dispatchMouseEvent", {
-                type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1,
+              await dispatchSend("Input.dispatchMouseEvent", {
+                type: "mouseReleased", x: dispatchPoint.x, y: dispatchPoint.y, button: "left", clickCount: 1,
               });
             }
           } finally { delivered = await inputWasDelivered(tabId, receiptId); }
         }, context);
-        if (!clickPointReady(current)) {
+        if (frameFailure) return withElementActionHelp(frameFailure, normalizedAction);
+        if (frameViewportBlocked || !clickPointReady(current)) {
           return clickNotReadyResult({
             target: resolvedTarget,
             selector,
