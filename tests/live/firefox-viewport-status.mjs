@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { randomBytes } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,6 +12,8 @@ import { readTestApiKey } from "../support/local-credentials.mjs";
 import { startBridge } from "../../services/mcp-bridge/src/server.mjs";
 import { runCli } from "../../services/mcp-bridge/src/cli.mjs";
 import { readHealth } from "../../services/mcp-bridge/src/client.mjs";
+import { installLiveTableProbe } from "../support/live-table-reveal.mjs";
+import { runFirefoxTableRevealJourneys } from "./firefox-table-reveal-journeys.mjs";
 
 // Explicit real-provider tests. Only the temporary sidebar receives the event probe.
 const apiKey = readTestApiKey("deepseek", { keyFile: process.env.QINGZHOU_DEEPSEEK_AK_FILE || "" });
@@ -85,10 +89,27 @@ try {
   manifest.background.scripts.unshift("background/live-network.js");
   await writeFile(manifestPath, JSON.stringify(manifest));
   await writeFile(join(extensionDir, "background/live-network.js"), `(${installNetworkForwarder.toString()})(${JSON.stringify(`${origin}/deepseek`)});`);
-  await writeFile(join(extensionDir, "sidepanel/live-test-hook.js"), `(${installSidebarProbe.toString()})();`);
+  await writeFile(join(extensionDir, "sidepanel/live-test-hook.js"), `(${installSidebarProbe.toString()})(); globalThis.__startLiveTableProbe = ${installLiveTableProbe.toString()};`);
   const html = join(extensionDir, "sidepanel/sidepanel.html");
   await writeFile(html, (await readFile(html, "utf8")).replace("</head>", '<script src="./live-test-hook.js"></script></head>'));
-  session = await openFirefoxSidebar({ extensionDir, profile: join(work, "profile") });
+  const profile = join(work, "profile");
+  if (process.env.QINGZHOU_FIREFOX_CA_FILE) {
+    await mkdir(profile, { recursive: true });
+    const run = promisify(execFile);
+    await run("certutil", ["-N", "--empty-password", "-d", `sql:${profile}`]);
+    await run("certutil", ["-A", "-n", "Live test environment CA", "-t", "C,,", "-i", process.env.QINGZHOU_FIREFOX_CA_FILE, "-d", `sql:${profile}`]);
+    report.environmentCertificateImported = true;
+  }
+  session = await openFirefoxSidebar({ extensionDir, profile });
+  report.pageDiagnostics = [];
+  const observePage = page => {
+    page.on("pageerror", error => report.pageDiagnostics.push({ type: "pageerror", page: page.url(), message: String(error) }));
+    page.on("console", message => {
+      if (message.type() === "error") report.pageDiagnostics.push({ type: "console", page: page.url(), message: message.text(), resource: message.location().url });
+    });
+  };
+  for (const page of session.context.pages()) observePage(page);
+  session.context.on("page", observePage);
   report.browser = session.browserVersion;
   report.version = JSON.parse(await readFile(join(extensionDir, "manifest.json"), "utf8")).version;
   await openFromToolbar(session);
@@ -105,9 +126,14 @@ try {
   `);
   await call("request", "save_config", { config: { provider: "deepseek", apiKey, model, vision: false, contextWindow: 128000, trimOldToolResults: true } }, "config_saved");
 
+  if (process.env.QINGZHOU_LIVE_FIREFOX_TABLES === "1") {
+    await runFirefoxTableRevealJourneys({ session, sidebar, call, finish, output: dirname(output), report, save });
+    assert.deepEqual(report.pageDiagnostics.filter(item => item.type === "pageerror"), [], "Live page reads must not throw component exceptions");
+  } else {
+
   const slowGate = pauseModel(body => body.messages?.some(message => message.role === "tool" && String(message.content).includes('"incomplete"')));
   try {
-    const task = await call("start", `先只用 open_tab 打开 ${origin}/slow，设置 timeout=1。即使超时也继续，下一轮用 read_article 读取同一个标签页，输出商品校验码。不要重复新开标签。`);
+    const task = await call("start", `先只用 open_tab 打开 ${origin}/slow，设置 timeout=1、tabAlias=slow。即使超时也继续，下一轮用 read_article 的 tabRef=slow 读取同一个标签页，输出商品校验码。不要重复新开标签。`);
     await Promise.race([slowArrival, finish(task).then(() => { throw new Error("Slow page was never requested"); })]);
     const loadingEvents = await call("events", task.after);
     assert.ok(loadingEvents.some(event => event.type === "tool_execution_start" && event.toolName === "open_tab"));
@@ -129,6 +155,11 @@ try {
     const done = await finish(task);
     assert.ok(done.answer.includes(codes[0]), done.answer);
     assert.equal(done.events.filter(event => event.type === "tool_execution_start" && event.toolName === "open_tab").length, 1);
+    const reads = done.events.filter(event => event.type === "tool_execution_start" && event.toolName === "read_article");
+    assert.ok(reads.length > 0);
+    const opened = done.events.find(event => event.type === "tool_execution_end" && event.toolName === "open_tab");
+    assert.equal(opened.result.tabAlias, "slow");
+    assert.equal(done.events.some(event => event.type === "tool_execution_end" && event.isError), false);
     report.scenarios.timeoutRecovery = { sessionId: task.sessionId, startBeforeCompletion: true, indicator, ...done };
     await save(); console.log("PASS Firefox live timeout result, indicator, and same-tab recovery");
   } finally { slowGate.release(); }
@@ -190,6 +221,8 @@ try {
   assert.ok(report.requests.some(request => request.chunks > 1), "The provider stream must arrive in multiple chunks");
   report.ok = true;
   console.log("PASS Firefox CLI pairing and actual CLI tasks command");
+  }
+  report.ok = true;
 } catch (error) {
   report.error = String(error.stack || error);
   report.recentEvents = await call("events", 0).then(events => events.slice(-35)).catch(() => []);

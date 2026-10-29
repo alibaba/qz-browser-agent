@@ -227,6 +227,11 @@ try {
   state.commandsOnCommand[0]("open-model-preset-switcher", state.tabs[0]);
   await waitFor(() => state.sidePanelOpens.length === sidePanelOpenCount + 1);
   assert.deepEqual(state.sidePanelOpens.at(-1), { windowId: 1 });
+  // Finish the native-open promise while no panel is attached, so this exercises
+  // buffered delivery instead of racing a direct send against connectPort below.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(postedMessages.some(msg => msg.type === "model_preset_switcher_requested"), false,
+    "a shortcut without an attached panel must remain buffered until attachment");
   const port = createPort("sidepanel");
   assert.equal(state.runtimeOnConnect.length, 2, "service worker should register separate Side Panel and runtime request port listeners");
   const unrelatedPort = createPort("unrelated");
