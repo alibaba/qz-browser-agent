@@ -24,12 +24,15 @@ for (const colorScheme of ['light', 'dark']) {
         await expect(row).toBeVisible();
         await expect(row.locator('.queued-followup-delete')).toBeDisabled();
         await expect(row.locator('[data-steer-follow-up]')).toBeDisabled();
+        await expect(row.locator('.queued-followup-drag')).toHaveAttribute('draggable', 'false');
 
         await page.evaluate(() => window.__admission.accept('queued'));
         await page.waitForTimeout(200);
         expect(await page.evaluate(() => window.__admission.probe.bubbleObservations)).toBe(0);
         await expect(row).toBeVisible();
         await expect(row.locator('.queued-followup-delete')).toBeEnabled();
+        await expect(row.locator('[data-steer-follow-up]')).toBeEnabled();
+        await expect(row.locator('.queued-followup-drag')).toHaveAttribute('draggable', 'true');
         const sent = await page.evaluate(() => window.__admission.requests[0]);
         expect(sent.images).toHaveLength(Number(['image', 'mixed'].includes(kind)));
         expect(sent.documents).toHaveLength(Number(['document', 'mixed'].includes(kind)));
