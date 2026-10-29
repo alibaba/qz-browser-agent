@@ -36,7 +36,7 @@ assert.doesNotMatch(citationSection, /每条 footnote 必须|同一个来源网�
 
 assert.match(
   SYSTEM_PROMPT,
-  /当前任务工作标签页：当前 Session 的默认页面目标；页面工具省略 tabId 时使用它。/,
+  /当前任务工作标签页：当前 Session 的默认页面目标；页面工具省略 tabRef 时使用它。/,
   "kernel should define the session working tab as the default page target",
 );
 assert.match(
@@ -56,7 +56,7 @@ assert.doesNotMatch(
 );
 
 assert.match(READING_CAPABILITY_PROTOCOL, /^### 视觉读取协议\n- 需要分析页面中的某张图片时/m, "visual reading protocol should include its title");
-assert.match(VISUAL_SCREEN_ACTION_RULE, /1\. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree\(\{root:"root"\}\)；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabId。/, "visual actions should select observation tools by tab ownership");
+assert.match(VISUAL_SCREEN_ACTION_RULE, /1\. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree\(\{root:"root"\}\)；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。/, "visual actions should select observation tools by tab ownership");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /2\. 有可靠 target 时，使用 act_on_element。/, "visual actions should route reliable targets to element actions");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /3\. 目标位于 Canvas 或没有可靠 target 时，调用 screenshot/, "visual actions should reserve screenshots for the screen-action branch");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /页面结构发生变化或 target 失效时，重新从第 1 步开始/, "visual actions should restart discovery after structural changes");
@@ -71,7 +71,7 @@ assert.match(VISUAL_SCREEN_ACTION_RULE, /只有 true 才产生观察截图；fal
 assert.match(VISUAL_SCREEN_ACTION_RULE, /run_script 会返回内部最后一次 screenshot 或 act_on_screen\(returnScreenshot:true\) 的图片/, "visual batches should return the last explicit observation");
 assert.doesNotMatch(VISUAL_SCREEN_ACTION_RULE, /会滚动、缩放、改尺寸.*主 Agent 逐步执行/, "the prompt should not blanket-ban action kinds whose effects depend on the page");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /^### 文本读取协议\n- 当前模型不能看图/m, "text-only reading protocol should include its title");
-assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /1\. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree\(\{root:"root"\}\)；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabId。/, "text-only actions should select observation tools by tab ownership");
+assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /1\. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree\(\{root:"root"\}\)；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。/, "text-only actions should select observation tools by tab ownership");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /2\. 有可靠 target 时，使用 act_on_element。/, "text-only actions should use element actions for reliable targets");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /3\. 没有可靠 target 时，使用 find_elements、inspect_element 或页面读取工具继续定位/, "text-only actions should keep locating without visual tools");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /仍无法定位就说明限制，不进行视觉猜测操作/, "text-only actions should fail clearly instead of guessing visually");
@@ -80,7 +80,7 @@ assert.doesNotMatch(SYSTEM_PROMPT, /### 文本读取协议/, "default system pro
 const textOnlyPrompt = SYSTEM_PROMPT.replace(READING_CAPABILITY_PROTOCOL, TEXT_ONLY_READING_CAPABILITY_PROTOCOL);
 assert.match(textOnlyPrompt, /### 文本读取协议\n- 当前模型不能看图/, "text-only replacement should swap the protocol title and body");
 assert.doesNotMatch(textOnlyPrompt, /### 视觉读取协议/, "text-only replacement should remove the visual protocol title");
-assert.match(SYSTEM_PROMPT, /属于其他任务且动态上下文标为可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabId/, "kernel should route foreign tabs to the explicit read-only tool set");
+assert.match(SYSTEM_PROMPT, /属于其他任务且动态上下文标为可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef/, "kernel should route foreign tabs to the explicit read-only tool set");
 assert.doesNotMatch(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /\b(?:screenshot|read_image|read_image_asset)\b/, "text-only reading protocol should not name hidden vision tools");
 assert.match(VISUAL_IMAGE_ASSET_PROTOCOL, /先通过 list_images 返回的 alt\/title、context、URL 和尺寸等元信息发现候选/, "visual image protocol should define one positive candidate-selection workflow");
 assert.match(VISUAL_IMAGE_ASSET_PROTOCOL, /用 read_image\(\{target\}\) 查看必要候选/, "visual image protocol should inspect visual candidates before saving");
@@ -160,7 +160,7 @@ const foreignTabContext = formatDynamicContext({
   workingTab: { id: 1, url: "https://owned.test/" },
   userVisibleTab: { id: 2, url: "https://other.test/", ownerSessionId: "other-session", ownedByCurrentTask: false },
 });
-assert.match(foreignTabContext, /可用 read_article、find_elements 或 list_images 显式传 tabId 查看/, "dynamic context should name the cross-session read tools instead of relying on an ambiguous read-only label");
+assert.match(foreignTabContext, /可用 read_article、find_elements 或 list_images 显式传 tabRef 查看/, "dynamic context should name the cross-session read tools instead of relying on an ambiguous read-only label");
 assert.doesNotMatch(foreignTabContext, /可用 use_tab/, "foreign visible pages must not invite ownership transfer");
 assert.match(agentSource, /VISUAL_TARGET_TOOL_PROTOCOL[\s\S]*TEXT_ONLY_TARGET_TOOL_PROTOCOL/, "agent should replace visual target guidance");
 assert.match(agentSource, /VISUAL_IMAGE_ASSET_PROTOCOL[\s\S]*TEXT_ONLY_IMAGE_ASSET_PROTOCOL/, "agent should replace visual image asset guidance");

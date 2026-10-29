@@ -317,6 +317,7 @@ const BATCH_TAB_REFERENCE_REASONS: Readonly<Record<string, { label: BackendMessa
   invalid_alias: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.invalidAlias.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.invalidAlias.message" },
   invalid_reference: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.invalidReference.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.invalidReference.message" },
   ambiguous_target: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.ambiguousTarget.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.ambiguousTarget.message" },
+  conflicting_target: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.conflictingTarget.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.conflictingTarget.message" },
   outside_batch: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.outsideBatch.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.outsideBatch.message" },
 });
 

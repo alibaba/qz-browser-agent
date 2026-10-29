@@ -7,11 +7,12 @@ import {
 
 type Fields = Record<string, unknown>;
 import type { SessionRuntime } from "../../shared/contracts/session-runtime.js";
+import { normalizeTabAliases } from "../../shared/tab-reference.js";
 export type { SessionRuntime } from "../../shared/contracts/session-runtime.js";
 interface ReduceOptions { now?: string; currentTool?: Fields | null }
 const record = (value: unknown): Fields => isPlainObject(value) ? value : {};
 
-export const SESSION_RUNTIME_SCHEMA_VERSION = 3;
+export const SESSION_RUNTIME_SCHEMA_VERSION = 4;
 
 export const SESSION_STATUS = SESSION_RUNTIME_STATUS;
 
@@ -57,6 +58,7 @@ export function createInitialSessionRuntime(sessionId: unknown, now: string | nu
     workingUrl: "",
     workingTitle: "",
     ownedTabIds: [],
+    tabAliases: {},
     visitedTaskSites: [],
   };
 }
@@ -88,6 +90,7 @@ export function normalizeSessionRuntime(input: unknown, sessionId: unknown = "",
     pendingSteeringMessages: cloneArray(source.pendingSteeringMessages),
     loadedPluginSkillNames: uniqueStrings(source.loadedPluginSkillNames),
     ownedTabIds: uniqueTabIds(source.ownedTabIds || source.sessionTabIds),
+    tabAliases: normalizeTabAliases(source.tabAliases, uniqueTabIds(source.ownedTabIds || source.sessionTabIds)),
     visitedTaskSites: cloneArray(source.visitedTaskSites),
   };
 }

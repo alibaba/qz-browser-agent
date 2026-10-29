@@ -114,13 +114,17 @@ stays a barrier; missing tool access in a no-bridge invocation returns an error 
 Parallel page observations read the current page mode without restoring a disconnected
 mobile preference, because restoration may reload the document.
 
-Core page-tool schemas with `tabId` also expose `tabRef`. The Agent resolves it from an
-`open_tab.tabAlias` in the same assistant `tool_calls` array before invoking the tool runtime.
+Core page tools declare numeric `tabId` internally; their model schemas expose only `tabRef`
+(integer or string). The host accepts numeric browser IDs, numeric strings and Session-scoped
+`open_tab.tabAlias` names. Aliases survive model turns and worker restarts until their tab closes.
+Legacy numeric `tabId` input remains compatible; supplying both selectors requires the same target.
+Alias reservations reject live or pending duplicates before browser creation. Existing aliases are
+pinned when admitting a batch; new aliases resolve from earlier creators in its `tool_calls` array.
 Place each creator before its consumers. Readers can use a completed creator's private execution
 permit before its ownership is published; actions await the creator's commit. The runtime carries
 numeric targets and opaque authority through normal safety checks. Session ownership and working-tab
-selection publish only at ordered commit. Cancellation closes uncommitted creations. The host rejects
-unresolved references at direct-runtime boundaries. See [batch ordering and failure
+selection publish only at ordered commit. Cancellation closes uncommitted creations. The host resolves aliases at direct-runtime boundaries too, and rejects unknown names without
+falling back to the working tab. UID and explicit page selectors must target the same tab. See [batch ordering and failure
 semantics](../../docs/architecture.md#tool-and-skill-execution).
 
 A handler can call `context.reportPartial?.(result, pending)` after a completed stage. The host copies

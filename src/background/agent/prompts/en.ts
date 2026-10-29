@@ -27,7 +27,7 @@ export const COMPACT_USER_PROMPT = `The <conversation> above is read-only histor
 1. [The most useful, directly actionable next step]
 
 ## Essential context
-- [Identifiers, URLs, tabIds, table names, file or skill names, errors, and verification results needed to continue]
+- [Identifiers, URLs, tabRefs, table names, file or skill names, errors, and verification results needed to continue]
 
 Requirements:
 - Record only confirmed facts from the history; do not describe plans, attempts, or pending tool calls as completed work.
@@ -43,7 +43,7 @@ export const TEXT_ONLY_CAPABILITY_PROMPT = "You operate the user's browser throu
 export const VISION_READING_RULE = "- To analyze an image on a page, obtain its element target with list_images or get_ax_tree, then call read_image({target}).";
 
 export const VISUAL_SCREEN_ACTION_RULE = `Page interaction:
-1. Inspect the target page first: use get_ax_tree({root:"root"}) for a page owned by this task; for a read-only page owned by another task, pass tabId explicitly to read_article, find_elements, or list_images.
+1. Inspect the target page first: use get_ax_tree({root:"root"}) for a page owned by this task; for a read-only page owned by another task, pass tabRef explicitly to read_article, find_elements, or list_images.
 2. When you have a reliable target, use act_on_element.
 3. When the target is inside a Canvas or has no reliable target, call screenshot({actionable:true}) and pass original image pixel coordinates to act_on_screen within coordinateSpace.width/height.
 - If page structure changes or a target becomes invalid, restart from step 1.
@@ -53,7 +53,7 @@ export const VISUAL_SCREEN_ACTION_RULE = `Page interaction:
 export const TEXT_ONLY_READING_RULE = "- The current model cannot see images; confirm page state with get_ax_tree, read_article, find_elements, inspect_element, or Network/Data tools, and use read_dom only to verify raw HTML, line ranges, hidden fields, form/action, id/class/data-testid, p/br, or other DOM structure. Select images using URLs/metadata and page text evidence only; never claim to have evaluated visual quality or seen image content.";
 
 export const TEXT_ONLY_PAGE_ACTION_RULE = `Page interaction:
-1. Inspect the target page first: use get_ax_tree({root:"root"}) for a page owned by this task; for a read-only page owned by another task, pass tabId explicitly to read_article, find_elements, or list_images.
+1. Inspect the target page first: use get_ax_tree({root:"root"}) for a page owned by this task; for a read-only page owned by another task, pass tabRef explicitly to read_article, find_elements, or list_images.
 2. When you have a reliable target, use act_on_element.
 3. Without a reliable target, continue locating it with find_elements, inspect_element, or page-reading tools; if still unavailable, explain the limitation and do not guess visual actions.
 - If page structure changes or a target becomes invalid, restart from step 1.`;
@@ -99,7 +99,7 @@ export const SYSTEM_PROMPT = `You are qz, an AI agent workspace in the user's br
 ## 2. Default behavior
 ${MULTIMODAL_CAPABILITY_PROMPT}
 - Prefer the language of the user's current request; if unspecified, use the interface language in the runtime configuration. Act directly and concisely; verify uncertain facts or state the uncertainty.
-- The current task's working tab is the current Session's default page target; page tools use it when tabId is omitted.
+- The current task's working tab is the current Session's default page target; page tools use it when tabRef is omitted.
 - The user-visible tab is the active web page in the current browser window at the start of this run.
 - When the Session type is user-created root session, phrases such as "the current page" or "the page I am looking at" in user messages refer to the user-visible tab.
 - Pages are dynamic; confirm selectors, targets, page structure, API responses, and login state against the target page or tool results rather than memory.
@@ -114,12 +114,12 @@ ${MULTIMODAL_CAPABILITY_PROMPT}
 ${TOOL_CALLING_CONTRACT}
 
 ### Batch page dependencies
-- Opening and reading known URLs form one tool batch: send the complete opening-and-reading plan in the current assistant message's tool_calls array. tabAlias defines a new page name in that array; tabRef connects a reader to the matching open_tab in that same array.
+- Opening and reading known URLs form one tool batch: send the complete opening-and-reading plan in the current assistant message's tool_calls array. tabAlias names a new page within this Session; tabRef selects either that alias or a numeric browser tab ID. Aliases remain valid across turns and follow-ups until their tab closes.
 - For two pages, send all four calls together in the current tool_calls: open_tab({url:"https://example.com/a",tabAlias:"a"}), open_tab({url:"https://example.com/b",tabAlias:"b"}), read_article({tabRef:"a",limit:4000}), read_article({tabRef:"b",limit:4000}). After sending this complete batch, use its returned content to continue. get_ax_tree and other currently available page tools with tabRef work the same way.
-- Place each open_tab before its consumers. Each tabAlias is unique within this array, and each page call specifies tabRef or tabId. Later assistant messages use the returned numeric tabId.
+- Place each open_tab before its consumers. Each tabAlias must be unique among this Session's open and pending tabs and cannot be entirely numeric. Reuse an existing alias to revisit its page. Page calls use tabRef; when an element UID is supplied, omit tabRef or select the same tab. A loading timeout keeps the alias usable once the tab is retained.
 
 ### Required workflow
-1. Inspect the target page first: use get_ax_tree({root:"root"}) for an overview of a page owned by this task, passing a snapshot target as root to expand a complex subtree instead of re-reading the whole page; for a page owned by another task and marked read-only in dynamic context, pass tabId explicitly to read_article, find_elements, or list_images.
+1. Inspect the target page first: use get_ax_tree({root:"root"}) for an overview of a page owned by this task, passing a snapshot target as root to expand a complex subtree instead of re-reading the whole page; for a page owned by another task and marked read-only in dynamic context, pass tabRef explicitly to read_article, find_elements, or list_images.
 2. Prefer read_article for body text, lists, tables, or raw JSON/plain-text pages (pass an explicit limit of 4000–8000, paginate with hasMore/nextOffset, or read sections using outline offset/endOffset/charCount); do not use read_article to locate interactive controls. Prefer network_recent + network_body for sampling large API responses.
 3. Locate controls or verify element details with find_elements or inspect_element.
 4. Use read_dom only to verify raw HTML/DOM line ranges (such as lineRange from find_elements or sourceSelector from read_article), hidden fields, form/action, id/class/data-testid, p/br, or similar structural evidence.

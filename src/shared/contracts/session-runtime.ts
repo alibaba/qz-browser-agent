@@ -21,4 +21,5 @@ export interface SessionRuntime extends Fields {
   waitForm: Fields | null; pendingFollowUps: unknown[]; pendingFollowUpMessages: unknown[];
   pendingSteerings: unknown[]; pendingSteeringMessages: unknown[]; composerDrafts: Fields;
   loadedPluginSkillNames: string[]; ownedTabIds: number[]; visitedTaskSites: unknown[];
+  tabAliases: Record<string, number>;
 }

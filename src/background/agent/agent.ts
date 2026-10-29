@@ -85,6 +85,7 @@ interface AgentToolPort {
   maxInFlight?: number;
   snapshot?(language?: string): unknown;
   getParallelReadTab?(name: string, args: unknown, context: Facts): number | null;
+  getTabAliases?(sessionId: string): Record<string, number>;
   getBatchTabPolicy?(name: string, args: unknown, context: Facts): ToolBatchTabPolicy | null;
   hasUidElementTargets?(name: string, args: unknown, context: Facts): boolean;
   commitToolResult?(result: unknown, signal: AbortSignal, context: Facts): Promise<void>;
@@ -2693,7 +2694,7 @@ export class Agent {
       if (!this._toolRuntime.getBatchTabPolicy && this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), args, lookup) != null)
         policy = { kind: "target", implicit: false, observation: true };
       return { args, policy };
-    }, this._runLanguage);
+    }, this._runLanguage, this._toolRuntime.getTabAliases?.(this.sessionId) || {});
     const identity = { sessionId: this.sessionId, runId: this._currentRunId };
     const started = new Set<ModelToolCall>();
     const emitStart = (call: ModelToolCall, toolName: string, toolIdentity: object, args: unknown) => {

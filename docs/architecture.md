@@ -454,11 +454,17 @@ can use the original result identity to authorize a dependent observation. A JSO
 permission. Actions await published ownership. Commit checks run authority, live tab availability and
 security again, then publishes ownership and selection together. Failed or cancelled uncommitted
 creations are closed; terminal cleanup also retries outstanding permits. A navigation timeout retains
-its loading tab only if its ordered commit is still authorized, and supplies no alias binding.
+its loading tab only if its ordered commit is still authorized, and retains its alias for dependent and later calls.
 
-Only trusted core registrations declare scheduling authority. References expire at the array boundary;
-subsequent messages use returned numeric IDs. Multiple opens require explicit page targets. Duplicate,
-invalid, forward and ambiguous references return `BATCH_TAB_REFERENCE_ERROR`. Failed, incomplete or
+Only trusted core registrations declare scheduling authority. Page-tool model schemas expose `tabRef`
+(integer or string); numeric strings also select browser IDs. Internal handlers retain numeric `tabId`,
+and legacy `tabId` input remains compatible. `open_tab.tabAlias` names a page within its Session until
+closure. Aliases persist across turns, follow-ups and worker restarts in runtime schema 4. An alias
+reservation precedes browser creation, so open and pending names cannot collide; aliases cannot be
+entirely numeric. Failed creation releases the reservation. The planner snapshots existing aliases
+when admitting a batch, so reuse after closure cannot retarget already queued calls. UID and explicit
+page references must agree. Multiple opens require explicit page targets. Duplicate, invalid,
+conflicting, forward and ambiguous references return `BATCH_TAB_REFERENCE_ERROR`. Failed or
 effect-failed producers yield `BATCH_TAB_DEPENDENCY_FAILED` for their consumers, including observations
 that executed speculatively before the producer's commit failed. Independent pages continue. Browser
 operations already issued may still finish after cancellation; closed provisional tabs and revoked

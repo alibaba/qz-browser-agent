@@ -60,7 +60,9 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     await writeFile(join(extension, "navigation-test-worker.js"), `import "./${manifest.background.service_worker}";
       import { createToolRuntime } from "./background/tools/runtime.js";
       import { Agent } from "./background/agent/agent.js";
+      import { createSessionTabs } from "./background/session/tabs.js";
       globalThis.navigationTestAgent = Agent;
+      globalThis.navigationTestSessionTabs = createSessionTabs;
       globalThis.navigationTestRuntime = createToolRuntime;`);
     manifest.background.service_worker = "navigation-test-worker.js";
     await writeFile(manifestPath, JSON.stringify(manifest));
@@ -71,41 +73,67 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     });
     const worker = browser.serviceWorkers()[0] || await browser.waitForEvent("serviceworker");
     await worker.evaluate(() => {
-      const owned = new Set(), pending = new Map();
-      globalThis.navigationWorking = null;
+      const state = { sessionId: 'navigation', ownedTabIds: [], workingTabId: null };
+      globalThis.navigationState = state;
       globalThis.navigationExecuted = [];
       globalThis.navigationCompleted = [];
       globalThis.navigationAttachCount = 0;
       const attach = chrome.debugger.attach.bind(chrome.debugger);
       chrome.debugger.attach = (...args) => { navigationAttachCount++; return attach(...args); };
+      const isRunCurrent = (sessionId, runId) => sessionId === 'navigation' && runId === 'run';
+      const setRuntime = (_id, patch) => Object.assign(state, patch);
+      const sessions = navigationTestSessionTabs({
+        supervisor: { getRuntime: id => id === 'navigation' ? state : null,
+          runtimeEntries: () => [['navigation', state]], setRuntime, isRunCurrent },
+        tabsApi: chrome.tabs, storage: chrome.storage.local, setRuntime, persistRuntime: async () => {},
+      });
+      chrome.tabs.onRemoved.addListener(tabId => { void sessions.handleTabRemoved(tabId); });
       const runtime = navigationTestRuntime({
         windowTarget: { resolveForNewTab: async () => (await chrome.windows.getAll())[0].id },
-        sessions: {
-          isRunCurrent: () => true,
-          resolveTargetTab: async ({ tabId, createdTabReservation }) => owned.has(tabId) || (pending.has(tabId) && pending.get(tabId) === createdTabReservation)
-            ? { ok: true, tabId, tab: await chrome.tabs.get(tabId), ownedByCurrentTask: true }
-            : { ok: false, code: "SESSION_TAB_FOREIGN" },
-          reserveCreatedTab: async ({ tab }) => { const reservation = {}; pending.set(tab.id, reservation); return { ok: true, reservation }; },
-          commitCreatedTab: async ({ reservation }) => {
-            const id = [...pending].find(([, token]) => token === reservation)?.[0];
-            if (!id) return { ok: false, code: 'SESSION_TAB_UNAVAILABLE' };
-            await chrome.tabs.get(id); pending.delete(id); owned.add(id); navigationWorking = id; return { ok: true };
-          },
-          discardCreatedTab: async reservation => {
-            const id = [...pending].find(([, token]) => token === reservation)?.[0];
-            if (id) { await chrome.tabs.remove(id).catch(() => {}); pending.delete(id); }
-          },
-          updateWorkingTab: async ({ tab }) => { owned.add(tab.id); navigationWorking = tab.id; },
-        },
+        sessions: { ...sessions, isRunCurrent },
       });
       globalThis.navigationRuntime = runtime;
       globalThis.navigationCall = async (name, args) => {
         globalThis.navigationAbort = new AbortController();
         try { return await runtime.execute(name, args, navigationAbort.signal, { sessionId: "navigation", runId: "run" }); }
-        catch (error) { return { code: error.code, error: error.message }; }
+        catch (error) { return { code: error.code, error: error.message, details: error.details }; }
       };
     });
     const call = (name, args) => worker.evaluate(({ name, args }) => navigationCall(name, args), { name, args });
+    // A fresh Session must authorize CDP setup before its first tab is committed.
+    const first = await worker.evaluate(async ({ origin, watchNetwork }) => {
+      const before = structuredClone(navigationState);
+      const agent = new navigationTestAgent('navigation', { tools: navigationRuntime });
+      agent._currentRunId = 'run';
+      const events = []; agent.subscribe(event => events.push(event));
+      const tc = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
+      const messages = await agent._executeToolCalls([
+        tc('first-open', 'open_tab', { url: `${origin}/first-open`, tabAlias: 'first', watchNetwork }),
+        tc('first-read', 'read_article', { tabRef: 'first', limit: 1200 }),
+      ], new AbortController().signal);
+      return { before, state: navigationState, ends: events.filter(event => event.type === 'tool_execution_end'),
+        ids: messages.filter(message => message.role === 'tool').map(message => message.tool_call_id) };
+    }, { origin, watchNetwork });
+    expect(first.before.ownedTabIds).toEqual([]);
+    expect(first.before.workingTabId).toBeNull();
+    expect(first.ends.map(event => event.result), 'first open and alias read must succeed').toEqual([
+      expect.objectContaining({ id: expect.any(Number) }), expect.objectContaining({ text: expect.stringContaining('Document /first-open generation 1') }),
+    ]);
+    expect(first.ends.every(event => !event.isError)).toBe(true);
+    expect(first.ids).toEqual(['first-open', 'first-read']);
+    expect(first.state.ownedTabIds).toEqual([first.ends[0].result.id]);
+    expect(first.state.workingTabId).toBe(first.ends[0].result.id);
+    if (watchNetwork) {
+      expect(first.ends[0].result.networkWatch.startedBeforeNavigation).toBe(true);
+      expect(JSON.stringify(await call('network_recent', { tabId: first.ends[0].result.id }))).toContain('/first-open');
+    }
+    expect(first.state.tabAliases).toEqual({ first: first.ends[0].result.id });
+    expect((await call('read_article', { tabRef: 'first', limit: 1200 })).text).toContain('Document /first-open');
+    expect((await call('read_article', { tabRef: String(first.ends[0].result.id), limit: 1200 })).text).toContain('Document /first-open');
+    const countBeforeDuplicate = await worker.evaluate(async () => (await chrome.tabs.query({})).length);
+    expect(await call('open_tab', { url: `${origin}/duplicate`, tabAlias: 'first' })).toHaveProperty('code', 'BATCH_TAB_REFERENCE_ERROR');
+    expect(await worker.evaluate(async () => (await chrome.tabs.query({})).length)).toBe(countBeforeDuplicate);
+    expect(counts.has('/duplicate')).toBe(false);
     const release = path => { for (const entry of held.get(path) || []) entry.finish(); held.delete(path); };
     const slow = async (name, args, path) => {
       held.set(path, []);
@@ -338,11 +366,20 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     }
     const before = await worker.evaluate(async () => (await chrome.tabs.query({})).length);
     held.set("/open-timeout", []);
-    const incompleteOpen = await call("open_tab", { url: `${origin}/open-timeout`, watchNetwork, timeout: 1 });
+    const incompleteOpen = await call("open_tab", { url: `${origin}/open-timeout`, tabAlias: "loading", watchNetwork, timeout: 1 });
     expect(incompleteOpen).toMatchObject({ loading: true, incomplete: { reason: "timeout" } });
     expect(await worker.evaluate(async () => (await chrome.tabs.query({})).length)).toBe(before + 1);
     release("/open-timeout");
-    expect(await call("close_tab", { tabId: incompleteOpen.tabId })).not.toHaveProperty("error");
+    expect(incompleteOpen.tabAlias).toBe('loading');
+    const loadingRead = await call('read_article', { tabRef: 'loading', limit: 1200 });
+    expect(loadingRead, JSON.stringify(loadingRead)).not.toHaveProperty('error');
+    expect(loadingRead.text, JSON.stringify(loadingRead)).toContain('Document /open-timeout');
+    expect(await call('close_tab', { tabRef: 'loading' })).not.toHaveProperty('error');
+    expect(await call('read_article', { tabRef: 'loading', limit: 1200 })).toHaveProperty('code', 'BATCH_TAB_REFERENCE_ERROR');
+    const reopened = await call('open_tab', { url: `${origin}/alias-reused`, tabAlias: 'loading' });
+    expect(reopened).not.toHaveProperty('error'); expect(reopened.id).not.toBe(incompleteOpen.tabId);
+    expect((await call('read_article', { tabRef: 'loading', limit: 1200 })).text).toContain('Document /alias-reused');
+    expect(await call('close_tab', { tabRef: 'loading' })).not.toHaveProperty('error');
 
     // Busy renderers retain a timeout handle; cancellation still cleans up the created tab.
     for (const outcome of ["timeout", "cancel"]) {

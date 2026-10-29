@@ -285,13 +285,17 @@ test('uid targets pin their registered tab for batch planning and working-tab de
   await runtime.execute('__uid_working_tab', { targets: ['css:img', 'uid:t41.0000a1.1'] }, undefined, context);
   assert.equal(targets.at(-1).tabId, 31, 'mixed calls still authorize the CSS default tab');
   assert.equal(received.tabId, undefined, 'that CSS default must not be injected into uid arguments');
+  await runtime.execute('__uid_working_tab', { target: 'uid:t41.0000a1.1', tabRef: 41 }, undefined, context);
+  assert.equal(received.tabId, 41, 'an agreeing tabRef and UID resolve to the same browser tab');
+  await assert.rejects(runtime.execute('__uid_working_tab', { target: 'uid:t41.0000a1.1', tabRef: 42 }, undefined, context),
+    error => error.details.reason === 'conflicting_target');
   received = null;
   for (const args of [
     { targets: ['css:img', 'uid:t41.0000a1.1'], tabId: 99 },
     { targets: ['css:img', 'uid:t41.0000a1.1'], _tabId: 31 },
   ]) {
     await assert.rejects(runtime.execute('__uid_working_tab', args, undefined, { ...context, workingTabId: 99 }),
-      { code: 'SESSION_TAB_FOREIGN' }, 'a uid cannot smuggle a CSS read onto a foreign tab');
+      { code: args.tabId != null ? 'BATCH_TAB_REFERENCE_ERROR' : 'SESSION_TAB_FOREIGN' }, 'a uid cannot smuggle a CSS read onto a foreign tab');
   }
   assert.equal(received, null);
 });

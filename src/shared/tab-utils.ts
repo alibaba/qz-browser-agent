@@ -9,6 +9,7 @@ export interface TabReference {
   title?: string;
   active?: boolean;
   pinned?: boolean;
+  tabAlias?: string;
 }
 
 export function isWebTabUrl(url: unknown) {

@@ -4,7 +4,8 @@ import {
   isSettledSessionRuntimeStatus,
 } from "../../shared/session/session-runtime-status.js";
 import { nowBeijingDateTime } from "../../shared/time-utils.js";
-import { reduceSessionRuntimePatch } from "./runtime-reducer.js";
+import { reduceSessionRuntimePatch, SESSION_RUNTIME_SCHEMA_VERSION } from "./runtime-reducer.js";
+import { normalizeTabAliases } from "../../shared/tab-reference.js";
 import {
   getOwnedTabIds,
   hasOwnedTabPatch,
@@ -99,6 +100,11 @@ export function createSessionRuntimeState({
           changed = true;
         }
         const ownedTabIds = getOwnedTabIds(runtime);
+        const tabAliases = normalizeTabAliases(runtime.tabAliases, ownedTabIds);
+        if (!sameJson(runtime.tabAliases, tabAliases) || runtime.schemaVersion !== SESSION_RUNTIME_SCHEMA_VERSION) {
+          runtime = { ...runtime, tabAliases, schemaVersion: SESSION_RUNTIME_SCHEMA_VERSION };
+          changed = true;
+        }
         if (!sameJson(runtime.ownedTabIds || [], ownedTabIds) || !sameJson(runtime.sessionTabIds || [], ownedTabIds)) {
           runtime = {
             ...runtime,
@@ -166,6 +172,10 @@ export function createSessionRuntimeState({
     const id = normalizeSessionId(sessionId);
     const previous = supervisor.getRuntime(id) || {};
     const normalizedPatch = normalizePatch(patch);
+    if (hasOwnedTabPatch(patch) || Object.hasOwn(patch, "tabAliases")) {
+      normalizedPatch.tabAliases = normalizeTabAliases(patch.tabAliases ?? previous.tabAliases,
+        getOwnedTabIds({ ...previous, ...normalizedPatch }));
+    }
     if (patch.currentTool === null || patch.running === false
       || (Object.prototype.hasOwnProperty.call(patch, "runId") && patch.runId !== previous.runId)) {
       activeTools.delete(id);

@@ -134,7 +134,7 @@ export function isGoalSnapshotCapsuleMessage(msg: Partial<ModelMessage> = {}) {
 
 function formatDynamicContextTab(tab: ContextTab = {}) {
   const suffix = tab.securityGuardrailBlocked ? t("pageBlocked") : "";
-  return `[${tab.id ?? ""}] ${tab.title ?? ""} | ${tab.url ?? ""}${suffix}`;
+  return `[${tab.id ?? ""}${tab.tabAlias ? ` alias=${JSON.stringify(tab.tabAlias)}` : ""}] ${tab.title ?? ""} | ${tab.url ?? ""}${suffix}`;
 }
 
 function trackerModeText(mode = "") {

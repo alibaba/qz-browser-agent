@@ -153,30 +153,30 @@ assert.equal(localizeToolFailureText("custom", { code: "DOCUMENT_TABLE_NOT_FOUND
 {
   const payload = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_DEPENDENCY_FAILED", details: { tabRef: "a" } });
   assert.equal(payload.codeLabel, "前置 open_tab 失败");
-  assert.equal(payload.error, "tabAlias「a」对应的 open_tab 没有成功，已跳过这次页面调用。请先看该 open_tab 的报错，再用返回的 tabId 重试。");
+  assert.equal(payload.error, "tabAlias「a」对应的 open_tab 未能建立有效页面，已跳过此次调用。请先处理该 open_tab 的错误，再重试。");
 }
 
 {
   const payload = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_DEPENDENCY_FAILED", details: {} });
-  assert.equal(payload.error, "tabAlias「（未知）」对应的 open_tab 没有成功，已跳过这次页面调用。请先看该 open_tab 的报错，再用返回的 tabId 重试。");
+  assert.equal(payload.error, "tabAlias「（未知）」对应的 open_tab 未能建立有效页面，已跳过此次调用。请先处理该 open_tab 的错误，再重试。");
 }
 
 {
   const messages = {}, labels = {};
-  for (const reason of ["unknown_reference", "duplicate_alias", "forward_reference", "invalid_alias", "invalid_reference", "ambiguous_target", "outside_batch"]) {
+  for (const reason of ["unknown_reference", "duplicate_alias", "forward_reference", "invalid_alias", "invalid_reference", "ambiguous_target", "outside_batch", "conflicting_target"]) {
     const payload = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_REFERENCE_ERROR", details: { reason, tabRef: "a" } });
     messages[reason] = payload.error;
     labels[reason] = payload.codeLabel;
     assert.ok(!payload.error.includes("{tabRef}"), `${reason} interpolates tabRef`);
     assert.ok(payload.codeLabel && !payload.codeLabel.includes("BATCH_TAB"), `${reason} label stays human-readable`);
   }
-  assert.equal(new Set(Object.values(messages)).size, 7, "every reference reason owns its message");
-  assert.equal(new Set(Object.values(labels)).size, 7, "every reference reason owns its label");
-  assert.equal(messages.unknown_reference, "本批没有 tabAlias「a」对应的 open_tab。请先添加对应的 open_tab，或改用已返回的 tabId。");
+  assert.equal(new Set(Object.values(messages)).size, 8, "every reference reason owns its message");
+  assert.equal(new Set(Object.values(labels)).size, 8, "every reference reason owns its label");
+  assert.equal(messages.unknown_reference, "当前任务没有已打开或本批待创建的别名「a」。请检查名称，或在 tabRef 中使用已返回的浏览器数字 ID。");
   assert.equal(labels.duplicate_alias, "tabAlias 重复");
   const generic = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_REFERENCE_ERROR", details: { tabRef: "a" } });
-  assert.equal(generic.codeLabel, "批次标签页引用无法解析");
-  assert.equal(generic.error, "本批标签页引用无法解析。请为 open_tab 设置唯一 tabAlias，并在页面调用中提供对应 tabRef 或明确的 tabId；将依赖的打开调用放在页面操作之前。");
+  assert.equal(generic.codeLabel, "标签页引用无法解析");
+  assert.equal(generic.error, "标签页引用无法解析。请用 tabRef 指定已返回的浏览器数字 ID 或当前任务的页面别名；新页面的 open_tab 应放在引用它的调用之前。");
 }
 
 {

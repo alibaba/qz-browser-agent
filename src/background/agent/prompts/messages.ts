@@ -54,7 +54,7 @@ const messages = defineMessages("agent-prompts", {
   "owned": {"zh-CN": "当前任务已拥有", "en": "Owned by this task"},
   "foreignOwned": {"zh-CN": "属于其他任务 {id}", "en": "Owned by another task: {id}"},
   "unowned": {"zh-CN": "未归属当前任务", "en": "Not owned by this task"},
-  "readOnlyAccess": {"zh-CN": "可用 read_article、find_elements 或 list_images 显式传 tabId 查看", "en": "Read with read_article, find_elements, or list_images and an explicit tabId"},
+  "readOnlyAccess": {"zh-CN": "可用 read_article、find_elements 或 list_images 显式传 tabRef 查看", "en": "Read with read_article, find_elements, or list_images and an explicit tabRef"},
   "useTabAccess": {"zh-CN": "可用 use_tab 设为当前任务工作标签页", "en": "Use use_tab to make it this task's working tab"},
   "visibleTab": {"zh-CN": "本轮开始时用户可见标签页（当前窗口 active 网页）: {tab} | {ownership} | {access}", "en": "User-visible tab at the start of this run (active page in the current window): {tab} | {ownership} | {access}"},
   "taskTabs": {"zh-CN": "本轮任务开始时当前任务标签页:", "en": "Tabs owned by this task at the start of the run:"},

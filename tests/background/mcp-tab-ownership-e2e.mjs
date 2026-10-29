@@ -114,18 +114,20 @@ async function cliMcpBrowserRoundTrip(environment, baseUrl) {
   assert.equal(schema.parameters.properties.url.type, "string");
   assert.ok(schema.parameters.required.includes("url"));
   const articleSchema = await mcp("qingzhou_get_tool", { name: "read_article", sessionId });
-  assert.equal(articleSchema.parameters.properties.tabId.type, "number");
+  assert.deepEqual(articleSchema.parameters.properties.tabRef.type, ["integer", "string"]);
+  assert.equal(Object.hasOwn(articleSchema.parameters.properties, "tabId"), false);
   assert.ok(articleSchema.parameters.required.includes("limit"));
 
   const url = `${baseUrl}/cli-roundtrip`;
-  const opened = await mcp("qingzhou_execute_tool", { name: "open_tab", sessionId, args: { url }, wait: true });
+  const opened = await mcp("qingzhou_execute_tool", { name: "open_tab", sessionId, args: { url, tabAlias: "cli-page" }, wait: true });
   assert.equal(opened.toolName, "open_tab");
   assert.equal(opened.sessionId, sessionId);
   const tabId = opened.result.id;
   assert.equal(typeof tabId, "number");
   assert.equal(opened.result.url, url);
+  assert.equal(opened.result.tabAlias, "cli-page");
   const article = await mcp("qingzhou_execute_tool", {
-    name: "read_article", sessionId, args: { tabId, source: "body", limit: 4000 }, wait: true,
+    name: "read_article", sessionId, args: { tabRef: "cli-page", source: "body", limit: 4000 }, wait: true,
   });
   assert.equal(article.toolName, "read_article");
   assert.equal(article.sessionId, sessionId);
@@ -134,7 +136,7 @@ async function cliMcpBrowserRoundTrip(environment, baseUrl) {
   const active = await command("show", sessionId);
   assert.ok(active.runtime.ownedTabIds.includes(tabId));
 
-  const closed = await mcp("qingzhou_execute_tool", { name: "close_tab", sessionId, args: { tabId }, wait: true });
+  const closed = await mcp("qingzhou_execute_tool", { name: "close_tab", sessionId, args: { tabRef: String(tabId) }, wait: true });
   assert.equal(closed.toolName, "close_tab");
   assert.equal(closed.result.closed, tabId);
   assert.equal(await environment.page.evaluate(async tabId => {

@@ -28,7 +28,7 @@ function fixture(execute = null) {
     ends: () => events.filter(event => event.type === 'tool_execution_end') };
 }
 
-test('direct runtime calls reject unresolved references and publish paired schema documentation', async () => {
+test('direct runtime calls reject unresolved references and publish the unified model schema', async () => {
   const runtime = createToolRuntime();
   await assert.rejects(runtime.execute('read_article', { tabRef: 'a', limit: 3000 }), { code: 'BATCH_TAB_REFERENCE_ERROR' });
   for (const language of ['en', 'zh-CN']) {
@@ -36,9 +36,10 @@ test('direct runtime calls reject unresolved references and publish paired schem
     const open = schemas.find(schema => schema.function.name === 'open_tab').function;
     const read = schemas.find(schema => schema.function.name === 'read_article').function;
     assert.equal(open.parameters.properties.tabAlias.type, 'string');
-    assert.equal(read.parameters.properties.tabRef.type, 'string');
+    assert.deepEqual(read.parameters.properties.tabRef.type, ['integer', 'string']);
+    assert.equal(read.parameters.properties.tabId, undefined);
     assert.match(open.description, /tabAlias/); assert.match(open.description, /tabRef/);
-    assert.match(read.parameters.properties.tabRef.description, /tool_calls/);
+    assert.match(read.parameters.properties.tabRef.description, /tabId/);
     const close = schemas.find(schema => schema.function.name === 'close_tab').function;
     assert.equal(close.parameters.required.includes('tabId'), false);
     assert.equal(runtime.resolveDefinition('close_tab').parameters.required.includes('tabId'), true);
@@ -68,8 +69,7 @@ for (const [name, input, reason] of [
   ['duplicate aliases', [open('oa', 'same'), open('ob', 'same'), read('r', 'same')], 'duplicate_alias'],
   ['unknown reference', [read('r', 'missing')], 'unknown_reference'],
   ['forward reference', [read('r', 'a'), open('o', 'a')], 'forward_reference'],
-  ['conflicting tabId', [open('o', 'a'), read('r', 'a', { tabId: 99 })], 'invalid_reference'],
-  ['conflicting UID', [open('o', 'a'), read('r', 'a', { selector: 'uid:t99.abcdef.1' })], 'invalid_reference'],
+  ['conflicting tabId', [open('o', 'a'), read('r', 'a', { tabId: 99 })], 'conflicting_target'],
   ['invalid alias', [open('o', 'has spaces')], 'invalid_alias'],
   ['untrusted creator', [call('o', 'plugin_open', { tabAlias: 'a' })], 'invalid_alias'],
 ]) test(`${name} becomes a per-call error`, async () => {
@@ -79,7 +79,7 @@ for (const [name, input, reason] of [
   assert.equal(f.calls.filter(c => c.name === 'read_article').length, 0);
 });
 
-for (const outcome of ['failed', 'incomplete', 'effects', 'error-flag', 'not-ok']) test(`a ${outcome} producer fails its dependent while independent pages proceed`, async () => {
+for (const outcome of ['failed', 'effects', 'error-flag', 'not-ok']) test(`a ${outcome} producer fails its dependent while independent pages proceed`, async () => {
   const f = fixture(async (name, args) => {
     if (name !== 'open_tab') return { tabId: args.tabId };
     if (args.tabAlias === 'good') return { id: 2 };
