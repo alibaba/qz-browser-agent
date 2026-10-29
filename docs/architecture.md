@@ -530,6 +530,14 @@ The [capability host](../src/sidepanel/capability-host/runtime.ts) registers and
 settings. Packages own form drafts; Session runtime owns unsent messages by window and message ID.
 Heavy UI libraries load on demand and update the instance that requested them.
 
+Submitting to a running Session shows a provisional queue row while the single `prompt` command
+awaits Background admission. The complete optimistic transcript record retains its message ID,
+images and documents, but the UI projection hides it while delivery is pending. Provisional rows
+cannot be recalled, steered or dragged until admission settles. A queued acknowledgement removes
+the local transcript record; a started acknowledgement or accepted user event reveals it, and a
+failure reveals the existing retry action. Presentation is scoped to the originating Session and
+does not change Background queue ownership or admission decisions.
+
 The queued-message close button returns the message to the composer for editing. Background saves
 the queue withdrawal and the complete draft together before releasing queue admission. Existing
 draft text and attachments are retained; documents from a different message are copied with their

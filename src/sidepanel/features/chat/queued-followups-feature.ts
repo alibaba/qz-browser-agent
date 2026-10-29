@@ -4,7 +4,7 @@ import type { ClientRuntime } from "../sessions/session-state.js";
 import type { PortMessage } from "../app/port-client.js";
 interface QueueItem {
   clientMessageId?: unknown; text?: unknown; imageCount?: unknown; attachmentCount?: unknown; index?: number;
-  queueKind?: string;
+  queueKind?: string; submitting?: boolean;
 }
 interface QueuePatch { followUps?: unknown; steerings?: unknown }
 interface QueueOptions {
@@ -28,6 +28,8 @@ const QUEUED_FOLLOWUP_GHOST_MS = 120;
 const QUEUED_FOLLOWUP_MOVE_MS = 220;
 
 export function createQueuedFollowupsFeature(options: QueueOptions = {}) {
+  // Presentation only: Background remains the sole owner of accepted queues.
+  const submissions = new Map<string, Map<string, QueueItem>>();
   const container = options.container || null;
   const getSessionId = options.getSessionId || (() => null);
   const isVisible = options.isVisible || (() => false);
@@ -88,6 +90,40 @@ function queuedItems(followUps: unknown = [], steerings: unknown = []) {
 
 function queuedItemsFromRuntime(runtime: Partial<ClientRuntime> = {}) {
   return queuedItems(runtime.pendingFollowUps, runtime.pendingSteerings);
+}
+
+function isSubmitting(sessionId: unknown, clientMessageId: unknown) {
+  return submissions.get(normalizeSessionId(sessionId) || "")?.has(normalizeClientMessageId(clientMessageId)) === true;
+}
+
+function stageSubmission(sessionId: string, message: QueueItem) {
+  const id = normalizeClientMessageId(message.clientMessageId);
+  if (!sessionId || !id) return;
+  const pending = submissions.get(sessionId) || new Map<string, QueueItem>();
+  pending.set(id, { ...message, clientMessageId: id, queueKind: "followup", submitting: true });
+  submissions.set(sessionId, pending);
+  if (sessionId === normalizeSessionId(getSessionId())) renderQueuedFollowups();
+}
+
+function settleSubmission(sessionId: string | null, clientMessageId: unknown) {
+  const session = normalizeSessionId(sessionId), id = normalizeClientMessageId(clientMessageId);
+  const pending = session ? submissions.get(session) : undefined;
+  if (!session || !pending?.delete(id)) return;
+  if (!pending.size) submissions.delete(session);
+  if (session === normalizeSessionId(getSessionId())) {
+    queuedFollowupLocalMutationReason = "submission";
+    renderQueuedFollowups();
+  }
+}
+
+function displayedQueueItems(sessionId: string | null, runtime: Partial<ClientRuntime>) {
+  const items: QueueItem[] = queuedItemsFromRuntime(runtime);
+  for (const item of submissions.get(sessionId || "")?.values() || []) {
+    const found = items.findIndex(existing => existing.clientMessageId === item.clientMessageId);
+    if (found >= 0) items[found] = { ...items[found], submitting: true };
+    else items.push(item);
+  }
+  return items;
 }
 
 function queuedFollowupItemsSignature(followUps: unknown = [], steerings: unknown = []) {
@@ -368,6 +404,9 @@ function settleQueuedFollowupForAcceptedUserMessage(clientMessageId: unknown = "
   const id = normalizeClientMessageId(clientMessageId);
   const sessionId = normalizeSessionId(getSessionId());
   if (!id || !sessionId) return false;
+  const pending = submissions.get(sessionId);
+  pending?.delete(id);
+  if (pending && !pending.size) submissions.delete(sessionId);
   const runtime = getRuntime(sessionId);
   const followUps = normalizePendingFollowUps(runtime.pendingFollowUps);
   const steerings = normalizePendingSteerings(runtime.pendingSteerings);
@@ -415,7 +454,7 @@ function renderQueuedFollowups() {
   }
   queuedFollowupAnimationSessionId = sessionId;
   const runtime = getRuntime(getSessionId());
-  const items = queuedItemsFromRuntime(runtime);
+  const items = displayedQueueItems(sessionId, runtime);
   const nextSignature = queuedFollowupRenderSignature(sessionId, items);
   const localMutationReason = queuedFollowupLocalMutationReason;
   queuedFollowupLocalMutationReason = "";
@@ -494,10 +533,10 @@ function renderQueuedFollowups() {
     ].filter(Boolean).join(" ");
     const domId = queuedFollowupDomId(id);
     return `
-      <div class="${classes}"${domId ? ` id="${escapeHtml(domId)}"` : ""} data-client-message-id="${escapeHtml(id)}" data-queue-kind="${item.queueKind}">
+      <div class="${classes}"${domId ? ` id="${escapeHtml(domId)}"` : ""} data-client-message-id="${escapeHtml(id)}" data-queue-kind="${item.queueKind}"${item.submitting ? ' data-submitting="true"' : ""}>
         ${isSteering
           ? `<span class="queued-followup-steering-mark" aria-hidden="true">${steeringMarkIcon()}</span>`
-          : `<span class="queued-followup-drag" draggable="true" aria-hidden="true">${dragGripIcon()}</span>`}
+          : `<span class="queued-followup-drag" draggable="${!item.submitting}" aria-hidden="true">${dragGripIcon()}</span>`}
         <span class="queued-followup-copy">
           <span class="queued-followup-text" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
           ${isSteering ? "" : `<span class="queued-followup-meta">${escapeHtml(meta)}</span>`}
@@ -506,9 +545,9 @@ function renderQueuedFollowups() {
           ${isSteering
             ? `<span class="queued-followup-steering-state"><span class="queued-followup-meta">${escapeHtml(meta)}</span></span>`
             : `
-            <button class="qz-btn qz-btn--ghost qz-btn--xs queued-followup-steer" type="button" data-steer-follow-up="${escapeHtml(id)}" title="${tHtml("convertToSteering")}" aria-label="${tHtml("convertToSteering")}">${steerActionIcon()}<span>${tHtml("steer")}</span></button>
+            <button class="qz-btn qz-btn--ghost qz-btn--xs queued-followup-steer" type="button" data-steer-follow-up="${escapeHtml(id)}" title="${tHtml("convertToSteering")}" aria-label="${tHtml("convertToSteering")}"${item.submitting ? " disabled" : ""}>${steerActionIcon()}<span>${tHtml("steer")}</span></button>
           `}
-          <button class="qz-icon-btn qz-icon-btn--xs queued-followup-delete" type="button" ${isSteering ? `data-delete-steering="${escapeHtml(id)}"` : `data-delete-follow-up="${escapeHtml(id)}"`} title="${tHtml("edit")}" aria-label="${tHtml("edit")}">
+          <button class="qz-icon-btn qz-icon-btn--xs queued-followup-delete" type="button" ${isSteering ? `data-delete-steering="${escapeHtml(id)}"` : `data-delete-follow-up="${escapeHtml(id)}"`} title="${tHtml("edit")}" aria-label="${tHtml("edit")}"${item.submitting ? " disabled" : ""}>
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M4.75 4.75l6.5 6.5M11.25 4.75l-6.5 6.5" />
             </svg>
@@ -630,7 +669,7 @@ container?.addEventListener("click", async (event) => {
   const followUpDeleteButton = (event.target instanceof Element ? event.target : null)?.closest<HTMLButtonElement>("[data-delete-follow-up]");
   const steeringDeleteButton = (event.target instanceof Element ? event.target : null)?.closest<HTMLButtonElement>("[data-delete-steering]");
   const button = followUpDeleteButton || steeringDeleteButton;
-  if (!button) return;
+  if (!button || button.disabled) return;
   const sessionId = normalizeSessionId(getSessionId());
   const clientMessageId = normalizeClientMessageId(
     followUpDeleteButton ? button.dataset.deleteFollowUp : button.dataset.deleteSteering,
@@ -662,7 +701,7 @@ container?.addEventListener("click", async (event) => {
 container?.addEventListener("dragstart", (event) => {
   const handle = (event.target instanceof Element ? event.target : null)?.closest<HTMLElement>(".queued-followup-drag");
   const row = handle?.closest<HTMLElement>(".queued-followup");
-  if (!row || row.dataset.queueKind !== "followup") return;
+  if (!row || row.dataset.queueKind !== "followup" || row.dataset.submitting === "true") return;
   queuedFollowupDragId = normalizeClientMessageId(row.dataset.clientMessageId);
   container.classList.add("is-reordering");
   row.classList.add("is-dragging");
@@ -723,6 +762,8 @@ container?.addEventListener("dragend", () => {
 });
 
   return {
+    stageSubmission, settleSubmission, isSubmitting,
+    forgetSession: (sessionId: string) => { submissions.delete(sessionId); },
     itemsSignature: queuedFollowupItemsSignature,
     render: renderQueuedFollowups,
     set: setCurrentSessionPendingFollowUps,
@@ -788,5 +829,6 @@ function queueItemsSignature(items: QueueItem[]) {
     String(item.text || ""),
     Math.max(0, Number(item.imageCount) || 0),
     Math.max(0, Number(item.attachmentCount) || 0),
+    Boolean(item.submitting),
   ].join("\u001f")).join("\u001e");
 }

@@ -45,7 +45,7 @@ function fixture({ current = "visible", listen, reconcile = false } = {}) {
       forgetSession: call("forgetTranscript"),
     },
     transcriptReconcile,
-    queuedFollowups: { itemsSignature: (a, b) => JSON.stringify([a, b]), render: call("queue"), settleAccepted: () => null },
+    queuedFollowups: { itemsSignature: (a, b) => JSON.stringify([a, b]), render: call("queue"), settleAccepted: () => null, forgetSession: call("queue.forget") },
     goalStrip: { renderCurrent: call("goal"), forget: call("forgetGoal") },
     forgetComposerSession: call("forgetComposer"), syncKeepAlive: call("keepAlive"),
     onEvent: event => ui.emit(event),
@@ -166,6 +166,7 @@ test("reconnection recovery retains stale-event, inactive-session and deletion b
 
   f.router.handle(interrupted);
   f.router.handle(event("session_deleted"));
+  assert.ok(f.calls.some(call => call.name === "queue.forget"), "deletion also clears provisional queue presentation");
   t.mock.timers.tick(400);
   f.router.handle({ ...interrupted, eventSeq: 99 });
   t.mock.timers.tick(400);

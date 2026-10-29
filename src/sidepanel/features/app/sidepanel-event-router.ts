@@ -392,6 +392,7 @@ export function createSidepanelEventRouter(options: RouterOptions) {
     const sessionId = normalizeSessionId(event.sessionId);
     if (!sessionId) return;
     deletedSessionIds.add(sessionId);
+    queuedFollowups.forgetSession(sessionId);
     goalStrip.forget(sessionId);
     sessionState.remove(sessionId);
     runController.forgetSession(sessionId);

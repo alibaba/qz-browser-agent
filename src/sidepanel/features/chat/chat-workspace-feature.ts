@@ -89,6 +89,7 @@ export function createChatWorkspaceFeature(options: ChatWorkspaceOptions) {
   const math = createMathFeature();
   const projection = createTranscriptProjection({
     projectArtifacts: (entries, sessionId) => extensions.projectTranscript(entries, sessionId),
+    isQueuedSubmission: (sessionId, clientMessageId) => queue.isSubmitting(sessionId, clientMessageId),
   });
   const toast = createToastFeature({
     root,
@@ -234,6 +235,12 @@ export function createChatWorkspaceFeature(options: ChatWorkspaceOptions) {
     hideWelcome: () => runController?.hideWelcome(),
     hideAssistantMessageActions: () => transcript?.hideAssistantActions(),
     appendUserMessage: (...args) => transcript?.appendUserMessage(...args),
+    stageQueuedSubmission: (sessionId, message) => {
+      const running = options.isRuntimeRunning?.(options.getRuntime(sessionId)) === true
+        || (runController?.getActiveSessionId() === sessionId && runController.getStatus() !== CHAT_RUN_STATES.IDLE);
+      if (running) queue.stageSubmission(sessionId, message);
+    },
+    settleQueuedSubmission: (sessionId, clientMessageId) => queue.settleSubmission(sessionId, clientMessageId),
     removePendingUserMessage: (...args) => transcript?.removePendingUserMessage(...args),
     setUserMessageDeliveryStatus: (...args) => transcript?.setUserMessageDeliveryStatus(...args),
     lockForUserMessage: scroll.lockForSubmittedAction,

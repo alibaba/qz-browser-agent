@@ -35,6 +35,8 @@ interface ComposerOptions {
   setSuppressRunEvents?(suppressed: boolean): void; showError?(message: string): void;
   markOnboardingActivated?(): void; hideWelcome?(): void; hideAssistantMessageActions?(): void;
   appendUserMessage?(text: string, images: TranscriptImage[], id: string, documents: MessageDocument[]): void;
+  stageQueuedSubmission?(sessionId: string, message: { clientMessageId: string; text: string; imageCount: number; attachmentCount: number }): void;
+  settleQueuedSubmission?(sessionId: string | null, clientMessageId: string): void;
   removePendingUserMessage?(sessionId: string | null, messageId: string): boolean;
   setUserMessageDeliveryStatus?(sessionId: string | null, messageId: string, status: string, options?: { moveToTail: boolean }): boolean;
   lockForUserMessage?(): void; preserveViewportDuringDockLayout?(update: () => void): void;
@@ -722,6 +724,7 @@ export function createComposerFeature(options: ComposerOptions) {
     }));
 
     armOutgoingUserMessageEntry(sessionId, clientMessageId);
+    options.stageQueuedSubmission?.(sessionId, { clientMessageId, text, imageCount: images.length, attachmentCount: documents.length });
     appendUserMessage(text, images, clientMessageId, documents);
     lockForUserMessage();
     return submitPrompt({
@@ -747,7 +750,7 @@ export function createComposerFeature(options: ComposerOptions) {
     try {
       const response = await request("prompt", payload, null);
       if (response?.disposition === "queued") {
-        // queue_update is emitted before durable admission; the ack only removes the temporary bubble.
+        // queue_update precedes the acknowledgement; retain the local delivery record until admission completes.
         removePendingUserMessage(sessionId, clientMessageId);
       } else {
         setUserMessageDeliveryStatus(sessionId, clientMessageId, "accepted");
@@ -768,6 +771,8 @@ export function createComposerFeature(options: ComposerOptions) {
         elapsedMs: Date.now() - startedAt,
       });
       return false;
+    } finally {
+      options.settleQueuedSubmission?.(sessionId, clientMessageId);
     }
   }
 
@@ -810,6 +815,7 @@ export function createComposerFeature(options: ComposerOptions) {
     }
     if (normalizeSessionId(getSessionId()) !== sessionId) return false;
     const documents = Array.isArray(entry.documents) ? entry.documents : [];
+    options.stageQueuedSubmission?.(sessionId, { clientMessageId, text: String(entry.text || ""), imageCount: images.length, attachmentCount: documents.length });
     setUserMessageDeliveryStatus(sessionId, clientMessageId, "pending", { moveToTail: true });
     lockForUserMessage();
     return submitPrompt({
