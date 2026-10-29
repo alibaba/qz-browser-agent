@@ -5,12 +5,14 @@ import { installNotificationRenewal } from "./notifications.js";
 import { installOffscreenHost } from "./offscreen-host.js";
 import { disableFirefoxSessionAutomations } from "./session-automations.js";
 import { installWorkspacePanel } from "./workspace-panel.js";
+import { installFirefoxTabNavigation } from "./tab-navigation.js";
 
 /** Patch Firefox APIs before the shared background graph reads them. */
 export function installFirefoxHost(chromeApi: unknown = globalThis.chrome): void {
   const browser = chromeApi as HostChrome | undefined;
   if (!browser || browser.qzFirefoxHost) return;
   browser.qzFirefoxHost = true;
+  installFirefoxTabNavigation(browser as Parameters<typeof installFirefoxTabNavigation>[0]);
   disableFirefoxSessionAutomations(browser);
   installFirefoxMcpWake(browser as Parameters<typeof installFirefoxMcpWake>[0]);
   installFirefoxDebugger(browser as Parameters<typeof installFirefoxDebugger>[0]);

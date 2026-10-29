@@ -75,7 +75,11 @@ Firefox API stand-ins install from the boot modules, which run before the shared
 - [sidepanel/firefox-boot.ts](../src/sidepanel/firefox-boot.ts) imports `sidepanel/firefox/host.ts`, then `sidepanel/sidepanel.ts`.
 
 `installFirefoxHost` patches `sidebarAction`, notifications, offscreen, debugger, and network
-hooks on the `chrome` object, then the shared service worker reads that object. It also sets
+hooks on the `chrome` object, then the shared service worker reads that object. It supplies
+Firefox's missing `Tab.pendingUrl` through main-frame request and commit events. Request IDs keep
+errors from replaced requests from clearing a newer navigation; commits, errors, no-content responses
+and tab removal clear the pending field. This adapter uses the package's existing permissions.
+The host also sets
 `qzSessionAutomationsEnabled` to false, clears `qingzhou.automation.scheduler`, and arms the
 Firefox MCP wake (`qzFirefoxMcpWake`) before that service worker starts. The wake pings a parent
 API while the CLI connection is enabled and registers `qingzhou-mcp-bridge-reconnect` during

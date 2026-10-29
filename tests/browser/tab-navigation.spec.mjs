@@ -36,7 +36,9 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     const finish = () => {
       if (path.startsWith('/head-block-')) { res.writeHead(200, { 'Content-Type': 'text/javascript' }); res.end('// parser released'); return; }
       res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
-      res.end(`<title>Navigation fixture</title><article>Document ${escapeHtml(path)} generation ${counts.get(path)}</article>`);
+      const sample = path === "/open-timeout"
+        ? '<button>Loaded action</button><img id="sample" alt="Loaded image" width="32" height="32" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=">' : '';
+      res.end(`<title>Navigation fixture</title><article>Document ${escapeHtml(path)} generation ${counts.get(path)}</article>${sample}`);
     };
     if (held.has(path)) held.get(path).push({ res, finish });
     else if (path === "/stream") {
@@ -369,11 +371,33 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     const incompleteOpen = await call("open_tab", { url: `${origin}/open-timeout`, tabAlias: "loading", watchNetwork, timeout: 1 });
     expect(incompleteOpen).toMatchObject({ loading: true, incomplete: { reason: "timeout" } });
     expect(await worker.evaluate(async () => (await chrome.tabs.query({})).length)).toBe(before + 1);
-    release("/open-timeout");
     expect(incompleteOpen.tabAlias).toBe('loading');
+    const readers = [
+      ['read_article', { limit: 1200 }], ['read_dom', {}], ['find_elements', { selector: 'button' }],
+      ['inspect_element', { target: 'css:article' }], ['list_images', {}],
+      ['read_image', { target: 'css:#sample' }], ['get_ax_tree', {}], ['screenshot', {}],
+    ];
+    // Keep the real response withheld: every reader must spend its own deadline
+    // waiting, and neither the open timeout nor a read timeout may close the tab.
+    for (const [name, args] of readers) {
+      const result = await call(name, { ...args, tabRef: 'loading', timeout: 0.1 });
+      if (['list_images', 'read_image'].includes(name)) expect(result.code, JSON.stringify(result)).toBe('TOOL_TIMEOUT');
+      else expect(result, JSON.stringify(result)).toMatchObject({ tabId: incompleteOpen.tabId, incomplete: { reason: 'timeout' } });
+      expect(await worker.evaluate(tabId => chrome.tabs.get(tabId).then(tab => tab.status), incompleteOpen.tabId)).toBe('loading');
+    }
+    release("/open-timeout");
     const loadingRead = await call('read_article', { tabRef: 'loading', limit: 1200 });
     expect(loadingRead, JSON.stringify(loadingRead)).not.toHaveProperty('error');
     expect(loadingRead.text, JSON.stringify(loadingRead)).toContain('Document /open-timeout');
+    for (const [name, args] of readers.slice(1)) {
+      const result = await call(name, { ...args, tabRef: 'loading' });
+      expect(result, `${name}: ${JSON.stringify(result)}`).not.toHaveProperty('error');
+      expect(result, `${name}: ${JSON.stringify(result)}`).not.toHaveProperty('incomplete');
+      if (name === 'read_dom' || name === 'inspect_element') expect(JSON.stringify(result)).toContain('Document /open-timeout');
+      if (name === 'find_elements' || name === 'get_ax_tree') expect(JSON.stringify(result)).toContain('Loaded action');
+      if (name === 'list_images') expect(result.images).toHaveLength(1);
+      if (name === 'read_image' || name === 'screenshot') expect(result._image).toBeTruthy();
+    }
     expect(await call('close_tab', { tabRef: 'loading' })).not.toHaveProperty('error');
     expect(await call('read_article', { tabRef: 'loading', limit: 1200 })).toHaveProperty('code', 'BATCH_TAB_REFERENCE_ERROR');
     const reopened = await call('open_tab', { url: `${origin}/alias-reused`, tabAlias: 'loading' });

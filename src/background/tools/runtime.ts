@@ -138,15 +138,16 @@ async function ensureContentScript(tabId: number, force = false, context: ToolCo
   }
 }
 
-// Initial about:blank is not the pending target document.
+// A pending main navigation still exposes either the initial blank or the old document.
 // This wait runs inside the caller's deadline and signal.
-async function waitForInitialPage(tabId: number, signal?: AbortSignal) {
-  let waited = false;
+async function waitForPageCommit(tabId: number, signal?: AbortSignal) {
   while (true) {
     if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for the page", { tabId });
     const tab = await chrome.tabs.get(tabId);
-    if ((tab.url && tab.url !== "about:blank") || !isPageTabUrl(tab.pendingUrl)) return waited;
-    waited = true;
+    // Chrome can drop pendingUrl when the initial blank commits while the target
+    // request is still in flight. Its loading status still warrants a bounded wait.
+    const loadingBlank = (!tab.url || tab.url === "about:blank") && tab.status === "loading";
+    if (!loadingBlank && !isPageTabUrl(tab.pendingUrl)) return;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
 }
@@ -546,7 +547,8 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     if (typeof definition.validateArgs === "function") definition.validateArgs(effectiveArgs);
     validateToolSchema(name, effectiveArgs, parameters);
     await assertToolAllowedForSession(definition, context);
-    const executionArgs = await withSessionOwnedTarget(definition, effectiveArgs, parameters, context, signal);
+    const executionArgs = await withSessionOwnedTarget(definition, effectiveArgs, parameters, context, signal,
+      needsCommittedPage(definition, effectiveArgs));
     effectiveArgs = executionArgs;
     assertScriptPageLifecycle(definition, executionArgs, context);
     const securityGuardrails = await getSecurityGuardrails();
@@ -593,9 +595,6 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
             };
           }
           const pageAccess = resolvePageAccess(selectedDefinition, args);
-          if (pageAccess && pageAccess !== "tab" && args._readOnlyTabAccess !== true && Number(args.tabId) > 0) {
-            await capabilityBridges.preparePage?.(Number(args.tabId), name, signal, callContext);
-          }
           if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
           const policy = selectedDefinition.behavior?.timeoutResult;
           if (policy?.kind === "action") reportPartial({ tabId: args.tabId, status: "unconfirmed" }, policy.pending);
@@ -604,10 +603,15 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
             const tabId = Number(args.tabId);
             reportPartial({ tabId }, policy.pending);
           }
-          if (pageAccess === "readOnly" && Number(args.tabId) > 0
-            && await waitForInitialPage(Number(args.tabId), signal)) {
-            await withSessionOwnedTarget(selectedDefinition, args, parameters, context, signal);
+          if (needsCommittedPage(selectedDefinition, args) && Number(args.tabId) > 0) {
+            await waitForPageCommit(Number(args.tabId), signal);
+            // Revalidate even if the blank finished between admission and this wait.
+            // It may have become a restricted page or lost its task ownership.
+            Object.assign(args, await withSessionOwnedTarget(selectedDefinition, args, parameters, context, signal));
             await assertToolTargetAllowedBySecurityGuardrails(selectedDefinition, args, context);
+          }
+          if (pageAccess && pageAccess !== "tab" && args._readOnlyTabAccess !== true && Number(args.tabId) > 0) {
+            await capabilityBridges.preparePage?.(Number(args.tabId), name, signal, callContext);
           }
           if (signal.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
           return selectedDefinition.execute(args, signal, callContext);
@@ -985,6 +989,12 @@ function resolvePageAccess(definition: RuntimeTool, args: Fields) {
   return typeof definition.page === "function" ? definition.page(args) : definition.page || false;
 }
 
+function needsCommittedPage(definition: RuntimeTool, args: Fields) {
+  const access = resolvePageAccess(definition, args);
+  return shouldResolveSessionTabTarget(definition, args)
+    && (access === "readOnly" || (access === "owned" && definition.behavior?.timeoutResult?.kind === "read"));
+}
+
 function shouldResolveSessionTabTarget(definition: RuntimeTool, args: Fields = {}) {
   const targets = elementTargetsOf(definition, args);
   // UID resolution checks each registered tab. Mixed calls still need the default
@@ -993,7 +1003,7 @@ function shouldResolveSessionTabTarget(definition: RuntimeTool, args: Fields = {
     && (!targets.some(isUidElementTarget) || targets.some(target => !isUidElementTarget(target)));
 }
 
-async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _parameters: ToolSchema, context: ToolContext = {}, signal?: AbortSignal): Promise<Fields> {
+async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _parameters: ToolSchema, context: ToolContext = {}, signal?: AbortSignal, allowLoadingBlank = false): Promise<Fields> {
   const toolName = definition.name;
   const input = { ...args };
   if (!shouldResolveSessionTabTarget(definition, input)) return input;
@@ -1022,6 +1032,7 @@ async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _pa
     checkOnly: context.preserveWorkingTab === true || context.deferToolCommit === true,
     readOnly: resolvePageAccess(definition, input) === "readOnly",
     tabOnly: resolvePageAccess(definition, input) === "tab",
+    allowLoadingBlank,
   });
   if (!resolved?.ok) {
     throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {

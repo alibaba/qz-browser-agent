@@ -244,8 +244,15 @@ loading state and `incomplete` marker. Stop and navigation failures retain new-t
 claimed while blank, configured for mobile mode or network capture, then navigated through this
 gate.
 
-Read-only page tools also wait for an initial pending navigation to leave `about:blank`, within
-their timeout and cancellation signal. They recheck access after waiting. Content reads inject
+Page readers, including accessibility trees and screenshots, wait for initial navigation to leave
+an empty URL or `about:blank`, within their timeout and cancellation signal. Admission also accepts
+an owned blank tab still marked `loading` when Chrome has dropped `pendingUrl`. Readers recheck
+the target and security policy before page preparation, even if navigation finished between admission
+and the wait. A web `pendingUrl` also gates reads of an existing document during replacement or
+same-URL reload, so a navigation timeout cannot turn into a successful read of the old page.
+Committed documents remain readable while subresources load. Firefox's host supplies its missing
+`pendingUrl` field from main-frame request and commit events; request IDs isolate cancelled and
+replaced requests. Readers need no Session-level navigation registry. Content reads inject
 immediately into the main frame. The initial presence ping has a short probe budget; installation
 and its acknowledgement use the call's existing deadline and cancellation signal. The installed bridge
 is idempotent. A presence ping also reports whether DOMContentLoaded has fired. Content reads wait

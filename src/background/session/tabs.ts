@@ -36,7 +36,7 @@ interface SessionTabsOptions {
 interface TabClaim { source?: string; toolName?: string; action?: string; explicitClaim?: boolean; createdTab?: boolean; clonedTab?: boolean }
 interface RunAuthority { runId?: string | null; signal?: AbortSignal }
 interface WorkingTabUpdate extends TabClaim, RunAuthority { sessionId?: unknown; tab?: unknown; owned?: boolean; claim?: boolean; createdTabReservation?: object }
-interface TargetTabOptions extends RunAuthority { sessionId?: unknown; tabId?: unknown; source?: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean; createdTabReservation?: object }
+interface TargetTabOptions extends RunAuthority { sessionId?: unknown; tabId?: unknown; source?: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean; allowLoadingBlank?: boolean; createdTabReservation?: object }
 type RestoreFailure = { ok: false; index: number; code: string; reason: string; error?: string };
 type RestoreSuccess = { ok: true; index: number; portable: PortableSessionTab; tab: WorkingTab };
 const object = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
@@ -280,6 +280,7 @@ export function createSessionTabs({
     readOnly = false,
     tabOnly = false,
     allowPreNavigationBlank = false,
+    allowLoadingBlank = false,
     createdTabReservation,
   }: TargetTabOptions = {}) {
     const id = normalizeSessionId(sessionId);
@@ -325,6 +326,13 @@ export function createSessionTabs({
       return { ok: false, code: "SESSION_TAB_UNAVAILABLE", reason: "pending_creation", sessionId: id, tabId: targetTabId };
     const owner = findOwner(targetTabId);
     const formatted = formatTab(tab, { titleLimit: 120 });
+    // Admission to the reader's readiness wait only. Do not publish the initial blank
+    // as the working page, and require ordinary target validation before page access.
+    if (allowLoadingBlank && owner?.sessionId === id && tab.status === "loading"
+      && (!tab.url || tab.url === "about:blank")) {
+      return { ok: true, reason: "loading_owned_tab", sessionId: id, tabId: targetTabId,
+        tab: formatted, ownedByCurrentTask: true };
+    }
     const tabUrl = String(tab?.url || tab?.pendingUrl || "").trim();
     const isOwnedPreNavigationBlank = allowPreNavigationBlank === true
       && tabUrl === "about:blank"

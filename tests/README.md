@@ -100,6 +100,32 @@ with a withheld HTTP response, real Content readiness and Network watching both 
 It uses the production Session tab manager and checks a fresh Session's first open, pre-navigation
 Network capture and a same-batch alias read. `--match session-tab-targeting` also covers provisional
 desktop/mobile setup, reservation isolation and cancellation during CDP authorization.
+The navigation fixture also holds a new tab's response past the open deadline, exercises eight page
+readers' own deadlines, and checks that the retained tab becomes readable after commit. The
+`page-readiness` units cover missing `pendingUrl`, cancellation, closed tabs and restricted destinations
+using the production Session target resolver. Firefox's `page-readiness.spec.mjs` checks native
+navigation and reader waits through its existing page-tool harness.
+
+`npm test -- unit --match page-readiness-fuzz` runs four replayable seeds through 220 lifecycle
+combinations with a controlled clock. It varies empty/blank/old documents, missing pending URLs,
+same-URL reloads, commit/deadline races, cancellation, removal, run replacement, deletion and
+restricted destinations. Each case also checks independent-tab progress and late callbacks.
+`npm test -- playwright tab-navigation-fuzz.spec.mjs --workers 2` exercises 17 lifecycle scenarios
+with three seeds and network watching on/off in Chrome. Firefox runs the same scenarios through
+`tests/firefox/page-navigation-fuzz.spec.mjs`; both fixtures load the production Session target
+resolver in an isolated extension. Filter a seed with Playwright's `--grep 'seed=17'`.
+Reports include the seed, scenario, observed navigation state and checked read count. Eight reader
+entry points run in shuffled concurrent batches. Network-error screenshots and AX trees may describe
+the browser's error document; they must not present the requested article as loaded.
+
+Use `--grep combinations` on the browser navigation fuzz specs for a second matrix: 12 compound
+scenarios, three different seeds, and network watching on/off in both browsers. It combines redirect
+chains with cancellation or policy changes, parser-blocking responses, reload timeouts and retries,
+same-URL replacement with late responses, alias reuse after closure, concurrent Sessions, ownership
+transfer, old/new runs, deadline/commit/close races, 204 recovery and stale UIDs. Assertions inspect
+actual text, elements, image metadata and lossless screenshot pixels rather than page metadata.
+The `page-readiness-fuzz` unit file adds 105 controlled-clock combinations with two scheduled
+transitions per case; `--test-name-pattern=combinations` selects just those three seeded tests.
 
 ## Add a test at the right boundary
 

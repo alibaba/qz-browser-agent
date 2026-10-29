@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { createSessionTabs } from "../../src/background/session/tabs.js";
 
 const targetUrl = "https://example.test/gallery";
 let tab, closed, denied, reads, resolves, polls;
@@ -7,6 +8,7 @@ let contentReady = true;
 let documentReady = true, completeDocument;
 let ackDelay = 0;
 let completeInjection;
+let afterResolve;
 const injections = [];
 globalThis.chrome = {
   runtime: { getURL: path => `chrome-extension://test/${path}` },
@@ -32,22 +34,30 @@ globalThis.chrome = {
   } },
 };
 const { createToolRuntime } = await import("../../src/background/tools/runtime.js");
+const state = { sessionId: "readiness", ownedTabIds: [1], workingTabId: 1 };
+const sessionTabs = createSessionTabs({
+  supervisor: { getRuntime: () => state, runtimeEntries: () => [["readiness", state]], isRunCurrent: () => true },
+  tabsApi: chrome.tabs, storage: chrome.storage.local,
+  setRuntime: (_id, patch) => Object.assign(state, patch), persistRuntime: async () => {},
+});
 const runtime = createToolRuntime({ sessions: {
   isRunCurrent: () => true,
-  async resolveTargetTab() {
+  async resolveTargetTab(options) {
     resolves++;
-    return denied ? { ok: false, code: "SESSION_TAB_UNAVAILABLE" }
-      : { ok: true, tabId: 1, tab: { ...tab }, ownedByCurrentTask: true };
+    const result = denied ? { ok: false, code: "SESSION_TAB_UNAVAILABLE" }
+      : await sessionTabs.resolveTargetTab(options);
+    const callback = afterResolve; afterResolve = undefined; callback?.();
+    return result;
   },
 } });
-const context = { sessionId: "readiness", runId: "run", workingTabId: 1 };
+const context = { sessionId: "readiness", runId: "run", workingTabId: 1, preserveWorkingTab: true };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const load = () => { tab = { id: 1, url: targetUrl, status: "complete", title: "Gallery" }; };
 
-for (const name of ["read_article", "list_images"]) {
+for (const name of ["read_article", "list_images"]) for (const pendingUrl of [targetUrl, undefined]) {
   for (const outcome of ["loaded", "cancelled", "timeout", "closed", "access-revoked", "blocked-redirect"]) {
-    test(`${name} waits for initial navigation: ${outcome}`, async () => {
-      tab = { id: 1, url: "about:blank", pendingUrl: targetUrl, status: "loading" };
+    test(`${name} waits for initial navigation (pendingUrl=${Boolean(pendingUrl)}): ${outcome}`, async () => {
+      tab = { id: 1, url: "about:blank", pendingUrl, status: "loading" };
       closed = denied = false;
       reads = resolves = polls = 0;
       const controller = new AbortController();
@@ -75,7 +85,7 @@ for (const name of ["read_article", "list_images"]) {
             assert.equal(settled.error, undefined);
             assert.equal(settled.value.incomplete.reason, "timeout");
             assert.equal(settled.value.pageState.url, "about:blank");
-            assert.equal(settled.value.pageState.pendingUrl, targetUrl);
+            assert.equal(settled.value.pageState.pendingUrl, pendingUrl || "");
             assert.equal(settled.value.pageState.readyState, "unknown", "tab loading does not imply document readiness");
           } else {
             assert.ok(settled.error, `${outcome} must fail`);
@@ -96,6 +106,38 @@ for (const name of ["read_article", "list_images"]) {
       }
     });
   }
+}
+
+const pageReaders = [
+  ["read_article", { limit: 1200 }], ["read_dom", {}], ["find_elements", {}],
+  ["inspect_element", { target: "css:body" }], ["list_images", {}],
+  ["read_image", { target: "css:img" }], ["get_ax_tree", {}], ["screenshot", {}],
+];
+for (const [name, args] of pageReaders) {
+  for (const url of ["", "about:blank"]) test(`${name} keeps a loading blank tab without pendingUrl until its deadline (${JSON.stringify(url)})`, async () => {
+    tab = { id: 1, url, status: "loading" }; closed = denied = false; reads = 0;
+    const result = await runtime.execute(name, { ...args, tabId: 1, timeout: 0.1 }, undefined, context)
+      .then(value => ({ value }), error => ({ error }));
+    if (["list_images", "read_image"].includes(name)) assert.equal(result.error?.code, "TOOL_TIMEOUT");
+    else {
+      assert.equal(result.error, undefined);
+      assert.equal(result.value.incomplete.reason, "timeout");
+      assert.equal(result.value.pageState.loading, true);
+    }
+    load(); await pause(70);
+    assert.equal(reads, 0, "deadline cannot revive a read after the page commits");
+  });
+}
+
+for (const finalUrl of ["about:blank", "chrome://settings", "https://blocked.test/gallery"]) {
+  test(`reader rechecks a page that settles before its first readiness poll: ${finalUrl}`, async () => {
+    tab = { id: 1, url: "about:blank", status: "loading" }; closed = denied = false; reads = 0;
+    afterResolve = () => { tab = { id: 1, url: finalUrl, status: "complete" }; };
+    await assert.rejects(runtime.execute("read_article", { limit: 1200 }, undefined, context), {
+      code: finalUrl.startsWith("https:") ? "SECURITY_GUARDRAIL_BLOCKED" : "SESSION_TAB_NOT_WEB",
+    });
+    assert.equal(reads, 0);
+  });
 }
 
 for (const outcome of ['ready', 'cancelled', 'timeout']) test(`a parsed-document gate protects late-body reads: ${outcome}`, async () => {
