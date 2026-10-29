@@ -15,6 +15,7 @@ import { describeAutomationSchedule, computeNextRunAt } from "../../src/shared/a
 import { qingzhouTabGroupPatch, ensureQingzhouTabGroupForWindow } from "../../src/shared/tab-groups.js";
 import { formatBeijingDateTime, parseBeijingDateTime } from "../../src/shared/time-utils.js";
 import { t as contentText } from "../../src/content/i18n.js";
+import { appendErrorSection } from "../../src/sidepanel/tools/generic-result-renderer.js";
 
 async function inLanguage(language, run) {
   const chrome = globalThis.chrome;
@@ -53,6 +54,81 @@ test("tool errors translate at the boundary and retain machine identity and orig
   assert.equal(english.details.originalError, input.error);
   assert.equal(input.error, "changed revision 7");
   assert.equal(await inLanguage("de-DE", () => localizeToolFailureCode("TOOL_NOT_EXECUTED")), "Tool did not run");
+});
+
+test("location failures keep stable codes and short recovery text", async () => {
+  const cases = [
+    ["LOCATION_RESPONSE_TIMEOUT", "locationResponseTimeout", "locationResponseTimeoutLabel"],
+    ["LOCATION_TIMEOUT", "locationTimeout", "locationTimeoutLabel"],
+    ["LOCATION_PERMISSION_DENIED", "locationPermissionDenied", "locationPermissionDeniedLabel"],
+    ["LOCATION_POSITION_UNAVAILABLE", "locationPositionUnavailable", "locationPositionUnavailableLabel"],
+    ["LOCATION_UNAVAILABLE", "locationUnavailable", "locationUnavailableLabel"],
+    ["LOCATION_PANEL_UNAVAILABLE", "locationPanelUnavailable", "locationPanelUnavailableLabel"],
+  ];
+  const expected = {
+    en: {
+      LOCATION_RESPONSE_TIMEOUT: "Location timed out. Allow location in the browser and turn on system Location Services, or just tell me a city or area.",
+      LOCATION_PERMISSION_DENIED: "Location was blocked. Allow it when the browser asks, check system Location Services, or just tell me a city or area.",
+      LOCATION_TIMEOUT: "Location timed out. Keep the sidebar open and allow browser location, or just tell me a city or area.",
+      LOCATION_POSITION_UNAVAILABLE: "Couldn't determine your position. Check network and Location Services, or just tell me a city or area.",
+      LOCATION_UNAVAILABLE: "Couldn't get your location. Open the sidebar and check location permissions, or just tell me a city or area.",
+      LOCATION_PANEL_UNAVAILABLE: "Sidebar isn't connected. Open it in this window and try again, or just tell me a city or area.",
+    },
+    "zh-CN": {
+      LOCATION_RESPONSE_TIMEOUT: "定位超时。请确认已允许浏览器定位，并打开系统定位服务；也可直接告诉我城市或区域。",
+      LOCATION_PERMISSION_DENIED: "定位被拒绝。请在浏览器提示中允许定位，并检查系统定位权限；也可直接告诉我城市或区域。",
+      LOCATION_TIMEOUT: "定位超时。请保持侧边栏打开并允许浏览器定位，或直接告诉我城市或区域。",
+      LOCATION_POSITION_UNAVAILABLE: "暂时无法定位。请检查网络和系统定位服务，或直接告诉我城市或区域。",
+      LOCATION_UNAVAILABLE: "未能获取位置。请打开侧边栏并检查定位权限，或直接告诉我城市或区域。",
+      LOCATION_PANEL_UNAVAILABLE: "侧边栏未连接。请打开当前窗口的侧边栏后重试，或直接告诉我城市或区域。",
+    },
+  };
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { createElement: () => ({
+      innerHTML: "",
+      set textContent(value) {
+        this.innerHTML = String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      },
+    }) },
+  });
+  try {
+    for (const [code, messageKey, labelKey] of cases) {
+      for (const language of ["en", "zh-CN"]) {
+        const payload = await inLanguage(language, () => localizeToolFailurePayload({
+          ok: false,
+          code,
+          error: "The side panel did not return a location result",
+        }));
+        const message = backendMessages.messages[messageKey][language];
+        const label = backendMessages.messages[labelKey][language];
+        assert.equal(message, expected[language][code]);
+        assert.equal(payload.code, code);
+        assert.equal(payload.error, message);
+        assert.equal(payload.codeLabel, label);
+        assert.equal(payload.details.originalCode, code);
+        assert.equal(payload.details.originalError, "The side panel did not return a location result");
+        assert.equal(message.includes(code), false);
+        assert.equal(/Chrome|Firefox/.test(message), false);
+        assert.equal(label.includes("_"), false);
+        const sections = [];
+        await inLanguage(language, () => {
+          appendErrorSection({ appendChild: section => sections.push(section) }, {
+            ok: false, code, error: "The side panel did not return a location result",
+          });
+        });
+        const html = sections.at(-1).innerHTML;
+        assert.match(html, /tool-error-message/);
+        assert.equal(html.includes(message), true);
+        assert.equal(html.includes(label), true);
+        assert.equal(html.includes(code), false);
+      }
+    }
+  } finally {
+    if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+    else delete globalThis.document;
+  }
 });
 
 test("tool failures interpolate fields without translating caller values", async () => {

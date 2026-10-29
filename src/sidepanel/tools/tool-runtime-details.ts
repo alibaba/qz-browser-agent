@@ -101,6 +101,7 @@ function getToolState(tool: ToolEvent, resultValue: unknown, displayResult: unkn
 function getToolStatus(tool: ToolEvent, state: ToolView["state"]): ToolView["status"] {
   if (state === "aborted") return { title: t("terminated"), tone: "error" };
   if (state === "error") return { title: t("incomplete"), tone: "error" };
+  if (state === "incomplete") return { title: t("toolResultIncompleteShort"), tone: "incomplete" };
   if (tool.argsIncomplete || tool.phase === "preparing") return { title: t("preparingArgs"), tone: "running" };
   if (state === "running" && tool.statusText) return { title: tool.statusText, tone: "running" };
   if (state === "running") return { title: t("running"), tone: "running" };

@@ -35,6 +35,8 @@ interface ComposerOptions {
   setSuppressRunEvents?(suppressed: boolean): void; showError?(message: string): void;
   markOnboardingActivated?(): void; hideWelcome?(): void; hideAssistantMessageActions?(): void;
   appendUserMessage?(text: string, images: TranscriptImage[], id: string, documents: MessageDocument[]): void;
+  stageQueuedSubmission?(sessionId: string, message: { clientMessageId: string; text: string; imageCount: number; attachmentCount: number }): void;
+  settleQueuedSubmission?(sessionId: string | null, clientMessageId: string): void;
   removePendingUserMessage?(sessionId: string | null, messageId: string): boolean;
   setUserMessageDeliveryStatus?(sessionId: string | null, messageId: string, status: string, options?: { moveToTail: boolean }): boolean;
   lockForUserMessage?(): void; preserveViewportDuringDockLayout?(update: () => void): void;
@@ -476,6 +478,7 @@ export function createComposerFeature(options: ComposerOptions) {
   }
 
   function removeImage(index: number) {
+    if (activeDraft.submitting) return;
     const [item] = activeDraft.images.splice(index, 1);
     if (item) { imageTasks.get(item)?.abort(); touchDraft(activeDraft); }
     renderAttachments();
@@ -484,6 +487,7 @@ export function createComposerFeature(options: ComposerOptions) {
   }
 
   function removeDocument(attachmentId: unknown) {
+    if (activeDraft.submitting) return;
     const index = activeDraft.documents.findIndex(item => item.attachmentId === attachmentId);
     if (index < 0) return;
     const [item] = activeDraft.documents.splice(index, 1);
@@ -605,6 +609,62 @@ export function createComposerFeature(options: ComposerOptions) {
     draft.documents = [];
   }
 
+  async function restoreQueuedMessage(sessionId: string, clientMessageId: string, queueKind: string) {
+    if (sessionId !== normalizeSessionId(getSessionId()) || draftIsBusy() || isComposingInput) return { busy: true };
+    bindEmptyDraftToCurrentSession();
+    if (activeDraft.sessionId !== sessionId) return { busy: true };
+    captureInputText();
+    const draft = activeDraft;
+    touchDraft(draft);
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = 0;
+    draft.submitting = true;
+    updateSendState();
+    const applyRecoveredDraft = (value: unknown) => {
+      if (!value || !isTrackedDraft(draft)) return;
+      const restored = createDraftState(value);
+      lastDraftUpdatedAt = Math.max(lastDraftUpdatedAt, restored.updatedAt);
+      Object.assign(draft, restored, { submitting: true });
+      if (isActiveDraft(draft)) {
+        slashMenu.close();
+        preserveViewportDuringDockLayout(() => activateDraft(draft));
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    };
+    try {
+      const result = await request("restore_queued_message", {
+        sessionId, clientMessageId, queueKind, draft: serializeDraft(draft),
+      });
+      if (result.restored) applyRecoveredDraft(result.draft);
+      return result;
+    } catch (error) {
+      // A disconnected/timed-out response does not mean the durable withdrawal failed.
+      // Keep editing paused until an ordered read settles that uncertainty; saving the
+      // stale local draft after unlocking could overwrite the recovered attachments.
+      const connectionFailure = (value: unknown) => /^(?:PORT_(?:DISCONNECTED|REQUEST_TIMEOUT)|TRANSPORT_(?:DISCONNECTED|TIMEOUT))$/.test(String(record(value).code || ""));
+      if (connectionFailure(error) || record(error).code === "COMPOSER_DRAFT_CHANGED") {
+        while (isTrackedDraft(draft)) {
+          try {
+            const saved = await request("get_composer_draft", { sessionId, afterQueuedMutation: true }, null);
+            if (Number(record(saved.draft).updatedAt) > draft.updatedAt) applyRecoveredDraft(saved.draft);
+            break;
+          } catch (readError) {
+            if (!connectionFailure(readError)) throw readError;
+            await new Promise(resolve => setTimeout(resolve, 300));
+          }
+        }
+      }
+      throw error;
+    } finally {
+      draft.submitting = false;
+      if (isActiveDraft(draft)) {
+        updateSendState();
+        scheduleDraftSave();
+      }
+    }
+  }
+
   async function sendComposerMessage() {
     if (draftIsBusy() || draftHasError()) return;
     if (commandRuns.has(normalizeSessionId(getSessionId()))) return;
@@ -664,6 +724,7 @@ export function createComposerFeature(options: ComposerOptions) {
     }));
 
     armOutgoingUserMessageEntry(sessionId, clientMessageId);
+    options.stageQueuedSubmission?.(sessionId, { clientMessageId, text, imageCount: images.length, attachmentCount: documents.length });
     appendUserMessage(text, images, clientMessageId, documents);
     lockForUserMessage();
     return submitPrompt({
@@ -689,7 +750,7 @@ export function createComposerFeature(options: ComposerOptions) {
     try {
       const response = await request("prompt", payload, null);
       if (response?.disposition === "queued") {
-        // queue_update is emitted before durable admission; the ack only removes the temporary bubble.
+        // queue_update precedes the acknowledgement; retain the local delivery record until admission completes.
         removePendingUserMessage(sessionId, clientMessageId);
       } else {
         setUserMessageDeliveryStatus(sessionId, clientMessageId, "accepted");
@@ -710,6 +771,8 @@ export function createComposerFeature(options: ComposerOptions) {
         elapsedMs: Date.now() - startedAt,
       });
       return false;
+    } finally {
+      options.settleQueuedSubmission?.(sessionId, clientMessageId);
     }
   }
 
@@ -752,6 +815,7 @@ export function createComposerFeature(options: ComposerOptions) {
     }
     if (normalizeSessionId(getSessionId()) !== sessionId) return false;
     const documents = Array.isArray(entry.documents) ? entry.documents : [];
+    options.stageQueuedSubmission?.(sessionId, { clientMessageId, text: String(entry.text || ""), imageCount: images.length, attachmentCount: documents.length });
     setUserMessageDeliveryStatus(sessionId, clientMessageId, "pending", { moveToTail: true });
     lockForUserMessage();
     return submitPrompt({
@@ -1036,6 +1100,7 @@ export function createComposerFeature(options: ComposerOptions) {
 
   return {
     send: sendComposerMessage,
+    restoreQueuedMessage,
     retryUserMessage,
     syncInputState,
     setValue,

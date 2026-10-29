@@ -140,8 +140,14 @@ export function readTranslationBaseline(sourceDir, includes = () => true) {
   return readTranslationSource(sourceDir, includes).baseline;
 }
 
+/** Authored language objects for the same literal definitions. Keys are qualified message ids. */
+export function readTranslationVariants(sourceDir, includes = () => true) {
+  return readTranslationSource(sourceDir, includes).variants;
+}
+
 function readTranslationSource(sourceDir, includes) {
   const messages = new Map();
+  const variants = new Map();
   const historicalLabels = new Map();
   const visit = path => {
     const stat = lstatSync(path);
@@ -173,6 +179,7 @@ function readTranslationSource(sourceDir, includes) {
           if (messages.has(qualified)) throw new Error(`Duplicate translation baseline: ${qualified}`);
           if (!value || typeof value.en !== "string") throw new Error(`Translation requires an English fallback: ${qualified}`);
           messages.set(qualified, value.en);
+          variants.set(qualified, value);
           if (options.historicalLabels?.includes(key)) {
             const labels = Object.values(value);
             if (labels.some(label => typeof label !== "string" || !label.trim() || parameters(label))) {
@@ -190,7 +197,7 @@ function readTranslationSource(sourceDir, includes) {
     walk(ast);
   };
   visit(sourceDir);
-  return { baseline: messages, historicalLabels };
+  return { baseline: messages, historicalLabels, variants };
 }
 
 function moduleAst(file, source = readFileSync(file, "utf8")) {

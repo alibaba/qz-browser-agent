@@ -1,4 +1,5 @@
 import { Readability } from "@mozilla/readability";
+import { appendOpenShadowContent, openShadowRoot } from "./open-shadow.js";
 import type { ArticleExtractor, ExtractedArticle, ReadableArticleMetadata } from './article-types.js';
 
 type QueryRoot = Document | Element;
@@ -549,6 +550,10 @@ const host = globalThis as typeof globalThis & { QingzhouArticleExtractor?: Arti
       const boundary = node.nodeType === 1 && BLOCK_TAGS.has((node as Element).tagName);
       if (boundary) parts.push("\n");
       for (const child of node.childNodes || []) walk(child);
+      if (node.nodeType === 1) {
+        const shadow = openShadowRoot(node as Element);
+        if (shadow) for (const child of shadow.childNodes) walk(child);
+      }
       if (boundary) parts.push("\n");
     }
     walk(root);
@@ -692,8 +697,17 @@ const host = globalThis as typeof globalThis & { QingzhouArticleExtractor?: Arti
       }
       cloneStyle?.setProperty("visibility", "visible", "important");
     }
+    appendOpenShadowContent(source, clone, {
+      includeElement: (element) => openShadowElementVisible(element, view),
+    });
     clone.removeAttribute("hidden");
     return true;
+  }
+
+  function openShadowElementVisible(element: Element, view: Window) {
+    if (element.getAttribute("aria-hidden") === "true") return false;
+    const state = elementVisibility(element, view);
+    return !state.hiddenSubtree && !state.hiddenText;
   }
 
   function prepareDocument(doc: Document) {
@@ -1352,6 +1366,8 @@ const host = globalThis as typeof globalThis & { QingzhouArticleExtractor?: Arti
       if (tag === "A") linkDepth += 1;
       current.path = nextPath;
       for (const child of node.childNodes) walk(child, nextPath);
+      const shadow = openShadowRoot(node as Element);
+      if (shadow) for (const child of shadow.childNodes) walk(child, nextPath);
       if (tag === "A") linkDepth -= 1;
       if (boundary) flush();
     }

@@ -150,6 +150,15 @@ export function classifyEvidence(target) {
   if (["background/agent-behavior-e2e.mjs", "background/agent-behavior-regression.py"].includes(normalized)) {
     return evidence(normalized, "explicit", "agent", "agent:model-regression");
   }
+  if (normalized === "live/page-batch-case.mjs") {
+    return evidence(normalized, "explicit", "agent", "live:page-batch");
+  }
+  if (normalized === "live/ax-viewport.mjs") {
+    return evidence(normalized, "explicit", "agent", "live:ax-viewport");
+  }
+  if (normalized === "live/ax-viewport-public.mjs") {
+    return evidence(normalized, "explicit", "agent", "live:ax-viewport-public");
+  }
   if (normalized === "behavior/probes/notification-return.mjs") {
     return evidence(normalized, "automated", "e2e", "probe:notification-return");
   }
@@ -276,13 +285,16 @@ export function commandForGroup(group) {
     ]],
     "agent:model-regression": ["node", ["tests/background/agent-behavior-e2e.mjs", "--suite", "all"]],
     "probe:notification-return": ["node", ["tests/behavior/probes/notification-return.mjs"]],
+    "live:page-batch": ["node", ["tests/live/deepseek-extension.mjs"], { QINGZHOU_LIVE_CASES: "pageBatch" }],
+    "live:ax-viewport": ["node", ["tests/live/ax-viewport.mjs"]],
+    "live:ax-viewport-public": ["node", ["tests/live/ax-viewport-public.mjs"]],
   };
   if (group.key.startsWith("e2e:python:")) {
     return command(common, "node", ["tests/support/run-python-browser.mjs", paths[0]]);
   }
   const pair = exact[group.key];
   assert.ok(pair, `no command for evidence group ${group.key}`);
-  return command(common, pair[0], pair[1]);
+  return command(common, pair[0], pair[1], pair[2]);
 }
 
 export function detectSkippedCommandOutput(...values) {

@@ -13,6 +13,8 @@ globalThis.chrome = {
   storage: { local: { async get() { return {}; }, async set() {}, async remove() {} } },
   runtime: { getURL: path => `chrome-extension://test/${path}`, lastError: null },
 };
+// stdout is the JSON protocol; browser-only dependencies may emit Node compatibility diagnostics.
+console.log = console.error.bind(console);
 const tools = await import('../../../src/background/tools/runtime.js');
 const { listBuiltinSkills, findBuiltinSkill } = await import('../../../src/shared/skills/builtin-skills.js');
 const { prepareSkillToolRegistryFromSkills } = await import('../../../src/background/skills/skill-tool-runtime.js');

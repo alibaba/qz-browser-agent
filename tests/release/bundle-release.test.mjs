@@ -72,6 +72,13 @@ for manifest in [
 import { checkDependencyAssets } from "../../scripts/vendor/assets.mjs";
 import { bundleExtension } from "../../scripts/build-extension-bundles.mjs";
 import { buildExtension } from "../../scripts/build-extension.mjs";
+import {
+  FIREFOX_ADDED_PERMISSIONS,
+  FIREFOX_DATA_COLLECTION,
+  FIREFOX_DROPPED_PERMISSIONS,
+  FIREFOX_GECKO_ID,
+  FIREFOX_MIN_VERSION,
+} from "../../scripts/firefox-manifest.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SOURCE_EXTENSION = join(ROOT, "src");
@@ -203,7 +210,7 @@ test("release publisher packages bundles and records auditable metadata", async 
   assertPublicReleasePackage(zipPath);
   const entries = zipEntries(zipPath);
   const runtimeFileCount = entries.filter(path => path.startsWith("qz-browser-agent-extension/") && !path.startsWith("qz-browser-agent-extension/vendor/licenses/")).length;
-  assert.ok(runtimeFileCount < 80, `expected compact runtime resources, received ${runtimeFileCount} files excluding bundled dependency licenses`);
+  assert.ok(runtimeFileCount < 85, `expected compact runtime resources, received ${runtimeFileCount} files excluding bundled dependency licenses`);
   assert.ok(entries.includes("qz-browser-agent-extension/background/service-worker.js"));
   assert.ok(entries.includes("qz-browser-agent-extension/sidepanel/sidepanel.js"));
   for (const chunk of metadata.bundling.chunks) assert.ok(entries.includes(`qz-browser-agent-extension/${chunk.output}`));
@@ -239,7 +246,27 @@ test("release publisher packages bundles and records auditable metadata", async 
   assert.equal(await fileDigest(zipPath), metadata.sha256, "full release ZIP must be reproducible");
 });
 
-test("publisher compiles TS even when bundling is disabled and requires locked Terser", async t => {
+test("Web Store publisher removes the upload ZIP when storecheck rejects CSP", async t => {
+  const work = await mkdtemp(join(tmpdir(), "qingzhou-store-gate-"));
+  t.after(() => rm(work, { recursive: true, force: true }));
+  const source = join(work, "source");
+  await cp(SOURCE_EXTENSION, source, { recursive: true });
+  const manifest = JSON.parse(await readFile(join(source, "manifest.json"), "utf8"));
+  manifest.content_security_policy.extension_pages = "script-src 'self' 'unsafe-eval'; object-src 'self';";
+  await writeFile(join(source, "manifest.json"), JSON.stringify(manifest));
+  const version = "0.0.0.948";
+  const result = spawnSync("python3", [join(ROOT, "scripts/publish-release.py"), "--version", version,
+    "--source", "worktree", "--target", "webstore", "--extension-dir", source, "--output-dir", work],
+  { cwd: ROOT, encoding: "utf8", timeout: 120_000 });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /storecheck blocked/);
+  const output = join(work, version, "webstore");
+  await assert.rejects(stat(join(output, `qz-browser-agent-extension-${version}.webstore.zip`)), { code: "ENOENT" });
+  const report = JSON.parse(await readFile(join(output, "storecheck.json"), "utf8"));
+  assert.ok(report.blocking.some(finding => finding.ruleId === "csp/unsafe-eval"));
+});
+
+test("publisher compiles TS without bundling and rejects obsolete minifier configuration", async t => {
   const work = await mkdtemp(join(tmpdir(), "qingzhou-compile-release-"));
   t.after(() => rm(work, { recursive: true, force: true }));
   const source = join(work, "source");
@@ -254,7 +281,8 @@ test("publisher compiles TS even when bundling is disabled and requires locked T
   assert.equal(entries.some(path => path.endsWith(".map") || (!path.includes("/vendor/") && path.endsWith(".ts"))), false);
   const mismatch = spawnSync("python3", [...args, "--terser-version", "0.0.0"], { cwd: ROOT, encoding: "utf8" });
   assert.notEqual(mismatch.status, 0);
-  assert.match(mismatch.stderr, /Terser must match package-lock.json/);
+  assert.match(mismatch.stderr, /unrecognized arguments: --terser-version/);
+  assert.equal(JSON.parse(await readFile(join(work, "0.0.0.943/version.json"), "utf8")).minification.enabled, false);
   await writeFile(join(work, "outside.js"), "globalThis.externalSource = true;");
   await symlink(join(work, "outside.js"), join(source, "shared/external-source.js"));
   const unsafe = spawnSync("python3", [...args, "--no-minify"], { cwd: ROOT, encoding: "utf8" });
@@ -262,7 +290,7 @@ test("publisher compiles TS even when bundling is disabled and requires locked T
   assert.match(unsafe.stderr, /must not be symlinks/);
 });
 
-test("release debug maps trace minified bundles from Unicode and spaced checkouts", async t => {
+test("release debug maps trace readable bundles from Unicode and spaced checkouts", async t => {
   const work = await mkdtemp(join(tmpdir(), "qingzhou-debug-release-"));
   t.after(() => rm(work, { recursive: true, force: true }));
   const repo = join(work, "checkout 开发 100% #");
@@ -297,12 +325,14 @@ test("release debug maps trace minified bundles from Unicode and spaced checkout
   }
   assert.equal(installed.some(path => path.endsWith(".map")), false);
   for (const [asset, upstream] of [
-    ["vendor/pdf.mjs", "pdfjs-dist/legacy/build/pdf.mjs"],
-    ["vendor/pdf.worker.mjs", "pdfjs-dist/legacy/build/pdf.worker.mjs"],
     ["vendor/tabulator/tabulator.min.css", "tabulator-tables/dist/css/tabulator.min.css"],
   ]) {
     assert.deepEqual(zipBytes(zip, `qz-browser-agent-extension/${asset}`), await readFile(join(ROOT, "node_modules", upstream)));
     assert.deepEqual(zipBytes(debug, `maps/${asset}.map`), await readFile(join(ROOT, "node_modules", `${upstream}.map`)));
+  }
+  for (const asset of ["vendor/pdf.mjs", "vendor/pdf.worker.mjs", "vendor/mathjax/startup.js"]) {
+    assert.ok(zipJson(debug, `maps/${asset}.map`).sourcesContent.length > 0, `${asset} retains its reviewed build inputs`);
+    assert.doesNotMatch(zipBytes(zip, `qz-browser-agent-extension/${asset}`).toString(), /new Function\s*\(|LT \+ SCRIPT/);
   }
   const provenance = zipJson(zip, "qz-browser-agent-extension/vendor/provenance.json");
   assert.equal(Object.keys(provenance.assets).some(path => path.endsWith(".map")), false);
@@ -318,14 +348,14 @@ test("release debug maps trace minified bundles from Unicode and spaced checkout
   const map = zipJson(debug, `maps/${runtime}.map`);
   const entry = new SourceMap(map).findEntry(before.length - 1, before.at(-1).length);
   assert.equal(entry.originalSource, `qingzhou://extension/${sourcePath}`);
-  assert.equal(entry.originalLine + 1, sourceLine, "Terser and bundle maps must retain the original TS line");
+  assert.equal(entry.originalLine + 1, sourceLine, "bundle maps must retain the original TS line");
   assert.ok(map.sourcesContent.some(contents => contents?.includes(probe.trim())));
   const build = zipJson(debug, "build.json");
   const worker = build.embeddedDebugScripts.find(script => script.entry === "workers/inner-runner.ts");
   const workerCode = readZip(debug, `debug/${worker.artifact.replace(/^\.qingzhou-debug\//, "")}`).toString();
   const sandbox = readZip(zip, "qz-browser-agent-extension/runner-sandbox.js").toString();
   const strings = [...tokenizer(sandbox, { ecmaVersion: "latest", sourceType: "module" })]
-    .filter(token => token.type.label === "string").map(token => token.value);
+    .filter(token => ["string", "template"].includes(token.type.label)).map(token => token.value);
   assert.ok(strings.includes(workerCode), "embedded debug source must remain byte-for-byte identical to the running Worker");
   for (const file of metadata.files) {
     const bytes = readZip(debug, file.path);
@@ -350,11 +380,18 @@ with tempfile.TemporaryDirectory() as temporary:
     (extension/'manifest.json').write_text(json.dumps({'manifest_version':3,'name':'qz fixture','version':'0.0.0.1','key':'fixture-public-key'}))
     (extension/'fixture.js').write_text('console.log(42);')
     (extension/'fixture.js.map').write_text('{}')
+    scripts=root/'scripts';scripts.mkdir()
+    (scripts/'check-no-remote-code.mjs').write_bytes(path.with_name('check-no-remote-code.mjs').read_bytes())
     module.compile_extension_sources=lambda source,**kwargs:(source,{'enabled':False})
     module.refresh_dependency_provenance=lambda *args:None
+    # This fixture isolates archive I/O; actual gates run in the package and Chrome tests.
+    module.assert_no_remote_code=lambda *args:None
+    module.audit_reviewable_code=lambda *args:'[]'
+    module.check_store_package=lambda *args:None
     original_run=module.subprocess.run
     def local_read(command,**kwargs):
-        assert command==['git','rev-parse','--is-inside-work-tree'], command
+        script=command[1] if len(command)>1 else ''
+        assert command==['git','rev-parse','--is-inside-work-tree'] or str(script).endswith('check-no-remote-code.mjs'), command
         return original_run(command,**kwargs)
     module.subprocess.run=local_read
     sys.argv=[str(path),'--version','0.0.0.1','--prepared-package-source',str(root),'--prepared-commit','a'*40,
@@ -448,6 +485,120 @@ with tempfile.TemporaryDirectory() as temporary:
                     {'manifest_version':3,'version':'0.0.0'}]:
         check({**files,'manifest.json':json.dumps(invalid).encode()}.items())
 `, join(ROOT, "scripts/publish-release.py")], { stdio: "pipe" });
+});
+
+test("Firefox archive validation requires a root manifest and keeps gecko settings", () => {
+  execFileSync("python3", ["-c", String.raw`
+import importlib.util,json,pathlib,sys,tempfile,zipfile
+spec=importlib.util.spec_from_file_location('firefox_archive_fixture',sys.argv[1])
+module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
+manual=module.release_paths(pathlib.Path('releases'),'1.2.3')
+assert manual.package.as_posix()=='releases/1.2.3/qz-browser-agent-extension-1.2.3.zip'
+assert manual.debug.as_posix()=='releases/1.2.3/qz-browser-agent-extension-1.2.3.debug.zip'
+store=module.release_paths(pathlib.Path('releases'),'1.2.3','webstore')
+assert store.package.as_posix()=='releases/1.2.3/webstore/qz-browser-agent-extension-1.2.3.webstore.zip'
+assert store.debug.name=='qz-browser-agent-extension-1.2.3.webstore.debug.zip'
+firefox=module.release_paths(pathlib.Path('releases'),'1.2.3','firefox')
+assert firefox.package.as_posix()=='releases/1.2.3/firefox/qz-browser-agent-firefox-1.2.3.xpi'
+assert firefox.debug.as_posix()=='releases/1.2.3/firefox/qz-browser-agent-firefox-1.2.3.debug.zip'
+assert module.archive_uses_root_manifest('manual') is False
+assert module.archive_uses_root_manifest('webstore') is True
+assert module.archive_uses_root_manifest('firefox') is True
+manifest={'manifest_version':3,'version':'0.1.0','name':'qz',
+    'permissions':['storage',*module.FIREFOX_KEPT_PERMISSIONS],
+    'background':{'scripts':['background/firefox-boot.js'],'type':'module'},
+    'browser_specific_settings':{'gecko':{
+        'id':module.FIREFOX_GECKO_ID,'strict_min_version':'154.0',
+        'data_collection_permissions':{'required':list(module.FIREFOX_DATA_COLLECTION_REQUIRED),
+            'optional':['locationInfo','bookmarksInfo']}}}}
+files={'manifest.json':json.dumps(manifest).encode(),'background/firefox-boot.js':b'fixture',
+    **{name:b'notice' for name in module.RELEASE_NOTICES}}
+with tempfile.TemporaryDirectory() as temporary:
+    path=pathlib.Path(temporary)/'qz-browser-agent-firefox-0.1.0.xpi'
+    def write(entries):
+        path.unlink(missing_ok=True)
+        with zipfile.ZipFile(path,'w') as archive:
+            for name,data in entries: module.write_zip_entry(archive,name,data)
+    def check(entries,valid=False):
+        write(entries)
+        try: module.validate_firefox_package(path)
+        except ValueError:
+            if valid: raise
+        else: assert valid, 'Invalid Firefox archive was accepted'
+    check(files.items(),True)
+    with zipfile.ZipFile(path) as archive:
+        assert archive.namelist().count('manifest.json')==1
+        assert 'version.json' not in archive.namelist()
+        assert all(not name.startswith('META-INF/') for name in archive.namelist())
+    check([('firefox/'+name,data) for name,data in files.items()])
+    check([*files.items(),('META-INF/mozilla.sf',b'signature')])
+    check([*files.items(),('META-INF/manifest.mf',b'signature')])
+    check([*files.items(),('background/firefox-boot.js.map',b'{}')])
+    check([*files.items(),('src/background/firefox-boot.ts',b'export {}')])
+    missing_permission=json.loads(files['manifest.json'])
+    missing_permission['permissions']=[item for item in missing_permission['permissions'] if item!='webRequestBlocking']
+    check([(name, json.dumps(missing_permission).encode() if name=='manifest.json' else data) for name,data in files.items()])
+    with_key=json.loads(files['manifest.json']); with_key['key']='fixture-public-key'
+    check([(name, json.dumps(with_key).encode() if name=='manifest.json' else data) for name,data in files.items()])
+    stripped=json.loads(files['manifest.json']); del stripped['browser_specific_settings']
+    check([(name, json.dumps(stripped).encode() if name=='manifest.json' else data) for name,data in files.items()])
+`, join(ROOT, "scripts/publish-release.py")], { stdio: "pipe" });
+});
+
+test("firefox release target writes an unsigned root-manifest xpi", async t => {
+  const output = await mkdtemp(join(tmpdir(), "qingzhou-firefox-release-"));
+  t.after(() => rm(output, { recursive: true, force: true }));
+  const version = "0.0.0.947";
+  const args = [
+    join(ROOT, "scripts/publish-release.py"),
+    "--version", version,
+    "--target", "firefox",
+    "--source", "worktree",
+    "--output-dir", output,
+    "--no-minify",
+  ];
+  execFileSync("python3", args, { cwd: ROOT, stdio: "pipe", timeout: 180_000 });
+  const releaseDir = join(output, version, "firefox");
+  const xpi = join(releaseDir, `qz-browser-agent-firefox-${version}.xpi`);
+  const metadata = JSON.parse(await readFile(join(releaseDir, "version.json"), "utf8"));
+  assert.equal(metadata.browser, "firefox");
+  assert.equal(metadata.geckoId, FIREFOX_GECKO_ID);
+  assert.equal(metadata.target, "firefox");
+  assert.equal(metadata.packageRoot, ".");
+  assert.equal(metadata.package, `qz-browser-agent-firefox-${version}.xpi`);
+  assert.deepEqual(await readdir(join(output, version)), ["firefox"]);
+  const entries = zipEntries(xpi);
+  assert.equal(entries.includes("manifest.json"), true);
+  assert.equal(entries.includes("version.json"), false);
+  assert.equal(entries.some(name => name.endsWith("/manifest.json") || name.startsWith("META-INF/") || name.split("/").includes(".git")), false);
+  assert.equal(entries.some(name => name.endsWith(".map") || name.endsWith(".ts")), false);
+  const manifest = zipJson(xpi, "manifest.json");
+  assert.equal(manifest.version, version);
+  assert.equal(manifest.browser_specific_settings.gecko.id, FIREFOX_GECKO_ID);
+  assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, FIREFOX_MIN_VERSION);
+  assert.deepEqual(manifest.browser_specific_settings.gecko.data_collection_permissions.required, [...FIREFOX_DATA_COLLECTION.required]);
+  assert.deepEqual(manifest.browser_specific_settings.gecko.data_collection_permissions.optional, [...FIREFOX_DATA_COLLECTION.optional]);
+  for (const permission of FIREFOX_ADDED_PERMISSIONS) {
+    assert.equal(manifest.permissions.includes(permission), true, permission);
+  }
+  for (const permission of FIREFOX_DROPPED_PERMISSIONS) {
+    assert.equal(manifest.permissions.includes(permission), false, permission);
+  }
+  assert.equal(manifest.permissions.includes("storage"), true);
+  assert.equal(Object.hasOwn(manifest, "key"), false);
+  assert.equal(Object.hasOwn(manifest, "side_panel"), false);
+  assert.deepEqual(manifest.background.scripts, ["background/firefox-boot.js"]);
+  assert.equal(entries.includes("background/firefox-boot.js"), true);
+  assert.equal(entries.includes(manifest.sidebar_action.default_panel), true);
+  assert.equal(entries.includes(manifest.sidebar_action.default_icon), true);
+  const debug = join(releaseDir, `qz-browser-agent-firefox-${version}.debug.zip`);
+  const debugMetadata = zipJson(debug, "manifest.json");
+  assert.equal(debugMetadata.localOnly, true);
+  assert.equal(debugMetadata.package.name, metadata.package);
+  assert.equal(debugMetadata.package.sha256, metadata.sha256);
+  assertPublicReleasePackage(xpi);
+  execFileSync("python3", args, { cwd: ROOT, stdio: "pipe", timeout: 180_000 });
+  assert.equal(await fileDigest(xpi), metadata.sha256, "Firefox XPI must be reproducible");
 });
 
 test("release versions reject invalid manifest values and output path traversal before building", () => {

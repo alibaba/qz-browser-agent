@@ -17,7 +17,7 @@ async function fixture(mode) {
   const console = Object.fromEntries(['log', 'info', 'warn', 'error', 'debug'].map(level => [level, () => {}]));
   const context = createContext({ URL, TransformStream, TextEncoder, TextDecoder, fetch, XMLHttpRequest, navigator, console, setTimeout, clearTimeout,
     location: { href: 'https://blocked.test/current' },
-    chrome: { storage: { local: { get: async () => ({ securityGuardrails: { rules } }) } }, scripting: { executeScript: async () => [] } },
+    chrome: { storage: { local: { get: async () => ({ securityGuardrails: { rules } }) } }, scripting: { executeScript: async options => { calls.push({ kind: 'bridge', files: options.files }); return []; } } },
   });
   runInContext('globalThis.window = globalThis; globalThis.document = {};', context);
   runInContext(await compileScriptToolHost(mode), context);
@@ -31,7 +31,7 @@ async function fixture(mode) {
   const originals = { fetch, open: XMLHttpRequest.prototype.open, beacon: navigator.sendBeacon, console: { ...console } };
   return {
     context, calls,
-    run: code => definitions.get('run_script').execute({ code, target: 'page', tabId: 7, timeout: 5 }, undefined, { sessionId: 'task', runId: 'run' }),
+    run: (code, options = {}) => definitions.get('run_script').execute({ code, target: 'page', tabId: 7, timeout: 5, ...options }, undefined, { sessionId: 'task', runId: 'run' }),
     restored() {
       assert.equal(context.fetch, originals.fetch);
       assert.equal(XMLHttpRequest.prototype.open, originals.open);
@@ -42,6 +42,27 @@ async function fixture(mode) {
 }
 
 for (const mode of ['development', 'production']) {
+  test(`${mode}: input-only scripts use the no-bridge path and missing tools never replay side effects`, async () => {
+    const f = await fixture(mode);
+    const result = await f.run('async () => input.value + args.extra', { args: { value: 4, extra: 8 } });
+    assert.equal(result.result, 12); assert.equal(result.ok, true);
+    assert.equal(f.calls.filter(c => c.kind === 'bridge').length, 0);
+    runInContext('globalThis.attempts = 0; globalThis.missingTools = () => tools.$list();', f.context);
+    const failed = await f.run('async () => { globalThis.attempts++; return globalThis.missingTools(); }');
+    assert.equal(failed.code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
+    assert.equal(failed.details.automaticReplay, false);
+    assert.equal(failed.details.mayHaveTakenEffect, true);
+    assert.match(failed.diagnostic.suggestedNextStep, /tools\.name/);
+    assert.equal(f.context.attempts, 1);
+    assert.equal(f.calls.filter(c => c.kind === 'bridge').length, 0);
+    const shape = await f.run('async () => { globalThis.shapeAttempts = (globalThis.shapeAttempts || 0) + 1; throw new Error("Illegal return statement"); }');
+    assert.equal(shape.ok, false); assert.equal(f.context.shapeAttempts, 1, 'a runtime error is not a compile-time shape retry');
+    const bridged = await f.run('async () => typeof tools.$list');
+    assert.equal(bridged.result, 'function');
+    assert.equal(f.calls.filter(c => c.kind === 'bridge').length, 1);
+    f.restored();
+  });
+
   test(`${mode}: actual page expression serializes cyclic, exceptional and binary values`, async () => {
     const f = await fixture(mode);
     const envelope = await f.run(`async () => {

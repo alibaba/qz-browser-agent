@@ -1,6 +1,7 @@
 import { createPortTransport } from "../../../shared/transport/port-transport.js";
 import { isConnectionFailure, MESSAGE_TRANSFER_BYTES, normalizeTransportError, prepareMessage, transportFailure, TransportError } from "../../../shared/transport/message-codec.js";
 import type { PreparedMessage } from "../../../shared/transport/message-codec.js";
+import { productText } from "../../../shared/product-text.js";
 import { createReceiveBudget, createTransferBudget } from "../../../shared/transport/transfer-budget.js";
 
 export type PortMessage = Record<string, unknown>;
@@ -264,7 +265,7 @@ export function createPortClient(options: PortClientOptions = {}) {
     unbindPort(boundPort);
     port = null;
     stopKeepAlive();
-    const error = new PortClientError("PORT_DISCONNECTED", "Side Panel port disconnected", {
+    const error = new PortClientError("PORT_DISCONNECTED", productText("Side Panel port disconnected", "Sidebar port disconnected"), {
       generation: boundGeneration,
       ...(cause ? { cause: normalizeError(cause) } : {}),
     });

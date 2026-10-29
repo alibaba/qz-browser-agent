@@ -20,12 +20,35 @@ test("full verification inventories production coverage and includes indexed ext
   assert.match(listed, /tests\/background\/extension-e2e\.mjs/);
   assert.match(listed, /tests\/release\/chrome-smoke\.mjs/);
   assert.equal(c8.all, true, "coverage must expose production files that no test loads");
-  assert.match(pkg.scripts.verify, /typecheck/);
-  assert.match(pkg.scripts.verify, /npm test -- --all --coverage/);
-  assert.equal(pkg.scripts["verify:quick"], "npm run typecheck && npm test -- --all");
-  assert.doesNotMatch(pkg.scripts["verify:quick"], /--coverage/);
+  assert.equal(pkg.scripts.verify, "npm run typecheck && npm test -- unit contracts services");
+  assert.doesNotMatch(pkg.scripts.verify, /--coverage|firefox|browser|e2e|release|visual|--all/);
+  assert.equal(pkg.scripts["verify:chrome"], "npm test -- browser e2e release visual");
+  assert.doesNotMatch(pkg.scripts["verify:chrome"], /--coverage|firefox|typecheck|--all/);
+  assert.equal(pkg.scripts["verify:firefox"], "npm run typecheck && npm test -- firefox");
+  assert.equal(pkg.scripts["verify:coverage"], "npm run typecheck && npm test -- --all --coverage");
+  assert.equal(pkg.scripts["verify:quick"], undefined);
   assert.match(listed, /Coverage: c8 \+ full runtime critical gate/);
   assert.doesNotMatch(listed, /tests\/live\/|agent-behavior-e2e/);
+  assert.doesNotMatch(listed, /tests\/firefox\/run\.mjs|playwright\.firefox\.config/);
+  const firefox = execFileSync(process.execPath, ["tests/run.mjs", "firefox", "--list"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  assert.match(firefox, /tests\/firefox\/run\.mjs/);
+  assert.doesNotMatch(firefox, /tests\/config\/playwright\.config\.mjs/);
+  const shared = execFileSync(process.execPath, ["tests/run.mjs", "unit", "contracts", "services", "--list"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  assert.match(shared, /\nunit:/);
+  assert.doesNotMatch(shared, /playwright\.config\.mjs|chrome-smoke\.mjs|tests\/firefox\/run\.mjs/);
+  const chrome = execFileSync(process.execPath, ["tests/run.mjs", "browser", "e2e", "release", "visual", "--list"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  assert.match(chrome, /playwright\.config\.mjs/);
+  assert.match(chrome, /chrome-smoke\.mjs/);
+  assert.doesNotMatch(chrome, /tests\/firefox\/run\.mjs|\nunit:/);
 });
 
 test("Playwright loads production modules from the browser build, not its Node collector", () => {

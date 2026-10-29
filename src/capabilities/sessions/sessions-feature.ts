@@ -1,3 +1,4 @@
+import { sessionAutomationsEnabled } from "#sdk/shared/session-automations";
 import { escapeHtmlAttribute } from "#sdk/sidepanel/dom";
 import { t } from "./i18n.js";
 import { formatSessionListSummaryText } from "#sdk/shared/sessions";
@@ -18,7 +19,7 @@ type TreeRow = TreeNode & { session: Session };
 type RefreshOptions = { immediate?: boolean; delay?: number | null };
 interface SessionsOptions {
   signal?: AbortSignal;
-  root?: Document; initialMode?: string; liveElapsedTickMs?: number; onStableViewChange?(): void;
+  root?: Document; initialMode?: string; automationsEnabled?: boolean; liveElapsedTickMs?: number; onStableViewChange?(): void;
   request(type: string, payload: PortMessage, timeout: number): Promise<PortMessage>; send?(message: PortMessage): unknown;
   sessionState: Pick<UiSessionPort, "mergeRuntime" | "mergeRecords">;
   artifactsFeature: Pick<ReturnType<typeof createArtifactsFeature>, "scheduleSummaryBackfill" | "scheduleListHydration" | "openPanel" | "getSummaryFromRecord" | "renderSessionChip">;
@@ -152,7 +153,8 @@ export function createSessionsFeature(options: SessionsOptions) {
     className: "session-tree-node-final-exit", keyframes: [{ clipPath: "inset(0 0 0 0)" }, { clipPath: "inset(0 0 100% 0)" }],
     duration: SESSION_LIST_LAYOUT_MOVE_MS, easing: "cubic-bezier(0.16, 1, 0.3, 1)",
   });
-  let sessionsViewMode = options.initialMode === "automation" ? "automation" : "manual";
+  const automationsEnabled = options.automationsEnabled ?? sessionAutomationsEnabled();
+  let sessionsViewMode = automationsEnabled && options.initialMode === "automation" ? "automation" : "manual";
   const sessionStateRequestedAt = new Map<string, number>();
   const expandedSessionIds = new Set<string>();
   const collapsedSessionIds = new Set<string>();
@@ -1085,7 +1087,7 @@ sessionsModeBtns.forEach((btn) => {
 });
 
 function setSessionsViewMode(mode: string, { track = false, refresh = false } = {}) {
-  const next = mode === "automation" ? "automation" : "manual";
+  const next = automationsEnabled && mode === "automation" ? "automation" : "manual";
   if (sessionsViewMode === next) return false;
   sessionsViewMode = next;
   if (track) {

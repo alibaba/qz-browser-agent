@@ -3,8 +3,30 @@ import test from "node:test";
 import { createToolRuntimeDetails } from "../../src/sidepanel/tools/tool-runtime-details.js";
 import { toolPresentationRegistry } from "../../src/sidepanel/tools/tool-presentation.js";
 import { presentations } from "../../src/capabilities/script/presentation.js";
+import { resolveToolState } from "../../src/sidepanel/tools/tool-model.js";
+import { withLanguage } from "../../src/shared/i18n/index.js";
 
 const details = createToolRuntimeDetails({ genericRenderer: {} });
+
+test("partial timeout results stay incomplete without masking running, errors or cancellation", () => {
+  const result = { tabId: 1, status: "loading", loading: true, incomplete: { reason: "timeout", pending: "navigation commit" } };
+  for (const name of ["open_tab", "navigate", "read_article", "find_elements"]) {
+    const tool = { name, hasResult: true, phase: "done", result };
+    assert.equal(resolveToolState(tool), "incomplete");
+    assert.equal(details.project(tool).state, "incomplete");
+    assert.equal(details.project(tool).status.tone, "incomplete");
+    assert.equal(resolveToolState({ ...tool, isRunning: true }), "running");
+    assert.equal(resolveToolState({ ...tool, isError: true }), "error");
+    assert.equal(resolveToolState({ ...tool, phase: "aborted" }), "aborted");
+    assert.equal(resolveToolState({ ...tool, result: { ...result, code: "TOOL_TIMEOUT", error: "Action not confirmed" } }), "error");
+    assert.equal(resolveToolState({ ...tool, result: { status: "loading", loading: true } }), "success");
+    assert.equal(resolveToolState({ ...tool, result: { ok: true, result } }), "success", "nested returned data is not runtime metadata");
+    assert.equal(details.project({ ...tool, result: { status: "complete" } }).state, "completed");
+  }
+  for (const [language, title] of [["zh-CN", "未完成"], ["en", "Incomplete"]]) {
+    withLanguage(language, () => assert.equal(details.project({ name: "open_tab", hasResult: true, result }).status.title, title));
+  }
+});
 
 test("script successful outer envelopes preserve returned error-like data without masking execution failure", () => {
   const unregister = presentations({ pageDisplayTarget: () => "" }).map(definition => toolPresentationRegistry.register(definition));

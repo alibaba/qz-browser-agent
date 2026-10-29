@@ -13,6 +13,9 @@ import {
   serializeConversation,
   transcriptFromConversation,
 } from "../../src/shared/session/session-codec.js";
+import { installImageAssetsFixture } from "../support/image-assets-fixture.mjs";
+
+installImageAssetsFixture();
 
 assertNormalizeEditMessageId();
 assertFindsLatestEditableUserMessage();

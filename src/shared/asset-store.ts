@@ -32,11 +32,62 @@ export interface ImageAssetOptions {
 import { nowBeijingDateTime } from "./time-utils.js";
 
 const DB_NAME = "qz-browser-agent-assets";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const IMAGE_ASSETS_STORE = "image_assets";
 const DEFAULT_MAX_IMAGES = 2000;
 const DEFAULT_MAX_BYTES = 1.5 * 1024 * 1024 * 1024;
 const DEFAULT_THUMB_MAX_SIZE = 512;
+// Durable Session payloads are not a cache: image GC and explicit gallery deletion
+// must never evict them. Keep the exact URL spelling for lossless model replay.
+const HISTORY_IMAGES_STORE = "history_images";
+export const HISTORY_IMAGE_PREFIX = "qz-history-image:v1:";
+const assetConnections = new WeakMap<IDBFactory, Promise<IDBDatabase>>();
+
+export async function saveHistoryImage(dataUrl: string): Promise<string> {
+  const blob = new Blob([dataUrl], { type: "text/plain;charset=utf-8" });
+  const assetId = `${HISTORY_IMAGE_PREFIX}${await sha256Blob(blob)}`;
+  const db = await openAssetDb();
+  // The read and insert share a transaction, including across extension contexts.
+  const tx = db.transaction(HISTORY_IMAGES_STORE, "readwrite");
+  const done = txDone(tx);
+  const store = tx.objectStore(HISTORY_IMAGES_STORE);
+  const request = store.getKey(assetId);
+  request.onsuccess = () => {
+    if (request.result === undefined) store.add({ assetId, blob });
+  };
+  await done;
+  return assetId;
+}
+
+export async function getHistoryImage(assetId: string): Promise<string | null> {
+  const db = await openAssetDb();
+  const tx = db.transaction(HISTORY_IMAGES_STORE, "readonly");
+  const done = txDone(tx);
+  const [record] = await Promise.all([
+    requestToPromise<{ blob: Blob } | undefined>(tx.objectStore(HISTORY_IMAGES_STORE).get(assetId)), done,
+  ]);
+  return record ? record.blob.text() : null;
+}
+
+/** Called only by the repository's exclusive sweep, after marking persisted and in-flight references. */
+export async function sweepHistoryImages(references: ReadonlySet<string>): Promise<string[]> {
+  const db = await openAssetDb();
+  const tx = db.transaction(HISTORY_IMAGES_STORE, "readwrite");
+  const done = txDone(tx);
+  const store = tx.objectStore(HISTORY_IMAGES_STORE);
+  const deleted: string[] = [];
+  const request = store.getAllKeys();
+  request.onsuccess = () => {
+    for (const key of request.result) {
+      if (typeof key === "string" && !references.has(key)) {
+        store.delete(key);
+        deleted.push(key);
+      }
+    }
+  };
+  await done;
+  return deleted;
+}
 
 export async function saveImageAsset(input: ImageAssetInput = {}, options: ImageAssetOptions = {}) {
   const blob = await normalizeImageBlob(input);
@@ -46,22 +97,23 @@ export async function saveImageAsset(input: ImageAssetInput = {}, options: Image
   const now = nowBeijingDateTime();
   const limits = normalizeAssetLimits(options);
   const db = await openAssetDb();
+  const refresh = (existing: ImageAssetRecord) => sanitizeAssetRecord({
+    ...existing,
+    mimeType: existing.mimeType || mimeType,
+    bytes: Number(existing.bytes || bytes || 0),
+    width: existing.width || input.width,
+    height: existing.height || input.height,
+    sourceWidth: existing.sourceWidth || input.sourceWidth || input.naturalWidth,
+    sourceHeight: existing.sourceHeight || input.sourceHeight || input.naturalHeight,
+    updatedAt: now,
+    lastAccessedAt: now,
+  });
   const existing = await findImageAssetByHash(db, hash);
 
   if (existing) {
     const tx = db.transaction(IMAGE_ASSETS_STORE, "readwrite");
     const store = tx.objectStore(IMAGE_ASSETS_STORE);
-    const next = sanitizeAssetRecord({
-      ...existing,
-      mimeType: existing.mimeType || mimeType,
-      bytes: Number(existing.bytes || bytes || 0),
-      width: existing.width || input.width,
-      height: existing.height || input.height,
-      sourceWidth: existing.sourceWidth || input.sourceWidth || input.naturalWidth,
-      sourceHeight: existing.sourceHeight || input.sourceHeight || input.naturalHeight,
-      updatedAt: now,
-      lastAccessedAt: now,
-    });
+    const next = refresh(existing);
     store.put(next);
     await txDone(tx);
     return { ...stripBinary(next), deduped: true };
@@ -95,9 +147,24 @@ export async function saveImageAsset(input: ImageAssetInput = {}, options: Image
   });
 
   const tx = db.transaction(IMAGE_ASSETS_STORE, "readwrite");
-  tx.objectStore(IMAGE_ASSETS_STORE).add(record);
-  await txDone(tx);
-  return { ...stripBinary(record), deduped: false };
+  const done = txDone(tx);
+  const store = tx.objectStore(IMAGE_ASSETS_STORE);
+  // Other Sessions/contexts can finish the same image while hashing or making
+  // its thumbnail. Recheck the unique index inside the insertion transaction.
+  let saved = record;
+  let deduped = false;
+  const request = store.index("sha256").get(hash);
+  request.onsuccess = () => {
+    if (request.result) {
+      saved = refresh(request.result);
+      deduped = true;
+      store.put(saved);
+    } else {
+      store.add(record);
+    }
+  };
+  await done;
+  return { ...stripBinary(saved), deduped };
 }
 
 export async function getImageAsset(assetId: string, options: ImageAssetOptions = {}) {
@@ -247,10 +314,16 @@ async function sha256Blob(blob: Blob) {
 }
 
 function openAssetDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+  const factory = indexedDB;
+  const existing = assetConnections.get(factory);
+  if (existing) return existing;
+  const opening = new Promise<IDBDatabase>((resolve, reject) => {
+    const req = factory.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      if (!db.objectStoreNames.contains(HISTORY_IMAGES_STORE)) {
+        db.createObjectStore(HISTORY_IMAGES_STORE, { keyPath: "assetId" });
+      }
       if (!db.objectStoreNames.contains(IMAGE_ASSETS_STORE)) {
         const store = db.createObjectStore(IMAGE_ASSETS_STORE, { keyPath: "assetId" });
         store.createIndex("sha256", "sha256", { unique: true });
@@ -258,9 +331,23 @@ function openAssetDb(): Promise<IDBDatabase> {
         store.createIndex("lastAccessedAt", "lastAccessedAt", { unique: false });
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      const retire = () => {
+        db.close();
+        if (assetConnections.get(factory) === opening) assetConnections.delete(factory);
+      };
+      db.onversionchange = retire;
+      db.onclose = retire;
+      resolve(db);
+    };
     req.onerror = () => reject(req.error || new Error("Failed to open asset IndexedDB"));
   });
+  assetConnections.set(factory, opening);
+  void opening.catch(() => {
+    if (assetConnections.get(factory) === opening) assetConnections.delete(factory);
+  });
+  return opening;
 }
 
 function stripBinary(record: ImageAssetRecord) {

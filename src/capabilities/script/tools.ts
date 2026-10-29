@@ -1,4 +1,6 @@
+import { productText } from "#sdk/shared/product-text";
 import { toolT } from "./tool-messages.js";
+import { mayUseTools } from "./tool-access.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 declare const SCRIPT_RUNTIME_SOURCE: string;
@@ -303,6 +305,7 @@ function makeRunScriptTargetRequiredError({ code, skill, script, context = {} }:
 
 registerTool({
   name: "run_skill_script",
+  behavior: { barrier: true, timeoutResult: { kind: "action", pending: "script outcome confirmation" } },
   requires: { tools: ["run_script"] },
   effects: args => args.mutatesPage === true ? [{ type: "context.siteChanged" }] : [],
   get description() { return toolT("runSkillScriptDescription"); },
@@ -342,6 +345,11 @@ registerTool({
 
 registerTool({
   name: "run_script",
+  behavior: {
+    barrier: args => isRunScriptInnerTargetArgs(args) || mayUseTools(args.code),
+    parallelTab: true,
+    timeoutResult: { kind: "action", pending: "script outcome confirmation" },
+  },
   workingTab: args => args.mutatesPage === true ? "claim" : "update",
   effects: args => args.mutatesPage === true ? [{ type: "context.siteChanged" }] : [],
   get description() { return getRunScriptDescription(); },
@@ -376,7 +384,7 @@ registerTool({
     if (!hasInlineCode) {
       throw new ToolExecutionError("INVALID_RUN_SCRIPT_INPUT", "run_script requires inline code", {});
     }
-    let scriptArgs = args && typeof args === "object" && !Array.isArray(args) ? args : {};
+    const scriptArgs = args && typeof args === "object" && !Array.isArray(args) ? args : {};
     const securityGuardrails = compactRunScriptSecurityGuardrails(await getSecurityGuardrails());
     if (executionTarget === "inner") {
       if (mutatesPage === true) {
@@ -392,7 +400,10 @@ registerTool({
     if (!resolvedTabId) throw makeRunScriptTargetRequiredError({ code, skill, script, context });
 
     const run = async () => {
-      if (scriptUsesToolApi(code) || scriptUsesInputArgs(code) || Object.keys(scriptArgs).length > 0) {
+      if (mayUseTools(code)) {
+        if (context.deferToolCommit) throw new ToolExecutionError("RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE", t("scriptToolAccessUnavailable"), {
+          toolAccess: false, executed: false, automaticReplay: false, suggestedNextStep: t("scriptToolAccessRecovery"),
+        });
         return runScriptWithCdpToolBridgeUnlocked(resolvedTabId, code, context, "tool_api", scriptArgs, securityGuardrails, signal);
       }
 
@@ -405,13 +416,12 @@ registerTool({
           userGesture: true,
         }, signal, context);
         const formatted = formatCdpScriptResult(evalResult, "cdp");
-        if (!formatted.ok && isToolApiReferenceError(formatted.error)) {
-          return runScriptWithCdpToolBridgeUnlocked(resolvedTabId, code, context, "tool_api_reference", scriptArgs, securityGuardrails, signal);
-        }
-        if (formatted.ok || !isExplicitReturnError(formatted.error)) return formatted;
-        return await runScriptAsFunctionBody(resolvedTabId, code, formatted.error, securityGuardrails, signal, context);
+        if (formatted.ok || isToolApiReferenceError(formatted.error) || !isExplicitReturnError(formatted.error, record(evalResult).exceptionDetails)) return withoutToolAccess(formatted);
+        // Only a native syntax error without an execution stack may use shape recovery.
+        return withoutToolAccess(await runScriptAsFunctionBody(resolvedTabId, code, formatted.error, scriptArgs, securityGuardrails, signal, context));
       } catch (cdpError) {
         if (errorCode(cdpError) === "OPERATION_ABORTED") throw cdpError;
+        if (isToolApiReferenceError(errorMessage(cdpError))) return withoutToolAccess({ ok: false, error: errorMessage(cdpError), engine: "cdp", execution_world: "page" });
         return makePageContextUnavailableResult(cdpError, { tabId: resolvedTabId, reason: "cdp" });
       }
     };
@@ -419,18 +429,18 @@ registerTool({
   },
 });
 
-function scriptUsesToolApi(code: unknown) {
-  const text = String(code || "");
-  return /(^|[^\w$])tools\s*\./.test(text) || /(^|[^\w$])tool\s*\(/.test(text);
-}
-
-function scriptUsesInputArgs(code: unknown) {
-  const text = String(code || "");
-  return /(^|[^\w$])(input|args)([^\w$]|$)/.test(text);
-}
-
 function isToolApiReferenceError(error: unknown) {
-  return /\b(tools|tool) is not defined\b/i.test(String(error || ""));
+  return /\b(?:tools|tool) is not defined\b|can't find variable:\s*(?:tools|tool)\b/i.test(String(error || ""));
+}
+
+function withoutToolAccess(result: Fields): Fields {
+  if (result.ok !== false || !isToolApiReferenceError(result.error)) return result;
+  return { ...result,
+    code: "RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE", error: t("scriptToolAccessUnavailable"),
+    details: { ...record(result.details), originalError: result.error, toolAccess: false, automaticReplay: false, mayHaveTakenEffect: true },
+    diagnostic: { ...record(result.diagnostic), category: "tool_access",
+      likelyCause: t("scriptToolAccessUnavailable"), suggestedNextStep: t("scriptToolAccessRecovery") },
+  };
 }
 
 const pageScriptQueuesByTabId = new Map<number, Promise<void>>();
@@ -486,7 +496,7 @@ async function runPageScriptExclusive<T>(tabId: number, signal: AbortSignal | un
 
 async function ensureRunScriptOffscreenDocument() {
   if (!chrome.offscreen?.createDocument) {
-    throw new ToolExecutionError("INNER_RUNNER_UNAVAILABLE", "Chrome offscreen documents are not available.", {
+    throw new ToolExecutionError("INNER_RUNNER_UNAVAILABLE", productText("Chrome offscreen documents are not available.", "Firefox offscreen documents are not available."), {
       engine: "offscreen_inner",
     });
   }
@@ -690,7 +700,7 @@ async function runScriptWithCdpToolBridgeUnlocked(tabId: number, code: string, c
   const runId = typeof context.runId === "string" ? context.runId : "";
   const depth = Math.max(0, Math.floor(Number(context.runScriptToolDepth) || 0));
   try {
-    await ensureRunScriptToolBridge(tabId);
+    await ensureRunScriptToolBridge(tabId, context);
   } catch (err) {
     if (errorCode(err) === "OPERATION_ABORTED") throw err;
     return makePageContextUnavailableResult(err, { tabId, reason, phase: "tool_bridge_install" });
@@ -733,12 +743,18 @@ function makePageContextUnavailableResult(error: unknown, { tabId, reason = "cdp
   });
 }
 
-async function ensureRunScriptToolBridge(tabId: number) {
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    world: "ISOLATED",
-    files: ["content/run-script-tool-bridge.js"],
-  });
+async function ensureRunScriptToolBridge(tabId: number, context: ToolContext) {
+  const finishPhase = context.measurePhase?.("injection");
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "ISOLATED",
+      files: ["content/run-script-tool-bridge.js"],
+      injectImmediately: true,
+    });
+  } finally {
+    finishPhase?.();
+  }
 }
 
 function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, depth, reason, scriptArgs = {}, securityGuardrails = {} }: ScriptOptions) {
@@ -942,12 +958,13 @@ function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, w
   `;
 }
 
-async function runScriptAsFunctionBody(tabId: number, code: string, cdpEvalError: unknown, securityGuardrails: Guardrails = {}, signal?: AbortSignal, context: ToolContext = {}) {
+async function runScriptAsFunctionBody(tabId: number, code: string, cdpEvalError: unknown, scriptArgs: Fields, securityGuardrails: Guardrails = {}, signal?: AbortSignal, context: ToolContext = {}) {
   const wrappedCode = `async () => { ${code} }`;
   const evalResult = await evaluateCdpScript(tabId, {
     expression: buildCdpTraceExpression(wrappedCode, {
       tabId,
       reason: "cdp_function_body",
+      scriptArgs,
       securityGuardrails,
     }),
     returnByValue: true,
@@ -965,8 +982,10 @@ async function runScriptAsFunctionBody(tabId: number, code: string, cdpEvalError
   return formatted;
 }
 
-function isExplicitReturnError(error: unknown) {
-  return /Illegal return statement|Unexpected token 'return'/i.test(String(error || ""));
+function isExplicitReturnError(error: unknown, exceptionDetails: unknown) {
+  const text = String(error || "");
+  return Boolean(exceptionDetails) && !record(exceptionDetails).stackTrace && !/\n\s+at\b/.test(text)
+    && /^(?:Uncaught\s+)?SyntaxError:\s*(?:Illegal return statement|Unexpected token 'return')/i.test(text);
 }
 
   return Object.freeze({ handleRunScriptInnerRuntimeMessage });

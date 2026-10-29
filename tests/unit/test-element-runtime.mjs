@@ -35,16 +35,20 @@ class ToolExecutionError extends Error {
 }
 
 const targetResolutions = [];
+let targetResolution = { ok: true };
+let securityFailure = false;
 const runtime = createElementRuntime({
   ToolExecutionError,
   getToolRuntimeDependencies() {
     return { sessions: {
-      async resolveTargetTab(input) { targetResolutions.push(input); return { ok: true }; },
+      async resolveTargetTab(input) { targetResolutions.push(input); return targetResolution; },
       listOwnedTabIds: () => ownedTabs,
     } };
   },
   makeSessionTabTargetError(code, details = {}) { return new ToolExecutionError(code, code, details); },
-  async assertTabAllowed() {},
+  async assertTabAllowed() {
+    if (securityFailure) throw new ToolExecutionError('SECURITY_GUARDRAIL_BLOCKED', 'blocked');
+  },
   async initializeContentScript() { contentInitializations += 1; },
   async sendToContent(tabId, action, params = {}) {
     contentCalls.push({ tabId, action, ...params });
@@ -240,6 +244,14 @@ ownedTabs = [955493525, 1855493525];
 assert.match(runtime.makeSnapshotId(955493525, context), /^t955493525\./, "a suffix shared through the last 8 digits keeps the whole shorter id");
 assert.match(runtime.makeSnapshotId(1855493525, context), /^t855493525\./);
 ownedTabs = [5];
+{
+const realNow = Date.now;
+try {
+  Date.now = () => 1700000000000;
+  const concurrentIds = await Promise.all(Array.from({ length: 100 }, () => Promise.resolve().then(() => runtime.makeSnapshotId(5, context))));
+  assert.equal(new Set(concurrentIds).size, 100, "same-millisecond snapshots remain unique");
+} finally { Date.now = realNow; }
+}
 const snapshotId = runtime.makeSnapshotId(5, context);
 assert.match(snapshotId, /^t5\.[0-9a-z]{6}$/);
 const imageUid = runtime.makeElementUid(snapshotId, 1, "i");
@@ -392,6 +404,79 @@ await assert.rejects(
 probedDocumentId = "doc-previous";
 const sameDocument = await runtime.resolveElementReference(undefined, { target: "uid:t5.00000b.1" }, context);
 assert.equal(sameDocument.uid, "t5.00000b.1");
+
+// A title redirect rewrites the URL string without replacing the document.
+runtime.registerElementRef({
+  uid: "t5.00000c.1",
+  tabId: 5,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/before-redirect",
+  selector: "img.redirect",
+  backendNodeId: 41,
+  loaderId: "loader-live",
+  documentId: "doc-redirect",
+});
+currentUrl = "https://example.test/after-redirect";
+probedDocumentId = "doc-redirect";
+const redirected = await runtime.resolveElementReference(undefined, { target: "uid:t5.00000c.1" }, context);
+assert.equal(redirected.uid, "t5.00000c.1", "a same-document redirect keeps the uid valid");
+
+// A real navigation replaces the document, so the changed URL stays stale.
+probedDocumentId = "doc-replaced";
+await assert.rejects(
+  runtime.resolveElementReference(undefined, { target: "uid:t5.00000c.1" }, context),
+  error => error?.code === "STALE_ELEMENT_UID_PAGE_CHANGED",
+  "a replaced document under a new url is a page change",
+);
+
+// Without a live probe the changed url cannot be disproved, so it stays stale.
+probedDocumentId = "";
+await assert.rejects(
+  runtime.resolveElementReference(undefined, { target: "uid:t5.00000c.1" }, context),
+  error => error?.code === "STALE_ELEMENT_UID_PAGE_CHANGED",
+  "a missing document probe keeps the strict verdict",
+);
+probedDocumentId = "doc-redirect";
+
+// Reject a conflicting tab before ownership resolution can select or claim it.
+const beforeMismatch = targetResolutions.length;
+targetResolution = { ok: false, code: 'SESSION_TAB_FOREIGN' };
+await assert.rejects(
+  runtime.resolveElementReference(9, { target: "uid:t5.00000c.1" }, context),
+  error => error?.code === "ELEMENT_UID_TAB_MISMATCH",
+  "an explicit wrong tab reports a tab mismatch, not a page or ownership error",
+);
+assert.equal(targetResolutions.length, beforeMismatch, 'a mismatched tab must never be selected or claimed');
+await assert.rejects(runtime.resolveElementReference(undefined, { target: 'uid:t5.00000c.1' }, context),
+  { code: 'SESSION_TAB_FOREIGN' }, 'uids still enforce ownership on their own tab');
+targetResolution = { ok: true };
+const uidSignal = new AbortController().signal;
+await runtime.resolveElementReference(undefined, { target: 'uid:t5.00000c.1' }, { ...context, signal: uidSignal, deferToolCommit: true });
+assert.equal(targetResolutions.at(-1).runId, context.runId);
+assert.equal(targetResolutions.at(-1).signal, uidSignal);
+assert.equal(targetResolutions.at(-1).checkOnly, true, 'parallel uid calls must not select a working tab during execution');
+targetResolution = { ok: true, claimRequired: true };
+await assert.rejects(runtime.resolveElementReference(undefined, { target: 'uid:t5.00000c.1' }, { ...context, deferToolCommit: true }),
+  { code: 'SESSION_TAB_UNOWNED' }, 'a speculative uid call cannot operate on a merely claimable tab');
+targetResolution = { ok: true };
+securityFailure = true;
+await assert.rejects(runtime.resolveElementReference(undefined, { target: 'uid:t5.00000c.1' }, context),
+  { code: 'SECURITY_GUARDRAIL_BLOCKED' }, 'document identity never bypasses URL guardrails');
+securityFailure = false;
+currentUrl = "https://example.test/page#one";
+
+runtime.registerElementRef({
+  uid: "t15.000099.1",
+  tabId: 15,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/other-page",
+  selector: "img.other",
+});
+assert.equal(runtime.elementUidTabId(["uid:t5.000001.1", "uid:t5.00000b.1"]), 5, "uids on one tab share its lane");
+assert.equal(runtime.elementUidTabId(["uid:t5.000001.1", "uid:t15.000099.1"]), null, "uids spanning tabs share no lane");
+assert.equal(runtime.elementUidTabId(["uid:t77.000001.1"]), null, "an unknown uid has no lane");
+assert.equal(runtime.elementUidTabId(["css:img"]), null, "a non-uid target has no lane");
+assert.equal(runtime.elementUidTabId([]), null, "no targets means no lane");
 delete chrome.scripting;
 
 ownedTabs = [5];

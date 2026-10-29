@@ -56,6 +56,7 @@ defineTool({ name: "async-validator", description: "Rejected async validation", 
 
 defineTool({ name: "behavior", description: "Trusted synchronous decisions", parameters: schema, execute: () => ({}),
   behavior: {
+    barrier: args => args.action === "create",
     mayUnloadPage: args => args.action === "create",
     nestedObservation: true,
     timeoutTrace: "example_trace",
@@ -63,6 +64,8 @@ defineTool({ name: "behavior", description: "Trusted synchronous decisions", par
 });
 defineTool({ name: "async-behavior", description: "Rejected async decision", parameters: schema, execute: () => ({}),
   behavior: {
+    // @ts-expect-error barrier decisions must be synchronous booleans.
+    barrier: async () => true,
     // @ts-expect-error runtime behavior decisions must be synchronous and boolean.
     mayUnloadPage: async () => true,
   },

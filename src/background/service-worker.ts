@@ -1,4 +1,5 @@
 import { initializeLanguage, whenLanguageReady, readLanguagePreference, saveLanguagePreference, getAvailableLanguages } from "../shared/i18n/index.js";
+import { firefoxExtension } from "../shared/product-text.js";
 import { matchConfiguredModelCapabilities } from "../shared/models/model-capabilities.js";
 import { createContentLanguageSnapshot } from "../shared/i18n/content.js";
 import { createSessionImportLabels } from "./services/session-import-labels.js";
@@ -78,6 +79,7 @@ import {
   getLastTranscriptToolName,
 } from "../shared/session/session-codec.js";
 import {
+  normalizeParentSessionId,
   ROOT_SESSION_ID,
 } from "../shared/session/session-store.js";
 import { getSessionRepository, getSessions } from "./session/repository.js";
@@ -132,6 +134,7 @@ import {
   createChromeNotificationService,
   createSessionCompletionNotifier,
 } from "./services/chrome-notifications.js";
+import { createChromeStoreReviewStore } from "./services/chrome-store-review.js";
 import { createGitSkillSourceRepository } from "./skills/git-skill-source-repository.js";
 import { getAutomationRepository } from "./automation/repository.js";
 import {
@@ -404,7 +407,7 @@ const sessionAgentHost = createSessionAgentHost({
   getToolRuntime: () => toolRuntime,
   getSupervisor: () => sessionSupervisor,
   getCommands: () => sessionCommands,
-  getWorkingTabContext: (...args) => sessionTabs.getWorkingTabContext(...args),
+  getWorkingTabContext: sessionId => sessionTabs.getWorkingTabContext(sessionId, { readOnly: true }),
   recordTranscriptEvent: (...args) => sessionTranscript.recordEvent(...args),
   recordRuntimeEvent: (...args) => sessionRuntimeState.recordEvent(...args),
   persistRuntime: (...args) => sessionRuntimeState.persist(...args),
@@ -420,6 +423,14 @@ sessionSupervisor = createSessionSupervisor({
   initializeAgent: sessionAgentHost.initializeAgent,
   onAgentEvent: sessionAgentHost.handleEvent,
 });
+const chromeStoreReview = createChromeStoreReviewStore({
+  storage: chrome.storage.local,
+  isRootSession: async sessionId => {
+    const session = (await getSessions())[sessionId];
+    if (!session) return false;
+    return normalizeParentSessionId(session.parentSessionId) === ROOT_SESSION_ID;
+  },
+});
 const sessionRuntimeState = createSessionRuntimeState({
   supervisor: sessionSupervisor,
   repository: sessionRepository,
@@ -428,6 +439,7 @@ const sessionRuntimeState = createSessionRuntimeState({
   normalizeSessionId,
   scheduleTabGroupSync: sessionId => sessionTabs.scheduleGroupSync(sessionId),
   onCompleted: sessionId => sessionCompletionNotifier?.notifyCompleted(sessionId),
+  onTaskCompleted: (sessionId, runtime) => chromeStoreReview.recordCompletion(sessionId, runtime),
 });
 const sessionArtifacts = createSessionArtifacts({
   sessionRepository,
@@ -484,7 +496,7 @@ const sessionBrowserContext = createSessionBrowserContextCollector({
   getOwnedTabContexts: sessionTabs.getOwnedTabContexts,
   findOwnedTabOwner: sessionTabs.findOwner,
   ownsTab: sessionTabs.owns,
-  getWorkingTabContext: sessionTabs.getWorkingTabContext,
+  getWorkingTabContext: sessionId => sessionTabs.getWorkingTabContext(sessionId, { readOnly: true }),
   getRuntime: (...args) => sessionCommands.getSessionRuntimeState(...args),
 });
 const collectBrowserContext = sessionBrowserContext.collect;
@@ -510,6 +522,7 @@ sessionCommands = createSessionCommands({
   collectBrowserContext,
   releaseRunResources: releaseAgentRunResources,
   removeChatMessageDocuments: chatDocumentAttachments.removeMessageDocuments,
+  copyChatMessageDocuments: chatDocumentAttachments.copyMessageDocuments,
   removeChatSessionDocuments: chatDocumentAttachments.removeSessionDocuments,
   removeSessionObservations: async id => productRuntime.removeSession(id),
   blockChatDocumentParsing: chatDocumentAttachments.blockSession,
@@ -714,6 +727,13 @@ toolRuntime = createToolRuntime({
     deleteAutomation: automationRuntime.remove,
     runAutomation: automationRuntime.run,
     listAutomationRuns: automationRuntime.listRuns,
+    reserveCreatedTab: sessionTabs.reserveCreatedTab,
+    getTabAliases: sessionTabs.getTabAliases,
+    reserveTabAlias: sessionTabs.reserveTabAlias,
+    commitTabAlias: sessionTabs.commitTabAlias,
+    discardTabAlias: sessionTabs.discardTabAlias,
+    commitCreatedTab: sessionTabs.commitCreatedTab,
+    discardCreatedTab: sessionTabs.discardCreatedTab,
     updateWorkingTab: sessionTabs.updateWorkingTab,
     clearWorkingTab: sessionTabs.clearWorkingTab,
     resolveTargetTab: sessionTabs.resolveTargetTab,
@@ -861,6 +881,7 @@ const backgroundApi = createBackgroundApi({
     consumeDraft: sessionCommands.consumeSessionComposerDraftRuntime,
     steerFollowUp: sessionCommands.steerSessionFollowUpRuntime,
     deleteFollowUp: sessionCommands.deleteSessionFollowUpRuntime,
+    restoreQueuedMessage: sessionCommands.restoreQueuedMessageRuntime,
     deleteSteering: sessionCommands.deleteSessionSteeringRuntime,
     reorderFollowUps: sessionCommands.reorderSessionFollowUpsRuntime,
     reset: sessionCommands.resetSessionRuntime,
@@ -1058,3 +1079,24 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
       }
     });
   });
+
+/** Firefox end-to-end checks call page tools in this background page. */
+export function installFirefoxPageToolHarness(): void {
+  if (!firefoxExtension()) return;
+  const root = globalThis as typeof globalThis & { __qzFirefoxPageTools?: ReturnType<typeof createToolRuntime> };
+  if (root.__qzFirefoxPageTools) return;
+  root.__qzFirefoxPageTools = createToolRuntime({
+    sessions: {
+      isRunCurrent: () => true,
+      async resolveTargetTab({ tabId }) {
+        const tab = await chrome.tabs.get(tabId);
+        return { ok: true, tabId: Number(tab?.id || tabId), tab, ownedByCurrentTask: true };
+      },
+      updateWorkingTab: async () => undefined,
+      clearWorkingTab: async () => undefined,
+      listOwnedTabIds: () => [],
+    },
+  });
+}
+
+installFirefoxPageToolHarness();

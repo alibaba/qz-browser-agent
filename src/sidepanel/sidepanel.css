@@ -14,6 +14,7 @@
 @import "./capability-host/settings.css" layer(components);
 @import "./features/chat/transcript/thinking.css" layer(components);
 @import "./features/chat/transcript/waiting-card.css" layer(components);
+@import "./features/chat/transcript/store-review-card.css" layer(components);
 @import "./tools/images.css" layer(components);
 @import "./ui/skin-hooks.css" layer(components);
 @import "./features/app/navigation.css" layer(components);

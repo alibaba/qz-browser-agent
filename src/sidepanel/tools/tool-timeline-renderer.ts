@@ -593,7 +593,7 @@ export function createToolTimelineGroupElement(entry: Entry, options: TimelineOp
   el.className = `msg msg-tool msg-tool-timeline${shouldExpand ? " tool-timeline-expanded" : ""}`;
   el.dataset.chatLane = toolTimelineLaneMode(tools, shouldExpand);
   const tone = toolTimelineTone(tools);
-  const statusClass = tone === "aborted" ? "aborted" : tone === "error" ? "error" : tone === "running" || tone === "waiting" ? "running" : "";
+  const statusClass = tone === "success" ? "" : tone === "waiting" ? "running" : tone;
   const { title, preview } = toolTimelineSummaryText(tools, activeTool, {
     activeIndex,
     expanded: shouldExpand,
@@ -604,7 +604,7 @@ export function createToolTimelineGroupElement(entry: Entry, options: TimelineOp
   el.dataset.activeToolKey = toolTimelineEntryKey(activeTool);
   el.innerHTML = `
     <button class="qz-chiphead tool-summary tool-timeline-summary ${tone !== "success" ? `tool-timeline-summary-${tone}` : ""}" type="button" aria-expanded="${shouldExpand ? "true" : "false"}">
-      <span class="dot ${statusClass}"></span>
+      <span class="dot ${statusClass}" title="${tone === "incomplete" ? tHtml("toolResultIncomplete") : ""}"></span>
       <span class="tool-name">${escapeHtml(title)}</span>
       <span class="tool-args-preview">${escapeHtml(preview)}</span>
       <span class="tool-caret">${shouldExpand ? "▾" : "▸"}</span>
@@ -929,9 +929,10 @@ function renderToolTimelineFamilyTrace(tools: Entry[], activeIndex: number) {
 
 function renderToolFamilyTab(family: Family, activeFamilyId: string) {
   const active = family.id === activeFamilyId;
+  const state = toolTimelineFamilyState(family);
   return `
     <button class="qz-pill tool-family-row ${active ? "active" : ""}" type="button" role="listitem" data-tool-family-id="${escapeHtml(family.id)}" data-tool-timeline-index="${family.latestIndex}" aria-current="${active ? "true" : "false"}" title="${escapeHtml(toolFamilySummary(family))}">
-      <span class="mini-dot ${toolTimelineFamilyState(family)}"></span>
+      <span class="mini-dot ${state}" title="${state === "incomplete" ? tHtml("toolResultIncomplete") : ""}"></span>
       <span class="tool-family-title">${escapeHtml(family.shortLabel || family.label)}</span>
       <span class="tool-family-count">${escapeHtml(String(family.items.length))}</span>
     </button>
@@ -1111,7 +1112,7 @@ function renderToolTimelineStep(tool: Entry, index: number, active = false) {
   const state = resolveTimelineToolState(tool);
   return `
     <button class="qz-pill tool-timeline-step ${state}${active ? " active" : ""}" type="button" data-tool-timeline-index="${index}" title="${escapeHtml(tool.name || "")}">
-      <span class="mini-dot"></span>
+      <span class="mini-dot" title="${state === "incomplete" ? tHtml("toolResultIncomplete") : ""}"></span>
       <span>${escapeHtml(toolTimelineActionLabel(tool))}</span>
     </button>
   `;
@@ -1484,6 +1485,7 @@ function toolTimelineActiveMeta(tool: Entry) {
   const state = resolveTimelineToolState(tool);
   if (state === "aborted") return t("terminated");
   if (state === "error") return t("failed");
+  if (state === "incomplete") return t("toolResultIncompleteShort");
   if (tool.isRunning && tool.statusText) return tool.statusText;
   if (state === "running") return t("running");
   if (state === "waiting") return t("awaitingApproval");

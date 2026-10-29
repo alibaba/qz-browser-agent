@@ -137,7 +137,6 @@ function compactErrorSentence(value = "") {
 function renderMarkdown(text: unknown, { math = true, highlightScope = null }: MarkdownOptions = {}) {
   if (!text) return "";
   try {
-    ensureMarkdownParserConfigured();
     const streamMath = math === "stream";
     const footnoteScopeId = nextMarkdownFootnoteScopeId();
     const footnotes = extractMarkdownFootnotes(String(text), {
@@ -154,13 +153,14 @@ function renderMarkdown(text: unknown, { math = true, highlightScope = null }: M
     const pendingLastCodeFence = streamMath &&
       hasUnclosedTrailingMarkdownFence(prepared.markdown) &&
       !/\r?\n$/.test(prepared.markdown);
-    const html = marked.parse(prepared.markdown, { breaks: true, async: false }) as string;
+    const parser = streamMath ? createMarkdownParser(prepared.markdown) : marked;
+    const html = parser.parse(prepared.markdown, { breaks: true, async: false }) as string;
     const restored = restoreMarkdownMathPlaceholders(html, prepared.math);
     const enhanced = enhanceMarkdownMath(restored, {
       stream: streamMath,
       pendingLastCodeFence,
     });
-    return withSafeMarkdownLinks(enhanceMarkdownCodeBlocks(appendMarkdownFootnotes(enhanced, footnotes.items), {
+    return withSafeMarkdownLinks(enhanceMarkdownCodeBlocks(appendMarkdownFootnotes(enhanced, footnotes.items, streamMath), {
       stream: streamMath,
       highlightScope,
     }));
@@ -169,13 +169,12 @@ function renderMarkdown(text: unknown, { math = true, highlightScope = null }: M
 }
 
 // This private parser has no asynchronous extensions; Marked 12 does not narrow its return type.
-const marked = new Marked({ async: false });
-let markdownParserConfigured = false;
 const DOUBLE_TILDE_STRIKETHROUGH_RE = /^(~~)(?=[^\s~])([\s\S]*?[^\s~])\1(?=[^~]|$)/;
+const marked = createMarkdownParser();
 
-function ensureMarkdownParserConfigured() {
-  if (markdownParserConfigured) return;
-  marked.use({
+function createMarkdownParser(streamingSource?: string) {
+  const parser = new Marked({ async: false });
+  parser.use({
     tokenizer: {
       del(this: Tokenizer, source) {
         const match = DOUBLE_TILDE_STRIKETHROUGH_RE.exec(source);
@@ -191,7 +190,108 @@ function ensureMarkdownParserConfigured() {
       },
     },
   });
-  markdownParserConfigured = true;
+  if (streamingSource !== undefined) parser.use({
+    extensions: [{
+      name: "pendingBlockPrefix",
+      level: "block",
+      tokenizer(source) {
+        // A leading '*' may become emphasis or a list. Avoid an empty list row
+        // while the stream is still delivering the opening delimiter.
+        if (/^ {0,3}(?:\*{1,3}|_{1,3})$/.test(source)) return { type: "pendingBlockPrefix", raw: source };
+      },
+      renderer() { return ""; },
+    }, {
+      name: "pendingCodeSpan",
+      level: "inline",
+      start: source => source.indexOf("`"),
+      tokenizer(source) {
+        if (this.lexer.state.inRawBlock || !source.startsWith("`") ||
+            !streamingSource.endsWith(source) || parser.defaults.tokenizer!.codespan(source)) return;
+        const opening = /^`+/.exec(source)!;
+        // Render HTML-looking code as text from its first chunk, instead of
+        // briefly interpreting tags until the closing backtick arrives.
+        return { type: "pendingCodeSpan", raw: source, text: source.slice(opening[0].length).replace(/\n/g, " ") };
+      },
+      renderer(token) { return `<code>${escapeHtml(token.text || "")}</code>`; },
+    }, {
+      name: "pendingTable",
+      level: "block",
+      tokenizer(source) {
+        const table = parser.defaults.tokenizer!.table(source);
+        // Automatic column sizing needs every row. Reveal a table at its block
+        // boundary, or on final rendering, so it keeps the compact static layout.
+        if (table) {
+          const closed = table.raw.length < source.length || /\n[ \t]*\n$/.test(table.raw);
+          return closed ? table : { type: "pendingTable", raw: table.raw };
+        }
+        // Do not flash a partial pipe-table header as prose before its delimiter.
+        if (/^\|[^\n]*(?:\n[|:\- \t]*)?$/.test(source.trimEnd())) return { type: "pendingTable", raw: source };
+      },
+      renderer(token) {
+        const count = Array.from(token.raw.replace(/\s/g, "")).length;
+        return `<div class="markdown-table-pending">${tHtml("tableGenerating", { count })}</div>`;
+      },
+    }, {
+      name: "pendingLink",
+      level: "inline",
+      start: source => source.indexOf("["),
+      tokenizer(source) {
+        if (this.lexer.state.inRawBlock || !source.startsWith("[") ||
+            !streamingSource.trimEnd().endsWith(source.trimEnd()) || /\n\s*$/.test(streamingSource)) return;
+        const label = pendingMarkdownLinkLabel(source);
+        if (label === null) return;
+        const tokenizer = parser.defaults.tokenizer!;
+        const reference = tokenizer.reflink(source, this.lexer.tokens.links);
+        if (reference && reference.type !== "text") return;
+        return { type: "pendingLink", raw: source, tokens: this.lexer.inlineTokens(label) };
+      },
+      renderer(token) { return this.parser.parseInline(token.tokens || []); },
+    }],
+  });
+  return parser;
+}
+
+// Only the unfinished inline suffix is provisional. Marked still owns complete links,
+// escaped brackets and code spans; no partial destination is displayed or clickable.
+function pendingMarkdownLinkLabel(source: string): string | null {
+  if (source.includes("\n")) return null;
+  let depth = 1;
+  for (let i = 1; i < source.length; i += 1) {
+    if (source[i] === "\\") { i += 1; continue; }
+    if (source[i] === "`") {
+      const fence = /^`+/.exec(source.slice(i))![0];
+      const end = source.indexOf(fence, i + fence.length);
+      if (end >= 0) { i = end + fence.length - 1; continue; }
+    }
+    if (source[i] === "[") depth += 1;
+    if (source[i] !== "]" || --depth !== 0) continue;
+    const rest = source.slice(i + 1);
+    if (rest && !rest.startsWith("(")) return null;
+    if (rest && hasClosedMarkdownLinkDestination(rest)) return null;
+    return source.slice(1, i);
+  }
+  return source.slice(1);
+}
+
+function hasClosedMarkdownLinkDestination(source: string) {
+  let depth = 1;
+  let quote = "";
+  for (let i = 1; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === "\\") { i += 1; continue; }
+    if (quote) {
+      if (char === quote) quote = "";
+    } else if (char === "<") {
+      quote = ">";
+    } else if ((char === '"' || char === "'") && /\s/.test(source[i - 1])) {
+      quote = char;
+    } else if (char === "(") {
+      depth += 1;
+    } else if (char === ")" && --depth === 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 let markdownFootnoteScopeSeq = 0;
@@ -217,6 +317,9 @@ function extractMarkdownFootnotes(text = "", { provisionalReferences = false, sc
     }
 
     if (!fence.active) {
+      // A trailing definition prefix must not flash in the body before its colon
+      // arrives. Final rendering restores literal brackets if the stream stops here.
+      if (provisionalReferences && i === lines.length - 1 && /^\[(?:\^(?:[^\]\s]+\]?)?|\d{1,3}\]?)?$/.test(line)) continue;
       const definition = line.match(/^\[(?:\^([^\]\s]+)|(\d{1,3}))\]:[ \t]*(.*)$/);
       if (definition) {
         const id = String(definition[1] || definition[2] || "").trim();
@@ -247,7 +350,7 @@ function extractMarkdownFootnotes(text = "", { provisionalReferences = false, sc
   if (!notes.length) {
     return {
       markdown: provisionalReferences
-        ? replaceMarkdownFootnoteReferences(source, byId, { provisional: true, scopeId })
+        ? replaceMarkdownFootnoteReferences(body.join("\n"), byId, { provisional: true, scopeId })
         : source,
       items: [],
     };
@@ -310,19 +413,21 @@ function renderMarkdownFootnoteReference({ label = "", refId = "", href = "", pe
   return `<sup class="${classes}" id="${safeRefId}"><a href="${escapeHtml(href)}" aria-label="${tHtml("sourceLabel", { label })}">${safeLabel}</a></sup>`;
 }
 
-function appendMarkdownFootnotes(html = "", notes: Footnote[] = []) {
+function appendMarkdownFootnotes(html = "", notes: Footnote[] = [], stream = false) {
   const referenced = (Array.isArray(notes) ? notes : []).filter(note => note?.referenced);
   if (!referenced.length) return html;
   const items = referenced.map((note) => {
-    const body = renderMarkdownFootnoteInline(note.text || "");
+    const body = renderMarkdownFootnoteInline(note.text || "", stream);
     return `<li id="fn-${escapeHtml(note.domId)}"><span class="markdown-footnote-body">${body}</span></li>`;
   }).join("");
   return `${html}<section class="markdown-footnotes" role="doc-endnotes"><ol>${items}</ol></section>`;
 }
 
-function renderMarkdownFootnoteInline(text = "") {
+function renderMarkdownFootnoteInline(text = "", stream = false) {
   try {
-    if (typeof marked.parseInline === "function") return marked.parseInline(normalizeMarkdownFootnoteInlineText(text), { async: false }) as string;
+    const source = normalizeMarkdownFootnoteInlineText(text);
+    const parser = stream ? createMarkdownParser(source) : marked;
+    return parser.parseInline(source, { async: false }) as string;
   } catch (_e) {}
   return escapeHtml(text);
 }

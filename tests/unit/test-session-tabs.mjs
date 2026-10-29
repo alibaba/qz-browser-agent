@@ -177,6 +177,29 @@ const nonBlankInternalPage = await sessionTabs.resolveTargetTab({
 assert.equal(nonBlankInternalPage.ok, false);
 assert.equal(nonBlankInternalPage.code, "SESSION_TAB_NOT_WEB");
 
+// Readiness admission is limited to owned loading blanks and never replaces the
+// working page. Strict resolution still rejects them before document commit.
+const beforeLoadingAdmission = structuredClone(runtimes.get("blank-owner"));
+for (const url of ["", "about:blank"]) {
+  tabs.set(10, { ...tabs.get(10), url, status: "loading" });
+  for (const readOnly of [false, true]) {
+    const loading = await sessionTabs.resolveTargetTab({
+      sessionId: "blank-owner", tabId: 10, readOnly, allowLoadingBlank: true,
+    });
+    assert.equal(loading.ok, true);
+    assert.equal(loading.ownedByCurrentTask, true);
+    assert.deepEqual(runtimes.get("blank-owner"), beforeLoadingAdmission);
+    assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId: 10, readOnly })).code, "SESSION_TAB_NOT_WEB");
+    assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "a", tabId: 10, readOnly, allowLoadingBlank: true })).code, "SESSION_TAB_NOT_WEB");
+    tabs.set(11, { ...tabs.get(11), url, status: "loading" });
+    assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId: 11, readOnly, allowLoadingBlank: true })).code, "SESSION_TAB_NOT_WEB");
+  }
+}
+tabs.set(10, { ...tabs.get(10), url: "about:blank", status: "complete" });
+assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId: 10, allowLoadingBlank: true })).code, "SESSION_TAB_NOT_WEB");
+tabs.set(12, { ...tabs.get(12), status: "loading" });
+assert.equal((await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId: 12, allowLoadingBlank: true })).code, "SESSION_TAB_NOT_WEB");
+
 tabs.set(13, {
   id: 13,
   url: "about:blank",

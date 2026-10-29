@@ -7,7 +7,10 @@ versions, declared licenses, and the license files included with the extension.
 
 The root `package.json` and `package-lock.json` pin runtime and development dependencies, including
 upstream tarball URLs and integrity hashes. TypeScript imports are bundled with their runtime;
-independent PDF, MathJax, and table CSS assets are extracted from the same locked packages.
+independent PDF and MathJax assets are rebuilt from readable, pinned package inputs. Table CSS is
+copied unchanged. The [code audit guide](docs/store-code-audit.md#readable-static-dependencies) documents
+the static-only PDF.js and Zod reductions and the MathJax composition. These derivatives are not
+represented as byte-identical upstream distributions.
 
 Each build generates `vendor/provenance.json` and `vendor/licenses/` from its actual dependency graph,
 including transitive dependencies present in the output. The manifest records package versions,
@@ -153,6 +156,10 @@ helpers and browser dependencies included in the extension.
 | require-directory | 2.1.1 | MIT |
 | semver | 7.8.5 | ISC |
 | signal-exit | 4.1.0 | ISC |
+| storecheck | 0.1.0 | MIT |
+| fflate | 0.8.3 | MIT |
+| yaml | 2.9.1 | ISC |
+| zod (storecheck only) | 3.25.76 | MIT |
 | source-map | 0.6.1 | BSD-3-Clause |
 | source-map-js | 1.2.2 | BSD-3-Clause |
 | source-map-support | 0.5.21 | MIT |

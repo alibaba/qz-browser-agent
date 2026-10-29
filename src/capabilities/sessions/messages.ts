@@ -3,7 +3,12 @@ import { defineMessages } from "#sdk/shared/i18n-definition";
 /** Package-owned interface text. Identifiers and user content remain untranslated. */
 export default defineMessages("sessions", {
   getLocation: { en: "Get location", "zh-CN": "获取位置" },
-  locationUnavailable: { en: "Open the side panel, check your device’s location settings, and try again.", "zh-CN": "请打开侧边栏，检查设备的定位设置后重试。" },
+  locationUnavailable: { en: "Couldn't get your location. Open the sidebar and check location permissions, or just tell me a city or area.", "zh-CN": "未能获取位置。请打开侧边栏并检查定位权限，或直接告诉我城市或区域。" },
+  locationPermissionDenied: { en: "Location was blocked. Allow it when the browser asks, check system Location Services, or just tell me a city or area.", "zh-CN": "定位被拒绝。请在浏览器提示中允许定位，并检查系统定位权限；也可直接告诉我城市或区域。" },
+  locationPositionUnavailable: { en: "Couldn't determine your position. Check network and Location Services, or just tell me a city or area.", "zh-CN": "暂时无法定位。请检查网络和系统定位服务，或直接告诉我城市或区域。" },
+  locationTimeout: { en: "Location timed out. Keep the sidebar open and allow browser location, or just tell me a city or area.", "zh-CN": "定位超时。请保持侧边栏打开并允许浏览器定位，或直接告诉我城市或区域。" },
+  locationPanelUnavailable: { en: "Sidebar isn't connected. Open it in this window and try again, or just tell me a city or area.", "zh-CN": "侧边栏未连接。请打开当前窗口的侧边栏后重试，或直接告诉我城市或区域。" },
+  locationResponseTimeout: { en: "Location timed out. Allow location in the browser and turn on system Location Services, or just tell me a city or area.", "zh-CN": "定位超时。请确认已允许浏览器定位，并打开系统定位服务；也可直接告诉我城市或区域。" },
   "manageTasks": { "zh-CN": "管理任务 · {action}", en: "Manage tasks · {action}" },
   "manageTasksTitle": { "zh-CN": "管理任务", en: "Manage tasks" },
   "tasks": { "zh-CN": "{count} 个任务", en: "Tasks: {count}" },

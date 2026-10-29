@@ -71,6 +71,7 @@ import {
 import { createTranscriptScheduler } from "./scheduler.js";
 import { createMessageActions } from "./message-actions.js";
 import { createWaitingCards, isWaitingTranscriptActive } from "./waiting-card.js";
+import { createStoreReviewTranscriptCard } from "./store-review-card.js";
 
 const CODE_BLOCK_TAIL_RESUME_PX = 28;
 const TRANSCRIPT_CACHE_RENDER_INTERVAL_MS = 120;
@@ -146,6 +147,14 @@ export function createTranscriptRenderer(options: TranscriptOptions) {
     },
   });
   const waitingCards = createWaitingCards({ send: command => request(command.type, command), isCurrentSession });
+  const storeReview = createStoreReviewTranscriptCard({
+    messagesEl,
+    getSessionId: () => normalizeSessionId(getSessionId()) || "",
+    hasTranscript: () => currentTranscript().length > 0,
+    onPlaced() {
+      if (scroll.shouldFollowTail()) scroll.scrollToBottom();
+    },
+  });
   const toolPresentationState = createToolPresentationState();
   const assistantHighlightScopes = new WeakMap<HTMLElement, object>();
   const messageActions = createMessageActions({
@@ -421,6 +430,7 @@ function reconcileChatTranscriptDom(sessionId: unknown, history: TranscriptEntry
   }
   endRemove?.({ removed: removedCount });
 
+  storeReview.sync();
   if (shouldStick) scroll.scrollToBottom();
   else if (viewportAnchor) scroll.restoreAnchor(viewportAnchor);
   } catch (err) {
@@ -578,6 +588,7 @@ function patchLiveTranscriptDomTail(sessionId: unknown, visibleHistory: Transcri
       }
       cursor = el;
     }
+    storeReview.sync();
     if (shouldStick) scroll.scrollToBottom();
     else if (viewportAnchor) scroll.restoreAnchor(viewportAnchor);
     patched = true;
@@ -1397,7 +1408,8 @@ function renderAssistantPlaybackContent(el: HTMLElement, text: unknown, { math =
   if (hasActiveSelectionInsideNode(content)) return;
   const shouldStick = scroll.shouldFollowTail();
   const next = String(text || "");
-  if (el.dataset.content !== next) {
+  const markdownMode = math === "stream" ? "stream" : "complete";
+  if (el.dataset.content !== next || (el.dataset.markdownMode || "complete") !== markdownMode) {
     const codeBlockScrollState = captureMarkdownCodeBlockScrollState(content);
     setAssistantFailureClass(el, next);
     patchHtmlContent(content, renderAssistantContentHtml(next, {
@@ -1412,6 +1424,7 @@ function renderAssistantPlaybackContent(el: HTMLElement, text: unknown, { math =
       followNewBlocks: followCodeBlocks,
     });
     el.dataset.content = next;
+    el.dataset.markdownMode = markdownMode;
     if (math && !isAssistantFailureText(next)) mathRenderer.schedule(content);
   }
   if (shouldStick) scroll.scrollToBottom({ immediate: true, instant: true, force: true });
@@ -2107,7 +2120,10 @@ function appendSystemNote(message: string) {
     if (!id) return;
     scheduler.cancel(id);
     waitingCards.forgetSession(id);
-    if (isCurrentSession(id)) messageActions.reset();
+    if (isCurrentSession(id)) {
+      messageActions.reset();
+      storeReview.clear();
+    }
     transcriptPartialRenderBySessionId.delete(id);
     clearSessionPendingToolState(id);
     transcriptLastChangedAtBySessionId.delete(id);
@@ -2125,6 +2141,7 @@ function appendSystemNote(message: string) {
     extensions?.notify({ type: "ui_close_transient" });
     scroll.setFollowing(true);
     disposeRendererTree(messagesEl);
+    storeReview.clear();
     messagesEl.innerHTML = welcomeHTML;
     showWelcome();
     scroll.syncScrollPosition();
@@ -2140,6 +2157,7 @@ function appendSystemNote(message: string) {
     scheduler.cancel();
     waitingCards.reset();
     messageActions.reset();
+    storeReview.clear();
     transcriptPartialRenderBySessionId.clear();
     pendingToolCalls.clear();
     transcriptLastChangedAtBySessionId.clear();

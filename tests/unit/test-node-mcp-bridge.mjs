@@ -1,12 +1,13 @@
 import { pairBrowser, browserId, pollBrowser, completeBrowser, resultPayload } from "../support/paired-bridge.mjs";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { request as httpRequest } from "node:http";
 import { readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { startBridge } from "../../services/mcp-bridge/src/server.mjs";
+import { isExtensionBridgeOrigin, startBridge } from "../../services/mcp-bridge/src/server.mjs";
 import { BridgeState } from "../../services/mcp-bridge/src/state.mjs";
 import { TOOL_CATALOG, executeMcpTool, resultToContent } from "../../services/mcp-bridge/src/tools.mjs";
 
@@ -99,6 +100,82 @@ test("token-free routes reject remote Host, browser Origin, and non-JSON request
   const poll = await post(bridge, "/v1/qingzhou/poll", { client: { id: "browser", pollTimeoutMs: 1 } }, { origin: extensionOrigin });
   assert.deepEqual(await poll.json(), { requests: [], ...bridge.state.connectionInfo(await pairBrowser(bridge.state, { id: "browser" })) });
   assert.equal(bridge.state.status().clientCount, 1);
+  await assert.rejects(startBridge({ host: "0.0.0.0", port: 0 }), /loopback/);
+});
+
+test("a Firefox extension UUID origin can pair, and other origins stay rejected", async t => {
+  const bridge = await withBridge(t);
+  const firefoxOrigin = "moz-extension://12345678-1234-5678-9abc-123456789abc";
+  const chromeOrigin = `chrome-extension://${"b".repeat(32)}`;
+  assert.equal(isExtensionBridgeOrigin(chromeOrigin), true);
+  assert.equal(isExtensionBridgeOrigin(firefoxOrigin), true);
+  assert.equal(isExtensionBridgeOrigin(`chrome-extension://${"q".repeat(32)}`), false);
+  const rejected = [
+    "https://evil.example",
+    "null",
+    "http://127.0.0.1:9999",
+    "chrome-extension://bad",
+    `chrome-extension://${"q".repeat(32)}`,
+    "moz-extension://not-a-uuid",
+    "moz-extension://qz-browser-agent@heleifz.github.io",
+    "moz-extension://12345678-1234-5678-9abc-123456789abc/sidepanel/sidepanel.html",
+    "moz-extension://12345678-1234-5678-9ABC-123456789ABC",
+    "MOZ-extension://12345678-1234-5678-9abc-123456789abc",
+    "moz-extension://",
+  ];
+  for (const origin of rejected) {
+    assert.equal(isExtensionBridgeOrigin(origin), false, origin);
+    const response = await fetch(`${bridge.endpoint}/v1/qingzhou/pair`, {
+      method: "POST", headers: { origin, "content-type": "application/json" }, body: "{}",
+    });
+    assert.equal(response.status, 403, origin);
+    assert.equal(response.headers.get("access-control-allow-origin"), null, origin);
+    assert.equal((await response.json()).error, "invalid bridge origin");
+  }
+  for (const origin of [chromeOrigin, firefoxOrigin]) {
+    const mcp = await fetch(`${bridge.endpoint}/mcp`, {
+      method: "POST", headers: { origin, "content-type": "application/json" }, body: "{}",
+    });
+    assert.equal(mcp.status, 403, origin);
+    assert.equal(mcp.headers.get("access-control-allow-origin"), null, origin);
+  }
+  const health = await fetch(`${bridge.endpoint}/health`, { headers: { origin: firefoxOrigin } });
+  assert.equal(health.status, 200);
+  assert.equal(health.headers.get("access-control-allow-origin"), firefoxOrigin);
+  const { instanceId } = await health.json();
+  const clientId = randomUUID();
+  const connectionId = randomUUID();
+  const pairedResponse = await fetch(`${bridge.endpoint}/v1/qingzhou/pair`, {
+    method: "POST",
+    headers: { origin: firefoxOrigin, "content-type": "application/json" },
+    body: JSON.stringify({ clientId, connectionId, instanceId }),
+  });
+  assert.equal(pairedResponse.status, 200);
+  assert.equal(pairedResponse.headers.get("access-control-allow-origin"), firefoxOrigin);
+  const paired = await pairedResponse.json();
+  assert.equal(paired.clientId, clientId);
+  assert.match(paired.pairingToken, /^[A-Za-z0-9_-]{43}$/);
+  const denied = await fetch(`${bridge.endpoint}/v1/qingzhou/poll`, {
+    method: "POST",
+    headers: { origin: firefoxOrigin, "content-type": "application/json" },
+    body: JSON.stringify({ client: {
+      id: clientId, pairingToken: "wrong-token", pairingVersion: 1, instanceId, connectionId, pollTimeoutMs: 1,
+    } }),
+  });
+  assert.equal(denied.status, 409);
+  assert.equal((await denied.json()).code, "BRIDGE_PAIRING_REQUIRED");
+  const poll = await fetch(`${bridge.endpoint}/v1/qingzhou/poll`, {
+    method: "POST",
+    headers: { origin: firefoxOrigin, "content-type": "application/json" },
+    body: JSON.stringify({ client: {
+      id: clientId, pairingToken: paired.pairingToken, pairingVersion: 1, instanceId, connectionId, pollTimeoutMs: 1,
+    } }),
+  });
+  assert.equal(poll.status, 200);
+  assert.deepEqual((await poll.json()).requests, []);
+  const chromePoll = await post(bridge, "/v1/qingzhou/poll", { client: { id: "chrome-browser", pollTimeoutMs: 1 } }, { origin: chromeOrigin });
+  assert.equal(chromePoll.status, 200);
+  assert.equal(chromePoll.headers.get("access-control-allow-origin"), chromeOrigin);
   await assert.rejects(startBridge({ host: "0.0.0.0", port: 0 }), /loopback/);
 });
 

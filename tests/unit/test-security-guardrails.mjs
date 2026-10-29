@@ -5,6 +5,8 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { navigationDocuments } from "../support/navigation-documents.mjs";
+import { createSessionRuntimeState } from "../../src/background/session/runtime-state.js";
+import { createSessionState } from "../../src/sidepanel/features/sessions/session-state.js";
 import {
   addSecurityGuardrailDomain,
   addSecurityGuardrailPattern,
@@ -1372,35 +1374,38 @@ test("service worker routes tool runtime updates through the session event pipel
 });
 
 test("rate-limit tool progress is recoverable from runtime snapshots", () => {
-  const serviceWorker = readSource(join(root, "src/background/service-worker.js"));
-  const sessionRuntimeState = readSource(join(root, "src/background/session/runtime-state.js"));
-  const sessionState = readSource(join(root, "src/sidepanel/features/sessions/session-state.ts"));
-
-  assert.match(
-    sessionRuntimeState,
-    /tool_execution_update[\s\S]*currentToolFromEvent[\s\S]*reduceSessionRuntimePatch/,
-    "tool_execution_update should persist the current tool progress object into session runtime",
-  );
-  assert.match(
-    sessionRuntimeState,
-    /event\.type === "tool_execution_end"[\s\S]*return null/,
-    "tool_execution_end should clear the recoverable current tool progress object",
-  );
-  assert.match(
-    sessionState,
-    /function\s+reduceRuntime\([\s\S]*tool_execution_start[\s\S]*tool_execution_update[\s\S]*next\.currentTool\s*=\s*normalizeSessionCurrentTool/,
-    "sidepanel runtime reducer should derive currentTool from live tool execution events",
-  );
-  assert.match(
-    sessionState,
-    /tool_execution_update[\s\S]*statusText:\s*event\.statusText\s*\?\?\s*fields\(source\.currentTool\)\.statusText/,
-    "sidepanel should preserve queued rate-limit statusText when it receives a live tool update",
-  );
-  assert.match(
-    sessionState,
-    /function\s+normalizeRuntime\([\s\S]*currentTool:\s*normalizeSessionCurrentTool\(merged\.currentTool\)/,
-    "sidepanel should restore queued tool progress from runtime.currentTool after reload or reconnect",
-  );
+  let runtime = null, checkpoint = null;
+  const state = createSessionRuntimeState({
+    supervisor: {
+      getRuntime: () => runtime,
+      setRuntime: (_id, next) => (runtime = next),
+    },
+    repository: { async writeRuntime(_id, value) { checkpoint = structuredClone(value); } },
+    getSessions: async () => ({}), getAgentEntry: () => ({ ready: null }), normalizeSessionId: String,
+    now: () => "2026-10-28 12:00:00",
+  });
+  const sessionId = "rate-limit", runId = "rate-run";
+  const emit = (type, toolCallId, fields = {}) => state.recordEvent(sessionId, { type, runId, toolCallId, ...fields });
+  emit("agent_start");
+  emit("tool_execution_start", "opening", { toolName: "open_tab" });
+  emit("tool_execution_start", "reading", { toolName: "read_article" });
+  const rateLimit = { host: "example.test", waitMs: 1000 };
+  emit("tool_execution_update", "opening", { phase: "queued", statusText: "流控等待中", rateLimit });
+  assert.equal(checkpoint.currentTool.statusText, "流控等待中");
+  assert.deepEqual(checkpoint.currentTool.rateLimit, rateLimit);
+  const queuedTool = structuredClone(checkpoint.currentTool);
+  const reconnected = createSessionState();
+  reconnected.applyEvent({ type: "state", sessionId, runId, runtime: checkpoint });
+  assert.deepEqual(reconnected.getRuntime(sessionId).currentTool, queuedTool,
+    "reconnecting the Side Panel must restore persisted queued progress");
+  emit("tool_execution_end", "reading");
+  assert.deepEqual(checkpoint.currentTool, queuedTool, "a sibling ending must preserve the queued call");
+  reconnected.applyEvent({ type: "tool_execution_end", sessionId, runId, toolCallId: "reading", runtime: checkpoint });
+  assert.deepEqual(reconnected.getRuntime(sessionId).currentTool, queuedTool);
+  emit("tool_execution_end", "opening");
+  assert.equal(checkpoint.currentTool, null, "ending the last call must clear persisted progress");
+  reconnected.applyEvent({ type: "tool_execution_end", sessionId, runId, toolCallId: "opening", runtime: checkpoint });
+  assert.equal(reconnected.getRuntime(sessionId).currentTool, null);
 });
 
 for (const { name, fn } of tests) {

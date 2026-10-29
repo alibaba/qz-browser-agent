@@ -2,11 +2,17 @@ import { defineConfig } from "@playwright/test";
 import { availableParallelism } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertChromiumChannel } from "../support/browser-package.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
 import "../support/typescript-loader.mjs";
 
+const chromiumChannel = assertChromiumChannel();
+
 if (!process.argv.includes("--list") && !process.argv.includes("--help")) {
   process.env.QINGZHOU_TEST_EXTENSION_DIR = await ensureTestExtension();
+  console.log(`browser=chromium package=dist/extension dir=${process.env.QINGZHOU_TEST_EXTENSION_DIR}`);
+} else {
+  console.log("browser=chromium package=dist/extension config=tests/config/playwright.config.mjs");
 }
 
 const testsRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -39,7 +45,7 @@ export default defineConfig({
   use: {
     locale: "zh-CN",
     baseURL: `http://127.0.0.1:${port}`,
-    channel: process.env.QINGZHOU_PLAYWRIGHT_CHANNEL || "chromium",
+    channel: chromiumChannel || "chromium",
     headless: process.env.QINGZHOU_TEST_HEADED !== "1",
     // API traces retain failure diagnostics; DOM snapshots are opt-in for visual debugging.
     trace: process.env.QINGZHOU_TEST_TRACE_SNAPSHOTS === "1" ? "retain-on-failure"

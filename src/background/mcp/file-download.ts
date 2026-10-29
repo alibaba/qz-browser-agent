@@ -1,4 +1,5 @@
 import { bytesToBase64 } from "../../shared/bytes.js";
+import { productText } from "../../shared/product-text.js";
 
 interface DownloadInput { bytes: Uint8Array; filename: string; mimeType: string }
 type Downloads = Pick<typeof chrome.downloads, "download" | "search">;
@@ -13,7 +14,7 @@ export async function downloadMcpFile(input: DownloadInput, downloads: Downloads
     filename, saveAs: false,
   });
   if (!Number.isInteger(downloadId) || downloadId < 0) {
-    throw Object.assign(new Error("Chrome did not accept the download."), { code: "DOWNLOAD_FAILED" });
+    throw Object.assign(new Error(productText("Chrome did not accept the download.", "Firefox did not accept the download.")), { code: "DOWNLOAD_FAILED" });
   }
   const deadline = Date.now() + Math.min(5_000, Math.max(0, wait.waitMs ?? 5_000));
   let item: chrome.downloads.DownloadItem | undefined;
@@ -25,7 +26,10 @@ export async function downloadMcpFile(input: DownloadInput, downloads: Downloads
     await new Promise(resolve => setTimeout(resolve, Math.min(remaining, Math.max(1, wait.pollMs ?? 100))));
   } while (Date.now() < deadline);
   if (item?.state === "interrupted") {
-    throw Object.assign(new Error("Chrome interrupted the download. Inspect Chrome downloads before retrying."), {
+    throw Object.assign(new Error(productText(
+      "Chrome interrupted the download. Inspect Chrome downloads before retrying.",
+      "Firefox interrupted the download. Inspect Firefox downloads before retrying.",
+    )), {
       code: "DOWNLOAD_INTERRUPTED", details: { downloadId, filename, reason: item.error || "unknown" },
     });
   }
@@ -33,8 +37,8 @@ export async function downloadMcpFile(input: DownloadInput, downloads: Downloads
   return {
     downloadId, filename, mimeType, bytes: input.bytes.byteLength, state: item?.state || "in_progress",
     ...(fileUrl ? { fileUrl, filepath: item!.filename } : {}),
-    ...(item?.state !== "complete" ? { hint: "Chrome is still saving this download. Check its status in chrome://downloads." }
-      : !fileUrl ? { hint: "Chrome completed the download. Find the file in chrome://downloads." } : {}),
+    ...(item?.state !== "complete" ? { hint: productText("Chrome is still saving this download. Check its status in chrome://downloads.", "Firefox is still saving this download. Check its status in about:downloads.") }
+      : !fileUrl ? { hint: productText("Chrome completed the download. Find the file in chrome://downloads.", "Firefox completed the download. Find the file in about:downloads.") } : {}),
   };
 }
 

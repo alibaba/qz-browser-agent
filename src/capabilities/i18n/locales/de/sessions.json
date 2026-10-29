@@ -220,5 +220,10 @@
   "sessions.goalTrackingShort": "Zielverfolgung",
   "sessions.latestMessagesShort": "Neueste Nachrichten",
   "sessions.getLocation": "Standort abrufen",
-  "sessions.locationUnavailable": "Der Standort konnte nicht ermittelt werden. Öffne die Seitenleiste und prüfe die Standorteinstellungen deines Geräts oder gib eine Stadt oder Region an."
+  "sessions.locationUnavailable": "Standort nicht verfügbar. Öffne die Seitenleiste und prüfe die Standortberechtigung, oder nenne einfach eine Stadt oder Region.",
+  "sessions.locationPermissionDenied": "Standort wurde blockiert. Erlaube ihn, wenn der Browser fragt, prüfe die Standortdienste, oder nenne einfach eine Stadt oder Region.",
+  "sessions.locationPositionUnavailable": "Position konnte nicht bestimmt werden. Prüfe Netzwerk und Standortdienste, oder nenne einfach eine Stadt oder Region.",
+  "sessions.locationTimeout": "Standortzeit überschritten. Lass die Seitenleiste offen und erlaube den Browser-Standort, oder nenne einfach eine Stadt oder Region.",
+  "sessions.locationPanelUnavailable": "Seitenleiste ist nicht verbunden. Öffne sie in diesem Fenster und versuche es erneut, oder nenne einfach eine Stadt oder Region.",
+  "sessions.locationResponseTimeout": "Standortzeit überschritten. Erlaube den Standort im Browser und schalte die Standortdienste ein, oder nenne einfach eine Stadt oder Region."
 }

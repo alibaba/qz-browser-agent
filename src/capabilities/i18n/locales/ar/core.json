@@ -378,6 +378,9 @@
   "core.firstColumns": "عرض أول {count} أعمدة",
   "core.imageTotal": "الصور: {count}",
   "core.moreImages": "{count} صور أخرى",
+  "core.storeReviewPrompt": "إذا كان qz مفيدًا، فتقييم على Chrome Web Store يساعدنا.",
+  "core.storeReviewAction": "اكتب تقييمًا",
+  "core.storeReviewDismiss": "عدم الإظهار مجددًا",
   "core.dataConsentTitle": "بدء استخدام {brand}",
   "core.dataConsentModel": "لتنفيذ المهمة، يرسل qz مدخلاتك والمعلومات المستخدمة إلى خدمة النماذج التي أعددتها. قد يشمل ذلك محتوى الصفحات ولقطات الشاشة والملفات وعناوين علامات التبويب وروابطها، ونتائج الإشارات المرجعية أو سجل التصفح التي سمحت بقراءتها.",
   "core.dataConsentLocation": "عندما تحتاج إلى معلومات محلية، يمكن لـ qz الحصول على إحداثياتك ودقتها ووقت تحديد الموقع وإرسالها إلى خدمة النماذج التي أعددتها. سيطلب موافقتك في المرة الأولى.",
@@ -386,5 +389,8 @@
   "core.dataConsentDetails": "الخصوصية والأذونات",
   "core.dataConsentAccept": "الموافقة والمتابعة",
   "core.dataConsentLater": "لاحقًا",
-  "core.dataConsentSaveFailed": "تعذّر حفظ اختيارك. حاول مرة أخرى."
+  "core.dataConsentSaveFailed": "تعذّر حفظ اختيارك. حاول مرة أخرى.",
+  "core.toolResultIncomplete": "انتهت المهلة؛ النتيجة غير مكتملة",
+  "core.toolResultIncompleteShort": "غير مكتمل",
+  "core.tableGenerating": "جارٍ إنشاء الجدول… {count} حرفًا"
 }

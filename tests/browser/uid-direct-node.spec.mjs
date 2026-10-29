@@ -236,7 +236,8 @@ function targets(snapshot, ...parts) {
 async function tree(h) {
   let last;
   await expect.poll(async () => {
-    last = await h.call("get_ax_tree", {});
+    // Node identity checks include controls outside the current viewport.
+    last = await h.call("get_ax_tree", { scope: "full" });
     return last.snapshot || last.code || "";
   }, { timeout: 15000 }).toContain("target=uid:");
   expect(last, JSON.stringify(last)).not.toHaveProperty("code");
@@ -377,14 +378,15 @@ test.describe("uid resolves the original node", () => {
     expect(expanded.rootFound, JSON.stringify(expanded)).toBe(true);
   });
 
-  test("a text-node uid operates on the owning element", async () => {
+  test("display-only text stays readable and the button uid operates on its element", async () => {
     const snapshot = (await tree(h)).snapshot;
-    const textUid = targets(snapshot, "StaticText", "Save")[0];
-    expect(textUid, snapshot).toBeTruthy();
-    const inspected = await h.call("inspect_element", { target: textUid });
+    expect(snapshot).toContain('StaticText "Save"');
+    expect(targets(snapshot, "StaticText", "Save")).toEqual([]);
+    const buttonUid = targets(snapshot, "button", "Save text")[0];
+    expect(buttonUid, snapshot).toBeTruthy();
+    const inspected = await h.call("inspect_element", { target: buttonUid });
     expect(inspected.code, JSON.stringify(inspected)).not.toBe("STALE_ELEMENT_UID");
     expect(JSON.stringify(inspected)).toContain("Save");
-    const buttonUid = targets(snapshot, "button", "Save text")[0];
     const clicked = await h.call("act_on_element", { target: buttonUid, action: "click" });
     expect(clicked, JSON.stringify(clicked)).not.toHaveProperty("code");
     expect((await h.state()).hits.save).toBe(1);
@@ -502,7 +504,7 @@ test.describe("uid resolves the original node", () => {
       root.append(region);
       document.body.append(outer, host);
     });
-    const page = await h.call("get_ax_tree", {});
+    const page = await h.call("get_ax_tree", { scope: "full" });
     expect(page.code, JSON.stringify(page)).toBeUndefined();
     const region = targets(page.snapshot, "region", "Panel")[0];
     expect(region, page.snapshot).toBeTruthy();
@@ -586,7 +588,7 @@ test.describe("uid resolves the original node", () => {
       alpha.addEventListener("click", () => { window.hits.alpha = (window.hits.alpha || 0) + 1; });
       beta.addEventListener("click", () => { window.hits.beta = (window.hits.beta || 0) + 1; });
     });
-    const snapshot = await h.call("get_ax_tree", { depth: 1, limit: 8 });
+    const snapshot = await h.call("get_ax_tree", { scope: "full", depth: 1, limit: 8 });
     expect(snapshot.code, JSON.stringify(snapshot)).toBeUndefined();
     const alpha = targets(snapshot.snapshot, "button", "Alpha")[0];
     const beta = targets(snapshot.snapshot, "button", "Beta")[0];

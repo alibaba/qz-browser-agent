@@ -199,7 +199,10 @@ npx qz-browser-agent@latest create "你的任务" --stream
 
 ### 支持 Edge 或 Firefox 吗？
 
-支持 Chrome 和 Edge，暂不支持 Firefox。
+发布版本运行在 Chrome 和 Edge。Firefox 尚未发布。开发时的临时加载见
+[在 Firefox 中临时加载](docs/commands.md#load-temporarily-in-firefox)。与 Chrome 仍有差异的行为见
+[Firefox 与 Chrome 的差异](docs/firefox-differences.md)。API 调查见
+[Firefox 能力差](docs/firefox-capability-gap.md)。
 
 ## 开发
 
@@ -215,15 +218,18 @@ npm run build
 ```
 
 打开 `chrome://extensions`，启用**开发者模式**，点击**加载已解压的扩展程序**，选择 `dist/extension/`。
+在 Firefox 中临时加载同一套源码，见[在 Firefox 中临时加载](docs/commands.md#load-temporarily-in-firefox)。
 
 ### 开发与测试
 
 完成[测试环境配置](docs/commands.md#run-tests)后，使用以下命令：
 
 ```bash
-npm run dev       # 源码变更后自动重新构建
-npm test          # 运行默认测试
-npm run verify    # 类型检查，并运行全部自动化测试与覆盖率统计
+npm run dev             # 源码变更后自动重新构建
+npm test                # 运行默认测试
+npm run verify          # 类型检查，并运行共享测试
+npm run verify:chrome   # 加载 dist/extension/ 的 Chrome 套件
+npm run verify:coverage # 共享套件、Chrome 套件，以及覆盖率门禁
 ```
 
 重新构建后，在 `chrome://extensions` 中重新加载扩展，并重新打开侧边栏。

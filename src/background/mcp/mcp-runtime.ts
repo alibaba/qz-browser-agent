@@ -1,4 +1,5 @@
 import { createSessionUserInput } from "../session/user-input.js";
+import { productText } from "../../shared/product-text.js";
 import type { createSessionCommands } from "../session/commands.js";
 import type { createSessionAgentHost } from "../session/agent-host.js";
 import type { createSessionRuntimeState } from "../session/runtime-state.js";
@@ -56,7 +57,10 @@ import {
 } from "../../shared/skills/skill-utils.js";
 
 const getSkillRuntimeGuidance = () => ([
-  "Skill 运行环境是轻舟 Chrome 浏览器扩展，不是 Node.js，也不是服务器。",
+  productText(
+    "Skill 运行环境是轻舟 Chrome 浏览器扩展，不是 Node.js，也不是服务器。",
+    "Skill 运行环境是轻舟 Firefox 浏览器扩展，不是 Node.js，也不是服务器。",
+  ),
   "Skill content 描述浏览器操作 SOP；资源文件承载 plugin.json、scripts、references、模板或示例。",
   "资源内容请用 get_skill_resource(name,path) 按需读取；get_skill 默认只返回资源清单。",
   "DOCX、XLSX、PDF 资源会解析为 document model，并返回首块预览与 docModelId。",

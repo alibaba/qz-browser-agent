@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Dense registration form</title>
+<style>body { margin: 12px; font: 12px/1.2 sans-serif } form { display: grid; grid-template-columns: repeat(8, 140px); gap: 4px } label { display: block } input { width: 125px; height: 20px } h1 { font-size: 18px }</style>
+<h1>Dense registration form</h1>
+<form id="fields"></form>
+<output id="receipt" aria-live="polite"></output>
+<script>
+  for (let i = 1; i <= 320; i++) {
+    const label = document.createElement('label');
+    label.textContent = `Field ${i}`;
+    const input = document.createElement('input');
+    input.name = `field-${i}`;
+    input.setAttribute('aria-label', `Field ${i}`);
+    input.addEventListener('input', () => receipt.textContent = `Updated Field ${i}`);
+    label.append(input);
+    fields.append(label);
+  }
+</script>

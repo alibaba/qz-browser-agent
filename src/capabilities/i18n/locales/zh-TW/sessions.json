@@ -220,5 +220,10 @@
   "sessions.goalTrackingShort": "目標追蹤",
   "sessions.latestMessagesShort": "最新訊息",
   "sessions.getLocation": "取得位置",
-  "sessions.locationUnavailable": "無法取得位置。請開啟側邊欄並檢查裝置定位設定，或直接提供城市、區域。"
+  "sessions.locationUnavailable": "未能取得位置。請開啟側邊欄並檢查定位權限，或直接告訴我城市或區域。",
+  "sessions.locationPermissionDenied": "定位被拒絕。請在瀏覽器提示中允許定位，並檢查系統定位權限；也可直接告訴我城市或區域。",
+  "sessions.locationPositionUnavailable": "暫時無法定位。請檢查網路和系統定位服務，或直接告訴我城市或區域。",
+  "sessions.locationTimeout": "定位逾時。請保持側邊欄開啟並允許瀏覽器定位，或直接告訴我城市或區域。",
+  "sessions.locationPanelUnavailable": "側邊欄未連線。請開啟目前視窗的側邊欄後重試，或直接告訴我城市或區域。",
+  "sessions.locationResponseTimeout": "定位逾時。請確認已允許瀏覽器定位，並開啟系統定位服務；也可直接告訴我城市或區域。"
 }

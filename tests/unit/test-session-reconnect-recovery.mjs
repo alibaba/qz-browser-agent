@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { createSidepanelPortRuntime } from "../../src/sidepanel/features/app/sidepanel-port-runtime.js";
 import { createAppShellFeature } from "../../src/sidepanel/features/app/app-shell-feature.js";
 import { createSessionNavigationFeature } from "../../src/sidepanel/features/sessions/session-navigation-feature.js";
+import { persistSessionImages, resolveSessionImages } from "../../src/shared/session/session-image-assets.js";
+import { createSessionRecord, serializeConversation } from "../../src/shared/session/session-codec.js";
+import { installImageAssetsFixture } from "../support/image-assets-fixture.mjs";
 
 await portReconnectRequestsOnlyTheCurrentSessionState();
 await deliveryTraceFollowsTheLiveDebugSetting();
@@ -14,6 +17,8 @@ await onlyTheLatestPreparedSessionCanCommit();
 await materializedDraftDoesNotCancelRequestedSwitch();
 await newChatAlwaysReloadsTheComposer();
 await cancelledRestoreCannotCommitOrReveal();
+await supersededNavigationStopsLoadingImagePayloads();
+await navigationHydratesTheUiButRestoresTheAgentWithReferences();
 
 console.log("session reconnect recovery tests passed");
 
@@ -345,6 +350,76 @@ async function cancelledRestoreCannotCommitOrReveal() {
   }
 }
 
+async function navigationHydratesTheUiButRestoresTheAgentWithReferences() {
+  const assets = installImageAssetsFixture();
+  try {
+    const image = "data:image/png;base64,AAAA";
+    const conversation = serializeConversation([{ role: "user", content: [{ type: "image_url", image_url: { url: image } }] }]);
+    const stored = await persistSessionImages({
+      _session_target: createSessionRecord([], [{ type: "user", text: "image", images: [{ dataUrl: image }] }]),
+      _active_conversation_target: conversation,
+    });
+    let current = "before", epoch = 0, transcript;
+    const sent = [];
+    const navigation = createNavigationFixture({
+      getCurrentSessionId: () => current, setCurrentSessionId: id => { current = id; },
+      getEpoch: () => epoch, incrementEpoch: () => ++epoch,
+      prepareSession: async () => null, hasTranscript: () => false,
+      readStorage: async () => stored, seedTranscript: (_id, entries) => { transcript = entries; },
+      send: message => sent.push(message),
+    });
+    await navigation.switchToSession("target");
+    assert.equal(transcript[0].images[0].dataUrl, image, "all UI images are hydrated before reveal");
+    const restored = sent.find(message => message.type === "restore_session");
+    assert.equal(restored.sessionId, "target");
+    assert.deepEqual(restored.session, stored._active_conversation_target, "active conversation precedence survives transport");
+    assert.ok(!JSON.stringify(restored).includes("data:image/"), "restore IPC does not clone image bytes");
+    assert.deepEqual(await resolveSessionImages(restored.session), conversation, "Agent hydration receives the exact original snapshot");
+  } finally { assets.dispose(); }
+}
+
+async function supersededNavigationStopsLoadingImagePayloads() {
+  for (const action of ["abort", "switch"]) for (const boundary of ["storage", "image"]) {
+    const assets = installImageAssetsFixture();
+    const nativeText = Blob.prototype.text;
+    try {
+      const stored = await persistSessionImages({ _session_target: Object.fromEntries(
+        Array.from({ length: 6 }, (_, index) => [index, `data:image/png;base64,${Buffer.from([index]).toString("base64")}`]),
+      ) });
+      let current = "before", epoch = 0, reads = 0, hydrated = 0;
+      const entered = Promise.withResolvers(), release = Promise.withResolvers();
+      Blob.prototype.text = async function () {
+        reads++;
+        if (boundary === "image") { entered.resolve(); await release.promise; }
+        return nativeText.call(this);
+      };
+      const navigation = createNavigationFixture({
+        getCurrentSessionId: () => current, setCurrentSessionId: id => { current = id; },
+        getEpoch: () => epoch, incrementEpoch: () => ++epoch,
+        prepareSession: async () => null, hasTranscript: () => false,
+        seedTranscript: () => { hydrated++; },
+        readStorage: async keys => {
+          if (keys[0] !== "_session_target") return {};
+          if (boundary === "storage") { entered.resolve(); await release.promise; }
+          return stored;
+        },
+      });
+      const controller = new AbortController();
+      const pending = navigation.switchToSession("target", { signal: controller.signal });
+      await entered.promise;
+      if (action === "abort") controller.abort();
+      else await navigation.switchToSession("newer");
+      release.resolve();
+      await pending;
+      assert.equal(reads, boundary === "storage" ? 0 : 4, `${action}/${boundary}: no further batch starts after revocation`);
+      assert.equal(hydrated, action === "switch" ? 1 : 0, "only the current view may hydrate");
+    } finally {
+      Blob.prototype.text = nativeText;
+      assets.dispose();
+    }
+  }
+}
+
 function createNavigationFixture({
   getCurrentSessionId,
   setCurrentSessionId,
@@ -353,6 +428,7 @@ function createNavigationFixture({
   prepareSession,
   adoptSession = () => null,
   request = async () => ({}),
+  send = () => {},
   hasTranscript = () => true,
   readStorage = () => Promise.resolve({}),
   seedTranscript = () => {},
@@ -371,7 +447,7 @@ function createNavigationFixture({
       handleSessionChanged() {},
     },
     request,
-    send() {},
+    send,
     sessionExport: { syncCurrentControl() {} },
     goalStrip: { renderCurrent() {} },
     sessions: { scheduleRefresh() {} },

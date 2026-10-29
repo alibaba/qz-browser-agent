@@ -455,6 +455,7 @@ function createEventRouterFixture() {
         return clientMessageId === "queued-client";
       },
       render: () => call("queue.render"),
+      forgetSession: id => call("queue.forget", id),
     },
     goalStrip: { renderCurrent: () => call("goal.render"), forget: () => call("goal.forget") },
     // Domain reactions belong to capabilities; the router publishes only accepted facts and UI intents.

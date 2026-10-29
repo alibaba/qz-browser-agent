@@ -1,10 +1,13 @@
 import { t } from "../../shared/i18n/backend.js";
+import { productText } from "../../shared/product-text.js";
 import type { StorageAdapter } from "../internal/storage.js";
 import type { TabReference } from "../../shared/tab-utils.js";
 import type { PortableSessionTab } from "../../shared/session/session-exchange.js";
 import type { SessionMetadata } from "../../shared/session/session-store.js";
 import type { SecurityGuardrails } from "../../shared/security-guardrails.js";
 import type { NewTabTarget } from "../services/chrome-window-target.js";
+import { isTabAlias, normalizeTabAliases } from "../../shared/tab-reference.js";
+import { tabReferenceError } from "../tools/tab-reference.js";
 type Fields = Record<string, unknown>;
 type WorkingTab = NonNullable<ReturnType<typeof normalizeWorkingTab>>;
 interface GroupWindow { groupId: number; tabIds: number[] }
@@ -32,8 +35,8 @@ interface SessionTabsOptions {
 }
 interface TabClaim { source?: string; toolName?: string; action?: string; explicitClaim?: boolean; createdTab?: boolean; clonedTab?: boolean }
 interface RunAuthority { runId?: string | null; signal?: AbortSignal }
-interface WorkingTabUpdate extends TabClaim, RunAuthority { sessionId?: unknown; tab?: unknown; owned?: boolean; claim?: boolean }
-interface TargetTabOptions extends RunAuthority { sessionId?: unknown; tabId?: unknown; source?: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean }
+interface WorkingTabUpdate extends TabClaim, RunAuthority { sessionId?: unknown; tab?: unknown; owned?: boolean; claim?: boolean; createdTabReservation?: object }
+interface TargetTabOptions extends RunAuthority { sessionId?: unknown; tabId?: unknown; source?: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean; allowLoadingBlank?: boolean; createdTabReservation?: object }
 type RestoreFailure = { ok: false; index: number; code: string; reason: string; error?: string };
 type RestoreSuccess = { ok: true; index: number; portable: PortableSessionTab; tab: WorkingTab };
 const object = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
@@ -87,8 +90,69 @@ export function createSessionTabs({
     throw new TypeError("session tabs require runtime persistence commands");
   }
 
+  const pendingTabs = new Map<number, { token: object; sessionId: string; runId?: string | null; tab: WorkingTab }>();
+  const pendingAliases = new Map<object, { sessionId: string; runId?: string | null; signal?: AbortSignal; alias: string }>();
   const groupSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const timestamp = () => String(now?.() || "");
+
+  function getTabAliases(sessionId: string) {
+    const runtime = supervisor.getRuntime(normalizeSessionId(sessionId));
+    return normalizeTabAliases(runtime?.tabAliases, getOwnedTabIds(runtime));
+  }
+
+  function assertAliasRun(sessionId: string, { runId, signal }: RunAuthority) {
+    if (!sessionId || !supervisor.getRuntime(sessionId) || signal?.aborted || (runId && !supervisor.isRunCurrent(sessionId, runId))) {
+      throw Object.assign(new Error("Operation aborted during tab alias binding"), { code: "OPERATION_ABORTED" });
+    }
+  }
+
+  async function reserveTabAlias({ sessionId, alias, runId, signal }: RunAuthority & { sessionId: string; alias: string }) {
+    const id = normalizeSessionId(sessionId);
+    if (!isTabAlias(alias)) throw tabReferenceError("invalid_alias", alias);
+    await ready();
+    if (!supervisor.getRuntime(id)) {
+      // An empty CLI/MCP Session has metadata before its first runtime checkpoint.
+      const sessions = await getSessions();
+      if (!Object.hasOwn(sessions, id) || signal?.aborted || (runId && !supervisor.isRunCurrent(id, runId))) {
+        throw Object.assign(new Error("Operation aborted during tab alias binding"), { code: "OPERATION_ABORTED" });
+      }
+      setRuntime(id, {});
+    }
+    assertAliasRun(id, { runId, signal });
+    const existing = getTabAliases(id)[alias];
+    if (Object.hasOwn(getTabAliases(id), alias)) {
+      // A close event can arrive after the next tool call. Reconcile only this old binding.
+      let alive = true;
+      try { await tabsApi.get(existing); } catch { alive = false; }
+      assertAliasRun(id, { runId, signal });
+      if (alive) throw tabReferenceError("duplicate_alias", alias);
+      await handleTabRemoved(existing);
+    }
+    assertAliasRun(id, { runId, signal });
+    if (Object.hasOwn(getTabAliases(id), alias)) throw tabReferenceError("duplicate_alias", alias);
+    for (const pending of pendingAliases.values()) {
+      if (pending.sessionId === id && pending.alias === alias) throw tabReferenceError("duplicate_alias", alias);
+    }
+    const reservation = Object.freeze({});
+    pendingAliases.set(reservation, { sessionId: id, alias, runId, signal });
+    return reservation;
+  }
+
+  function commitTabAlias({ sessionId, runId, signal, reservation, tabId }: RunAuthority & { sessionId: string; reservation: object; tabId: number }) {
+    const pending = pendingAliases.get(reservation);
+    const id = normalizeSessionId(sessionId);
+    assertAliasRun(id, { runId, signal });
+    if (!pending || pending.sessionId !== id || pending.runId !== runId || pending.signal?.aborted || !owns(id, tabId)) {
+      const error = tabReferenceError("invalid_reference", pending?.alias);
+      Object.assign(error.details, { tabId, sessionId: id, bindingReason: !pending ? "missing_reservation"
+        : pending.signal?.aborted ? "aborted_reservation" : !owns(id, tabId) ? "unowned_tab" : "mismatched_reservation" });
+      throw error;
+    }
+    setRuntime(id, { tabAliases: { ...getTabAliases(id), [pending.alias]: tabId } });
+    pendingAliases.delete(reservation);
+  }
+
+  function discardTabAlias(reservation: object) { pendingAliases.delete(reservation); }
 
   function findOwner(tabId: unknown, { excludeSessionId = "" } = {}) {
     const target = Number(tabId);
@@ -109,6 +173,49 @@ export function createSessionTabs({
     return getOwnedTabIds(supervisor.getRuntime(id)).includes(target);
   }
 
+  async function reserveCreatedTab({ sessionId, runId, signal, tab }: Pick<WorkingTabUpdate, "sessionId" | "runId" | "signal" | "tab">) {
+    const id = normalizeSessionId(sessionId);
+    if (signal?.aborted || (runId && !supervisor.isRunCurrent(id, runId))) return { ok: false, code: "OPERATION_ABORTED" };
+    const created = normalizeWorkingTab(tab);
+    if (!id || !created) return { ok: false, code: "SESSION_TAB_UNAVAILABLE" };
+    if (findOwner(created.id) || pendingTabs.has(created.id)) return { ok: false, code: "SESSION_TAB_FOREIGN" };
+    const token = Object.freeze({});
+    pendingTabs.set(created.id, { token, sessionId: id, runId, tab: created });
+    return { ok: true, reservation: token };
+  }
+
+  async function discardCreatedTab(reservation: object) {
+    const pending = [...pendingTabs.values()].find(entry => entry.token === reservation);
+    if (!pending) return;
+    // Keep the reservation while closing so another task cannot claim an uncommitted tab.
+    try { await tabsApi.remove(pending.tab.id); } catch {
+      let exists = false;
+      try { await tabsApi.get(pending.tab.id); exists = true; } catch { /* Already closed. */ }
+      if (exists) await tabsApi.remove(pending.tab.id); // Retry a transient failure; retain the permit if closing still fails.
+    }
+    if (pendingTabs.get(pending.tab.id) === pending) pendingTabs.delete(pending.tab.id);
+  }
+
+  async function commitCreatedTab({ sessionId, runId, signal, reservation }: RunAuthority & { sessionId: string; reservation: object }) {
+    const pending = [...pendingTabs.values()].find(entry => entry.token === reservation);
+    const id = normalizeSessionId(sessionId);
+    const current = () => !signal?.aborted && (!runId || supervisor.isRunCurrent(id, runId));
+    if (!pending || pending.sessionId !== id || pending.runId !== runId) return { ok: false, code: "SESSION_TAB_UNAVAILABLE" };
+    if (!current()) return { ok: false, code: "OPERATION_ABORTED" };
+    let tab;
+    try { tab = await tabsApi.get(pending.tab.id); } catch { return { ok: false, code: "SESSION_TAB_UNAVAILABLE" }; }
+    if (!current()) return { ok: false, code: "OPERATION_ABORTED" };
+    if (pendingTabs.get(pending.tab.id) !== pending || findOwner(pending.tab.id)) return { ok: false, code: "SESSION_TAB_FOREIGN" };
+    // A navigation timeout retains its blank tab under the originally validated destination.
+    const publication = updateWorkingTab({ sessionId: id, runId, signal,
+      tab: isPageTab(tab) ? tab : { ...tab, url: pending.tab.url },
+      source: "tool:open_tab", toolName: "open_tab", createdTab: true, claim: true, createdTabReservation: reservation });
+    // The runtime patch is synchronous. Retire its cleanup permit before yielding to stop/delete.
+    if (owns(id, pending.tab.id)) pendingTabs.delete(pending.tab.id);
+    await publication;
+    return owns(id, pending.tab.id) ? { ok: true } : { ok: false, code: current() ? "SESSION_TAB_UNAVAILABLE" : "OPERATION_ABORTED" };
+  }
+
   async function updateWorkingTab({
     sessionId,
     runId,
@@ -120,11 +227,14 @@ export function createSessionTabs({
     action = "",
     createdTab = false,
     claim = undefined,
+    createdTabReservation,
   }: WorkingTabUpdate = {}) {
     const id = normalizeSessionId(sessionId);
     if (signal?.aborted || (runId && !supervisor.isRunCurrent(id, runId))) return supervisor.getRuntime(id);
     const workingTab = normalizeWorkingTab(tab);
     if (!workingTab) return null;
+    const reservation = pendingTabs.get(workingTab.id);
+    if (reservation && reservation.token !== createdTabReservation) return null;
     const explicitClaim = claim === true || owned === true;
     const ownership = shouldClaimTabForTask({
       source,
@@ -170,6 +280,8 @@ export function createSessionTabs({
     readOnly = false,
     tabOnly = false,
     allowPreNavigationBlank = false,
+    allowLoadingBlank = false,
+    createdTabReservation,
   }: TargetTabOptions = {}) {
     const id = normalizeSessionId(sessionId);
     const isCurrent = () => !signal?.aborted && (!runId || supervisor.isRunCurrent(id, runId));
@@ -209,12 +321,22 @@ export function createSessionTabs({
     }
 
     if (!isCurrent()) return aborted();
+    const pending = pendingTabs.get(targetTabId);
+    if (pending && (pending.token !== createdTabReservation || pending.sessionId !== id || pending.runId !== runId))
+      return { ok: false, code: "SESSION_TAB_UNAVAILABLE", reason: "pending_creation", sessionId: id, tabId: targetTabId };
     const owner = findOwner(targetTabId);
     const formatted = formatTab(tab, { titleLimit: 120 });
+    // Admission to the reader's readiness wait only. Do not publish the initial blank
+    // as the working page, and require ordinary target validation before page access.
+    if (allowLoadingBlank && owner?.sessionId === id && tab.status === "loading"
+      && (!tab.url || tab.url === "about:blank")) {
+      return { ok: true, reason: "loading_owned_tab", sessionId: id, tabId: targetTabId,
+        tab: formatted, ownedByCurrentTask: true };
+    }
     const tabUrl = String(tab?.url || tab?.pendingUrl || "").trim();
     const isOwnedPreNavigationBlank = allowPreNavigationBlank === true
       && tabUrl === "about:blank"
-      && owner?.sessionId === id;
+      && (owner?.sessionId === id || Boolean(pending));
     if (!isPageTab(tab) && !isOwnedPreNavigationBlank && !(tabOnly && owner?.sessionId === id)) {
       return {
         ok: false,
@@ -236,6 +358,7 @@ export function createSessionTabs({
       if (!isCurrent()) return aborted();
     }
 
+    if (pending) return { ok: true, sessionId: id, tabId: targetTabId, tab: formatted, ownedByCurrentTask: true };
     if (!owner) {
       if (tabOnly) return { ok: false, code: "SESSION_TAB_UNOWNED", reason: "tab_not_owned_by_current_session",
         error: t("browser.tabUnowned"), sessionId: id, tabId: targetTabId };
@@ -541,7 +664,7 @@ export function createSessionTabs({
         title: opened?.title || portable.title,
         url: opened?.url || opened?.pendingUrl || portable.url,
       });
-      if (!tab) throw new Error("Chrome did not return a restorable web tab");
+      if (!tab) throw new Error(productText("Chrome did not return a restorable web tab", "Firefox did not return a restorable web tab"));
       return { ok: true, index, portable, tab };
     } catch (error) {
       await closeImportedTab(opened?.id);
@@ -569,7 +692,14 @@ export function createSessionTabs({
     };
   }
 
+  async function discardPendingTabs(sessionId: unknown) {
+    const id = normalizeSessionId(sessionId);
+    for (const [token, pending] of pendingAliases) if (pending.sessionId === id) pendingAliases.delete(token);
+    for (const pending of pendingTabs.values()) if (pending.sessionId === id) await discardCreatedTab(pending.token);
+  }
+
   async function closeOwnedTabsAfterTerminal(sessionId: unknown, source = "terminal") {
+    await discardPendingTabs(sessionId);
     if (!(await shouldAutoCloseOwnedTabs(sessionId))) return { closed: [], skipped: true };
     return closeOwnedTabs(sessionId, { source });
   }
@@ -584,6 +714,7 @@ export function createSessionTabs({
   }
 
   async function closeOwnedTabs(sessionId: unknown, { source = "" } = {}) {
+    await discardPendingTabs(sessionId);
     const id = normalizeSessionId(sessionId);
     const runtime = supervisor.getRuntime(id) || {};
     const ownedTabIds = getOwnedTabIds(runtime);
@@ -613,6 +744,7 @@ export function createSessionTabs({
           }
         : {}),
       ownedTabIds: [],
+      tabAliases: {},
       ownedTabsClosedAt: timestamp(),
       ownedTabsCloseSource: source || "terminal",
     });
@@ -620,7 +752,7 @@ export function createSessionTabs({
     return { closed, skipped: false };
   }
 
-  async function getWorkingTabContext(sessionId: unknown) {
+  async function getWorkingTabContext(sessionId: unknown, { readOnly = false } = {}) {
     await ready();
     const id = normalizeSessionId(sessionId);
     const persisted = supervisor.getRuntime(id) || {};
@@ -637,13 +769,14 @@ export function createSessionTabs({
 
     if (Number.isFinite(tabId) && tabId > 0) {
       if (!owns(id, tabId)) {
-        await clearWorkingTab({ sessionId: id, tabId, source: "working_tab_not_owned" });
+        if (!readOnly) await clearWorkingTab({ sessionId: id, tabId, source: "working_tab_not_owned" });
         return null;
       }
       try {
         const tab = await tabsApi.get(tabId);
         if (isPageTab(tab)) {
           const formatted = formatTab(tab, { titleLimit: 120 });
+          if (readOnly) return formatted;
           const runtime = await updateWorkingTab({
             sessionId: id,
             tab: formatted,
@@ -670,7 +803,8 @@ export function createSessionTabs({
       try {
         const tab = await tabsApi.get(tabId);
         if (!isPageTab(tab)) continue;
-        const formatted = formatTab(tab, { titleLimit });
+        const tabAlias = Object.entries(getTabAliases(id)).find(([, target]) => target === tabId)?.[0];
+        const formatted = { ...formatTab(tab, { titleLimit }), ...(tabAlias ? { tabAlias } : {}) };
         out.push(guardrails ? annotateGuardrailTab(formatted, guardrails) : formatted);
       } catch (_error) {}
     }
@@ -735,6 +869,7 @@ export function createSessionTabs({
             }
           : {}),
         ownedTabIds: nextTabIds,
+        tabAliases: normalizeTabAliases(runtime.tabAliases, nextTabIds),
         sessionTabIds: nextTabIds,
         ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
         updatedAt: timestamp(),
@@ -770,14 +905,16 @@ export function createSessionTabs({
     const groupedTabIds = new Set();
     let runtimeChanged = false;
     for (const [runtimeSessionId, runtime] of supervisor.runtimeEntries()) {
-      const validTabIds = [];
+      const validTabIds: number[] = [];
       const ownedTabIds = getOwnedTabIds(runtime);
       for (const tabId of ownedTabIds) {
         try {
           const tab = await tabsApi.get(tabId);
-          if (!isPageTab(tab)) continue;
           const normalizedTabId = Number(tab.id);
           validTabIds.push(normalizedTabId);
+          // Loading about:blank and temporarily non-page tabs still belong to their Session.
+          // Group presentation must not revoke the reference before navigation commits.
+          if (!isPageTab(tab)) continue;
           if (!groupedTabIds.has(normalizedTabId)) {
             groupedTabIds.add(normalizedTabId);
             validTabs.push(tab);
@@ -785,10 +922,15 @@ export function createSessionTabs({
         } catch (_error) {}
       }
       if (!sameTabIdSet(ownedTabIds, validTabIds)) {
+        const latest = supervisor.getRuntime(runtimeSessionId);
+        if (!latest) continue;
+        const missing = new Set(ownedTabIds.filter(tabId => !validTabIds.includes(tabId)));
+        const retained = getOwnedTabIds(latest).filter(tabId => !missing.has(tabId));
         supervisor.setRuntime(runtimeSessionId, {
-          ...runtime,
-          ownedTabIds: validTabIds,
-          sessionTabIds: validTabIds,
+          ...latest,
+          ownedTabIds: retained,
+          sessionTabIds: retained,
+          tabAliases: normalizeTabAliases(latest.tabAliases, retained),
           ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
           updatedAt: timestamp(),
         });
@@ -920,6 +1062,13 @@ export function createSessionTabs({
   }
 
   return Object.freeze({
+    getTabAliases,
+    reserveTabAlias,
+    commitTabAlias,
+    discardTabAlias,
+    reserveCreatedTab,
+    commitCreatedTab,
+    discardCreatedTab,
     updateWorkingTab,
     resolveTargetTab,
     clearWorkingTab,

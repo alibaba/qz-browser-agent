@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Vertical viewport band</title>
+<style>
+  body { margin: 0; min-height: 200vh }
+  button, [role=group] { position: absolute; height: 20px }
+  #above { top: -40px }
+  #top-overlap { top: -5px; left: 200px }
+  #bottom-overlap { top: calc(100vh - 5px) }
+  #below { top: 100vh }
+  #side { top: 100px; left: 2400px }
+  [role=group] { top: -100px; left: 400px }
+  #child { top: 110px }
+  #fixed { position: fixed; top: 30px; left: 750px }
+  #fixed-footer { position: fixed; bottom: 0; left: 900px }
+  #sticky { position: sticky; top: 0; margin-left: 750px }
+  iframe { position: absolute; top: 160px; left: 500px; width: 300px; height: 240px }
+</style>
+<button id="above">Above band</button>
+<button id="top-overlap">Top intersection</button>
+<button id="bottom-overlap">Bottom intersection</button>
+<button id="below">Below band</button>
+<button id="side">Horizontal overflow</button>
+<div role="group" aria-label="Off-band ancestor"><button id="child">Visible descendant</button></div>
+<button id="fixed">Fixed header</button>
+<button id="fixed-footer">Fixed footer</button>
+<button id="sticky">Sticky header</button>
+<iframe title="Same-process frame" srcdoc="<button>Frame visible</button><button style='position:absolute;top:1000px'>Frame below</button>"></iframe>

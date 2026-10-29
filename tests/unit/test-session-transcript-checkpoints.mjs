@@ -6,6 +6,10 @@ import { createSessionRecord, readSessionRecord, serializeConversation } from ".
 import { SESSION_RECORD_PREFIX } from "../../src/shared/session/session-store.js";
 import { createMemoryStorage } from "../support/memory-storage.mjs";
 
+import { installImageAssetsFixture } from "../support/image-assets-fixture.mjs";
+const assets = installImageAssetsFixture();
+test.after(() => assets.dispose());
+
 const sessionId = "checkpoint-session";
 const recordKey = id => `${SESSION_RECORD_PREFIX}${id}`;
 const image = "data:image/png;base64,AAAA";

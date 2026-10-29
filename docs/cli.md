@@ -2,13 +2,21 @@
 
 Run browser tasks, manage results, and connect external agents to qz through CLI or MCP.
 For a short overview, see the [package README](../services/mcp-bridge/README.md).
-Requires Node.js 22 or later and Chrome. CLI and MCP share the same browser connection.
+Requires Node.js 22 or later. CLI and MCP share one local daemon. Each paired browser profile
+has its own connection.
+
+The daemon is [`services/mcp-bridge`](../services/mcp-bridge/README.md). From this repository the
+command is `npm run qz`. The published command is `qz`. The daemon is not copied into
+`dist/extension/` or `dist/extension-firefox/`. Chrome loads the first directory. Firefox loads
+the second. Package layout is in [Firefox packaging](firefox-packaging.md). The command list is
+in [Commands](commands.md).
 
 ## Quick start
 
 Install [qz from the Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm)
 with **Add to Chrome**. Open the qz side panel, accept the data notice shown on first use, and configure
-your provider and model in Settings.
+your provider and model in Settings. A development build in Firefox uses
+[Load qz in Firefox](#load-qz-in-firefox) instead of the store.
 
 Run the published package with npx:
 
@@ -21,11 +29,12 @@ npx qz-browser-agent@latest create "Summarize the current page." --stream
 installation, download the [latest GitHub release](https://github.com/alibaba/qz-browser-agent/releases/latest)
 and follow the [manual installation steps](https://github.com/alibaba/qz-browser-agent/blob/main/README.md#manual-installation).
 
-`connect` starts the local MCP service and pairs automatically with your default browser.
+`connect` starts the local MCP service and opens its connection page in the default browser.
 The first new profile is named `default`;
 accepting the data notice alone does not enable the local connection. Repeating `connect` reuses
 an online browser. Add further profiles with a [pairing URL](#pair-a-selected-browser-from-the-shell)
-or from their own qz Settings.
+or from their own qz Settings. To choose Firefox, return the URL and open it there, as in
+[Load qz in Firefox](#load-qz-in-firefox).
 
 The examples and suggested next commands use `qz`. Replace it with
 `npx qz-browser-agent@latest`, or install the command globally:
@@ -38,6 +47,56 @@ qz --version
 On Windows, use PowerShell 7.3 or newer with its default native argument passing. After a global
 install, use `qz.ps1` for commands containing JSON or quoted names; Windows command suggestions
 use that wrapper. For automation, pin a compatible release version verified with your extension.
+
+## Load qz in Firefox
+
+One daemon serves both packages. Build the Firefox package and load it for this session.
+Pairing uses **Connect CLI** or a pairing URL.
+
+```bash
+npm run build:firefox
+```
+
+`npm run dev:firefox` watches `dist/extension-firefox/` and leaves `dist/extension/` alone.
+Load `dist/extension-firefox/manifest.json` from `about:debugging#/runtime/this-firefox`. The
+clicks, the reload, and the fact that a temporary add-on is removed when Firefox exits are in
+[Load temporarily in Firefox](commands.md#load-temporarily-in-firefox). The gecko id
+`qz-browser-agent@heleifz.github.io` and the Chrome `key` are compared in
+[Firefox packaging](firefox-packaging.md#identifiers).
+
+Open the sidebar from the toolbar button, then pair:
+
+1. In qz, open **Settings → Advanced → CLI → Connect CLI**. The service address is the one
+   `qz status` prints. The default is `http://127.0.0.1:18765`.
+2. Or run `qz connect --no-open --json` and open `result.url` in the Firefox profile that has
+   the add-on. `qz connect` without `--no-open` opens the URL in the system default browser.
+
+The settings sender accepts a `moz-extension://<host>/` page when `sender.id` is this add-on.
+A web page URL is rejected.
+
+The daemon allows two Origin shapes on extension routes
+([`services/mcp-bridge/src/server.mjs`](../services/mcp-bridge/src/server.mjs)). A Chrome origin
+remains `chrome-extension://` plus 32 characters from `a` to `p`. A Firefox origin is
+`moz-extension://` plus a lowercase UUID. Firefox stores that UUID for gecko id
+`qz-browser-agent@heleifz.github.io` in the profile pref `extensions.webextensions.uuids`.
+`runtime.id` stays the gecko id. The bridge cannot derive the UUID from the gecko id, so the
+origin check accepts the UUID shape and then the pairing token authenticates the profile.
+The first `/v1/qingzhou/pair` from an allowed origin issues or checks that token. Later poll
+and result calls require it. A web origin is rejected with `403` and `invalid bridge origin`.
+A request to `/mcp` that carries any Origin is rejected. The daemon still binds to loopback.
+
+### Check Connect CLI on a local Firefox
+
+Use `npm run qz` from this checkout. An older daemon keeps its previous origin rule until
+`npm run qz -- stop`.
+
+1. Run `npm run build:firefox`. In Firefox 154 or later, open
+   `about:debugging#/runtime/this-firefox` and load `dist/extension-firefox/manifest.json`.
+2. Open the sidebar and accept the data notice.
+3. Run `npm run qz -- connect --no-open --json` and open `result.url` in that Firefox window.
+4. The page reports the profile connected. `npm run qz -- browsers` lists it online.
+
+**Settings → Advanced → CLI → Connect CLI** is the same check. Use the address `qz status` prints.
 
 ## Connect and stop
 
@@ -77,7 +136,14 @@ qz connect --no-open --name work --json
 
 The JSON envelope contains `result.endpoint`, `result.url`, `result.mcpUrl`, and
 `result.opened: false`. The command starts or reuses the service even when other browsers are
-already connected. Open the exact returned URL in the intended browser profile with qz installed.
+already connected. Open the exact returned URL in the browser profile where qz is installed.
+
+`qz connect` without `--no-open` asks the operating system to open that URL (`open` on macOS,
+`xdg-open` on Linux, `rundll32` on Windows). That uses the system default browser. A specific
+profile uses `--no-open` and one of the commands below. If the automatic open fails, the CLI
+message says to open the URL in Chrome.
+
+### Open the URL in Chrome
 
 Set `QZ_PAIRING_URL` to that URL and `QZ_PROFILE_DIRECTORY` to the selected profile's directory
 name, such as `Default` or `Profile 2`. These are directory names, not Chrome's display labels.
@@ -110,6 +176,20 @@ open -na "Google Chrome" --args --user-data-dir="$QZ_USER_DATA_DIR" --profile-di
 The [Chrome profile documentation](https://chromium.googlesource.com/chromium/src/+/master/docs/user_data_dir.md)
 distinguishes the data directory from the profile inside it. A new data directory needs its own
 extension installation and first-use setup.
+
+### Open the URL in Firefox
+
+A Firefox profile is the directory path shown in `about:profiles`. Load the temporary add-on in
+that profile first. See [Load qz in Firefox](#load-qz-in-firefox).
+
+```sh
+firefox --profile "$QZ_FIREFOX_PROFILE" "$QZ_PAIRING_URL"
+```
+
+Use the installed Firefox executable when `firefox` is not on `PATH`. A new profile needs the
+temporary add-on and first-use setup again. After the page opens, the sidebar background pairs
+with the daemon. `qz browsers` lists that profile when the pair succeeds. See
+[Check Connect CLI on a local Firefox](#check-connect-cli-on-a-local-firefox).
 
 `--name work` adds `?name=work` to the URL. The profile opening it receives that identifier,
 including when it already has a connection. Without `--name`, a registered profile keeps its name;
@@ -163,9 +243,10 @@ in place; `qz status` reports an available update. Restart the connection to use
 
 1. Use the latest CLI and let current tasks finish.
 2. Run `npx --yes qz-browser-agent@latest stop`. This disconnects all browsers using that service.
-3. Update qz from the [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm).
-   For a manual ZIP installation, replace its extracted files with the
-   [latest release](https://github.com/alibaba/qz-browser-agent/releases/latest) and reload it at `chrome://extensions`.
+3. Update the extension that profile is running. Chrome: install from the
+   [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm),
+   or replace a manual ZIP and reload it at `chrome://extensions`. Firefox development: run
+   `npm run build:firefox` and reload the temporary add-on at `about:debugging`.
 4. Run `npx --yes qz-browser-agent@latest connect`, then reconnect additional profiles using their
    pairing URL or settings.
 
@@ -217,7 +298,8 @@ readable `message` and its structured event in `params._meta["qz/task-event"]`. 
 `created`, `status`, `text`, `replace`, and `input`. Input events include the current form, exact
 field IDs, option values, and `responseTemplate`. Fill that template and pass it to
 `qingzhou_respond_to_user_input`; another CLI or MCP connection can answer while the original call
-keeps waiting. Native Chrome permissions still require the user's click in the side panel.
+keeps waiting. A permission dialog the browser itself shows still needs a click in the side panel
+or sidebar.
 
 MCP `timeoutSeconds` bounds each browser request (180 seconds by default).
 `waitTimeoutSeconds` bounds the whole observation; omit it for no overall deadline. Configure your
@@ -298,9 +380,10 @@ current request; `cancel` stops the whole task.
 Each response reads the current wait ID before sending. To answer a specific request you already
 read, pass `--wait-id WAIT_ID` to `submit`, `approve`, or `reject`. A stale or invalid response
 leaves the request pending. Review the application consent notice included in the pending input,
-such as location sharing, before approving. Native Chrome permissions require a click in the qz side panel; CLI
-approval reports that action is needed and preserves the wait without opening a browser page.
-With `--wait` or `--stream`, the command stays connected while you grant permission in Chrome.
+such as location sharing, before approving. A permission dialog the browser itself shows needs a
+click in the qz side panel or sidebar. CLI approval reports that action is needed and preserves
+the wait without opening a browser page.
+With `--wait` or `--stream`, the command stays connected while you grant permission in the paired browser.
 Location approval reads the current disclosure version and includes it in the response. Human
 terminal output shows the notice before submitting the explicit approval; JSON output remains a
 single final result. MCP callers should show the notice to the user before sending approval with
@@ -309,7 +392,7 @@ the returned `consentVersion`.
 `submit`, `approve`, and `reject` accept `--wait` and `--stream` with the same completion condition:
 the task has completed and its follow-up and steering queues are empty. They follow successive
 runs, questions, and permission requests. Each new request is shown once. Respond in the side
-panel or another terminal; the original command continues automatically. `watch` follows an
+panel, the Firefox sidebar, or another terminal; the original command continues automatically. `watch` follows an
 existing task with this same condition without resubmitting anything. Timeouts and Ctrl-C stop
 watching, while the task continues in the browser.
 
@@ -358,8 +441,9 @@ are active in the selected task's context.
 `skills --scope all|global|site|resident` filters by activation scope. Exports accept `--filename NAME`.
 `automations --limit N` limits the automation list.
 
-Exports use Chrome downloads. The result includes the download status, ID, filename, and path when
-Chrome provides it. Check pending downloads in `chrome://downloads`. `delete` removes the named table
+Exports use the browser's downloads. The result includes the download status, ID, filename, and path when
+the browser provides it. Pending Chrome downloads are in `chrome://downloads`. Pending Firefox
+downloads are in `about:downloads`. `delete` removes the named table
 or image collection and its rows. Image blobs shared by other collections or task history remain
 in the asset store.
 
@@ -401,8 +485,8 @@ to request JSON explicitly or `--plain` to keep text when redirecting output. `-
 In JSON mode, `--wait` and `--stream` emit one final JSON result on stdout. Complete pending-input
 notices and submission templates appear on stderr so you can respond while preserving
 machine-readable output. MCP snapshots and rejected responses include `input`, with a
-`responseTemplate` that binds answers to the current session and wait. Chrome-native permission
-requests provide user instructions instead of an approval template.
+`responseTemplate` that binds answers to the current session and wait. A permission dialog the
+browser itself shows provides user instructions instead of an approval template.
 Exit codes are `0` for success (including reading pending input), `1` for an operation or
 task failure or a rejected submission, `2` for invalid arguments, and `130` for Ctrl-C.
 Connection errors include the GitHub setup guide and installation link.

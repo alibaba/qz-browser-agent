@@ -29,5 +29,7 @@
   "script.forDataStoreProcessingFileGenerationOrPureJs": "Для обработки data_store, создания файлов и чистых JS-вычислений используйте target:\"inner\", не открывая пустую страницу.",
   "script.noReturnValue": "Нет возвращаемого значения",
   "script.theScriptRanWithoutAReturnValueOrReturned": "Скрипт выполнен без возвращаемого значения либо вернул undefined.",
-  "script.runCode": "Выполнить код"
+  "script.runCode": "Выполнить код",
+  "script.scriptToolAccessUnavailable": "У этого вызова нет доступа к инструментам, и он не был автоматически повторён.",
+  "script.scriptToolAccessRecovery": "Сначала проверьте состояние страницы. Чтобы вызвать инструменты, явно напишите tools.name(...) в коде и отправьте новый вызов."
 }

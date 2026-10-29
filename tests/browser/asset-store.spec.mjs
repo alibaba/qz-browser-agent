@@ -49,6 +49,49 @@ test("image storage keeps binary data, deduplicates, enforces limits and preserv
   expect(result.repeatedDelete.deleted).toBe(false);
 });
 
+test("five independent contexts collect the same image without unique-index races", async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const store = await import("/extension/shared/asset-store.js");
+    const canvas = new OffscreenCanvas(16, 16);
+    canvas.getContext("2d").fillRect(0, 0, 16, 16);
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    const dataUrl = await store.blobToDataUrl(blob);
+    const gate = Promise.withResolvers();
+    let arrivals = 0;
+    // Pause thumbnail work until every context has missed the initial lookup.
+    window.assetThumbnailGate = () => {
+      if (++arrivals === 5) gate.resolve();
+      return gate.promise;
+    };
+    const frames = await Promise.all(Array.from({ length: 5 }, () => new Promise(resolve => {
+      const frame = document.createElement("iframe");
+      frame.onload = () => resolve(frame);
+      frame.src = "/asset-store-fixture";
+      document.body.append(frame);
+    })));
+    try {
+      const saved = await Promise.all(frames.map(frame => frame.contentWindow.eval(`(async () => {
+        const native = createImageBitmap;
+        globalThis.createImageBitmap = async (...args) => {
+          await parent.assetThumbnailGate();
+          return native.call(globalThis, ...args);
+        };
+        const store = await import("/extension/shared/asset-store.js");
+        return store.saveImageAsset({ dataUrl: ${JSON.stringify(dataUrl)}, width: 16, height: 16 }, { maxImages: 1 });
+      })()`)));
+      const restored = await store.getImageAssetDataUrl(saved[0].assetId);
+      return { saved, stats: await store.getImageAssetStats(), identical: restored.dataUrl === dataUrl };
+    } finally {
+      frames.forEach(frame => frame.remove());
+      delete window.assetThumbnailGate;
+    }
+  });
+  expect(new Set(result.saved.map(asset => asset.assetId)).size).toBe(1);
+  expect(result.saved.filter(asset => asset.deduped)).toHaveLength(4);
+  expect(result.stats.count).toBe(1);
+  expect(result.identical).toBe(true);
+});
+
 test("transaction helpers report abort and the store remains usable after rollback", async ({ page }) => {
   const result = await page.evaluate(async () => {
     const { requestToPromise, txDone } = await import("/extension/shared/indexeddb.js");

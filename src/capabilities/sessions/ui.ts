@@ -1,4 +1,5 @@
 import { t } from "./i18n.js";
+import { sessionAutomationsEnabled } from "#sdk/shared/session-automations";
 import type { UiExtensionAPI } from "#sdk/sidepanel";
 import { isSessionRuntimeActive, trackerModeTitle, trackerModeUnit } from "#sdk/sidepanel/sessions";
 import { goalStatusClass } from "#sdk/sidepanel/sessions";
@@ -6,6 +7,7 @@ import { clipText, formatLiveElapsedMs } from "#sdk/sidepanel/sessions";
 import { record } from "#sdk/sidepanel/presentation";
 import { createSessionsFeature } from "./sessions-feature.js";
 import { createArtifactsFeature } from "./artifacts/artifacts-feature.js";
+import { removeSessionAutomationControls } from "./automations/availability.js";
 import { createAutomationsFeature } from "./automations/automations-feature.js";
 
 /** Task lists, scheduled tasks and their result index share one package owner.
@@ -13,6 +15,8 @@ import { createAutomationsFeature } from "./automations/automations-feature.js";
 export default function (qz: UiExtensionAPI) {
   let sessions: ReturnType<typeof createSessionsFeature>;
   let automations: ReturnType<typeof createAutomationsFeature>;
+  const automationsEnabled = sessionAutomationsEnabled();
+  if (!automationsEnabled) removeSessionAutomationControls(qz.root);
   const active = () => !qz.signal.aborted && qz.getCurrentPage() === "sessions";
   const current = (id: string) => qz.getCurrentSessionId() === id;
   const chatActive = () => qz.getCurrentPage() === "chat";
@@ -47,6 +51,7 @@ export default function (qz: UiExtensionAPI) {
   });
   sessions = createSessionsFeature({
     root: qz.root, signal: qz.signal, onStableViewChange: qz.notifyViewChange,
+    automationsEnabled,
     request, send: qz.send, sessionState: qz.sessions, artifactsFeature: artifacts,
     sessionExportFeature: { exportSession: qz.sessions.export, isPreparing: qz.sessions.isExporting },
     getRuntime: qz.sessions.getRuntime, isRuntimeRunning: isSessionRuntimeActive,
@@ -61,7 +66,7 @@ export default function (qz: UiExtensionAPI) {
     showToast: qz.showToast, flashAction: qz.chat.flashAction, syncKeepAlive: qz.syncKeepAlive,
     renderCurrentGoalStrip: qz.chat.renderGoal, liveElapsedTickMs: 100,
   });
-  automations = createAutomationsFeature({
+  automations = automationsEnabled ? createAutomationsFeature({
     root: qz.root, signal: qz.signal, request,
     isActive: () => active() && sessions.getMode() === "automation",
     syncModeUi: sessions.syncModeUi, getSearchQuery: sessions.getSearchQuery,
@@ -74,7 +79,17 @@ export default function (qz: UiExtensionAPI) {
     canOpenDataArtifact: artifacts.canOpenData, canOpenFileArtifact: artifacts.canOpenFile,
     dataArtifactActionAttributes: artifacts.dataActionAttributes, fileArtifactActionAttributes: artifacts.fileActionAttributes,
     artifactStatsText: artifacts.statsText, clipText, confirm: qz.dialogs.confirm,
-  });
+  }) : {
+    panel: null,
+    editor: null,
+    setVisible() {},
+    scheduleRefresh() {},
+    async renderNow() {},
+    openEditor() {},
+    closeEditor() {},
+    closeTopmostTransientUi() { return false; },
+    reset() {},
+  };
   qz.extensions.register({
     commands: [
       { id: "sessions.closeArtifacts", run: () => artifacts.closePanel() },

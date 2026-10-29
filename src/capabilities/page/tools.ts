@@ -47,8 +47,8 @@ export function registerPageElementTools({
   withDebugger,
   getPageContext,
 }: PageElementHost) {
-async function sendToContent(tabId: number | undefined, action: string, params: Record<string, unknown>, call?: (action: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>): Promise<ElementReply> {
-  const result = await (call ? call(action, params) : sendContent(tabId, action, params));
+async function sendToContent(tabId: number | undefined, action: string, params: Record<string, unknown>, call?: (action: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>, context?: ToolContext): Promise<ElementReply> {
+  const result = await (call ? call(action, params) : sendContent(tabId, action, params, context));
   if (!isElementReply(result)) throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED", t("contentScriptReturnedAnInvalidResponse", { action: String(action) }), { tabId, action });
   return result;
 }
@@ -100,6 +100,7 @@ const touch = createCdpTouch({ ToolExecutionError });
 
 registerTool({
   name: "read_article",
+  behavior: { parallelRead: true, timeoutResult: { kind: "read", pending: "article extraction" } },
   get description() { return toolT("readArticleDescription"); },
   get parameters() { return {
     type: "object",
@@ -125,12 +126,13 @@ registerTool({
     const target = source === "selector"
       ? await resolveSelectorTarget(tabId, selector, 0, context)
       : { tabId, selector };
-    return readBound(target, context, call => sendToContent(target.tabId, "readArticle", { source, selector: target.selector, offset, limit }, call));
+    return readBound(target, context, call => sendToContent(target.tabId, "readArticle", { source, selector: target.selector, offset, limit }, call, context));
   },
 });
 
 registerTool({
   name: "read_dom",
+  behavior: { timeoutResult: { kind: "read", pending: "DOM extraction" } },
   get description() { return toolT("readDomDescription"); },
   get parameters() { return {
     type: "object",
@@ -145,12 +147,13 @@ registerTool({
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, offset = 1, limit = 200, selector = "body" }, _signal, context = {}) => {
     const target = await resolveSelectorTarget(tabId, selector, 0, context);
-    return readBound(target, context, call => sendToContent(target.tabId, "readDom", { offset, limit, selector: scopedSelector(target) }, call));
+    return readBound(target, context, call => sendToContent(target.tabId, "readDom", { offset, limit, selector: scopedSelector(target) }, call, context));
   },
 });
 
 registerTool({
   name: "find_elements",
+  behavior: { parallelRead: true, timeoutResult: { kind: "read", pending: "element scan" } },
   get description() { return toolT("findElementsDescription"); },
   get parameters() { return {
     type: "object",
@@ -172,13 +175,14 @@ registerTool({
     const target = await resolveSelectorTarget(tabId, selector, 0, context);
     const result = await readBound(target, context, call => sendToContent(target.tabId, "findElements", {
       pattern, flags, selector: scopedSelector(target), roles, tags, types, limit, includeHidden,
-    }, call));
+    }, call, context));
     return addElementTargetsToFindResult(result);
   },
 });
 
 registerTool({
   name: "inspect_element",
+  behavior: { timeoutResult: { kind: "read", pending: "element inspection" } },
   get description() { return toolT("inspectElementDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
   get parameters() { return {
     type: "object",
@@ -194,7 +198,7 @@ registerTool({
   execute: async ({ tabId, target = "", index = 0 }, _signal, context = {}) => {
     const ref = await resolveElementReference(tabId, { target, index }, context);
     return readBound(ref, context, async call => {
-      const inspection = await sendToContent(ref.tabId, "inspectElement", { selector: ref.selector, index: ref.index }, call);
+      const inspection = await sendToContent(ref.tabId, "inspectElement", { selector: ref.selector, index: ref.index }, call, context);
       return {
         ...inspection,
         tabId: ref.tabId,
@@ -212,7 +216,7 @@ registerTool({
 
 registerTool({
   name: "act_on_element",
-  behavior: { mayUnloadPage: args => {
+  behavior: { parallelTab: true, timeoutResult: { kind: "action", pending: "action outcome confirmation" }, mayUnloadPage: args => {
     const action = String(args.action || "").trim().toLowerCase();
     const key = String(args.key || args.value || "").trim().toLowerCase();
     return action === "click" || (action === "fill" && args.submit === true)
@@ -284,7 +288,7 @@ registerTool({
     if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, selector, action });
     const frameId = String(ref.ref?.frameId || "");
 
-    const inspected = await sendToContent(tabId, "inspectElement", { selector, index }, bound);
+    const inspected = await sendToContent(tabId, "inspectElement", { selector, index }, bound, context);
     if (inspected.error) return withElementActionHelp(inspected, normalizedAction);
 
     if (normalizedAction === "click") {
@@ -296,13 +300,13 @@ registerTool({
       let resolved: ElementReply | null = null;
 
       if (!clickPointReady(current)) {
-        const scrolled = await sendToContent(tabId, "scrollElementIntoView", { selector, index, block: "center" }, bound);
+        const scrolled = await sendToContent(tabId, "scrollElementIntoView", { selector, index, block: "center" }, bound, context);
         if (scrolled.error) return withElementActionHelp(scrolled, normalizedAction);
         current = scrolled;
       }
 
       if (!clickPointReady(current)) {
-        resolved = await sendToContent(tabId, "resolveClickTarget", { selector, index }, bound);
+        resolved = await sendToContent(tabId, "resolveClickTarget", { selector, index }, bound, context);
         if (resolved.error) return withElementActionHelp(resolved, normalizedAction);
         if (resolved.navigateUrl) {
           const preparedNavigation = await prepareKnownPageNavigation({
@@ -343,7 +347,7 @@ registerTool({
             selector: resolved.resolvedSelector,
             index: 0,
             block: "center",
-          });
+          }, undefined, context);
           if (!resolvedInspection.error) {
             current = resolvedInspection;
             pointSelector = resolved.resolvedSelector;
@@ -388,7 +392,7 @@ registerTool({
         await withDebugger(tabId, async (_target, send) => {
           await ensurePageSurface(tabId, send, { frameId });
           const sameTarget = pointSelector === selector && pointIndex === index;
-          const refreshed = await sendToContent(tabId, "inspectElement", { selector: pointSelector, index: pointIndex }, sameTarget ? bound : undefined);
+          const refreshed = await sendToContent(tabId, "inspectElement", { selector: pointSelector, index: pointIndex }, sameTarget ? bound : undefined, context);
           if (!refreshed.error && clickPointReady(refreshed)) current = refreshed;
           if (!clickPointReady(current)) return;
           const point = await framedPagePoint(send, current.clickablePoint, frameId);
@@ -444,7 +448,7 @@ registerTool({
         if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
         if (frameId || dispatched || touchInput || isCdpFallbackForbiddenError(err)) throw err;
         observation ??= await beginPageNavigationObservation(tabId, _signal);
-        const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound);
+        const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound, context);
         const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation);
         return {
           ...fallback,
@@ -472,7 +476,7 @@ registerTool({
       const guardrails = submit ? await getSecurityGuardrails() : null;
       return withDebugger(tabId, async (_target, send) => {
         assertActive();
-        const prepared = await sendToContent(tabId, "prepareElementFill", { selector, index, value }, bound);
+        const prepared = await sendToContent(tabId, "prepareElementFill", { selector, index, value }, bound, context);
         assertActive();
         if (prepared.error) return withElementActionHelp(prepared, normalizedAction);
         // Preparation may resolve an inherited contenteditable child to its editing host.
@@ -488,12 +492,12 @@ registerTool({
           else await inputKeyboard.press(tabId, "Backspace", context);
         } else {
           // Rich-text paragraphs and non-keyboard fields retain their specialized writer.
-          const result = await sendToContent(tabId, "actOnElement", { ...field, elementAction: "fill", value, submit: false }, bound);
+          const result = await sendToContent(tabId, "actOnElement", { ...field, elementAction: "fill", value, submit: false }, bound, context);
           if (result.error) return withElementActionHelp(result, normalizedAction);
           fill = result.fill;
         }
         assertActive();
-        const actual = await sendToContent(tabId, "readElementActionState", field, bound);
+        const actual = await sendToContent(tabId, "readElementActionState", field, bound, context);
         assertActive();
         if (actual.error) return withElementActionHelp(actual, normalizedAction);
         // Chromium uses NBSP to preserve boundary spaces in contenteditable text.
@@ -536,7 +540,7 @@ registerTool({
       return withDebugger(tabId, async (_target, send) => {
         assertActive();
         await ensurePageSurface(tabId, send, { frameId });
-        const current = await sendToContent(tabId, "resolveCheckTarget", { selector, index }, bound);
+        const current = await sendToContent(tabId, "resolveCheckTarget", { selector, index }, bound, context);
         assertActive();
         if (current.error) return withElementActionHelp(current, normalizedAction);
         if (current.tag !== "input" || current.type !== inspected.type) {
@@ -569,7 +573,7 @@ registerTool({
         } finally { delivered = await inputWasDelivered(tabId, receiptId); }
         assertActive();
         if (!delivered) return inputNotDelivered(identity);
-        const actual = await sendToContent(tabId, "readElementActionState", { selector, index }, bound);
+        const actual = await sendToContent(tabId, "readElementActionState", { selector, index }, bound, context);
         assertActive();
         if (actual.error) return withElementActionHelp(actual, normalizedAction);
         if (actual.tag !== "input" || actual.type !== inspected.type || actual.checked !== desired) return { ...identity, error: t("elementCheckStateMismatch"),
@@ -594,7 +598,7 @@ registerTool({
         if (inspected.clickablePoint) {
           await withDebugger(tabId, async (_target, send) => {
             await ensurePageSurface(tabId, send, { frameId });
-            const refreshed = await sendToContent(tabId, "inspectElement", { selector, index }, bound);
+            const refreshed = await sendToContent(tabId, "inspectElement", { selector, index }, bound, context);
             const localPoint = !refreshed.error && clickPointReady(refreshed) ? refreshed.clickablePoint : inspected.clickablePoint;
             if (!localPoint) return;
             const point = await framedPagePoint(send, localPoint, frameId);
@@ -616,12 +620,12 @@ registerTool({
         rethrowStaleElement(err);
         assertActive();
         if (frameId || isCdpFallbackForbiddenError(err)) throw err;
-        const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: "press", value, key: pressedKey, submit }, bound);
+        const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: "press", value, key: pressedKey, submit }, bound, context);
         return { ...fallback, target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, method: fallback.error ? "content_failed" : "content_fallback", cdpError: err instanceof Error ? err.message : String(err), element: fallback.element || inspected };
       }
     }
 
-    const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound);
+    const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound, context);
     return {
       ...fallback,
       target: resolvedTarget,
@@ -647,6 +651,7 @@ function withElementActionHelp(result: ElementReply, action: string) {
 
 registerTool({
   name: "scroll_page",
+  behavior: { timeoutResult: { kind: "action", pending: "scroll outcome confirmation" } },
   get description() { return toolT("scrollPageDescription"); },
   get parameters() { return {
     type: "object",
@@ -661,9 +666,9 @@ registerTool({
   page: "owned",
   timeout: { defaultMs: 20000, maxMs: 120000 },
   execute: async ({ tabId, direction = "down", pixels = 500, target = "", index = 0 }, _signal, context = {}) => {
-    if (!String(target || "").trim()) return sendToContent(tabId, "scrollPage", { direction, pixels });
+    if (!String(target || "").trim()) return sendToContent(tabId, "scrollPage", { direction, pixels }, undefined, context);
     const ref = await resolveElementReference(tabId, { target, index }, context);
-    const scrolled = await readBound(ref, context, call => sendToContent(ref.tabId, "scrollPage", { direction, pixels, selector: ref.selector }, call));
+    const scrolled = await readBound(ref, context, call => sendToContent(ref.tabId, "scrollPage", { direction, pixels, selector: ref.selector }, call, context));
     return {
       ...scrolled,
       tabId: ref.tabId,

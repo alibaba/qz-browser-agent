@@ -186,7 +186,7 @@ assert.equal(automationWrites.length, 1, "the rejected request must not reach pe
 const { SYSTEM_PROMPT: prompts } = await import("../../src/background/agent/prompts.js");
 assert.match(prompts, /schedule\.type="once"[\s\S]*runAt="YYYY-MM-DDTHH:mm:ss\+08:00"/, "kernel prompt should tell agents how to create one-shot automations");
 assert.match(prompts, /不要改用普通子任务等待/, "kernel prompt should discourage simulating one-shot automations with child sessions");
-assert.match(prompts, /明确要求并行[\s\S]*manage_sessions\.create[\s\S]*连续打开多个标签页不构成并行/, "kernel prompt should distinguish child-session parallelism from sequential tab work");
+assert.match(prompts, /明确要求并行[\s\S]*manage_sessions\.create[\s\S]*同时返回多个工具调用[\s\S]*按任务依赖关系自动编排执行顺序/, "kernel prompt should map child-session parallelism to dependency-scheduled tool calls");
 assert.match(prompts, /先 manage_sessions\.wait\(waitFor:"any"\)[\s\S]*wait\(waitFor:"all"\)/, "progressive parallel requests should map to any then all waits");
 
 const automationRuntime = readFileSync(new URL("../../src/background/automation/runtime.ts", import.meta.url), "utf8");

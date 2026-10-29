@@ -102,13 +102,15 @@ function createToolEventView(tool: ToolEvent, options: ToolRenderOptions = {}) {
   const initiallyExpanded = presentationState
     ? Boolean(presentationState.userToggled && presentationState.expanded)
     : Boolean(options.expanded);
+  const statusClass = toolStatusClass(tool);
   return {
     ...tool,
     tool,
     options,
     name: tool.name || "",
     label: toolLabel,
-    statusClass: toolStatusClass(tool),
+    statusClass,
+    statusTitle: statusClass === "incomplete" ? t("toolResultIncomplete") : "",
     args,
     rawArgsText: argsInfo.rawText,
     argsIncomplete: argsInfo.incomplete,
@@ -136,7 +138,7 @@ function rememberToolEventView(root: HTMLElement, view: ToolEventView) {
 function renderToolSummaryHtml(view: ToolEventView) {
   return `
     <button class="qz-chiphead tool-summary" type="button" aria-expanded="false">
-      <span class="dot ${view.statusClass}"></span>
+      <span class="dot ${view.statusClass}" title="${escapeHtml(view.statusTitle)}"></span>
       <span class="tool-name">${escapeHtml(view.label)}</span>
       <span class="tool-args-preview">${escapeHtml(view.argsPreview)}</span>
       ${view.hasDetails ? '<span class="tool-caret">▸</span>' : ''}
@@ -528,10 +530,7 @@ export function patchToolEvent(existing: HTMLElement | null, tool: ToolEvent, op
   const shouldExpand = wasUserToggled && wasExpanded;
   const rawPanelWasOpen = isToolEventRawPanelOpen(currentDetails);
   const shouldSettle = Boolean(currentSummary.querySelector<HTMLElement>(".dot.running"))
-    && !tool.isRunning
-    && !tool.argsIncomplete
-    && tool.phase !== "preparing"
-    && !tool.isError;
+    && view.statusClass === "";
 
   if (hasActiveSelectionInsideNode(existing)) return true;
   patchToolSummary(currentSummary, view, shouldExpand);
@@ -570,7 +569,10 @@ export function patchToolEvent(existing: HTMLElement | null, tool: ToolEvent, op
 
 function patchToolSummary(currentSummary: HTMLElement, view: ToolEventView, expanded: boolean) {
   const currentDot = currentSummary.querySelector<HTMLElement>(".dot");
-  if (currentDot) currentDot.className = `dot ${view.statusClass}`.trim();
+  if (currentDot) {
+    currentDot.className = `dot ${view.statusClass}`.trim();
+    currentDot.title = view.statusTitle;
+  }
 
   patchTextValue(currentSummary.querySelector<HTMLElement>(".tool-name"), view.label);
   patchTextValue(currentSummary.querySelector<HTMLElement>(".tool-args-preview"), view.argsPreview);

@@ -29,5 +29,7 @@
   "script.forDataStoreProcessingFileGenerationOrPureJs": "只處理 data_store、建立檔案或進行純 JS 運算時，請使用 target:\"inner\"，不必開啟空白頁面。",
   "script.noReturnValue": "無回傳值",
   "script.theScriptRanWithoutAReturnValueOrReturned": "指令碼已執行，但沒有回傳值，或回傳了 undefined。",
-  "script.runCode": "執行程式碼"
+  "script.runCode": "執行程式碼",
+  "script.scriptToolAccessUnavailable": "本次調用未啟用工具存取，且沒有自動重跑。",
+  "script.scriptToolAccessRecovery": "先檢查頁面狀態。若需呼叫工具，請在程式碼中明確寫 tools.name(...)，再提交新的調用。"
 }

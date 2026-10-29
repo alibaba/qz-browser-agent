@@ -68,6 +68,7 @@ interface SessionCommandsDependencies {
   collectBrowserContext(id: string, options: { sourceWindowId?: number | null }): Promise<DynamicContext>;
   releaseRunResources?(context: { sessionId: string; runId: string; eventType: string }): Promise<unknown>;
   removeChatMessageDocuments?: Documents["removeMessageDocuments"] | null;
+  copyChatMessageDocuments?: Documents["copyMessageDocuments"];
   removeChatSessionDocuments?(id: string): Promise<unknown>;
   removeSessionObservations?(id: string): Promise<unknown>;
   blockChatDocumentParsing?(id: string): Promise<(() => void) | void>;
@@ -99,6 +100,8 @@ import { normalizeParentSessionId, ROOT_SESSION_ID } from "../../shared/session/
 import { compareBeijingDateTimeDesc, nowBeijingDateTime } from "../../shared/time-utils.js";
 import { localizeToolFailurePayload } from "../../shared/tools/tool-error-localization.js";
 import { assertMessageDocumentOwnership } from "../../shared/documents/document-attachments.js";
+import { extractUserMessageImages } from "../../shared/session/conversation-edit.js";
+import { summarizeQueuedUserMessage } from "../agent/message-queue.js";
 import { createKeyedSerialQueue } from "../internal/serial-queue.js";
 import { formatTraceFields, trace } from "../trace.js";
 import { getOwnedTabIds, normalizeVisitedTaskSites, normalizeWorkingTab } from "./tabs.js";
@@ -144,6 +147,7 @@ export function createSessionCommands(deps: SessionCommandsDependencies) {
     collectBrowserContext,
     releaseRunResources = async () => ({ released: 0 }),
     removeChatMessageDocuments = null,
+    copyChatMessageDocuments,
     removeChatSessionDocuments = async () => {},
     removeSessionObservations = async () => {},
     blockChatDocumentParsing = async () => {},
@@ -936,13 +940,16 @@ async function followUpSessionRuntime(params: PromptInput = {}, signal?: AbortSi
 async function getSessionComposerDraftRuntime(params: Fields = {}) {
   const sessionId = requireExplicitSessionId(params.sessionId, "get_composer_draft");
   const windowKey = composerWindowKey(params.windowId);
-  return composerDraftMutations.run(sessionId, async () => {
+  const read = () => composerDraftMutations.run(sessionId, async () => {
     await sessionRuntimeReady;
     return {
       sessionId,
       draft: normalizeComposerDraft(object(sessionSupervisor.getRuntime(sessionId)?.composerDrafts)[windowKey], sessionId),
     };
   });
+  // A recall may still be waiting to enter the composer queue after its caller times out.
+  // Recovery must follow that command through both queues before unlocking the editor.
+  return params.afterQueuedMutation === true ? sessionSupervisor.withRuntime(sessionId, read) : read();
 }
 
 async function saveSessionComposerDraftRuntime(params: Fields = {}) {
@@ -1038,6 +1045,73 @@ async function deleteSessionFollowUpRuntime(sessionId: string, clientMessageId =
     operationName: "delete_follow_up",
     remove: (agent, beforeCommit) => agent.removeFollowUp(clientMessageId, beforeCommit),
   });
+}
+
+async function restoreQueuedMessageRuntime(params: Fields = {}) {
+  const sessionId = requireExplicitSessionId(params.sessionId, "restore_queued_message");
+  const windowKey = composerWindowKey(params.windowId);
+  const clientMessageId = String(params.clientMessageId || "").trim();
+  const steering = params.queueKind === "steering";
+  return sessionSupervisor.withAgent(sessionId, agent => composerDraftMutations.run(sessionId, async () => {
+    const supplied = normalizeComposerDraft(params.draft, sessionId);
+    const stored = normalizeComposerDraft(object(sessionSupervisor.getRuntime(sessionId)?.composerDrafts)[windowKey], sessionId);
+    if (stored && stored.updatedAt > (supplied?.updatedAt || 0)) throw sessionError(
+      "COMPOSER_DRAFT_CHANGED", "The draft changed. Please retry.",
+    );
+    let restored: ComposerDraft | null = null;
+    const remove = steering ? agent.removeSteering.bind(agent) : agent.removeFollowUp.bind(agent);
+    const removal = await remove(clientMessageId, async message => {
+      const documents = assertMessageDocumentOwnership(message.documents, { sessionId, messageId: clientMessageId });
+      const messageId = supplied?.messageId || clientMessageId;
+      const needsCopy = documents.length > 0 && messageId !== clientMessageId;
+      if (needsCopy && !copyChatMessageDocuments) throw new Error("document attachment copy is unavailable");
+      const attachments = needsCopy
+        ? await copyChatMessageDocuments!({ sessionId, messageId: clientMessageId, targetMessageId: messageId, documents })
+        : documents;
+      const previous = sessionSupervisor.getRuntime(sessionId);
+      const previousDrafts = object(previous?.composerDrafts);
+      const queueKey = steering ? "pendingSteeringMessages" : "pendingFollowUpMessages";
+      const summaryKey = steering ? "pendingSteerings" : "pendingFollowUps";
+      const queued = steering ? agent.getPendingSteeringMessages() : agent.getPendingFollowUpMessages();
+      const remaining = queued.filter(item => item.clientMessageId !== clientMessageId);
+      restored = {
+        sessionId, messageId,
+        text: [summarizeQueuedUserMessage(message).text, supplied?.text || ""].filter(Boolean).join("\n\n"),
+        images: [...extractUserMessageImages(message).map((image, index) => ({
+          ...image, attachmentId: `${clientMessageId}_image_${index}`,
+        })), ...(supplied?.images || [])],
+        documents: [...attachments.map(document => ({ ...document, document, status: "ready", error: "", base64: "" })),
+          ...(supplied?.documents || [])],
+        updatedAt: Math.max(Date.now(), (supplied?.updatedAt || 0) + 1, (stored?.updatedAt || 0) + 1),
+      };
+      // Persist the queue withdrawal and the complete draft in one runtime snapshot before handoff resumes.
+      runtimeState.set(sessionId, { composerDrafts: { ...previousDrafts, [windowKey]: restored },
+        [queueKey]: remaining, [summaryKey]: remaining.map(summarizeQueuedUserMessage) });
+      try {
+        await runtimeState.persist(sessionId);
+      } catch (error) {
+        runtimeState.set(sessionId, { composerDrafts: previousDrafts,
+          [queueKey]: queued, [summaryKey]: queued.map(summarizeQueuedUserMessage) });
+        // A failed acknowledgement may follow an automatic checkpoint. Only collect the copies
+        // after the rollback is durable; otherwise either persisted snapshot remains recoverable.
+        try {
+          await runtimeState.persist(sessionId);
+          if (needsCopy) await removeChatMessageDocuments?.({ sessionId, messageId, documents: attachments });
+        } catch (rollbackError) {
+          trace(`queued message rollback cleanup failed: ${errorMessage(rollbackError)}`);
+        }
+        throw error;
+      }
+      return { documents, copied: needsCopy };
+    });
+    const cleanup = object(removal?.cleanup);
+    if (cleanup.copied) {
+      // The draft owns durable copies. Failure to collect originals must not lose the successful recall.
+      await removeChatMessageDocuments?.({ sessionId, messageId: clientMessageId, documents: cleanup.documents })
+        .catch(error => trace(`queued attachment cleanup failed: ${errorMessage(error)}`));
+    }
+    return { sessionId, restored: Boolean(removal), draft: restored };
+  }));
 }
 
 async function deleteSessionSteeringRuntime(sessionId: string, clientMessageId = "") {
@@ -2052,6 +2126,7 @@ function sessionError(code: string, message: string) {
 
 
   return Object.freeze({
+    restoreQueuedMessageRuntime,
     canManageSessionTools,
     canUseSessionGoal,
     listSessionsRuntime,

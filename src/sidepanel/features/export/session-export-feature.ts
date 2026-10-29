@@ -19,6 +19,7 @@ import {
   timelineGroupTools,
 } from "../../tools/tool-timeline-renderer.js";
 import { loadActiveSidepanelSkin, resolveActiveSidepanelSkin } from "../../ui/skin-runtime.js";
+import { mathExportStylesheet, renderMathSvg, withMathRuntime } from "../chat/math-runtime.js";
 
 interface ExportSession { id?: unknown; title?: string }
 
@@ -49,6 +50,7 @@ type SessionSnapshot = NonNullable<Parameters<typeof createSessionExchangePayloa
 interface ExportHtmlOptions {
   chatHtml?: string;
   stylesheet?: string;
+  mathStylesheet?: string;
   skin?: { name?: string; path?: string };
   brandAssets?: Partial<BrandAssets>;
 }
@@ -224,9 +226,14 @@ export function createSessionExportFeature(options: ExportOptions = {}) {
       loadSessionExportStylesheet(),
       loadSessionExportBrandAssets(),
     ]);
+    // Load MathJax output rules only when the rendered chat contains a formula element.
+    const mathStylesheet = /\bclass="[^"]*\bmath-formula\b/u.test(String(chatHtml || ""))
+      ? mathExportStylesheet().catch(() => "")
+      : Promise.resolve("");
     const html = buildSessionExportHtml(session, payload, {
-      chatHtml,
+      chatHtml: await inlineSessionExportMath(chatHtml),
       stylesheet: skin.css,
+      mathStylesheet: await mathStylesheet,
       skin,
       brandAssets,
     });
@@ -399,14 +406,20 @@ function findLastIndex<T>(items: T[], predicate: (item: T, index: number) => boo
 export function buildSessionExportHtml(session: ExportSession, exchangePayload: unknown, {
   chatHtml = "",
   stylesheet = "",
+  mathStylesheet = "",
   skin = {},
   brandAssets = {},
 }: ExportHtmlOptions = {}) {
   const title = session.title || t("qingzhouConversation");
-  const safeStylesheet = String(stylesheet || "").replace(/<\/style/giu, "<\\/style");
   const dayLogo = String(brandAssets.day || "");
   const nightLogo = String(brandAssets.night || dayLogo);
   const favicon = String(brandAssets.favicon || "");
+  const safeStylesheet = portableExportStylesheet(String(stylesheet || ""), {
+    day: dayLogo,
+    night: nightLogo,
+    favicon,
+  });
+  const safeMathStylesheet = String(mathStylesheet || "").replace(/<\/style/giu, "<\\/style");
   const logoHtml = dayLogo
     ? `<div class="session-export-logo" aria-hidden="true">
         <img class="session-export-logo-day" src="${escapeHtml(dayLogo)}" alt="">
@@ -415,8 +428,7 @@ export function buildSessionExportHtml(session: ExportSession, exchangePayload: 
     : "";
   const skinName = String(skin.name || "default");
   const skinPath = String(skin.path || "");
-  const mathJaxHtml = renderSessionExportMathJax(chatHtml);
-  return `<!doctype html>
+  const documentHtml = `<!doctype html>
 <html lang="${getLanguage()}" dir="${getTextDirection()}" data-qingzhou-skin="${escapeHtml(skinName)}"${skinPath ? ` data-qingzhou-skin-path="${escapeHtml(skinPath)}"` : ""}>
 <head>
   <meta charset="utf-8">
@@ -533,8 +545,8 @@ export function buildSessionExportHtml(session: ExportSession, exchangePayload: 
       .session-export-logo-day { display: none !important; }
       .session-export-logo-night { display: block !important; }
     }
+    /* qingzhou-math-styles */
   </style>
-  ${mathJaxHtml}
 </head>
 <body>
   <div class="session-export-shell">
@@ -553,23 +565,80 @@ export function buildSessionExportHtml(session: ExportSession, exchangePayload: 
   </div>
 </body>
 </html>`;
+  return documentHtml.replace("/* qingzhou-math-styles */", safeMathStylesheet);
 }
 
-function renderSessionExportMathJax(chatHtml = "") {
-  if (!/\bclass="[^"]*\bmath-formula\b/u.test(String(chatHtml || ""))) return "";
-  return `<script>
-    window.MathJax = {
-      tex: {
-        inlineMath: [["\\\\(", "\\\\)"]],
-        displayMath: [["\\\\[", "\\\\]"]],
-        processEscapes: true
-      },
-      options: {
-        ignoreHtmlClass: ".*",
-        processHtmlClass: "math-formula"
-      },
-      svg: { fontCache: "none" }
-    };
-  </script>
-  <script defer src="https://registry.npmmirror.com/mathjax/3.2.2/files/es5/tex-svg.js"></script>`;
+const EXPORT_EMPTY_IMAGE = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+/** Keep skin rules inline and replace extension-relative assets with data URIs. */
+function portableExportStylesheet(css: string, assets: { day?: string; night?: string; favicon?: string }) {
+  return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gu, (match, _quote, raw) => {
+    const value = String(raw).trim();
+    if (!value || value.startsWith("data:") || value.startsWith("#")) return match;
+    const embedded = value.includes("logo-night.png") ? assets.night
+      : value.includes("logo-day.png") ? assets.day
+      : value.includes("icon32.png") ? assets.favicon
+      : "";
+    return `url("${embedded || EXPORT_EMPTY_IMAGE}")`;
+  }).replace(/<\/style/giu, "<\\/style");
+}
+
+type ExportMathRenderer = (tex: string, display: boolean) => Promise<string>;
+
+/** Replace formula source with one self-contained SVG. Pending formulas stay as text. */
+export async function inlineSessionExportMath(chatHtml = "", render: ExportMathRenderer = renderMathSvg) {
+  const html = String(chatHtml || "");
+  if (!/\bclass="[^"]*\bmath-formula\b/u.test(html) || typeof document === "undefined") return html;
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const formulas = collectExportMathFormulas(template.content);
+  if (render === renderMathSvg && formulas.some(node => node.dataset.mathPending !== "true")) {
+    try {
+      // tex2svgPromise keeps labels across calls. One reset per export lets \label and \ref resolve together.
+      await withMathRuntime(async runtime => { runtime.texReset?.(); });
+    } catch {
+      // MathJax is unavailable; each formula below keeps its source text.
+    }
+  }
+  for (const node of formulas) {
+    if (node.dataset.mathPending === "true") continue;
+    const display = node.classList.contains("math-display");
+    const tex = exportMathTex(node, display);
+    if (!tex) continue;
+    let markup = "";
+    try {
+      markup = await render(tex, display);
+    } catch {
+      continue;
+    }
+    const parsed = document.createElement("template");
+    parsed.innerHTML = markup;
+    const svg = parsed.content.querySelector("svg");
+    if (svg) node.replaceChildren(svg);
+  }
+  return template.innerHTML;
+}
+
+/** querySelectorAll does not look inside a template's content, where later thinking and tool steps live. */
+function collectExportMathFormulas(root: ParentNode) {
+  const formulas: HTMLElement[] = [];
+  const visit = (parent: ParentNode) => {
+    for (const node of parent.querySelectorAll(".math-formula")) {
+      if (node instanceof HTMLElement) formulas.push(node);
+    }
+    for (const nested of parent.querySelectorAll("template")) {
+      if (nested instanceof HTMLTemplateElement) visit(nested.content);
+    }
+  };
+  visit(root);
+  return formulas;
+}
+
+function exportMathTex(node: HTMLElement, display: boolean) {
+  const text = (node.textContent || "").trim();
+  const wrapped = (display ? /^\\\[([\s\S]*)\\\]$/u : /^\\\(([\s\S]*)\\\)$/u).exec(text);
+  if (wrapped?.[1]?.trim()) return wrapped[1].trim();
+  const fallback = (node.dataset.mathFallback || "").trim();
+  if (text && !node.querySelector("svg, mjx-container")) return text;
+  return fallback || text;
 }

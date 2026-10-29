@@ -1,0 +1,30 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Static component extraction</title>
+<base href="https://example.test/research/">
+<style>qz-article-note, #shadow-host { display:block; } .hidden { display:none; }</style>
+</head><body><article id="story">
+<h1>Component research report</h1>
+<p>This research report explains browser support and preserves the evidence in custom components. The main article contains ordinary text, a visible support matrix, relative links and slotted annotations. Reading it must preserve every visible observation without running page component lifecycle callbacks.</p>
+<qz-article-note id="light-note"><p>LIGHT-SLOT-EVIDENCE</p></qz-article-note>
+<div id="shadow-host"></div>
+<p class="hidden">HIDDEN-LIGHT-SECRET</p>
+<p>The final recommendations depend on the support matrix and the annotations. These are content, even though the page implements their presentation with nested custom elements and constructed stylesheets.</p>
+</article><script>
+globalThis.componentCalls = { construct: 0, connect: 0, adopt: 0, disconnect: 0 };
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(':host{display:block}.hidden{display:none}');
+customElements.define('qz-article-note', class extends HTMLElement {
+  constructor() { super(); componentCalls.construct++; this.attachShadow({mode:'open'}); }
+  connectedCallback() {
+    componentCalls.connect++;
+    this.shadowRoot.adoptedStyleSheets = [sheet];
+    if (this.shadowRoot.childNodes.length) return;
+    this.shadowRoot.innerHTML = '<h2>Support evidence</h2><p>VISIBLE-COMPONENT-EVIDENCE. The complete <a href="reference.html">reference report</a> documents the measured results and the exact methods used to verify these browser versions.</p><table><thead><tr><th>Browser</th><th>Support</th></tr></thead><tbody><tr><td>Chrome</td><td>FULL-117</td></tr><tr><td>Firefox</td><td>FULL-118</td></tr></tbody></table><slot></slot><p class="hidden">HIDDEN-SHADOW-SECRET</p>';
+  }
+  adoptedCallback() { componentCalls.adopt++; }
+  disconnectedCallback() { componentCalls.disconnect++; }
+});
+const outer = document.querySelector('#shadow-host').attachShadow({mode:'open'});
+outer.innerHTML = '<qz-article-note><p>NESTED-SLOT-EVIDENCE</p><qz-article-note><p>DEEP-SLOT-EVIDENCE</p></qz-article-note></qz-article-note>';
+globalThis.componentBaseline = {...componentCalls};
+</script></body></html>

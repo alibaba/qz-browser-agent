@@ -54,7 +54,8 @@ test("development build preserves application modules and generates locked runti
   assert.equal(first.files.includes("products/manifest.json"), false);
   assert.ok(first.files.length > 250);
   await checkDependencyAssets({ extensionDir: first.outputDir });
-  assert.ok((await readFile(join(first.outputDir, "vendor/pdf.mjs"))).equals(await readFile(join(ROOT, "node_modules/pdfjs-dist/legacy/build/pdf.mjs"))), "PDF runtime retains upstream bytes");
+  assert.match(await readFile(join(first.outputDir, "vendor/pdf.mjs"), "utf8"), /Local PDF worker is not registered/);
+  assert.doesNotMatch(await readFile(join(first.outputDir, "vendor/mathjax/startup.js"), "utf8"), /__webpack_require__|MathJax\.config\.loader/);
   const canonicalSource = await realpath(sourceDir);
   const uiAssets = await capabilityUiAssets(canonicalSource);
   const localeAssets = capabilityLocaleAssets(canonicalSource, { includes: (await readProductProfile(canonicalSource)).includes });
@@ -170,11 +171,11 @@ test("TS emits .js imports, maps and standalone classic scripts; production reta
 
 test("bare npm imports resolve in dev, classic contexts and the production runtime graph", async t => {
   const { sourceDir, outputDir, work } = await fixture(t);
-  await put(sourceDir, "shared/pdf-loader.ts", 'export { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";');
+  await put(sourceDir, "shared/pdf-loader.ts", 'export { getDocument } from "pdfjs-dist/build/pdf.mjs";');
   await put(sourceDir, "background/service-worker.ts", 'import { parse } from "partial-json"; import { load } from "js-yaml"; export const result = [parse(\'{"name":"open\'), load("count: 2")];');
   await put(sourceDir, "offscreen.js", 'import { parse } from "partial-json"; export const value = parse(\'{"ready":true}\');');
   await put(sourceDir, "content/content-script.ts", 'import { parse } from "partial-json"; globalThis.answer = parse(\'{"answer":42}\').answer;');
-  await put(sourceDir, "sidepanel/sidepanel.js", 'import * as XLSX from "xlsx/dist/xlsx.mini.min.js"; export const rows = XLSX.utils.sheet_to_json(XLSX.utils.aoa_to_sheet([["name"], ["A"]]));');
+  await put(sourceDir, "sidepanel/sidepanel.js", 'import * as XLSX from "xlsx"; export const rows = XLSX.utils.sheet_to_json(XLSX.utils.aoa_to_sheet([["name"], ["A"]]));');
   const dev = await buildExtension({ sourceDir, outputDir });
   assert.ok(dev.files.some(path => path.startsWith("deps/chunks/")), "shared npm code is emitted once");
   const pdfLoader = await readFile(join(outputDir, "shared/pdf-loader.js"), "utf8");
@@ -277,7 +278,7 @@ test("Side Panel chunks defer evaluation and retain maps, vendor paths and depen
   const { sourceDir, outputDir, work } = await fixture(t);
   await put(sourceDir, "sidepanel/sidepanel.js", 'export const load = () => import("./heavy.js"); export const pdf = () => import("./pdf.js");');
   await put(sourceDir, "sidepanel/heavy.ts", 'import { parse } from "partial-json";\nglobalThis.__lazyChunkExecutions = (globalThis.__lazyChunkExecutions || 0) + 1;\nexport function run(): unknown { return parse(\'{"marker":"lazy-chunk-marker"}\'); }\n');
-  await put(sourceDir, "sidepanel/pdf.ts", 'export { version } from "pdfjs-dist/legacy/build/pdf.mjs";');
+  await put(sourceDir, "sidepanel/pdf.ts", 'export { version } from "pdfjs-dist/build/pdf.mjs";');
   const first = await buildExtension({ sourceDir, outputDir, mode: "production", debugMaps: true });
   assert.deepEqual(first.bundling.entries.map(entry => entry.output), ["background/service-worker.js", "sidepanel/sidepanel.js"]);
   assert.ok(first.bundling.chunks.length >= 2);

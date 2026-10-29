@@ -1,12 +1,24 @@
 import { modelT } from "./model-messages.js";
 import { t } from "./i18n.js";
 import { registerGoalTools } from "./goal-tools.js";
+import { sessionAutomationsEnabled } from "#sdk/shared/session-automations";
 import type { ToolExtension, ToolExtensionAPI, AutomationSaveInput } from "#sdk/background";
-type SessionToolsHost = Pick<ToolExtensionAPI,
-  "registerTool" | "ToolExecutionError" | "getToolRuntimeDependencies" | "secondsToMs">;
 import { requireToolFields } from "#sdk/background/tools";
 import { sessionWaitTimeout } from "#sdk/background/tools";
 import { ROOT_SESSION_ID } from "#sdk/shared/sessions";
+
+type SessionToolsHost = Pick<ToolExtensionAPI,
+  "registerTool" | "ToolExecutionError" | "getToolRuntimeDependencies" | "secondsToMs">;
+
+const AUTOMATION_SESSION_ACTIONS = [
+  "list_automations",
+  "create_automation",
+  "update_automation",
+  "delete_automation",
+  "run_automation",
+  "automation_runs",
+] as const;
+const AUTOMATION_SESSION_ACTION_SET = new Set<string>(AUTOMATION_SESSION_ACTIONS);
 
 export function registerSessionTools({
   registerTool,
@@ -17,7 +29,7 @@ export function registerSessionTools({
 registerTool({
   name: "manage_sessions",
   requires: { rootSession: { code: "SESSION_TOOL_FORBIDDEN", get message() { return "manage_sessions is only available in user-created root sessions. Agent-created child sessions and automation sessions cannot create, list, wait for, or delete other sessions."; } } },
-  get description() { return modelT("manageSessions"); },
+  get description() { return modelT(sessionAutomationsEnabled() ? "manageSessions" : "manageSessionsWithoutAutomations"); },
   get parameters() { return {
     type: "object",
     properties: {
@@ -31,14 +43,9 @@ registerTool({
           "delete",
           "last_messages",
           "wait",
-          "list_automations",
-          "create_automation",
-          "update_automation",
-          "delete_automation",
-          "run_automation",
-          "automation_runs",
+          ...(sessionAutomationsEnabled() ? AUTOMATION_SESSION_ACTIONS : []),
         ],
-        description: modelT("sessionAction"),
+        description: modelT(sessionAutomationsEnabled() ? "sessionAction" : "sessionActionWithoutAutomations"),
       },
       sessionId: { type: "string", description: modelT("sessionId") },
       message: { type: "string", description: modelT("sessionMessage") },
@@ -114,6 +121,14 @@ registerTool({
     timeout,
     timeoutMs,
   }, signal, context = {}) => {
+    const actionName = String(action || "");
+    if (AUTOMATION_SESSION_ACTION_SET.has(actionName) && !sessionAutomationsEnabled()) {
+      return {
+        error: modelT("sessionAutomationsDisabled"),
+        code: "AUTOMATION_DISABLED",
+        details: { action: actionName },
+      };
+    }
     const commands = getToolRuntimeDependencies(context).sessions;
     if (action === "list") {
       const excludeSessionId = typeof context.sessionId === "string" ? context.sessionId.trim() : "";
@@ -312,6 +327,7 @@ registerTool({
   },
   validateArgs: args => {
     const action = String(args.action || "").trim();
+    if (AUTOMATION_SESSION_ACTION_SET.has(action) && !sessionAutomationsEnabled()) return;
     if (["stop","delete","last_messages"].includes(action)) requireToolFields("manage_sessions", args, ["sessionId"], { action, requiredWhen: `action=${action}` });
     if (["send_message"].includes(action)) requireToolFields("manage_sessions", args, ["sessionId","message"], { action, requiredWhen: `action=${action}` });
     if (["wait"].includes(action)) requireToolFields("manage_sessions", args, [["sessionIds","sessionId"]], { action, requiredWhen: `action=${action}` });

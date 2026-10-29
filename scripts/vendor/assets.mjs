@@ -1,4 +1,6 @@
 import { modelsDevAssetPath, modelsDevAsset } from "../models-dev-assets.mjs";
+import { hardenPdfSource, pdfSourceHashes } from "./pdfjs.mjs";
+import { hardenZodSource, zodSourceHashes } from "./zod.mjs";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -11,17 +13,41 @@ const hash = value => createHash("sha256").update(value).digest("hex");
 const posix = value => value.split(sep).join("/");
 export const packageAssets = new Map([
   ["#mcp-sdk", "vendor/mcp-sdk.mjs"],
-  ["pdfjs-dist/legacy/build/pdf.mjs", "vendor/pdf.mjs"],
-  ["pdfjs-dist/legacy/build/pdf.worker.mjs", "vendor/pdf.worker.mjs"],
+  ["pdfjs-dist/build/pdf.mjs", "vendor/pdf.mjs"],
+  ["pdfjs-dist/build/pdf.worker.mjs", "vendor/pdf.worker.mjs"],
 ]);
 const copies = [
-  ...[...packageAssets].filter(([source]) => !source.startsWith("#")),
-  ["pdfjs-dist/legacy/build/pdf.mjs.map", "vendor/pdf.mjs.map"],
-  ["pdfjs-dist/legacy/build/pdf.worker.mjs.map", "vendor/pdf.worker.mjs.map"],
-  ["mathjax/es5/tex-svg-full.js", "vendor/mathjax/tex-svg-full.js"],
+  // JavaScript engines are built below from readable sources, never copied from minified distributions.
   ["tabulator-tables/dist/css/tabulator.min.css", "vendor/tabulator/tabulator.min.css"],
   ["tabulator-tables/dist/css/tabulator.min.css.map", "vendor/tabulator/tabulator.min.css.map"],
 ];
+
+let staticEnginesBuild;
+function buildStaticEngines() {
+  return staticEnginesBuild ||= Promise.all([
+    ...Object.keys(pdfSourceHashes).map(filename => build({
+      absWorkingDir: ROOT, entryPoints: [`node_modules/pdfjs-dist/build/${filename}`],
+      outfile: `vendor/${filename}`, bundle: true, write: false, metafile: true,
+      platform: "browser", format: "esm", target: "chrome114", minify: false, keepNames: true,
+      sourcemap: "external", sourcesContent: true, legalComments: "inline",
+      plugins: [{ name: "static-only-pdfjs", setup(context) {
+        context.onLoad({ filter: /pdf(?:\.worker)?\.mjs$/ }, async args => ({
+          contents: hardenPdfSource(await readFile(args.path, "utf8"), filename),
+          loader: "js", resolveDir: dirname(args.path),
+        }));
+      } }],
+    })),
+    build({
+      absWorkingDir: ROOT, entryPoints: ["scripts/vendor/mathjax-entry.mjs"],
+      outfile: "vendor/mathjax/startup.js", bundle: true, write: false, metafile: true,
+      platform: "browser", format: "iife", target: "chrome114", minify: false, keepNames: true,
+      define: { global: "globalThis" }, sourcemap: "external", sourcesContent: true,
+      // Match MathJax's upstream tsconfig: subclass type declarations must not reset base fields.
+      tsconfigRaw: { compilerOptions: { useDefineForClassFields: false } },
+      legalComments: "inline", plugins: [stablePackagePaths()],
+    }),
+  ]).catch(error => { staticEnginesBuild = null; throw error; });
+}
 
 let mcpSdkBuild;
 function buildMcpSdk() {
@@ -37,7 +63,18 @@ function buildMcpSdk() {
     platform: "browser", format: "iife", globalName: "qzMcpSdk", target: "chrome114",
     banner: { js: "let cached;\nexport function getMcpSdk() {\nif (cached) return cached;" },
     footer: { js: "return cached = qzMcpSdk;\n}" },
-    sourcemap: "linked", sourcesContent: true, legalComments: "none", plugins: [stablePackagePaths()],
+    sourcemap: "linked", sourcesContent: true, legalComments: "none", plugins: [{
+      name: "mcp-interpreted-schema-validator",
+      setup(context) {
+        // The SDK's default Ajv provider compiles schemas with Function, even when unused.
+        // qz already selects CfWorker explicitly; make the SDK default use the same interpreter.
+        context.onResolve({ filter: /\/validation\/ajv-provider\.js$/ }, () => ({ path: "mcp-validator", namespace: "qz" }));
+        context.onLoad({ filter: /^mcp-validator$/, namespace: "qz" }, () => ({
+          contents: 'export { CfWorkerJsonSchemaValidator as AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";',
+          resolveDir: ROOT, loader: "js",
+        }));
+      },
+    }, stablePackagePaths()],
   }).catch(error => { mcpSdkBuild = null; throw error; });
 }
 
@@ -69,7 +106,10 @@ export function stablePackagePaths() {
     context.onLoad({ filter: /.*/, namespace: "npm" }, async ({ path }) => {
       const file = resolve(NODE_MODULES, path);
       const extension = extname(file).slice(1);
-      return { contents: await readFile(file, "utf8"), loader: ["json", "ts", "tsx", "jsx", "css"].includes(extension) ? extension : "js", resolveDir: dirname(file) };
+      let contents = await readFile(file, "utf8");
+      const zod = /^zod\/v4\/core\/(util|doc|schemas)\.js$/u.exec(path);
+      if (zod) contents = hardenZodSource(contents, `${zod[1]}.js`);
+      return { contents, loader: ["json", "ts", "tsx", "jsx", "css"].includes(extension) ? extension : "js", resolveDir: dirname(file) };
     });
   } };
 }
@@ -100,6 +140,9 @@ function packageDirectory(filename) {
 }
 
 export function recordDependencyBuild(graph, metafile, workingDirectory, outputDirectory) {
+  for (const input of Object.keys(metafile.inputs)) {
+    if (/\.min\.(?:m?js|cjs)$/iu.test(input)) throw new Error(`minified dependency input is forbidden: ${input}`);
+  }
   for (const [output, details] of Object.entries(metafile.outputs)) {
     const packages = new Set();
     for (const input of Object.keys(details.inputs || {})) {
@@ -120,13 +163,14 @@ export function recordDependencyBuild(graph, metafile, workingDirectory, outputD
 }
 
 export async function copyRuntimeAssets(outputDirectory, graph) {
-  const sdk = await buildMcpSdk();
-  for (const file of sdk.outputFiles) {
-    const destination = resolve(outputDirectory, relative(ROOT, file.path));
-    await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, file.contents);
+  for (const result of [await buildMcpSdk(), ...await buildStaticEngines()]) {
+    for (const file of result.outputFiles) {
+      const destination = resolve(outputDirectory, relative(ROOT, file.path));
+      await mkdir(dirname(destination), { recursive: true });
+      await writeFile(destination, file.contents);
+    }
+    recordDependencyBuild(graph, result.metafile, ROOT, ROOT);
   }
-  recordDependencyBuild(graph, sdk.metafile, ROOT, ROOT);
   const modelsDirectory = resolve(NODE_MODULES, "@opencode-ai/models");
   await mkdir(dirname(resolve(outputDirectory, modelsDevAssetPath)), { recursive: true });
   await writeFile(resolve(outputDirectory, modelsDevAssetPath), modelsDevAsset);
@@ -159,7 +203,12 @@ export async function writeDependencyProvenance(outputDirectory, graph, bundling
       graph.outputs.delete(`${entry.output}.map`);
     }
   }
-  const manifest = { version: 2, esbuild: esbuildVersion, packageSha256: hash(packageBytes), lockSha256: hash(lockBytes), components: {}, assets: {} };
+  const manifest = { version: 2, esbuild: esbuildVersion, packageSha256: hash(packageBytes), lockSha256: hash(lockBytes),
+    staticEngines: { pdfjs: { sources: pdfSourceHashes, transform: "scripts/vendor/pdfjs.mjs" },
+      mathjax: { entry: "scripts/vendor/mathjax-entry.mjs", source: "mathjax-full/ts", minify: false },
+      zod: { sources: zodSourceHashes, transform: "scripts/vendor/zod.mjs" },
+      mcpValidator: "CfWorkerJsonSchemaValidator (interpreted, including the SDK default)" },
+    components: {}, assets: {} };
   const keys = new Map();
   for (const directory of [...graph.packages].sort()) {
     const location = posix(relative(ROOT, directory));

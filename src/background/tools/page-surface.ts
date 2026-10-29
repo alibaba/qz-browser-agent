@@ -114,14 +114,26 @@ function frameKey(frameId: number, documentId: string) {
   return `${frameId}:${documentId}`;
 }
 
+function receiptWorld(): "MAIN" | "ISOLATED" {
+  // Firefox dispatches synthetic input in the isolated world, where isTrusted stays false.
+  // Chrome counts trusted events in the page world.
+  try {
+    const root = chrome.runtime?.getURL?.("") || "";
+    return root.startsWith("moz-extension:") ? "ISOLATED" : "MAIN";
+  } catch {
+    return "MAIN";
+  }
+}
+
 async function receiptFrames(tabId: number, receiptId: string, arm: boolean): Promise<ReceiptFrame[]> {
   return probe(async () => {
-    const frames = await chrome.scripting.executeScript({
+    const world = receiptWorld();
+    const details = {
       target: { tabId, allFrames: true },
-      world: "MAIN",
+      world,
       injectImmediately: true,
-      args: [receiptId, arm, Date.now() + PROBE_TIMEOUT_MS],
-      func: (opId: string, shouldArm: boolean, armDeadline: number) => {
+      args: [receiptId, arm, Date.now() + PROBE_TIMEOUT_MS, world === "ISOLATED"] as [string, boolean, number, boolean],
+      func: (opId: string, shouldArm: boolean, armDeadline: number, acceptExtensionEvents = false) => {
         const root = globalThis as unknown as {
           addEventListener: (type: string, listener: (event: { isTrusted: boolean }) => void, capture: boolean) => void;
           document: {
@@ -132,6 +144,7 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean): Pr
             __qzInputReceiptsV2Bound?: boolean;
             __qzInputReceiptsV2?: ReceiptBook;
           };
+          __qzExtensionInputEvents?: { has?(value: object): boolean };
         };
         const doc = root.document;
         if (!doc?.defaultView) return null;
@@ -151,7 +164,11 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean): Pr
         if (!doc.__qzInputReceiptsV2Bound) {
           doc.__qzInputReceiptsV2Bound = true;
           const count = (event: { isTrusted: boolean }) => {
-            if (!event.isTrusted) return;
+            if (!event.isTrusted) {
+              if (!acceptExtensionEvents) return;
+              const marked = (globalThis as { __qzExtensionInputEvents?: { has?(value: object): boolean } }).__qzExtensionInputEvents;
+              if (marked?.has?.(event) !== true) return;
+            }
             const open = ops();
             if (!open) return;
             for (const op of Object.values(open)) {
@@ -170,7 +187,17 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean): Pr
         };
         return 0;
       },
-    });
+    };
+    let frames;
+    try {
+      frames = await chrome.scripting.executeScript(details);
+    } catch (error) {
+      if (world !== "ISOLATED") throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/world|ISOLATED/i.test(message)) throw error;
+      const { world: _world, ...rest } = details;
+      frames = await chrome.scripting.executeScript(rest);
+    }
     return frames.map(frame => ({
       frameId: Number(frame?.frameId),
       documentId: String(frame?.documentId || ""),

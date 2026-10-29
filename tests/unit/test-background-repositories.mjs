@@ -238,9 +238,9 @@ async function legacyRuntimeMigrationIsIdempotent() {
   });
   const repository = createSessionRepository({ storage });
   assert.equal((await repository.readRuntime("a")).runId, "ra");
-  assert.deepEqual(await repository.migrateLegacyRuntime(), { migrated: 2, skipped: 0, schemaVersion: 3 });
-  assert.deepEqual(await repository.migrateLegacyRuntime(), { migrated: 0, skipped: 2, schemaVersion: 3 });
-  assert.equal(storage.snapshot()[SESSION_RUNTIME_MIGRATION_KEY], 3);
+  assert.deepEqual(await repository.migrateLegacyRuntime(), { migrated: 2, skipped: 0, schemaVersion: 4 });
+  assert.deepEqual(await repository.migrateLegacyRuntime(), { migrated: 0, skipped: 2, schemaVersion: 4 });
+  assert.equal(storage.snapshot()[SESSION_RUNTIME_MIGRATION_KEY], 4);
   assert.equal(storage.snapshot()[runtimeKey("a")].runId, "ra");
 }
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { navigationDocuments } from "../support/navigation-documents.mjs";
+import { createSessionTabs } from "../../src/background/session/tabs.js";
 
 const navigation = navigationDocuments();
 
@@ -125,6 +126,7 @@ globalThis.chrome = {
     detach() {},
     sendCommand(target = {}, command = "", params = {}) {
       state.events.push({ type: "debugger.sendCommand", tabId: Number(target.tabId), command, params: { ...params } });
+      if (command === 'Runtime.evaluate' && params.expression === 'navigator.userAgent') return { result: { value: 'Chrome/149.0.0.0' } };
       return {};
     },
   },
@@ -558,6 +560,66 @@ try {
   assert.equal(state.sendMessages.some(item => item.message.selector === "button.hit"), true);
 } finally {
   chrome.tabs.sendMessage = sendMessage;
+}
+
+// Use the real reservation gate: a permissive ownership mock misses run authority
+// lost between a deferred open_tab and its pre-navigation CDP setup.
+for (const mode of ['desktop', 'mobile']) for (const watchNetwork of [false, true]) {
+  const runtimeState = { sessionId: 'first-open', ownedTabIds: [], workingTabId: null };
+  const controller = new AbortController();
+  const context = { sessionId: 'first-open', runId: 'first-run', deferToolCommit: true, deferCreatedTabSelection: true };
+  const isRunCurrent = (sessionId, runId) => sessionId === context.sessionId && runId === context.runId;
+  const setRuntime = (_id, patch) => Object.assign(runtimeState, patch);
+  const sessions = createSessionTabs({
+    supervisor: { getRuntime: id => id === context.sessionId ? runtimeState : null,
+      runtimeEntries: () => [[context.sessionId, runtimeState]], setRuntime, isRunCurrent },
+    tabsApi: chrome.tabs, storage: chrome.storage.local, setRuntime, persistRuntime: async () => {},
+  });
+  const cdpChecks = [];
+  let cancelAuthorization = false;
+  const runtime = toolsModule.createToolRuntime({
+    windowTarget: { resolveForNewTab: async () => 1 },
+    sessions: { ...sessions, isRunCurrent, async resolveTargetTab(input) {
+      if (input.source === 'cdp:run') {
+        cdpChecks.push(input);
+        if (cancelAuthorization) controller.abort();
+      }
+      return sessions.resolveTargetTab(input);
+    } },
+  });
+  resetCalls();
+  const result = await runtime.execute('open_tab', { url: 'https://first.example/article', mode, watchNetwork }, controller.signal, context);
+  assert.deepEqual(runtimeState.ownedTabIds, [], 'CDP setup must not publish provisional ownership');
+  assert.equal(runtimeState.workingTabId, null);
+  assert.equal(state.tabs.find(tab => tab.id === result.id)?.url, 'https://first.example/article');
+  if (watchNetwork || mode === 'mobile') {
+    assert.equal(cdpChecks.length, 1, 'first CDP attachment uses the real Session authorization gate');
+    assert.equal(cdpChecks[0].runId, context.runId);
+    assert.ok(cdpChecks[0].signal instanceof AbortSignal);
+    for (const patch of [{ createdTabReservation: {} }, { runId: 'another-run' }, { sessionId: 'another-session' }]) {
+      const denied = await sessions.resolveTargetTab({ ...cdpChecks[0], ...patch });
+      assert.equal(denied.ok, false, 'run and private reservation checks remain enforced');
+    }
+  }
+  const navigationIndex = state.events.findIndex(event => event.type === 'tabs.update');
+  for (const command of [watchNetwork && 'Network.enable', mode === 'mobile' && 'Emulation.setDeviceMetricsOverride'].filter(Boolean)) {
+    const index = state.events.findIndex(event => event.command === command);
+    assert.ok(index >= 0 && index < navigationIndex, `${command} must run before navigation`);
+  }
+  await runtime.commitToolResult(result, controller.signal, context);
+  assert.deepEqual(runtimeState.ownedTabIds, [result.id]);
+  assert.equal(runtimeState.workingTabId, result.id);
+
+  // Cancellation while the asynchronous tab gate is entered must prevent attach,
+  // navigation and ownership publication, even before the run ID is retired.
+  resetCalls();
+  cancelAuthorization = true;
+  const tabsBefore = state.tabs.map(tab => tab.id);
+  await assertRejectsWithCode(runtime.execute('open_tab', { url: 'https://first.example/cancel', watchNetwork: true }, controller.signal, context), 'OPERATION_ABORTED');
+  assert.deepEqual(state.tabs.map(tab => tab.id), tabsBefore, 'cancelled provisional tab is removed');
+  assert.equal(state.events.some(event => event.type === 'debugger.attach' || event.type === 'tabs.update'), false);
+  assert.deepEqual(runtimeState.ownedTabIds, [result.id]);
+  assert.equal(runtimeState.workingTabId, result.id);
 }
 
 console.log("session tab targeting behavior tests passed");

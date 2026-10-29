@@ -1,4 +1,10 @@
+import { resolveTabReference, tabReferenceError } from "./tab-reference.js";
+import { isTabAlias } from "../../shared/tab-reference.js";
 import { t } from "../../shared/i18n/backend.js";
+import { t as toolT } from "./messages.js";
+import { runToolWithTimeout, type ToolPartialResult } from "./tool-timeout.js";
+import { readPartialPageState } from "./partial-page-state.js";
+import { createToolPhaseTiming } from "./phase-timing.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { chat, getConfig, saveConfig, applyModelPreset, deleteModelPreset, listModels, listProviderSummaries } from "../llm/index.js";
 import { createCapabilityChat } from "../llm/capability-chat.js";
@@ -6,7 +12,7 @@ import { setCurrentRuntimeConfig } from "../runtime-config.js";
 import { listSkills, loadSkill, saveSkill, updateSkill, deleteSkill, loadSkillResource, loadSkillScript } from "../skills/runtime.js";
 import type { ToolContext } from "../../sdk/background.js";
 import type { ToolRuntimeDependencies } from "../../sdk/background/services.js";
-import type { ToolDefinition, ToolSchema, ToolParameter, ToolModelPolicy } from "../../shared/contracts/tool.js";
+import type { ToolDefinition, ToolSchema, ToolParameter, ToolModelPolicy, ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
 import type { RegisteredTool } from "./registry.js";
 import type { SkillTool, SkillManifest } from "../../shared/skills/skill-manifest.js";
 import type { SkillRenderer } from "../../shared/skills/skill-renderers.js";
@@ -77,55 +83,94 @@ import { callMcpServerTool, inspectMcpServer } from "../mcp/mcp-client.js";
 
 // ---------------------------------------------------------------------------
 // Content script messaging
-// One injection covers every frame. Messages stay on the main frame; without
-// a frame id, Chrome accepts whichever frame answers first.
+// Ordinary reads install only the main frame. UID recovery retains all-frame
+// initialization and validates its selected document again in element-runtime.
 // ---------------------------------------------------------------------------
 
-async function ensureContentScript(tabId: number, force = false) {
-  if (!force) {
-    try {
-      const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }));
-      if (response?.ok === true) return;
-    } catch(_e) {
-      // Inject the content script when it is missing.
-    }
-  }
-  await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
-    world: "ISOLATED",
-    files: ["content/article-extractor.js", "content/content-script.js"],
-    injectImmediately: force,
+async function contentDeadline<T>(operation: Promise<T>, tabId: number, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([operation, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content initialization timed out", { tabId })), ms);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+async function withContentSignal<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation;
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason || new ToolExecutionError("OPERATION_ABORTED", "Content initialization was cancelled"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
   });
-  const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }));
-  if (response?.ok !== true) {
-    throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", {
-      tabId,
-      response,
-    });
+  try { return await Promise.race([operation, aborted]); }
+  finally { signal.removeEventListener("abort", onAbort); }
+}
+
+async function ensureContentScript(tabId: number, force = false, context: ToolContext = {}) {
+  const signal = context.signal;
+  const finishPhase = context.measurePhase?.("injection");
+  try {
+    if (!force) {
+      try {
+        const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), tabId, 150));
+        if (response?.ok === true) return response;
+      } catch(_e) {
+        // Inject the content script when it is missing.
+      }
+    }
+    signal?.throwIfAborted();
+    await withContentSignal(chrome.scripting.executeScript({
+      target: force ? { tabId, allFrames: true } : { tabId, frameIds: [0] },
+      world: "ISOLATED",
+      files: ["content/article-extractor.js", "content/content-script.js"],
+      injectImmediately: true,
+    }), signal);
+    signal?.throwIfAborted();
+    const response = record(await withContentSignal(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), signal));
+    if (response?.ok !== true) {
+      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", { tabId, response });
+    }
+    return response;
+  } finally {
+    finishPhase?.();
   }
 }
 
-// Script injection already waits for document_idle, but cannot target the initial
-// about:blank document. This wait runs inside the caller's deadline and signal.
-async function waitForInitialPage(tabId: number, signal?: AbortSignal) {
-  let waited = false;
+// A pending main navigation still exposes either the initial blank or the old document.
+// This wait runs inside the caller's deadline and signal.
+async function waitForPageCommit(tabId: number, signal?: AbortSignal) {
   while (true) {
     if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for the page", { tabId });
     const tab = await chrome.tabs.get(tabId);
-    if ((tab.url && tab.url !== "about:blank") || !isPageTabUrl(tab.pendingUrl)) return waited;
-    waited = true;
+    // Chrome can drop pendingUrl when the initial blank commits while the target
+    // request is still in flight. Its loading status still warrants a bounded wait.
+    const loadingBlank = (!tab.url || tab.url === "about:blank") && tab.status === "loading";
+    if (!loadingBlank && !isPageTabUrl(tab.pendingUrl)) return;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
 }
 
-export async function sendToContent(tabId: number | undefined, action: string, params: Fields = {}): Promise<unknown> {
+export async function sendToContent(tabId: number | undefined, action: string, params: Fields = {}, context: ToolContext = {}): Promise<unknown> {
   if (!tabId) {
     throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "Content script calls require the current session workingTabId or an explicit owned tabId", { action });
   }
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
-  await ensureContentScript(tabId);
+  const presence = await ensureContentScript(tabId, false, context);
+  if (presence.documentReady === false) {
+    const finishReadiness = context.measurePhase?.("readiness");
+    try {
+      await withContentSignal(chrome.tabs.sendMessage(tabId, { action: "awaitDocument" }, { frameId: 0 }), context.signal);
+    } finally { finishReadiness?.(); }
+  }
+  context.signal?.throwIfAborted();
+  await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
+  context.signal?.throwIfAborted();
+  const finishPhase = context.measurePhase?.("extraction");
   try {
     const response = await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action, ...params }, { frameId: 0 });
+    context.signal?.throwIfAborted();
     if (response == null) {
       throw new ToolExecutionError("EMPTY_CONTENT_RESPONSE", `Content script returned empty response for ${action}`, {
         action,
@@ -139,6 +184,8 @@ export async function sendToContent(tabId: number | undefined, action: string, p
       action,
       tabId,
     });
+  } finally {
+    finishPhase?.();
   }
 }
 
@@ -184,6 +231,45 @@ export async function captureTabScreenshot(tabId: number, options: ScreenshotOpt
   return await capabilityBridges.captureTabScreenshot(tabId, options, context);
 }
 
+interface DeferredToolState {
+  toolName: string;
+  context: ToolContext;
+  authority: ToolRuntimeDependencies;
+  tabId?: number;
+  reservation?: object;
+  settling?: boolean;
+  commit(signal: AbortSignal): Promise<void>;
+  discard(): Promise<void>;
+}
+const deferredToolStates = new WeakMap<object, DeferredToolState>();
+function deferredState(result: unknown, context: ToolContext) {
+  const ticket = isRecord(result) ? deferredToolStates.get(result) : undefined;
+  return ticket && ticket.context.sessionId === context.sessionId && ticket.context.runId === context.runId
+    && ticket.authority === getToolRuntimeDependencies(context) ? ticket : undefined;
+}
+async function settleToolState(result: unknown, context: ToolContext, signal?: AbortSignal) {
+  const ticket = deferredState(result, context);
+  if (!ticket || ticket.settling || !isRecord(result)) return;
+  ticket.settling = true;
+  try {
+    if (signal) {
+      if (signal.aborted || ticket.authority.sessions?.isRunCurrent?.(context.sessionId || "", context.runId || "") === false)
+        throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before ordered commit");
+      await ticket.commit(signal);
+    }
+  } catch (error) {
+    throw withLanguage(ticket.context.language || getLanguage(), () => localizeToolFailureError(error, { toolName: ticket.toolName }));
+  } finally { deferredToolStates.delete(result); await ticket.discard(); }
+}
+function withExecutionAuthority(context: ToolContext, authority: ToolRuntimeDependencies, reservation?: object, tabId?: number) {
+  if (!authority.sessions?.resolveTargetTab) return withToolRuntimeContext(context, authority);
+  return withToolRuntimeContext(context, { ...authority, sessions: { ...authority.sessions,
+    resolveTargetTab: input => authority.sessions!.resolveTargetTab!({ ...input,
+      ...(context.deferToolCommit ? { checkOnly: true } : {}),
+      ...(reservation && Number(input.tabId) === tabId ? { createdTabReservation: reservation } : {}) }),
+  } });
+}
+
 export function createToolRuntime({
   sessions = null,
   skills = null,
@@ -207,6 +293,19 @@ export function createToolRuntime({
     getSchemas: getToolSchemas,
     getIdentity: getToolIdentity,
     getModelPolicy: (name: string, options: ToolOptions = {}) => resolveToolDefinition(name, options)?.model,
+    hasUidElementTargets,
+    element: elementRuntime,
+    getParallelReadTab,
+    getTabAliases: (sessionId: string) => sessions?.getTabAliases?.(sessionId) || {},
+    getBatchTabPolicy(name: string, args: unknown, options: ToolOptions = {}) {
+      const policy = getBatchTabPolicy(name, args, options);
+      return policy?.kind === "create" && policy.parallel && (!sessions?.reserveCreatedTab || !sessions.commitCreatedTab || !sessions.discardCreatedTab || !sessions.resolveTargetTab)
+        ? { ...policy, parallel: false } : policy;
+    },
+    commitToolResult: (result: unknown, signal: AbortSignal, context: ToolContext) =>
+      settleToolState(result, withToolRuntimeContext(context, dependencies), signal),
+    discardToolResult: (result: unknown, context: ToolContext) =>
+      settleToolState(result, withToolRuntimeContext(context, dependencies)),
     consumeEffects: consumeToolEffects,
     resolveDefinition: resolveToolDefinition,
     execute(name: string, args: unknown, signal?: AbortSignal, context: ToolContext = {}) {
@@ -258,7 +357,8 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
     ...identity,
     parameters: getSkillToolParameters(entry.tool),
     model: hostDefinition?.model,
-    behavior: hostDefinition?.behavior,
+    // Skill execution may invoke arbitrary tools; manifests cannot opt out of this boundary.
+    behavior: { ...hostDefinition?.behavior, barrier: true },
     source: "plugin",
     plugin: entry.plugin,
     ...(renderer?.type === "selection" ? { selectionRenderer: renderer } : {}),
@@ -276,6 +376,73 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
       { skillSettings: getToolRuntimeDependencies(context).skillSettings },
     ),
   };
+}
+
+function isToolBarrier(definition: RuntimeTool, args: Fields): boolean {
+  try {
+    const policy = definition.behavior?.barrier;
+    return typeof policy === "function" ? policy(args) !== false : policy === true;
+  } catch { return true; }
+}
+
+export function getParallelReadTab(name: string, args: unknown, options: ToolOptions = {}): number | null {
+  const definition = resolveToolDefinition(name, options), input = record(args);
+  return !definition || isToolBarrier(definition, input) ? null : parallelReadTab(definition, input);
+}
+
+/** Keep non-uid targets too: mixed calls cannot safely use a single uid's tab lane. */
+function elementTargetsOf(definition: RuntimeTool, input: Fields): unknown[] {
+  const values = ["target", "selector", "root"]
+    .filter(key => definition.parameters.properties[key])
+    .map(key => input[key])
+    .filter(value => value != null && value !== "");
+  try {
+    const declared = definition.behavior?.uidTargets?.(input);
+    if (Array.isArray(declared)) values.push(...declared);
+  } catch { /* Singular fields remain available if a capability extractor fails. */ }
+  return values.flat();
+}
+
+/** Whether a tool call's arguments reference an element uid in any declared target field. */
+export function hasUidElementTargets(name: string, args: unknown, options: ToolOptions = {}): boolean {
+  const definition = resolveToolDefinition(name, options);
+  return Boolean(definition && elementTargetsOf(definition, record(args)).some(isUidElementTarget));
+}
+
+function isParallelReadGranted(definition: RuntimeTool, input: Fields): boolean {
+  const policy = definition.behavior?.parallelRead;
+  return (typeof policy === "function" ? policy(input) : policy) === true;
+}
+
+function parallelReadTab(definition: RuntimeTool, input: Fields): number | null {
+  const tab = input.tabId;
+  if (typeof tab !== "number" || !Number.isInteger(tab) || tab <= 0) return null;
+  if (elementTargetsOf(definition, input).some(isUidElementTarget)) return null;
+  return isParallelReadGranted(definition, input) ? tab : null;
+}
+
+export function getBatchTabPolicy(name: string, args: unknown, options: ToolOptions = {}): ToolBatchTabPolicy | null {
+  const definition = resolveToolDefinition(name, options);
+  if (!definition) return null;
+  const input = record(args), barrier = isToolBarrier(definition, input);
+  if (definition.workingTab === "created") return { kind: "create", ...(definition.behavior?.parallelOpen ? { parallel: !barrier } : {}) };
+  const pageAccess = resolvePageAccess(definition, input);
+  const targets = pageAccess ? elementTargetsOf(definition, input) : [];
+  if (targets.some(isUidElementTarget)) {
+    // A uid pins its registered tab: schedule the call on that lane, never the working tab.
+    // Unknown or cross-tab uid sets keep the conservative commit barrier.
+    const lane = elementRuntime.elementUidTabId(targets);
+    if (lane == null) return { kind: "target", implicit: false, observation: false };
+    return { kind: "target", implicit: false,
+      observation: !barrier && isParallelReadGranted(definition, input),
+      ...(definition.behavior?.parallelTab ? { parallel: !barrier } : {}),
+      tabId: lane };
+  }
+  if (!definition.parameters.properties.tabId || !pageAccess) return barrier ? { kind: "barrier" } : null;
+  // Retain targeting metadata for tabRef even when the declaration disables parallel execution.
+  return { kind: "target", implicit: input.tabId == null,
+    observation: !barrier && parallelReadTab(definition, { ...input, tabId: 1 }) !== null,
+    ...(definition.behavior?.parallelTab ? { parallel: !barrier } : {}) };
 }
 
 export function getToolIdentity(name: string, options: ToolOptions = {}) {
@@ -317,6 +484,22 @@ function getLocalizedToolSchemas(options: ToolOptions, snapshot: ReturnType<type
  */
 export async function executeTool(name: string, args: unknown, signal?: AbortSignal, context: ToolContext = {}) {
   const startedAtMs = Date.now();
+  const authority = getToolRuntimeDependencies(context);
+  const parent = deferredState(context.createdTabResult, context);
+  if (context.deferToolCommit || parent?.reservation) context = withExecutionAuthority(context, authority, parent?.reservation, parent?.tabId);
+  let pending: { tabId: number; reservation: object } | undefined;
+  let transferred = false;
+  let aliasReservation: object | undefined;
+  const discard = async () => {
+    try { if (pending) await authority.sessions?.discardCreatedTab?.(pending.reservation); }
+    finally { if (aliasReservation) authority.sessions?.discardTabAlias?.(aliasReservation); }
+  };
+  const commitAlias = (tabId: number, commitSignal?: AbortSignal) => {
+    if (aliasReservation) authority.sessions!.commitTabAlias!({ sessionId: context.sessionId || "", runId: context.runId,
+      signal: commitSignal, reservation: aliasReservation, tabId });
+  };
+  const timing = createToolPhaseTiming(name, context);
+  context = withToolRuntimeContext({ ...context, measurePhase: timing.start }, getToolRuntimeDependencies(context));
   const language = isCoreToolSnapshot(context.toolRegistrySnapshot) ? context.toolRegistrySnapshot.language : context.language || getLanguage();
   let effectiveArgs = args;
   let definition: RuntimeTool | null = null;
@@ -342,17 +525,41 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     }
     assertToolAllowedByPolicy(name, normalizeToolPolicy(context));
     parameters = definition.parameters || parameters;
+    if (Object.hasOwn(record(args), "tabRef")) {
+      if (!definition.page || !parameters.properties.tabId || !resolvePageAccess(definition, record(args))) {
+        throw tabReferenceError("invalid_reference", record(args).tabRef, language);
+      }
+      const { tabRef, ...input } = record(args);
+      const tabId = resolveTabReference(tabRef, authority.sessions?.getTabAliases?.(context.sessionId || "") || {}, language);
+      if (input.tabId != null && input.tabId !== tabId) throw tabReferenceError("conflicting_target", tabRef, language);
+      args = { ...input, tabId };
+    }
+    const uidTargets = elementTargetsOf(definition, record(args)).filter(isUidElementTarget);
+    if (uidTargets.length && record(args).tabId != null && elementRuntime.elementUidTabId(uidTargets) !== record(args).tabId) {
+      throw tabReferenceError("conflicting_target", record(args).tabId, language);
+    }
+    if (record(args).tabAlias != null && (definition.workingTab !== "created" || !isTabAlias(record(args).tabAlias))) {
+      throw tabReferenceError("invalid_alias", record(args).tabAlias, language);
+    }
     effectiveArgs = withWorkingTabDefault(definition, args, parameters, context);
     effectiveArgs = withTimeoutAliases(effectiveArgs, definition);
     validateToolArgs(name, effectiveArgs, parameters, definition.defaultableFields);
     if (typeof definition.validateArgs === "function") definition.validateArgs(effectiveArgs);
     validateToolSchema(name, effectiveArgs, parameters);
     await assertToolAllowedForSession(definition, context);
-    const executionArgs = await withSessionOwnedTarget(definition, effectiveArgs, parameters, context, signal);
+    const executionArgs = await withSessionOwnedTarget(definition, effectiveArgs, parameters, context, signal,
+      needsCommittedPage(definition, effectiveArgs));
     effectiveArgs = executionArgs;
     assertScriptPageLifecycle(definition, executionArgs, context);
     const securityGuardrails = await getSecurityGuardrails();
     await assertToolTargetAllowedBySecurityGuardrails(definition, executionArgs, context, securityGuardrails);
+    if (executionArgs.tabAlias != null) {
+      if (!authority.sessions?.reserveTabAlias || !authority.sessions.commitTabAlias || !authority.sessions.discardTabAlias) {
+        throw makeSessionTabTargetError("CDP_SESSION_RUNTIME_UNAVAILABLE", { toolName: name });
+      }
+      aliasReservation = await authority.sessions.reserveTabAlias({ sessionId: context.sessionId || "", runId: context.runId,
+        signal, alias: String(executionArgs.tabAlias) });
+    }
     await enforceSiteOpenRateLimitForTool({
       name,
       args: executionArgs,
@@ -375,23 +582,52 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     try {
       result = await runToolWithTimeout(
         name,
-        async (args, signal, context) => {
-          const pageAccess = resolvePageAccess(selectedDefinition, args);
-          if (pageAccess && pageAccess !== "tab" && args._readOnlyTabAccess !== true && Number(args.tabId) > 0) {
-            await capabilityBridges.preparePage?.(Number(args.tabId), name, signal, context);
+        async (signal, reportPartial) => {
+          const args = executionArgs;
+          const callContext = withToolRuntimeContext({ ...context, signal, reportPartial }, getToolRuntimeDependencies(context));
+          if (context.deferCreatedTabSelection && selectedDefinition.source === "core" && selectedDefinition.behavior?.parallelOpen) {
+            callContext.prepareCreatedTab = async tab => {
+              const reserved = await authority.sessions?.reserveCreatedTab?.({ sessionId: context.sessionId || "", runId: context.runId, signal, tab });
+              if (!reserved?.ok || !reserved.reservation) throw makeSessionTabTargetError(reserved?.code || "SESSION_TAB_UNAVAILABLE", { tabId: tab.id });
+              pending = { tabId: Number(tab.id), reservation: reserved.reservation };
+              if (signal.aborted) { await discard(); throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted during tab creation"); }
+              return withExecutionAuthority(callContext, authority, reserved.reservation, Number(tab.id));
+            };
           }
-          if (pageAccess === "readOnly" && Number(args.tabId) > 0
-            && await waitForInitialPage(Number(args.tabId), signal)) {
-            await withSessionOwnedTarget(selectedDefinition, args, parameters, context, signal);
+          const pageAccess = resolvePageAccess(selectedDefinition, args);
+          if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
+          const policy = selectedDefinition.behavior?.timeoutResult;
+          if (policy?.kind === "action") reportPartial({ tabId: args.tabId, status: "unconfirmed" }, policy.pending);
+          if (policy?.kind === "read" && Number(args.tabId) > 0
+            && !elementTargetsOf(selectedDefinition, args).some(isUidElementTarget)) {
+            const tabId = Number(args.tabId);
+            reportPartial({ tabId }, policy.pending);
+          }
+          if (needsCommittedPage(selectedDefinition, args) && Number(args.tabId) > 0) {
+            await waitForPageCommit(Number(args.tabId), signal);
+            // Revalidate even if the blank finished between admission and this wait.
+            // It may have become a restricted page or lost its task ownership.
+            Object.assign(args, await withSessionOwnedTarget(selectedDefinition, args, parameters, context, signal));
             await assertToolTargetAllowedBySecurityGuardrails(selectedDefinition, args, context);
           }
-          if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
-          return selectedDefinition.execute(args, signal, context);
+          if (pageAccess && pageAccess !== "tab" && args._readOnlyTabAccess !== true && Number(args.tabId) > 0) {
+            await capabilityBridges.preparePage?.(Number(args.tabId), name, signal, callContext);
+          }
+          if (signal.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
+          return selectedDefinition.execute(args, signal, callContext);
         },
-        executionArgs,
         signal,
-        context,
         timeoutMs,
+        async (partial, timeoutError) => {
+          try { return await finishTimedOutTool(selectedDefinition, partial, signal, language, timeoutError, context); }
+          catch (error) {
+            if (selectedDefinition.workingTab === "created" && Number(partial.result.tabId) > 0) {
+              try { await chrome.tabs.remove(Number(partial.result.tabId)); } catch { /* Already closed. */ }
+            }
+            throw error;
+          }
+        },
+        context,
         definition.behavior?.timeoutTrace,
       );
     } catch (err) {
@@ -403,17 +639,39 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         (nestedName, nestedArgs, nestedSignal, nestedContext) => executeTool(nestedName, nestedArgs, nestedSignal,
           withToolRuntimeContext(nestedContext, getToolRuntimeDependencies(context))));
     }
-    const enrichedResult = await attachPageContextToToolResult(definition, executionArgs, result);
-    const localizedResult = copyToolEffects(result, withLanguage(language, () => localizeToolFailurePayload(enrichedResult, { toolName: name })));
-    if (!signal?.aborted && !(record(localizedResult).error || record(localizedResult).ok === false || record(localizedResult).isError === true)) {
-      issueToolEffects(localizedResult, definition.effects?.(executionArgs, localizedResult) || [], context);
-    }
-    await recordWorkingTabFromTool(definition, executionArgs, localizedResult, context, signal);
-    if (traceTool) {
-      const ok = !(localizedResult && typeof localizedResult === "object" && record(localizedResult).error);
-      toolTrace(`[tool] done name=${name} ok=${ok ? 1 : 0} durationMs=${Date.now() - startedAtMs} result=${summarizeToolArgsForTrace(localizedResult)}`);
-    }
-    return localizedResult;
+    const finishPostprocess = context.measurePhase?.("postprocess");
+    try {
+      const enrichedResult = await attachPageContextToToolResult(definition, executionArgs, result);
+      const localizedResult = copyToolEffects(result, withLanguage(language, () => localizeToolFailurePayload(enrichedResult, { toolName: name })));
+      if (aliasReservation && isRecord(localizedResult)) localizedResult.tabAlias = executionArgs.tabAlias;
+      if (!signal?.aborted && !(record(localizedResult).error || record(localizedResult).ok === false || record(localizedResult).isError === true)) {
+        issueToolEffects(localizedResult, definition.effects?.(executionArgs, localizedResult) || [], context);
+        if (context.deferToolCommit && definition.source === "core" && isRecord(localizedResult)) {
+          const selected = definition;
+          deferredToolStates.set(localizedResult, { toolName: name, context, authority, ...pending, discard,
+            async commit(commitSignal) {
+              if (pending) {
+                await assertTabAllowedBySecurityGuardrails(pending.tabId, { tool: name, source: "batch_commit" });
+                const committed = await authority.sessions?.commitCreatedTab?.({ sessionId: context.sessionId || "", runId: context.runId,
+                  signal: commitSignal, reservation: pending.reservation });
+                if (!committed?.ok) throw makeSessionTabTargetError(committed?.code || "SESSION_TAB_UNAVAILABLE", { toolName: name, tabId: pending.tabId });
+              } else await recordWorkingTabFromTool(selected, executionArgs, localizedResult,
+                withToolRuntimeContext({ ...context, preserveWorkingTab: false }, authority), commitSignal);
+              commitAlias(Number(record(localizedResult).tabId ?? record(localizedResult).id), commitSignal);
+            },
+          });
+          transferred = true;
+        } else {
+          await recordWorkingTabFromTool(definition, executionArgs, localizedResult, context, signal);
+          commitAlias(Number(record(localizedResult).tabId ?? record(localizedResult).id), signal);
+        }
+      }
+      if (traceTool) {
+        const ok = !(localizedResult && typeof localizedResult === "object" && record(localizedResult).error);
+        toolTrace(`[tool] done name=${name} ok=${ok ? 1 : 0} durationMs=${Date.now() - startedAtMs} result=${summarizeToolArgsForTrace(localizedResult)}`);
+      }
+      return localizedResult;
+    } finally { finishPostprocess?.(); }
   } catch (err) {
     attachToolRetryContext(err, parameters, effectiveArgs);
     const localized = withLanguage(language, () => localizeToolFailureError(err, { toolName: name }));
@@ -421,11 +679,13 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       toolTrace(`[tool] error name=${name} code=${record(localized).code || record(err).code || ""} label=${record(localized).codeLabel || ""} message=${record(localized).message || record(err).message || err} durationMs=${Date.now() - startedAtMs} details=${summarizeToolArgsForTrace(record(localized).details || record(err).details || {})}`);
     }
     throw localized;
+  } finally {
+    try { if (!transferred) await discard(); } finally { timing.finish(); }
   }
 }
 
 function emitToolExecutionUpdate(name: string, args: unknown = {}, update: Fields = {}, context: ToolContext = {}) {
-  const sink = getToolRuntimeDependencies(context).emit;
+  const sink = typeof context.onToolUpdate === "function" ? context.onToolUpdate as (event: Fields) => void : getToolRuntimeDependencies(context).emit;
   if (typeof sink !== "function") return false;
   const toolCallId = String(context?.toolCallId || "").trim();
   const spanId = String(context?.spanId || "").trim();
@@ -563,7 +823,7 @@ async function assertToolTargetAllowedBySecurityGuardrails(definition: RuntimeTo
   }
 
   if (!resolvePageAccess(definition, args) || resolvePageAccess(definition, args) === "tab") return;
-  if (isUidElementTarget(args?.target) || isUidElementTarget(args?.selector)) return;
+  if (!shouldResolveSessionTabTarget(definition, args)) return;
 
   const tabIds = Array.isArray(args?.tabIds) ? args.tabIds : [];
   for (const item of tabIds) {
@@ -652,60 +912,36 @@ function withTimeoutAliases(args: unknown, definition: RuntimeTool) {
   return input;
 }
 
-async function runToolWithTimeout(name: string, execute: RuntimeTool["execute"], args: Fields, parentSignal: AbortSignal | undefined, context: ToolContext, timeoutMs: number, timeoutTrace?: string): Promise<unknown> {
-  if (parentSignal?.aborted) {
-    throw new ToolExecutionError("OPERATION_ABORTED", `Operation aborted before running ${name}`, { name });
+async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialResult, signal: AbortSignal | undefined, language: string, timeoutError: ToolExecutionError, context: ToolContext) {
+  let result = partial.result;
+  let pending = partial.pending;
+  const kind = definition.behavior?.timeoutResult?.kind;
+  const tabId = Number(result.tabId || result.id);
+  if (tabId > 0) {
+    await assertTabAllowedBySecurityGuardrails(tabId, { tool: definition.name, source: "timeout" });
+    const before = record(result.pageState);
+    const pageState = await readPartialPageState(tabId, before, context);
+    await assertTabAllowedBySecurityGuardrails(tabId, { tool: definition.name, source: "timeout" });
+    const oldDocument = result.documentId || before.documentId;
+    const changed = (oldDocument && pageState.documentId && oldDocument !== pageState.documentId)
+      || (before.url && before.url !== pageState.url);
+    if (changed && kind === "read") {
+      result = { tabId };
+      pending = "current document content";
+    }
+    result = { ...result, pageState };
+    if (kind === "navigation") result = { ...result, url: pageState.url, status: pageState.status, loading: pageState.loading };
   }
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return execute(args, parentSignal, context);
+  if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while collecting timeout result");
+  if (kind === "action") result = { ...result, error: timeoutError.message, code: timeoutError.code, details: timeoutError.details,
+    status: "unconfirmed", mayHaveTakenEffect: true, automaticReplay: false,
+    note: withLanguage(language, () => toolT("actionTimeout")) };
+  // Only a fully validated successful screenshot can grant coordinates.
+  if (result._image) {
+    const { screenshotId: _id, coordinateSpace: _coordinates, ...observation } = result;
+    result = { ...observation, actionable: false };
   }
-
-  const controller = new AbortController();
-  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-  let abortHandler: (() => void) | null = null;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutTimer = setTimeout(() => {
-      controller.abort();
-      if (timeoutTrace) {
-        diagnosticTrace(`${timeoutTrace}${formatTraceFields({
-          phase: "tool.timeout",
-          session: context?.sessionId || "",
-          run: context?.runId || "",
-          call: context?.toolCallId || context?.callId || "",
-          tab: Number(args?.tabId) || 0,
-          action: args?.action || "",
-          timeoutMs,
-        })}`);
-      }
-      if (shouldTraceDiagnosticTool(name)) {
-        toolTrace(`[tool] timeout name=${name} timeoutMs=${timeoutMs} source=${context?.source || "agent"} args=${summarizeToolArgsForTrace(args)}`);
-      }
-      reject(new ToolExecutionError(
-        "TOOL_TIMEOUT",
-        `${name} timed out after ${timeoutMs}ms`,
-        { name, timeout: timeoutMs },
-      ));
-    }, timeoutMs);
-  });
-  const abortPromise = new Promise((_, reject) => {
-    if (!parentSignal) return;
-    abortHandler = () => {
-      controller.abort();
-      reject(new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while running ${name}`, { name }));
-    };
-    parentSignal.addEventListener("abort", abortHandler, { once: true });
-  });
-
-  try {
-    return await Promise.race([
-      Promise.resolve(execute(args, controller.signal, context)),
-      timeoutPromise,
-      abortPromise,
-    ]);
-  } finally {
-    clearTimeout(timeoutTimer);
-    if (parentSignal && abortHandler) parentSignal.removeEventListener("abort", abortHandler);
-  }
+  return { ...result, incomplete: { reason: "timeout", pending } };
 }
 
 function resolveToolTimeoutMs(definition: RuntimeTool, args: Fields = {}) {
@@ -753,16 +989,27 @@ function resolvePageAccess(definition: RuntimeTool, args: Fields) {
   return typeof definition.page === "function" ? definition.page(args) : definition.page || false;
 }
 
-function shouldResolveSessionTabTarget(definition: RuntimeTool, args: Fields = {}) {
-  return Boolean(resolvePageAccess(definition, args)) && !isUidElementTarget(args?.target) && !isUidElementTarget(args?.selector);
+function needsCommittedPage(definition: RuntimeTool, args: Fields) {
+  const access = resolvePageAccess(definition, args);
+  return shouldResolveSessionTabTarget(definition, args)
+    && (access === "readOnly" || (access === "owned" && definition.behavior?.timeoutResult?.kind === "read"));
 }
 
-async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _parameters: ToolSchema, context: ToolContext = {}, signal?: AbortSignal): Promise<Fields> {
+function shouldResolveSessionTabTarget(definition: RuntimeTool, args: Fields = {}) {
+  const targets = elementTargetsOf(definition, args);
+  // UID resolution checks each registered tab. Mixed calls still need the default
+  // tab's ownership check for their CSS targets, without assigning it to the UIDs.
+  return Boolean(resolvePageAccess(definition, args))
+    && (!targets.some(isUidElementTarget) || targets.some(target => !isUidElementTarget(target)));
+}
+
+async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _parameters: ToolSchema, context: ToolContext = {}, signal?: AbortSignal, allowLoadingBlank = false): Promise<Fields> {
   const toolName = definition.name;
   const input = { ...args };
   if (!shouldResolveSessionTabTarget(definition, input)) return input;
 
-  const explicitTabId = Number(input.tabId ?? input._tabId);
+  const hasUidTargets = elementTargetsOf(definition, input).some(isUidElementTarget);
+  const explicitTabId = Number(input.tabId ?? (hasUidTargets ? undefined : input._tabId));
   const targetTabId = Number.isFinite(explicitTabId) && explicitTabId > 0
     ? explicitTabId
     : Number(context.workingTabId);
@@ -782,8 +1029,10 @@ async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _pa
     signal,
     tabId: targetTabId,
     source: `tool:${toolName}:preflight`,
+    checkOnly: context.preserveWorkingTab === true || context.deferToolCommit === true,
     readOnly: resolvePageAccess(definition, input) === "readOnly",
     tabOnly: resolvePageAccess(definition, input) === "tab",
+    allowLoadingBlank,
   });
   if (!resolved?.ok) {
     throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {
@@ -795,7 +1044,10 @@ async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _pa
       message: resolved?.error || "",
     });
   }
-  input.tabId = Number(resolved.tabId || targetTabId);
+  if ((context.preserveWorkingTab || context.deferToolCommit) && resolved.claimRequired && !resolved.readOnlyAccess) {
+    throw makeSessionTabTargetError("SESSION_TAB_UNOWNED", { toolName, sessionId, tabId: targetTabId });
+  }
+  if (!hasUidTargets) input.tabId = Number(resolved.tabId || targetTabId);
   if (resolved.readOnlyAccess === true && resolved.ownedByCurrentTask === false) {
     input._readOnlyTabAccess = true;
     if (resolved.ownerSessionId) input._readOnlyOwnerSessionId = resolved.ownerSessionId;
@@ -820,7 +1072,7 @@ function withWorkingTabDefault(definition: RuntimeTool, args: unknown, parameter
   if (!isRecord(input)) return input;
   if (!resolvePageAccess(definition, input)) return input;
   if (!parameters?.properties?.tabId || input.tabId != null) return input;
-  if (isUidElementTarget(input.target) || isUidElementTarget(input.selector)) return input;
+  if (elementTargetsOf(definition, input).some(isUidElementTarget)) return input;
   const workingTabId = Number(context.workingTabId);
   if (Number.isFinite(workingTabId) && workingTabId > 0) {
     input.tabId = workingTabId;
@@ -834,7 +1086,7 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
   const sessionId = typeof context.sessionId === "string" ? context.sessionId.trim() : "";
   const sessions = getToolRuntimeDependencies(context).sessions;
   if (!sessionId || !sessions) return;
-  if (args?._readOnlyTabAccess === true) return;
+  if (args?._readOnlyTabAccess === true || context.preserveWorkingTab === true) return;
 
   if (role === "clear" && Number.isFinite(Number(args.tabId))) {
     await sessions.clearWorkingTab?.({
@@ -851,7 +1103,7 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
   if (!tabId) return;
   // A uid has no explicit tabId, so a read-only look at an unclaimed tab never
   // sets _readOnlyTabAccess. That look must not become the working tab.
-  if ((isUidElementTarget(args?.target) || isUidElementTarget(args?.selector))
+  if (elementTargetsOf(definition, args).some(isUidElementTarget)
     && resolvePageAccess(definition, args) === "readOnly"
     && !elementRuntime.taskTabIds(context).includes(tabId)) return;
 
@@ -1287,6 +1539,8 @@ async function authorizeRunCdpTab({ tabId, sessionId, context = {} }: { tabId: n
   }
   const resolved = await sessions.resolveTargetTab({
     sessionId,
+    runId,
+    signal: context.signal,
     tabId,
     source: "cdp:run",
     checkOnly: true,
@@ -1347,9 +1601,9 @@ const elementRuntime = createElementRuntime({
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   withDebugger,
   sendToContent,
-  initializeContentScript: async tabId => {
+  initializeContentScript: async (tabId, context) => {
     await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action: "initialize" });
-    await ensureContentScript(tabId, true);
+    await ensureContentScript(tabId, true, context);
   },
 });
 const { isUidElementTarget } = elementRuntime;

@@ -8,8 +8,9 @@ let browserZoomError = null;
 globalThis.chrome = {
   scripting: {
     async executeScript({ func, args }) {
-      if (measurementUnavailable) throw new Error("Cannot inject into this page");
+      if (measurementUnavailable && typeof args?.[0] === 'boolean') throw new Error("Cannot measure this page");
       return [{ documentId: mainDocumentId, result: runInNewContext(`(${func})(...(args || []))`, { args: args || [],
+        document: { readyState: 'complete' },
         innerWidth: viewportState.clientWidth, innerHeight: viewportState.clientHeight,
         outerWidth: 412, outerHeight: 915, visualViewport: { scale: viewportState.scale },
       }) }];
@@ -26,6 +27,7 @@ globalThis.chrome = {
 
 const { registerMediaTools } = await import("../../src/capabilities/media/tools.js");
 const { createScreenActionRuntime } = await import("../../src/capabilities/media/screen-action-runtime.js");
+const { runToolWithTimeout } = await import("../../src/background/tools/tool-timeout.js");
 const { clearTraceLog, getTraceLog } = await import("../../src/background/trace.js");
 await clearTraceLog();
 
@@ -255,7 +257,12 @@ assert.throws(
   "cross-field screenshot validation should live beside the tool definition",
 );
 
-const cdpShot = await runtime.captureTabScreenshot(3, { format: "jpeg", quality: 70 });
+const phasesStarted = [], phasesFinished = [];
+const cdpShot = await runtime.captureTabScreenshot(3, { format: "jpeg", quality: 70 }, {
+  measurePhase(phase) { phasesStarted.push(phase); return () => phasesFinished.push(phase); },
+});
+assert.deepEqual(phasesStarted.sort(), ['measurement', 'normalization', 'readiness']);
+assert.deepEqual(phasesFinished.sort(), phasesStarted);
 assert.equal(cdpShot.method, "cdp");
 assert.equal(cdpShot.dataUrl, "data:image/jpeg;base64,Y2Rw");
 assert.equal(cdpShot.cssWidth, 1000);
@@ -2193,3 +2200,49 @@ await assert.rejects(
   "a list_images uid dies after the same url loads a new document",
 );
 mainDocumentId = "";
+
+// A busy renderer cannot hold an ordinary screenshot behind CSS measurement.
+{
+  const originalExecute = chrome.scripting.executeScript;
+  let immediate = false;
+  chrome.scripting.executeScript = options => {
+    if (typeof options.args?.[0] !== "boolean") return originalExecute(options);
+    immediate = options.injectImmediately === true;
+    return new Promise(() => {});
+  };
+  try {
+    const shot = await settleWithin(runtime.captureTabScreenshot(5), 500, "measurement must be bounded");
+    assert.equal(immediate, true);
+    assert.ok(shot.dataUrl);
+    assert.equal(shot.cssWidth, undefined);
+    assert.equal(shot.cssHeight, undefined);
+    const start = updates.length;
+    const partial = await runToolWithTimeout('screenshot', (signal, reportPartial) => runtime.captureTabScreenshot(5, {}, { signal, reportPartial }),
+      undefined, 60, async stage => ({ ...stage.result, incomplete: { reason: 'timeout', pending: stage.pending } }), {});
+    assert.ok(partial._image);
+    assert.equal(partial.actionable, false);
+    assert.equal(partial.coordinateSpace, undefined);
+    assert.equal(partial.incomplete.reason, 'timeout');
+    await new Promise(resolve => setTimeout(resolve, 160));
+    assert.equal(updates.length, start, 'timeout cannot trigger a late native fallback');
+  } finally { chrome.scripting.executeScript = originalExecute; }
+}
+
+// Native fallback owns activation, capture and restoration as one window transaction.
+{
+  const originalCapture = chrome.tabs.captureVisibleTab;
+  let activeCaptures = 0, peakCaptures = 0;
+  cdpFailure = true;
+  chrome.tabs.captureVisibleTab = async () => {
+    peakCaptures = Math.max(peakCaptures, ++activeCaptures);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    activeCaptures--;
+    return "data:image/jpeg;base64,dmlzaWJsZQ==";
+  };
+  const start = updates.length;
+  try {
+    await Promise.all([runtime.captureTabScreenshot(5), runtime.captureTabScreenshot(6)]);
+    assert.equal(peakCaptures, 1);
+    assert.deepEqual(updates.slice(start).map(([id]) => id), [5, 9, 6, 9]);
+  } finally { chrome.tabs.captureVisibleTab = originalCapture; cdpFailure = false; }
+}

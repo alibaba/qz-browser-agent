@@ -597,12 +597,32 @@ textarea.msg-user-edit-input::placeholder {
   color: var(--text-secondary);
 }
 
+:is(.msg-assistant .msg-content, .qz-markdown) .markdown-table-pending {
+  margin: 8px 0;
+  color: var(--text-muted);
+  font-size: var(--markdown-table-font-size, calc(12px * var(--chat-text-scale, 1)));
+  font-variant-numeric: tabular-nums;
+}
+
 :is(.msg-assistant .msg-content, .qz-markdown) table {
   border-collapse: collapse;
   width: 100%;
   margin: 8px 0;
   font-size: var(--markdown-table-font-size, calc(12px * var(--chat-text-scale, 1)));
 }
+
+/* Commit the complete table's geometry once, then soften its first painted frame. */
+@media (prefers-reduced-motion: no-preference) {
+  .msg-assistant[data-markdown-mode] .msg-content table {
+    transition: opacity var(--motion-fast) var(--ease-standard);
+  }
+  @starting-style {
+    .msg-assistant[data-markdown-mode] .msg-content table {
+      opacity: 0;
+    }
+  }
+}
+
 :is(.msg-assistant .msg-content, .qz-markdown) :is(th, td) {
   border: 1px solid var(--border);
   padding: 6px 8px;

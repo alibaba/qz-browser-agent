@@ -13,8 +13,122 @@ await sendCarriesTheExactDraftIdentity();
 await failedPromptStaysRetryableWithTheSameIdentity();
 await pageHidePublishesTheLastTextSnapshot();
 await inputResizeTracksAllocatedWidth();
+await queuedRestoreStaysWithItsSession();
+await queuedRestoreFailurePreservesDraft();
+await queuedRestoreReconcilesLostResponses();
+await queuedRestoreCannotResurrectDeletedSessions();
 
 console.log("composer draft lifecycle tests passed");
+
+async function queuedRestoreStaysWithItsSession() {
+  let respond;
+  const fixture = createFixture({ sessionId: "source", request(type, payload, fallback) {
+    if (type !== "restore_queued_message") return fallback();
+    return new Promise(resolve => { respond = () => resolve({ restored: true, draft: {
+      ...payload.draft, text: "queued text\n\noriginal draft", updatedAt: payload.draft.updatedAt + 10,
+    } }); });
+  } });
+  type(fixture, "original draft");
+  const pending = fixture.composer.restoreQueuedMessage("source", "queued", "followup");
+  assert.equal(fixture.input.readOnly, true);
+  assert.deepEqual(await fixture.composer.restoreQueuedMessage("source", "queued", "followup"), { busy: true });
+  await switchSession(fixture, "target");
+  type(fixture, "target draft");
+  respond();
+  await pending;
+  assert.equal(fixture.input.value, "target draft", "a late recall must not overwrite a different Session");
+  await switchSession(fixture, "source");
+  assert.equal(fixture.input.value, "queued text\n\noriginal draft");
+  assert.equal(fixture.input.readOnly, false);
+  await fixture.composer.send();
+  assert.equal(fixture.promptRequests[0].text, "queued text\n\noriginal draft");
+}
+
+async function queuedRestoreFailurePreservesDraft() {
+  const fixture = createFixture({ sessionId: "source", request(type, _payload, fallback) {
+    if (type === "restore_queued_message") throw new Error("connection failed");
+    return fallback();
+  } });
+  type(fixture, "unsent work");
+  await assert.rejects(fixture.composer.restoreQueuedMessage("source", "queued", "followup"), /connection failed/);
+  assert.equal(fixture.input.value, "unsent work");
+  assert.equal(fixture.input.readOnly, false);
+  await fixture.composer.flushDraft();
+  assert.equal(fixture.records.get("source").text, "unsent work");
+}
+
+async function queuedRestoreReconcilesLostResponses() {
+  for (const queueKind of ["followup", "steering"]) {
+    for (const code of ["PORT_DISCONNECTED", "PORT_REQUEST_TIMEOUT", "TRANSPORT_DISCONNECTED", "TRANSPORT_TIMEOUT", "COMPOSER_DRAFT_CHANGED"]) {
+      let readStarted, finishRead, reads = 0, restoring = false, restoreRequests = 0;
+      const reading = new Promise(resolve => { readStarted = resolve; });
+      const gate = new Promise(resolve => { finishRead = resolve; });
+      const fixture = createFixture({ sessionId: "source", async request(type, payload, fallback) {
+        if (type === "restore_queued_message") {
+          restoreRequests++;
+          restoring = true;
+          fixture.records.set("source", { ...payload.draft, text: "recovered\n\noriginal", updatedAt: payload.draft.updatedAt + 10 });
+          throw Object.assign(new Error("restore response lost"), { code });
+        }
+        if (type === "get_composer_draft" && payload.sessionId === "source" && restoring) {
+          reads++;
+          if (reads === 1) throw Object.assign(new Error("recovery connection interrupted"), { code: "PORT_DISCONNECTED" });
+          readStarted();
+          await gate;
+        }
+        return fallback();
+      } });
+      type(fixture, "original");
+      const pending = fixture.composer.restoreQueuedMessage("source", "queued", queueKind);
+      const rejected = assert.rejects(pending, /restore response lost/);
+      await reading;
+      assert.equal(fixture.input.readOnly, true, "editing waits for authoritative recovery after reconnect");
+      await fixture.composer.send();
+      assert.equal(fixture.promptRequests.length, 0);
+      await switchSession(fixture, "target");
+      type(fixture, "other session");
+      finishRead();
+      await rejected;
+      assert.equal(fixture.input.value, "other session");
+      await switchSession(fixture, "source");
+      assert.equal(fixture.input.value, "recovered\n\noriginal");
+      assert.equal(fixture.input.readOnly, false);
+      type(fixture, fixture.input.value + " edited");
+      await fixture.composer.flushDraft();
+      assert.equal(fixture.records.get("source").text, "recovered\n\noriginal edited");
+      assert.equal(restoreRequests, 1, "recovery reads the result without replaying the mutation");
+    }
+  }
+}
+
+async function queuedRestoreCannotResurrectDeletedSessions() {
+  for (const queueKind of ["followup", "steering"]) {
+    let finish, readingStarted;
+    const reading = new Promise(resolve => { readingStarted = resolve; });
+    const gate = new Promise(resolve => { finish = resolve; });
+    const fixture = createFixture({ sessionId: "source", async request(type, payload, fallback) {
+      if (type === "restore_queued_message") throw Object.assign(new Error("response lost"), { code: "PORT_DISCONNECTED" });
+      if (type === "get_composer_draft" && payload.afterQueuedMutation) {
+        readingStarted();
+        await gate;
+        return { draft: { sessionId: "source", messageId: "queued", text: "must not resurrect", updatedAt: Date.now() + 1000 } };
+      }
+      return fallback();
+    } });
+    type(fixture, "source draft");
+    const rejected = assert.rejects(fixture.composer.restoreQueuedMessage("source", "queued", queueKind), /response lost/);
+    await reading;
+    fixture.composer.forgetSession("source");
+    await switchSession(fixture, "target");
+    type(fixture, "keep target");
+    finish();
+    await rejected;
+    assert.equal(fixture.input.value, "keep target");
+    assert.equal(fixture.input.readOnly, false);
+    assert.equal(fixture.records.has("source"), false);
+    assert.equal(fixture.promptRequests.length, 0);
+  }
+}
 
 async function failedImageNormalizationPreservesStoredDraft() {
   const dataUrl = "data:image/png;base64,AAAA";

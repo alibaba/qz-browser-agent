@@ -1,3 +1,4 @@
+import { productText } from "../../../shared/product-text.js";
 import { sessionIdText as normalizeSessionId } from "../sessions/session-id.js";
 import type { TranscriptAgentEvent } from "../../../shared/contracts/session.js";
 interface RuntimeOptions extends Pick<PortClientOptions, "connect" | "keepAliveMs" | "reconnectDelayMs" | "maxReconnectDelayMs" | "shouldKeepAlive"> {
@@ -36,7 +37,7 @@ export function createSidepanelPortRuntime(options: RuntimeOptions = {}) {
 
   function attachWindow(windowId: unknown, timeoutMs = 1500) {
     const id = normalizeWindowId(windowId);
-    if (id === null) return Promise.reject(new Error("Side Panel windowId is required"));
+    if (id === null) return Promise.reject(new Error(productText("Side Panel windowId is required", "Sidebar windowId is required")));
     attachedWindowId = id;
     return request("sidepanel_attach", { windowId: id }, timeoutMs);
   }

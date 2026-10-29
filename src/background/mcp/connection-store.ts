@@ -16,6 +16,8 @@ export interface BridgeConfig {
   endpoint: string;
   pairingToken: string;
   instanceId: string;
+  /** Firefox event-page wake lease. Chrome leaves this unset and mints a new id per worker. */
+  connectionId?: string;
   state: CliConnectionStatus["state"];
   attemptsRemaining: number;
   leaseWaitRemaining: number;
@@ -32,6 +34,10 @@ export interface BridgeConfig {
 
 const object = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const integer = (v: unknown, fallback: number, min: number, max: number) => Number.isFinite(Number(v)) ? Math.max(min, Math.min(max, Math.floor(Number(v)))) : fallback;
+const BROWSER_UUID = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
+function browserUuid(value: unknown): string {
+  return typeof value === "string" && BROWSER_UUID.test(value) ? value : "";
+}
 let writes: Promise<unknown> = Promise.resolve();
 function serialize<T>(work: () => Promise<T>): Promise<T> {
   const result = writes.then(work);
@@ -59,10 +65,10 @@ async function read(): Promise<BridgeConfig> {
   const data = await chrome.storage.local.get([BRIDGE_STORAGE_KEY, CLIENT_ID_KEY]);
   const stored = object(data[BRIDGE_STORAGE_KEY]);
   const storedId = typeof data[CLIENT_ID_KEY] === "string" ? data[CLIENT_ID_KEY] as string : "";
-  const current = stored.schemaVersion === 2 && stored.clientId === storedId
-    && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(storedId);
+  const current = stored.schemaVersion === 2 && stored.clientId === storedId && Boolean(browserUuid(storedId));
   const raw = current ? stored : {};
   const clientId = current ? storedId : crypto.randomUUID();
+  const connectionId = browserUuid(raw.connectionId);
   const name = String(raw.name || "").trim();
   let endpoint = DEFAULT_ENDPOINT;
   try { endpoint = connectionEndpoint(raw.endpoint); } catch { /* Invalid addresses stay local. */ }
@@ -74,6 +80,7 @@ async function read(): Promise<BridgeConfig> {
     authorizationId: String(raw.authorizationId || ""),
     pairingToken: String(raw.pairingToken || ""),
     instanceId: String(raw.instanceId || ""),
+    ...(connectionId ? { connectionId } : {}),
     state: enabled && states.includes(String(raw.state)) ? raw.state as BridgeConfig["state"] : enabled ? "connecting" : "disconnected",
     attemptsRemaining: integer(raw.attemptsRemaining, RETRY_LIMIT, 0, RETRY_LIMIT),
     leaseWaitRemaining: integer(raw.leaseWaitRemaining, LEASE_WAIT_LIMIT, 0, LEASE_WAIT_LIMIT),

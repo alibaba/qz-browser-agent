@@ -579,7 +579,7 @@ registerTool({
     type: "object",
     properties: {
       tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
-      requestId: { type: "string", description: "CDP requestId" },
+      requestId: { type: "string", description: toolT("networkBodyRequestId") },
       maxBytes: { type: "number", description: toolT("networkBodyMaxBytes") },
     },
     required: ["requestId"],

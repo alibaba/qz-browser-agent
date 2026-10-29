@@ -321,6 +321,9 @@
   "core.stop": "停止",
   "core.stoppedBeforeRequest": "已在發送模型請求前中止。",
   "core.stopSaveRecording": "停止並儲存錄製內容",
+  "core.storeReviewAction": "前往評價",
+  "core.storeReviewDismiss": "不再顯示",
+  "core.storeReviewPrompt": "如果輕舟對你有幫助，歡迎到 Chrome Web Store 留下評價。",
   "core.submit": "提交",
   "core.submitting": "提交中...",
   "core.suggestion": "建議",
@@ -386,5 +389,8 @@
   "core.dataConsentDetails": "隱私與權限說明",
   "core.dataConsentAccept": "同意並繼續",
   "core.dataConsentLater": "稍後再說",
-  "core.dataConsentSaveFailed": "無法儲存你的選擇，請重試。"
+  "core.dataConsentSaveFailed": "無法儲存你的選擇，請重試。",
+  "core.toolResultIncomplete": "等待逾時，結果不完整",
+  "core.toolResultIncompleteShort": "未完成",
+  "core.tableGenerating": "表格產生中… {count} 字"
 }

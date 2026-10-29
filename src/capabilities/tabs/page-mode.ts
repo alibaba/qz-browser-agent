@@ -119,7 +119,8 @@ export function createPageModeRuntime(host: ModeHost, states = new Map<number, M
   return {
     change, describePage,
     async preparePage(tabId: number, toolName: string, signal: AbortSignal | undefined, context: ToolContext) {
-      if (toolName === "set_page_mode" || toolName === "close_tab") return;
+      // Parallel observations read the current page; restoring a preference can reload it.
+      if (context.preserveWorkingTab || toolName === "set_page_mode" || toolName === "close_tab") return;
       const state = states.get(tabId);
       if (state?.sessionId !== context.sessionId || readPageMode(tabId, states) === "mobile") return;
       if ((context.source === "run_script" || context.runScriptToolDepth != null) && Number(context.senderTabId) === tabId) {

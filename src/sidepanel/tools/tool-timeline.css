@@ -166,6 +166,13 @@
   animation: pulse 1s infinite;
 }
 
+.tool-badge .dot.incomplete,
+.tool-summary .dot.incomplete {
+  border: 1.4px solid var(--orange);
+  background: transparent;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--orange) 12%, transparent);
+}
+
 .thinking-dot.completed {
   background: var(--green);
 }
@@ -388,7 +395,8 @@
 }
 
 .tool-timeline-step.running,
-.tool-timeline-step.waiting {
+.tool-timeline-step.waiting,
+.tool-timeline-step.incomplete {
   border-color: color-mix(in srgb, var(--orange) 16%, var(--border));
   background: color-mix(in srgb, var(--orange) 3%, var(--bg-primary));
 }
@@ -679,6 +687,13 @@
   border: 1px solid var(--red);
   background: transparent;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 10%, transparent);
+}
+
+.tool-timeline-step.incomplete .mini-dot,
+.tool-family-row .mini-dot.incomplete {
+  border: 1px solid var(--orange);
+  background: transparent;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--orange) 12%, transparent);
 }
 
 .tool-family-title {

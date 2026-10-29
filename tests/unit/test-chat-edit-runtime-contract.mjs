@@ -352,7 +352,7 @@ function assertUiRuntimeContracts() {
   assert.match(sidepanel, /el\.addEventListener\("transitionend",\s*remove,\s*\{\s*once:\s*true,\s*signal:\s*lifetime\s*\}\)/, "artifact cards should remove after the retreat transition finishes, scoped to the capability lifetime");
   assert.match(sidepanelCss, /\.msg-artifacts\.msg-artifacts-exiting\s*\{[\s\S]*max-height:\s*0[\s\S]*opacity:\s*0/, "artifact cards should collapse smoothly when hidden for a new turn");
   assert.match(sidepanel, /id="\$\{escapeHtml\(domId\)\}"/, "queued follow-up rows should keep stable DOM ids without making the whole row draggable");
-  assert.match(sidepanel, /class="queued-followup-drag"\s+draggable="true"/, "queued follow-ups should drag only from the quiet handle");
+  assert.match(sidepanel, /class="queued-followup-drag"\s+draggable="\$\{!item\.submitting\}"/, "queued follow-ups should enable their drag handle only after admission");
   assert.match(sidepanel, /function\s+queuedFollowupDropPositionForEvent/, "queued follow-up drag should calculate before/after insertion points");
   assert.match(sidepanel, /setDragImage\?\.\(row/, "queued follow-up drag should use the row as a stable drag image");
   assert.match(sidepanel, /const\s+rect\s*=\s*row\.getBoundingClientRect\(\)[\s\S]*event\.clientX\s*-\s*rect\.left[\s\S]*event\.clientY\s*-\s*rect\.top[\s\S]*setDragImage\?\.\(row,\s*offsetX,\s*offsetY\)/, "queued follow-up drag image should stay under the cursor");

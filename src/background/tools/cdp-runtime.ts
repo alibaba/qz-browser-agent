@@ -213,7 +213,7 @@ export function createCdpRuntime({
     const state = await ensureDebugger(tabId, context);
     const check = commandAccess(state, context);
     try {
-      return await sendForState(state, method, params, check);
+      return await sendForState(state, method, params, check, "", context);
     } catch (err) {
       if (record(err).code === "CDP_RUN_RELEASED") throw err;
       throw new ToolExecutionError("CDP_COMMAND_FAILED", `${method} failed: ${String(record(err).message || err)}`, {
@@ -251,7 +251,9 @@ export function createCdpRuntime({
           aborted = true;
           // A late abort must not terminate the next run on this retained connection.
           if (state.ownerKey === ownerKey && state.attached && !state.releasing) {
-            debuggerApi.sendCommand(state.target, "Runtime.terminateExecution").catch(() => {});
+            const finishPhase = context.measurePhase?.("cdp");
+            debuggerApi.sendCommand(state.target, "Runtime.terminateExecution")
+              .finally(() => finishPhase?.()).catch(() => {});
           }
           reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while running script", {
             tabId: state.tabId,
@@ -263,11 +265,14 @@ export function createCdpRuntime({
       : null;
     const runCommand = async (method: string, commandParams: Record<string, unknown>) => {
       check();
-      const command = debuggerApi.sendCommand(state.target, method, commandParams);
-      command.catch(() => {});
-      const result = await (abortPromise ? Promise.race([command, abortPromise]) : command);
-      check();
-      return result;
+      const finishPhase = context.measurePhase?.("cdp");
+      try {
+        const command = debuggerApi.sendCommand(state.target, method, commandParams);
+        command.catch(() => {});
+        const result = await (abortPromise ? Promise.race([command, abortPromise]) : command);
+        check();
+        return result;
+      } finally { finishPhase?.(); }
     };
 
     try {
@@ -299,7 +304,7 @@ export function createCdpRuntime({
     const state = await ensureDebugger(tabId, context);
     const check = commandAccess(state, context);
     check();
-    const result = await fn(state.target, bindSend(state, check));
+    const result = await fn(state.target, bindSend(state, check, "", context));
     check();
     return result;
   }
@@ -483,6 +488,7 @@ export function createCdpRuntime({
   }
 
   function assertRunCurrent(owner: CdpOwner, tabId: number, context: ToolContext = {}) {
+    if (context.signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Tool call was cancelled", { tabId });
     if (owner?.kind !== "run") return;
     if (typeof isRunCurrent === "function" && isRunCurrent({
       sessionId: owner.sessionId,
@@ -507,17 +513,18 @@ export function createCdpRuntime({
     };
   }
 
-  function bindSend(state: CdpState, check: () => void, sessionId = ""): CdpCommand {
-    const send = ((method: string, params: Record<string, unknown> = {}) => sendForState(state, method, params, check, sessionId)) as CdpCommand;
-    send.inSession = (childSessionId: string) => bindSend(state, check, String(childSessionId || ""));
+  function bindSend(state: CdpState, check: () => void, sessionId = "", context: ToolContext = {}): CdpCommand {
+    const send = ((method: string, params: Record<string, unknown> = {}) => sendForState(state, method, params, check, sessionId, context)) as CdpCommand;
+    send.inSession = (childSessionId: string) => bindSend(state, check, String(childSessionId || ""), context);
     send.tabId = state.tabId;
     send.connectionId = state.connectionId;
     return send;
   }
 
-  async function sendForState(state: CdpState, method: string, params: Record<string, unknown> = {}, check = () => {}, sessionId = "") {
+  async function sendForState(state: CdpState, method: string, params: Record<string, unknown> = {}, check = () => {}, sessionId = "", context: ToolContext = {}) {
     assertStateActive(state);
     check();
+    const finishPhase = context.measurePhase?.("cdp");
     try {
       const target = sessionId ? { ...state.target, sessionId } : state.target;
       const result = await debuggerApi.sendCommand(target, method, params);
@@ -528,6 +535,8 @@ export function createCdpRuntime({
       assertStateActive(state);
       check();
       throw error;
+    } finally {
+      finishPhase?.();
     }
   }
 

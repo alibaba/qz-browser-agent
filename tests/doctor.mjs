@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { assertChromiumChannel } from "./support/browser-package.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -87,7 +88,7 @@ async function checkChrome() {
       "Playwright Chromium installed",
       "Playwright Chromium is missing; run npx playwright install chromium",
     );
-    const channel = process.env.QINGZHOU_PLAYWRIGHT_CHANNEL || "";
+    const channel = assertChromiumChannel();
     const browser = await chromium.launch({ ...(channel ? { channel } : {}), headless: true });
     const version = browser.version();
     await browser.close();

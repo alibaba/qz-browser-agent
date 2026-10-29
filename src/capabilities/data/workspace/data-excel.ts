@@ -1,11 +1,11 @@
 import { t } from "../i18n.js";
-import type XLSX from "xlsx/dist/xlsx.mini.min.js";
+import type * as XLSX from "xlsx";
 
 let pending: Promise<typeof XLSX> | undefined;
 
-/** Load the mini distribution only for spreadsheet I/O, never for plain-text parsing. */
+/** Load the readable ESM distribution only for spreadsheet I/O, never for plain-text parsing. */
 export function loadExcel() {
-  return pending ||= import("xlsx/dist/xlsx.mini.min.js").then(module => module.default).catch(error => {
+  return pending ||= import("xlsx").catch(error => {
     pending = undefined;
     throw new Error(t("couldNotLoadExcelSupportReopenTheSidePanel"), { cause: error });
   });

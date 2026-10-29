@@ -1,5 +1,6 @@
 import { DATA_CONSENT_KEY, DATA_CONSENT_VERSION, hasDataConsent } from "../../shared/data-consent.js";
 import { t } from "../../shared/i18n/backend.js";
+import { productText } from "../../shared/product-text.js";
 
 export function createDataConsentService(storage: Pick<chrome.storage.StorageArea, "get" | "set">) {
   let accepted = false;
@@ -15,7 +16,7 @@ export function createDataConsentService(storage: Pick<chrome.storage.StorageAre
   }
   async function accept(version: unknown, sender: chrome.runtime.MessageSender) {
     assertSidePanelSender(sender);
-    if (version !== DATA_CONSENT_VERSION) throw new Error("Data disclosure has changed. Reopen the side panel.");
+    if (version !== DATA_CONSENT_VERSION) throw new Error(productText("Data disclosure has changed. Reopen the side panel.", "Data disclosure has changed. Reopen the sidebar."));
     await ready;
     if (!accepted) {
       await storage.set({ [DATA_CONSENT_KEY]: { version: DATA_CONSENT_VERSION, acceptedAt: Date.now() } });
@@ -28,6 +29,6 @@ export function createDataConsentService(storage: Pick<chrome.storage.StorageAre
 
 export function assertSidePanelSender(sender: chrome.runtime.MessageSender) {
   if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("sidepanel/sidepanel.html")) {
-    throw new Error("Data consent must be given in the side panel");
+    throw new Error(productText("Data consent must be given in the side panel", "Data consent must be given in the sidebar"));
   }
 }

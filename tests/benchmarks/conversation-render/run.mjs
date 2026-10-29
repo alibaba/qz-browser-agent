@@ -632,9 +632,12 @@ async function sampleStreamingScrollInteraction(page, { holdMs = 64, fuzzPlan } 
     const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
     const tailGap = () => Math.max(0, messages.scrollHeight - messages.scrollTop - messages.clientHeight);
     const resumeTrace = [];
-    for (let index = 0; index < 8; index += 1) {
+    const resumeFrames = [];
+    for (let index = 0; index < 24; index += 1) {
       await frame();
       resumeTrace.push(tailGap());
+      resumeFrames.push({ top: messages.scrollTop, height: messages.scrollHeight,
+        client: messages.clientHeight, width: messages.clientWidth });
     }
     let consecutiveOffTailFrames = 0;
     let maxResumeLagFrames = 0;
@@ -643,11 +646,20 @@ async function sampleStreamingScrollInteraction(page, { holdMs = 64, fuzzPlan } 
       else consecutiveOffTailFrames = 0;
       maxResumeLagFrames = Math.max(maxResumeLagFrames, consecutiveOffTailFrames);
     }
+    // A shrinking answer can move the viewport upward while the tail gap stays zero.
+    // Viewport resizing (e.g. the run-status bar closing) has its own layout contract.
+    const backward = resumeFrames.slice(1).map((after, i) => {
+      const before = resumeFrames[i];
+      return before.client === after.client && before.width === after.width ? before.top - after.top : 0;
+    });
+    const maxResumeBackwardPx = Math.max(0, ...backward);
     return {
       resumeTailGap: resumeTrace[resumeTrace.length - 1] ?? tailGap(),
       maxResumeLagFrames,
-      resumeFailed: !resumeTrace.some(gap => gap <= 28) || maxResumeLagFrames > 1,
+      resumeFailed: !resumeTrace.some(gap => gap <= 28) || maxResumeLagFrames > 1 || maxResumeBackwardPx > 0.5,
+      maxResumeBackwardPx,
       resumeTrace,
+      resumeFrames,
     };
   });
   return { ...held, ...resume, ...(fuzzPlan ? { fuzzPlan } : {}) };
@@ -889,6 +901,7 @@ function summarizeStreamingScrollSamples(samples = []) {
     lostAnchors: sampled.filter(sample => sample.lostAnchor).length,
     tailHijacks: sampled.filter(sample => sample.tailHijacked).length,
     maxResumeLagFrames: Math.max(0, ...sampled.map(sample => Number(sample.maxResumeLagFrames) || 0)),
+    maxResumeBackwardPx: Math.max(0, ...sampled.map(sample => Number(sample.maxResumeBackwardPx) || 0)),
     resumeFailures: sampled.filter(sample => sample.resumeFailed).length,
     anchor,
     scrollTopDelta,

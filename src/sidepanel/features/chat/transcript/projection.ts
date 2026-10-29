@@ -1,6 +1,9 @@
 import { optionalSessionId as normalizeSessionId } from "../../sessions/session-id.js";
 import type { TranscriptEntry } from "../../../tools/renderer-input.js";
-interface ProjectionOptions { projectArtifacts?(entries: TranscriptEntry[], sessionId: string): TranscriptEntry[] }
+interface ProjectionOptions {
+  projectArtifacts?(entries: TranscriptEntry[], sessionId: string): TranscriptEntry[];
+  isQueuedSubmission?(sessionId: string, clientMessageId: unknown): boolean;
+}
 
 import { groupConsecutiveToolTranscriptEntries } from "../../../tools/tool-timeline-renderer.js";
 import { hashText } from "../../../ui/ui-utils.js";
@@ -36,8 +39,12 @@ function dedupeDuplicateAssistantFailureErrors(history: TranscriptEntry[] = []) 
 }
 
 function transcriptUiHistory(history: TranscriptEntry[], { sessionId = "" } = {}) {
+  // Retain optimistic delivery evidence in the transcript store, but show pending
+  // submissions to a busy Session in the queue until Background decides admission.
+  const visible = visibleTranscriptHistory(history).filter(entry => !(entry.type === "user"
+    && entry.deliveryStatus === "pending" && options.isQueuedSubmission?.(sessionId, entry.clientMessageId)));
   return projectArtifacts(
-    groupConsecutiveToolTranscriptEntries(visibleTranscriptHistory(history)),
+    groupConsecutiveToolTranscriptEntries(visible),
     sessionId,
   );
 }

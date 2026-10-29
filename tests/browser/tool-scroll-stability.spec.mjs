@@ -1,4 +1,16 @@
 import { expect, test } from "./sidepanel-fixtures.mjs";
+import { expectToolCollapseVisible, runToolCollapseProbe } from "../support/tool-collapse-probe.mjs";
+
+test.describe("short conversation collapse", () => {
+  test.use({ viewport: { width: 400, height: 600 } });
+  for (const toolCount of [1, 45]) {
+    for (const footer of [false, true]) {
+      test(`${toolCount} tools collapsed from ${footer ? "footer" : "summary"} reveal the first message before scrolling`, async ({ page }) => {
+        expectToolCollapseVisible(expect, await page.evaluate(runToolCollapseProbe, { toolCount, footer }));
+      });
+    }
+  }
+});
 
 test.describe("completed tool card scroll stability", () => {
   test.use({ viewport: { width: 430, height: 844 } });
@@ -653,6 +665,10 @@ test.describe("completed tool card scroll stability", () => {
       await window.qingzhouConversationBenchmark.runSnapshotRender({
         sessionId: "viewport_search_navigation",
         transcript: [
+          ...Array.from({ length: 12 }, (_, index) => ({
+            type: "assistant", spanId: `search-history-${index}`,
+            content: `历史消息 ${index + 1}：保持收起后的对话仍需滚动。`.repeat(4),
+          })),
           { type: "user", text: "执行脚本并查看搜索目标。", clientMessageId: "viewport_search_user" },
           {
             type: "tool",
@@ -673,7 +689,7 @@ test.describe("completed tool card scroll stability", () => {
       summary.click();
       await nextFrame();
       await nextFrame();
-      messages.scrollTop = Math.min(120, Math.max(0, messages.scrollHeight - messages.clientHeight));
+      messages.scrollTop = messages.scrollHeight;
       messages.dispatchEvent(new Event("scroll"));
       await nextFrame();
       summary.click();
@@ -693,10 +709,12 @@ test.describe("completed tool card scroll stability", () => {
     const after = await page.locator("#messages").evaluate(messages => ({
       compensation: getComputedStyle(messages).getPropertyValue("--viewport-anchor-after-space").trim(),
       activeMatches: messages.querySelectorAll(".chat-search-active").length,
+      anchored: window.qingzhouConversationBenchmark.collectViewportAnchorState().active,
     }));
     expect(after, JSON.stringify({ setup, after }, null, 2)).toEqual({
       compensation: "0px",
       activeMatches: 1,
+      anchored: false,
     });
   });
 
