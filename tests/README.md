@@ -103,6 +103,25 @@ desktop/mobile setup, reservation isolation and cancellation during CDP authoriz
 
 ## Add a test at the right boundary
 
+`npm test -- playwright chat-followup-restore.spec.mjs` exercises queue withdrawal through the
+production Side Panel transport, Session commands, Agent queues, and document store. It checks
+image/file restoration, editing and resending, merging an existing draft, Session switching, and
+persistence failure with retry in both color schemes. The fixture uses isolated local data and
+does not invoke a model provider.
+
+For seeded queue/composer interactions, run:
+
+```bash
+npm test -- playwright chat-followup-restore.spec.mjs --grep "queued recall fuzz" --repeat-each=3
+```
+
+The matrix uses three widths and both themes, with a new seed per repetition. Native steering/recall
+clicks, double-clicks, attachment removal,
+Shift+Enter editing, Session switches, and wheels overlap assistant streaming and delayed recall
+responses. Each scenario checks text and attachment ownership before resending and records frame
+geometry, real input events, and the action sequence. Firefox's native BiDi `fill` sends ordinary
+Enter for embedded newlines; the fuzz uses Shift+Enter to exercise editing without submitting.
+
 | Behavior being changed | Where to put the evidence |
 | --- | --- |
 | Pure logic, storage or a race | `unit/test-*.mjs`, discovered automatically |

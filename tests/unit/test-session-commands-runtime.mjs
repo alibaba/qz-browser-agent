@@ -32,6 +32,7 @@ await titleGenerationWaitsForAcceptedPrompt();
 await generatedTitlesKeepCompleteWords();
 await manualTitleWinsGenerationRace();
 await queuedFollowUpAttachmentDeletionFlow();
+await queuedMessageRestorationFlow();
 await steeringQueueFlow();
 await compactContextCommandFlow();
 await recordExchangeAndFallbackFlow();
@@ -828,6 +829,72 @@ async function queuedFollowUpAttachmentDeletionFlow() {
     [document.messageId],
     "failed attachment cleanup must restore the queued message",
   );
+}
+
+async function queuedMessageRestorationFlow() {
+  for (const queueKind of ["followup", "steering"]) {
+    let failWrite = false;
+    const snapshots = [];
+    const copied = [];
+    const fixture = createFixture({
+      async persistSessionRuntime(id) {
+        if (failWrite) { failWrite = false; throw new Error("draft storage failed"); }
+        snapshots.push(structuredClone(fixture.runtimes.get(id)));
+      },
+      async copyChatMessageDocuments(input) {
+        copied.push(input);
+        return input.documents.map(document => ({ ...document, messageId: input.targetMessageId,
+          attachmentId: "copied-attachment", fileId: "copied-file", docModelId: "copied-model" }));
+      },
+    });
+    const sessionId = `recall-${queueKind}`;
+    await fixture.repository.createMetadata({ id: sessionId });
+    const agent = new Agent(sessionId, createTestAgentOptions({ canStartQueuedRun: () => false }));
+    fixture.agents.set(sessionId, agent);
+    agent.subscribe(event => fixture.setRuntime(sessionId, reduceSessionRuntime(fixture.runtimes.get(sessionId), event)));
+    const document = { sessionId, messageId: "queued", attachmentId: "attachment", fileId: "file", docModelId: "model",
+      filename: "notes.txt", mimeType: "text/plain", format: "txt", size: 12 };
+    agent.followUp("revise this", [{ dataUrl: "data:image/png;base64,AAAA" }], "queued", [document]);
+    if (queueKind === "steering") agent.steerFollowUp("queued");
+    const draft = { sessionId, messageId: "draft", text: "keep my draft", images: [], documents: [], updatedAt: Date.now() };
+    await fixture.commands.saveSessionComposerDraftRuntime({ sessionId, windowId: 4, draft });
+    const input = { sessionId, windowId: 4, queueKind, clientMessageId: "queued", draft };
+    try {
+      failWrite = true;
+      await assert.rejects(fixture.commands.restoreQueuedMessageRuntime(input), /draft storage failed/);
+      assert.ok(agent.findPendingUserMessage("queued"), "failed persistence keeps the original queued message");
+      assert.deepEqual(fixture.runtimes.get(sessionId).composerDrafts[4], draft);
+      assert.equal(fixture.removedChatDocuments.at(-1).messageId, "draft", "rollback only collects new copies");
+      failWrite = false;
+      snapshots.length = 0;
+      const restored = await fixture.commands.restoreQueuedMessageRuntime(input);
+      assert.equal(restored.restored, true);
+      assert.equal(restored.draft.text, "revise this\n\nkeep my draft");
+      assert.equal(restored.draft.images[0].dataUrl, "data:image/png;base64,AAAA");
+      assert.equal(restored.draft.documents[0].document.messageId, "draft");
+      assert.equal(agent.findPendingUserMessage("queued"), null);
+      assert.equal(snapshots.length, 1);
+      assert.deepEqual(snapshots[0].composerDrafts[4], restored.draft);
+      assert.deepEqual(snapshots[0][queueKind === "steering" ? "pendingSteeringMessages" : "pendingFollowUpMessages"], []);
+      assert.equal(fixture.removedChatDocuments.at(-1).messageId, "queued", "originals are collected only after durable copies exist");
+      const repeated = await fixture.commands.restoreQueuedMessageRuntime({ ...input, draft: restored.draft });
+      assert.equal(repeated.restored, false, "a duplicate click cannot duplicate the recovered text or attachments");
+      assert.equal(copied.length, 2);
+
+      agent.followUp("empty composer", [], "intact", [{ ...document, messageId: "intact" }]);
+      const empty = await fixture.commands.restoreQueuedMessageRuntime({ sessionId, windowId: 5, clientMessageId: "intact" });
+      assert.equal(empty.draft.documents[0].fileId, "file", "an empty composer retains the original attachment without reparsing/copying");
+      assert.equal(empty.draft.messageId, "intact");
+      assert.equal(copied.length, 2);
+      agent.followUp("keep queued", [], "stale");
+      await assert.rejects(fixture.commands.restoreQueuedMessageRuntime({ ...input, clientMessageId: "stale" }),
+        error => error.code === "COMPOSER_DRAFT_CHANGED");
+      assert.ok(agent.findPendingUserMessage("stale"));
+    } finally {
+      agent._clearScheduledFollowUpRun();
+      agent.abort();
+    }
+  }
 }
 
 async function compactContextCommandFlow() {
@@ -2207,6 +2274,7 @@ function createFixture(options = {}) {
         deletedModelCount: input.documents.length,
       };
     },
+    copyChatMessageDocuments: options.copyChatMessageDocuments,
     removeChatSessionDocuments: async sessionId => {
       draftCleanupOrder.push(`documents:${sessionId}`);
       removedSessionDocuments.push(sessionId);

@@ -149,6 +149,7 @@ export function createChatWorkspaceFeature(options: ChatWorkspaceOptions) {
     send: options.send,
     request: options.request,
     showToast: toast.show,
+    restoreQueuedMessage: (sessionId, messageId, kind) => composer.restoreQueuedMessage(sessionId, messageId, kind),
     now: options.nowTimestamp,
   });
   let composer: ReturnType<typeof createComposerFeature>;

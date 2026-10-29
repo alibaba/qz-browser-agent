@@ -83,6 +83,7 @@ export function createSidepanelTransport(api: BackgroundApi, {
     delete_chat_document: { method: "attachments.remove", response: "chat_document_deleted", args: message => [message], requestOnly: true },
     get_composer_draft: { method: "sessions.getDraft", response: "get_composer_draft_result", args: (message, port) => [{ sessionId: message.sessionId, windowId: getWindowId(port), }] },
     delete_follow_up: { method: "sessions.deleteFollowUp", response: "follow_up_deleted", args: message => [message.sessionId, message.clientMessageId || ""], requestOnly: true },
+    restore_queued_message: { method: "sessions.restoreQueuedMessage", response: "queued_message_restored", args: (message, port) => [{ ...message, windowId: getWindowId(port) }], requestOnly: true },
     delete_steering: { method: "sessions.deleteSteering", response: "steering_deleted", args: message => [message.sessionId, message.clientMessageId || ""], requestOnly: true },
     reorder_follow_ups: { method: "sessions.reorderFollowUps", response: "follow_ups_reordered", args: message => [message.sessionId, message.clientMessageIds || []], requestOnly: true },
     compact_context: { method: "sessions.compact", response: "compact_context_result", args: message => [{ sessionId: message.sessionId, instruction: message.instruction || "", }] },

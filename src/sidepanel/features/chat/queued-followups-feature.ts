@@ -14,6 +14,7 @@ interface QueueOptions {
   normalizePendingFollowUps?(items: unknown): QueueItem[]; normalizePendingSteerings?(items: unknown): QueueItem[];
   settleAfterDockLayout?(): void; send?(message: PortMessage): unknown;
   request?(type: string, payload: PortMessage): Promise<PortMessage>;
+  restoreQueuedMessage?(sessionId: string, messageId: string, kind: string): Promise<PortMessage>;
   showToast?(message: string, options: { tone?: string; anchorEl: Element }): void; now?(): string;
 }
 interface RowSnapshot { id: string; rect: DOMRect; node: HTMLElement }
@@ -39,6 +40,7 @@ export function createQueuedFollowupsFeature(options: QueueOptions = {}) {
   const request: NonNullable<QueueOptions["request"]> = options.request || (async () => ({}));
   const showToast = options.showToast || (() => {});
   const now = options.now || (() => new Date().toISOString());
+  const restoring = new Set<string>();
 
   let queuedFollowupDragId = "";
   let queuedFollowupDropTargetId = "";
@@ -432,7 +434,8 @@ function renderQueuedFollowups() {
 
   const snapshots = captureQueuedFollowupSnapshots();
   const drainInfo = queuedFollowupTopDrainInfo(items);
-  const isTopDrain = drainInfo.isTopDrain && !localMutationReason;
+  const isTopDrain = drainInfo.isTopDrain && !localMutationReason
+    && !restoring.has(`${sessionId}:${drainInfo.removedId}`);
   const wasHidden = container.classList.contains("hidden");
   const previousCount = Number(container.dataset.count || 0);
   if (!isVisible()) {
@@ -505,7 +508,7 @@ function renderQueuedFollowups() {
             : `
             <button class="qz-btn qz-btn--ghost qz-btn--xs queued-followup-steer" type="button" data-steer-follow-up="${escapeHtml(id)}" title="${tHtml("convertToSteering")}" aria-label="${tHtml("convertToSteering")}">${steerActionIcon()}<span>${tHtml("steer")}</span></button>
           `}
-          <button class="qz-icon-btn qz-icon-btn--xs queued-followup-delete" type="button" ${isSteering ? `data-delete-steering="${escapeHtml(id)}" title="${tHtml("deleteSteering")}" aria-label="${tHtml("deleteSteering")}"` : `data-delete-follow-up="${escapeHtml(id)}" title="${tHtml("deleteFollowup")}" aria-label="${tHtml("deleteFollowup")}"`}>
+          <button class="qz-icon-btn qz-icon-btn--xs queued-followup-delete" type="button" ${isSteering ? `data-delete-steering="${escapeHtml(id)}"` : `data-delete-follow-up="${escapeHtml(id)}"`} title="${tHtml("edit")}" aria-label="${tHtml("edit")}">
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M4.75 4.75l6.5 6.5M11.25 4.75l-6.5 6.5" />
             </svg>
@@ -632,21 +635,28 @@ container?.addEventListener("click", async (event) => {
   const clientMessageId = normalizeClientMessageId(
     followUpDeleteButton ? button.dataset.deleteFollowUp : button.dataset.deleteSteering,
   );
-  if (!clientMessageId || !sessionId) return;
-  const runtime = getRuntime(sessionId);
-  if (followUpDeleteButton) {
-    setSessionPendingQueues(sessionId, {
-      followUps: normalizePendingFollowUps(runtime.pendingFollowUps)
-        .filter(item => item.clientMessageId !== clientMessageId),
-    }, { reason: "delete" });
-    send({ type: "delete_follow_up", sessionId, clientMessageId });
-    return;
+  const key = `${sessionId}:${clientMessageId}`;
+  if (!clientMessageId || !sessionId || restoring.has(key) || !options.restoreQueuedMessage) return;
+  restoring.add(key);
+  button.disabled = true;
+  try {
+    const result = await options.restoreQueuedMessage(sessionId, clientMessageId, followUpDeleteButton ? "followup" : "steering");
+    if (result.restored) {
+      const runtime = getRuntime(sessionId);
+      setSessionPendingQueues(sessionId, followUpDeleteButton ? {
+        followUps: normalizePendingFollowUps(runtime.pendingFollowUps).filter(item => item.clientMessageId !== clientMessageId),
+      } : {
+        steerings: normalizePendingSteerings(runtime.pendingSteerings).filter(item => item.clientMessageId !== clientMessageId),
+      }, { reason: "delete" });
+    } else if (!result.busy && sessionId === normalizeSessionId(getSessionId())) {
+      showToast(t("requestAlreadyStarted"), { anchorEl: button });
+    }
+  } catch (error) {
+    if (sessionId === normalizeSessionId(getSessionId())) showToast(String(error instanceof Error ? error.message : error), { tone: "error", anchorEl: button });
+  } finally {
+    restoring.delete(key);
+    button.disabled = false;
   }
-  setSessionPendingQueues(sessionId, {
-    steerings: normalizePendingSteerings(runtime.pendingSteerings)
-      .filter(item => item.clientMessageId !== clientMessageId),
-  }, { reason: "delete" });
-  send({ type: "delete_steering", sessionId, clientMessageId });
 });
 
 container?.addEventListener("dragstart", (event) => {

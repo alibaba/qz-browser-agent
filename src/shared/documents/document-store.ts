@@ -99,6 +99,45 @@ export async function getDocumentModel(docModelId: string) {
   return requestToPromise<SavedDocumentModel | undefined>(db.transaction(MODELS_STORE, "readonly").objectStore(MODELS_STORE).get(docModelId));
 }
 
+/** Copies queued attachments into an existing draft without changing the queued originals. */
+export async function copyMessageDocuments({ sessionId, messageId, targetMessageId, documents }: {
+  sessionId: string; messageId: string; targetMessageId: string; documents: unknown;
+}): Promise<MessageDocument[]> {
+  const refs = assertMessageDocumentOwnership(documents, { sessionId, messageId });
+  if (!targetMessageId.trim()) throw new Error("targetMessageId is required");
+  if (!refs.length) return [];
+  const db = await openDocumentDb();
+  const tx = db.transaction([FILES_STORE, MODELS_STORE], "readwrite");
+  const completion = txDone(tx);
+  const files = tx.objectStore(FILES_STORE);
+  const models = tx.objectStore(MODELS_STORE);
+  try {
+    const copies = await Promise.all(refs.map(async ref => {
+      const [file, model] = await Promise.all([
+        requestToPromise<DocumentFile | undefined>(files.get(ref.fileId)),
+        requestToPromise<SavedDocumentModel | undefined>(models.get(ref.docModelId)),
+      ]);
+      assertOwnedAttachmentRecord(file, ref, "file");
+      assertOwnedAttachmentRecord(model, ref, "model");
+      if (!file || !model || model.fileId !== file.id) throw Object.assign(
+        new Error("queued document attachment is unavailable"), { code: "DOCUMENT_ATTACHMENT_INVALID" },
+      );
+      const copy = { ...ref, messageId: targetMessageId, attachmentId: createDocumentId("attachment"),
+        fileId: createDocumentId("file"), docModelId: createDocumentId("model") };
+      const owner = { messageId: targetMessageId, attachmentId: copy.attachmentId, updatedAt: nowBeijingDateTime() };
+      files.put({ ...file, ...owner, id: copy.fileId });
+      models.put({ ...model, ...owner, id: copy.docModelId, fileId: copy.fileId });
+      return copy;
+    }));
+    await completion;
+    return copies;
+  } catch (error) {
+    try { tx.abort(); } catch (_abortError) { /* transaction already settled */ }
+    await completion.catch(() => null);
+    throw error;
+  }
+}
+
 export async function deleteMessageDocument({ sessionId, messageId, attachmentId, fileId, docModelId }: Partial<MessageDocument> = {}) {
   const result = await deleteMessageDocuments({
     sessionId,

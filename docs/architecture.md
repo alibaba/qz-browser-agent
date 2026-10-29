@@ -530,6 +530,12 @@ The [capability host](../src/sidepanel/capability-host/runtime.ts) registers and
 settings. Packages own form drafts; Session runtime owns unsent messages by window and message ID.
 Heavy UI libraries load on demand and update the instance that requested them.
 
+The queued-message close button returns the message to the composer for editing. Background saves
+the queue withdrawal and the complete draft together before releasing queue admission. Existing
+draft text and attachments are retained; documents from a different message are copied with their
+parsed models into the draft's ownership before the queued originals are collected. A failed save
+keeps the message queued, and messages whose execution has already started cannot be recalled.
+
 [Session export](../src/sidepanel/features/export/session-export-feature.ts) uses one Background
 exchange payload and synchronous `renderStatic` projections. It embeds the active skin and a
 standalone [export runtime](../src/sidepanel/features/export/session-export-runtime.ts). Text,

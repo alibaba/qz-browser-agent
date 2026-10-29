@@ -476,6 +476,7 @@ export function createComposerFeature(options: ComposerOptions) {
   }
 
   function removeImage(index: number) {
+    if (activeDraft.submitting) return;
     const [item] = activeDraft.images.splice(index, 1);
     if (item) { imageTasks.get(item)?.abort(); touchDraft(activeDraft); }
     renderAttachments();
@@ -484,6 +485,7 @@ export function createComposerFeature(options: ComposerOptions) {
   }
 
   function removeDocument(attachmentId: unknown) {
+    if (activeDraft.submitting) return;
     const index = activeDraft.documents.findIndex(item => item.attachmentId === attachmentId);
     if (index < 0) return;
     const [item] = activeDraft.documents.splice(index, 1);
@@ -603,6 +605,42 @@ export function createComposerFeature(options: ComposerOptions) {
     for (const image of draft.images) imageTasks.get(image)?.abort();
     draft.images = [];
     draft.documents = [];
+  }
+
+  async function restoreQueuedMessage(sessionId: string, clientMessageId: string, queueKind: string) {
+    if (sessionId !== normalizeSessionId(getSessionId()) || draftIsBusy() || isComposingInput) return { busy: true };
+    bindEmptyDraftToCurrentSession();
+    if (activeDraft.sessionId !== sessionId) return { busy: true };
+    captureInputText();
+    const draft = activeDraft;
+    touchDraft(draft);
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = 0;
+    draft.submitting = true;
+    updateSendState();
+    try {
+      const result = await request("restore_queued_message", {
+        sessionId, clientMessageId, queueKind, draft: serializeDraft(draft),
+      });
+      if (result.restored && result.draft && isTrackedDraft(draft)) {
+        const restored = createDraftState(result.draft);
+        lastDraftUpdatedAt = Math.max(lastDraftUpdatedAt, restored.updatedAt);
+        Object.assign(draft, restored);
+        if (isActiveDraft(draft)) {
+          slashMenu.close();
+          preserveViewportDuringDockLayout(() => activateDraft(draft));
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      }
+      return result;
+    } finally {
+      draft.submitting = false;
+      if (isActiveDraft(draft)) {
+        updateSendState();
+        scheduleDraftSave();
+      }
+    }
   }
 
   async function sendComposerMessage() {
@@ -1036,6 +1074,7 @@ export function createComposerFeature(options: ComposerOptions) {
 
   return {
     send: sendComposerMessage,
+    restoreQueuedMessage,
     retryUserMessage,
     syncInputState,
     setValue,

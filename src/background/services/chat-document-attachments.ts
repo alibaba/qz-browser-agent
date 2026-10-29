@@ -5,6 +5,7 @@ import {
   documentAttachmentKey,
 } from "../../shared/documents/document-attachments.js";
 import {
+  copyMessageDocuments,
   deleteMessageDocument,
   deleteMessageDocuments,
   deleteSessionMessageDocuments,
@@ -286,7 +287,7 @@ export function createChatDocumentAttachmentService(options: AttachmentServiceOp
     );
   }
 
-  return Object.freeze({ stage, remove, removeMessageDocuments, removeSessionDocuments, blockSession });
+  return Object.freeze({ stage, remove, removeMessageDocuments, copyMessageDocuments, removeSessionDocuments, blockSession });
 }
 
 function normalizeStageRequest(input: Fields = {}) {

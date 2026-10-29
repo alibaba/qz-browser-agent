@@ -13,8 +13,47 @@ await sendCarriesTheExactDraftIdentity();
 await failedPromptStaysRetryableWithTheSameIdentity();
 await pageHidePublishesTheLastTextSnapshot();
 await inputResizeTracksAllocatedWidth();
+await queuedRestoreStaysWithItsSession();
+await queuedRestoreFailurePreservesDraft();
 
 console.log("composer draft lifecycle tests passed");
+
+async function queuedRestoreStaysWithItsSession() {
+  let respond;
+  const fixture = createFixture({ sessionId: "source", request(type, payload, fallback) {
+    if (type !== "restore_queued_message") return fallback();
+    return new Promise(resolve => { respond = () => resolve({ restored: true, draft: {
+      ...payload.draft, text: "queued text\n\noriginal draft", updatedAt: payload.draft.updatedAt + 10,
+    } }); });
+  } });
+  type(fixture, "original draft");
+  const pending = fixture.composer.restoreQueuedMessage("source", "queued", "followup");
+  assert.equal(fixture.input.readOnly, true);
+  assert.deepEqual(await fixture.composer.restoreQueuedMessage("source", "queued", "followup"), { busy: true });
+  await switchSession(fixture, "target");
+  type(fixture, "target draft");
+  respond();
+  await pending;
+  assert.equal(fixture.input.value, "target draft", "a late recall must not overwrite a different Session");
+  await switchSession(fixture, "source");
+  assert.equal(fixture.input.value, "queued text\n\noriginal draft");
+  assert.equal(fixture.input.readOnly, false);
+  await fixture.composer.send();
+  assert.equal(fixture.promptRequests[0].text, "queued text\n\noriginal draft");
+}
+
+async function queuedRestoreFailurePreservesDraft() {
+  const fixture = createFixture({ sessionId: "source", request(type, _payload, fallback) {
+    if (type === "restore_queued_message") throw new Error("connection failed");
+    return fallback();
+  } });
+  type(fixture, "unsent work");
+  await assert.rejects(fixture.composer.restoreQueuedMessage("source", "queued", "followup"), /connection failed/);
+  assert.equal(fixture.input.value, "unsent work");
+  assert.equal(fixture.input.readOnly, false);
+  await fixture.composer.flushDraft();
+  assert.equal(fixture.records.get("source").text, "unsent work");
+}
 
 async function failedImageNormalizationPreservesStoredDraft() {
   const dataUrl = "data:image/png;base64,AAAA";
