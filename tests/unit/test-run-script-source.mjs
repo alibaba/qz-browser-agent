@@ -518,7 +518,7 @@ assert.match(
 );
 assert.match(
   workbench.content,
-  /\`runtime:"page"\` 只在当前任务 workingTabId 或显式传入的自有 tabId 上执行；\`runtime:"inner"\` 在无 DOM 的 Worker 中执行，不需要 tab/,
+  /\`runtime:"page"\` 在当前任务工作标签页或用 \`tabRef\` 指定的自有页面上执行；\`runtime:"inner"\` 在无 DOM 的 Worker 中执行，不需要 tab/,
   "skill author script conventions should distinguish page and inner tab prerequisites",
 );
 assert.match(
