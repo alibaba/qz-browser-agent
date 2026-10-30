@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AX option disabled</title>
+<style>
+  body { margin: 12px; font: 16px sans-serif; }
+  button, select { display: block; margin: 8px 0; min-width: 140px; min-height: 28px; }
+</style>
+<select id="city" aria-label="城市" disabled>
+  <option value="">请选择</option>
+</select>
+<button id="load" type="button">加载城市</button>
+<select id="province" aria-label="省份" disabled>
+  <option value="zj">浙江</option>
+  <option value="js">江苏</option>
+</select>
+<select id="route" aria-label="航线">
+  <option value="g">庚</option>
+  <option value="x">辛</option>
+</select>
+<select id="locked" aria-label="锁定" disabled>
+  <option value="c">丙</option>
+  <option value="d" disabled>丁</option>
+</select>
+<select id="grouped" aria-label="分组">
+  <optgroup label="组" disabled>
+    <option value="a">甲</option>
+  </optgroup>
+  <option value="b">乙</option>
+</select>
+<select id="mixed" aria-label="混合">
+  <option value="e">戊</option>
+  <option value="f" disabled>己</option>
+</select>
+<div aria-disabled="true">
+  <select id="aria-select" aria-label="停用列表">
+    <option value="z">子</option>
+  </select>
+</div>
+<script>
+  document.getElementById("load").addEventListener("click", () => {
+    window.setTimeout(() => {
+      const city = document.getElementById("city");
+      city.replaceChildren();
+      for (const [value, text] of [["hz", "杭州"], ["nb", "宁波"], ["wz", "温州"]]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = text;
+        city.append(option);
+      }
+      city.disabled = false;
+      document.getElementById("province").disabled = false;
+      document.getElementById("route").disabled = true;
+    }, 300);
+  });
+</script>

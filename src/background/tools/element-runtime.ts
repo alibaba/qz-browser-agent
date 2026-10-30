@@ -239,12 +239,26 @@ function parseElementTarget(target = "") {
   });
 }
 
-function addElementTargetsToFindResult(result: unknown) {
+async function addElementTargetsToFindResult(result: unknown, tabId?: number, context: ToolContext = {}, scope?: Pick<ElementReference, "frameId" | "loaderId">) {
   if (!isRecord(result)) return result;
+  const items = Array.isArray(result.results) ? result.results : Array.isArray(result.elements) ? result.elements : [result];
+  const tokens = items.filter(isRecord).map(item => item._elementRef).filter((token): token is string => typeof token === "string" && !!token);
+  const bound = tokens.length && tabId ? await bindFindElementRefs(tabId, tokens, context, scope) : new Map<string, ElementReference>();
+  const snapshotId = bound.size && tabId ? makeSnapshotId(tabId, context) : "";
+  let sequence = 0;
   const addTarget = (item: unknown) => {
     if (!isRecord(item)) return item;
-    const target = item.target || elementTargetForUid(item.uid) || elementTargetForSelector(item.selector);
-    return target ? { ...item, target } : item;
+    let candidate = item;
+    if (typeof item._elementRef === "string") {
+      const { _elementRef, ...summary } = item;
+      const ref = bound.get(_elementRef);
+      if (!ref) return { ...summary, actionable: false };
+      const uid = makeElementUid(snapshotId, ++sequence);
+      registerElementRef({ ...ref, uid, tabId, sessionId: context.sessionId });
+      candidate = { ...summary, uid };
+    }
+    const target = candidate.target || elementTargetForUid(candidate.uid) || elementTargetForSelector(candidate.selector);
+    return target ? { ...candidate, target } : candidate;
   };
   if (Array.isArray(result.results)) {
     return { ...result, results: result.results.map(addTarget) };
@@ -253,6 +267,45 @@ function addElementTargetsToFindResult(result: unknown) {
     return { ...result, elements: result.elements.map(addTarget) };
   }
   return addTarget(result);
+}
+
+async function bindFindElementRefs(tabId: number, tokens: string[], context: ToolContext, scope?: Pick<ElementReference, "frameId" | "loaderId">) {
+  const objectGroup = `${OBJECT_GROUP}-find-${makeSnapshotId(tabId, context)}`;
+  try {
+    return await withDebugger(tabId, async (_target, send) => {
+      const child = scope?.frameId ? await openChildFrame(send, scope.frameId) : null;
+      if (scope?.frameId && !child) throw staleElement(scope.frameId);
+      const nodeSend = child?.send || send;
+      const frame = child || record(record(record(await send("Page.getFrameTree")).frameTree).frame);
+      const frameId = String(frame.id || "");
+      const loaderId = String(frame.loaderId || "");
+      if (scope?.loaderId && scope.loaderId !== loaderId) throw staleElement(scope.frameId);
+      const contextId = await contentContextId(tabId, nodeSend, frameId, child?.sessionId || "", context);
+      const bound = new Map<string, ElementReference>();
+      try {
+        for (const token of tokens) {
+          const remote = record(await nodeSend("Runtime.callFunctionOn", {
+            executionContextId: contextId, objectGroup, awaitPromise: true, returnByValue: false,
+            functionDeclaration: ISOLATED_CONTENT_INVOKE,
+            arguments: [{ value: { action: "resolveFindElement", elementRef: token } }],
+          }));
+          const object = record(remote.result);
+          if (remote.exceptionDetails || object.subtype !== "node" || !object.objectId) continue;
+          const described = record(await nodeSend("DOM.describeNode", { objectId: object.objectId }));
+          const backendNodeId = Number(record(described.node).backendNodeId || 0);
+          if (backendNodeId) bound.set(token, { backendNodeId, loaderId, ...(child ? { frameId } : {}) });
+        }
+        if (await frameLoaderId(nodeSend, frameId) !== loaderId) throw staleElement(frameId);
+        return bound;
+      } finally {
+        try { await nodeSend("Runtime.releaseObjectGroup", { objectGroup }); } catch { /* The document may be gone. */ }
+      }
+    }, context);
+  } catch (error) {
+    if (isCdpFallbackForbiddenError(error)) throw error;
+    // Do not advertise an actionable hit when its original node cannot be bound.
+    return new Map<string, ElementReference>();
+  }
 }
 
 async function resolveSelectorTarget(tabId: number | undefined, selector = "", index = 0, context: ToolContext = {}) {

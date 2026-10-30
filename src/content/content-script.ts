@@ -18,7 +18,7 @@ interface ElementSummary extends PageAction {
   rect: { x: number; y: number; w: number; h: number }; clickablePoint: PagePoint | null;
 }
 interface ContentRequest {
-  action: string; selector?: string; editingHost?: boolean; fillToken?: string; source?: string; offset?: number; limit?: number;
+  action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRef?: string; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
   index?: number; block?: ScrollLogicalPosition; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
@@ -43,7 +43,10 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-10-28-open-shadow";
+  const QZ_CONTENT_VERSION = "2026-10-28-shadow-find-target";
+  const findElementRefs = new Map<string, WeakRef<Element>>();
+  const findElementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  let findElementRefSequence = 0;
   const imageSourceIdentities = new WeakMap<HTMLImageElement, { source: string; identity: string }>();
   const imageSourceScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let imageSourceSequence = 0;
@@ -1765,6 +1768,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         .slice(0, maxResults)
         .map(({ el, summary, match = "", matchKind = "none", score = 0 }) => ({
           ...summary,
+          ...(el.getRootNode() instanceof ShadowRoot ? { _elementRef: rememberFindElement(el) } : {}),
           ...getElementDomLocation(el, selector),
           match,
           matchKind,
@@ -2715,7 +2719,17 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return depth;
   }
 
+  function rememberFindElement(el: Element) {
+    const token = `${findElementRefScope}:${++findElementRefSequence}`;
+    findElementRefs.set(token, new WeakRef(el));
+    while (findElementRefs.size > 5000) findElementRefs.delete(findElementRefs.keys().next().value!);
+    return token;
+  }
+
   function getElementDomLocation(el: Element, rootSelector = "body") {
+    // read_dom's HTML snapshot does not contain shadow trees, even when their
+    // markup happens to match a light-DOM element.
+    if (el.getRootNode() instanceof ShadowRoot) return {};
     const lines = getDomLines(rootSelector);
     if (!Array.isArray(lines)) return {};
     const ownLines = normalizeHtmlForLines(el.outerHTML);
@@ -2728,7 +2742,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       start = lines.findIndex(line => compactHtml(line).includes(compactFirst));
     }
     if (start < 0) {
-      const selector = getAbsoluteSelector(el);
+      const selector = getAbsoluteSelector(el).split(" > ").pop();
       const id = el.id ? `id="${el.id}"` : "";
       const cls = el.className && typeof el.className === "string"
         ? el.className.split(/\s+/).filter(Boolean)[0]
@@ -2736,7 +2750,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       start = lines.findIndex(line =>
         (id && line.includes(id)) ||
         (cls && line.includes(cls)) ||
-        line.includes(selector.split(" > ").pop() || ""),
+        (selector && line.includes(selector)),
       );
     }
     if (start < 0) return {};
@@ -3030,6 +3044,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     }
   }
   host.__qzInvoke = async (node, payload) => {
+    // Background consumes this isolated-world reference once to bind a backend
+    // node UID. It never rematches a selector or exposes a DOM node in a reply.
+    if (payload?.action === "resolveFindElement") {
+      const token = String(payload.elementRef || "");
+      const element = findElementRefs.get(token)?.deref();
+      findElementRefs.delete(token);
+      return element?.isConnected && element.ownerDocument === document ? element : null;
+    }
     const token = String(payload?.fillToken || "");
     if (payload?.action === "releaseFillRoot") {
       if (token) fillRoots.delete(token);

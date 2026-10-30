@@ -91,12 +91,14 @@ This is a source-change gate, not a whole-program data-flow proof.
 | `contentContextId`, `invokeBound` | Static isolated-world identity probe and literal bridge function; arguments travel as CDP values rather than code. |
 | Firefox `page-command` invoke | Firefox-only emulation of CDP `Runtime.callFunctionOn` for the same callers. It compiles the declaration with the page realm's `Function`, never in the isolated world or extension context. The Chrome package does not contain it. |
 | `getElementScreenshotBoundsFromRuntime` | Calls only the packaged element bounds function on an owned page element. |
+| `clearStaleOptionDisabled` | Calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code. |
+| `bindFindElementRefs` | Resolves find_elements tokens through the packaged `ISOLATED_CONTENT_INVOKE` bridge with action `resolveFindElement`; token/action values travel as CDP arguments, not code. |
 
 On the Firefox-integrated branch, `contentContextId` and `invokeBound` read their probe and bridge
 source from the literal constants in `background/tools/isolated-page-calls.ts`. Their function
 fingerprints do not cover those constants, so changes to that module need the same review.
 
-The eight CDP call sites remain explicit findings in the custom report, each limited to its exact
+The ten CDP call sites remain explicit findings in the custom report, each limited to its exact
 function fingerprint and owning output path. storecheck does not detect these calls. In particular,
 `run_script target:"page"` deliberately executes user/Agent source in a page through CDP; it is not
 made static or policy-safe merely because there is no `eval` token. This capability has the same

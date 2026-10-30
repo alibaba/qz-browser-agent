@@ -89,7 +89,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     if (method === "DOM.getFrameOwner") return frameOwner(tabId, String(params.frameId || ""));
     if (method === "DOM.getDocument") return run(tabId, frameId, { op: "document" });
     if (method === "DOM.querySelectorAll") return run(tabId, frameId, { op: "query", nodeId: numberValue(params.nodeId), selector: String(params.selector || "") });
-    if (method === "DOM.describeNode") return run(tabId, frameId, { op: "describe", nodeId: numberValue(params.nodeId), backendNodeId: numberValue(params.backendNodeId) });
+    if (method === "DOM.describeNode") return run(tabId, frameId, { op: "describe", nodeId: numberValue(params.nodeId), backendNodeId: numberValue(params.backendNodeId), objectId: String(params.objectId || "") });
     if (method === "DOM.pushNodesByBackendIdsToFrontend") return run(tabId, frameId, { op: "push", backendNodeIds: numberList(params.backendNodeIds) });
     if (method === "DOM.getBoxModel") return run(tabId, frameId, { op: "box", backendNodeId: numberValue(params.backendNodeId) });
     // Internal batch geometry contract; avoids one executeScript per AX node.
@@ -103,8 +103,11 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
       if (isIsolatedContentInvoke(declaration)) {
         const first = callArgs[0];
         const payload = first && typeof first === "object" && "value" in first ? first.value : undefined;
-        return run(tabId, frameId, {
+        const selected = params.executionContextId ? (contexts.get(tabId) || []).find(context => context.id === numberValue(params.executionContextId)) : undefined;
+        if (params.executionContextId && !selected) throw new Error("Cannot find context");
+        return run(tabId, selected?.frameId ?? frameId, {
           op: "invoke", objectId: String(params.objectId || ""), payload, awaitPromise: params.awaitPromise !== false,
+          returnByValue: params.returnByValue !== false, objectGroup: String(params.objectGroup || ""),
         });
       }
       return run(tabId, frameId, {

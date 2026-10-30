@@ -680,6 +680,36 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+/** Chrome can retain disabled on options after their select is enabled. Only clear confirmed stale flags. */
+async function clearStaleOptionDisabled(send: CdpCommand, nodes: AxNode[]) {
+  const candidates = nodes.filter(node => (node.role?.value === "option" || node.role?.value === "optgroup")
+    && node.properties?.some(prop => prop.name === "disabled" && prop.value?.value === true));
+  if (!candidates.length) return;
+  const objectGroup = `qz-ax-option-disabled-${crypto.randomUUID()}`;
+  try {
+    for (const node of candidates) {
+      if (!node.backendDOMNodeId) continue;
+      try {
+        const resolved = record(await send("DOM.resolveNode", { backendNodeId: node.backendDOMNodeId, objectGroup }));
+        const objectId = record(resolved.object).objectId;
+        if (typeof objectId !== "string" || !objectId) continue;
+        const result = record(await send("Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: `function() { return this.matches(':disabled') || !!this.closest('select:disabled, optgroup:disabled, [aria-disabled="true"]'); }`,
+          returnByValue: true,
+        }));
+        if (!result.exceptionDetails && record(result.result).value === false) {
+          node.properties = node.properties?.filter(prop => prop.name !== "disabled");
+        }
+      } catch {
+        // Detached nodes and hosts without these CDP methods keep their AX state.
+      }
+    }
+  } finally {
+    try { await send("Runtime.releaseObjectGroup", { objectGroup }); } catch { /* Best-effort cleanup. */ }
+  }
+}
+
 /** Graft one direct child document under its iframe. A frame that echoes the main tree, or has no owner, is left out. */
 async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: number,
   progress?: (nodes: AxNode[], pending: string[]) => void): Promise<AxNode[]> {
@@ -714,6 +744,7 @@ async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: n
         if (!backendNodeId) return null;
         const ownerNode = combined.find(node => !node.documentFrameId && Number(node.backendDOMNodeId || 0) === backendNodeId);
         if (!ownerNode?.nodeId) return null;
+        await clearStaleOptionDisabled(frame.send, fetched);
         const present = new Set(fetched.map(node => node?.nodeId).filter(Boolean));
         const prefixed = fetched.filter(node => node?.nodeId).map(node => {
           const parentInFrame = Boolean(node.parentId && present.has(node.parentId));
@@ -853,6 +884,7 @@ registerTool({
       const fetchDepth = snapshotScope === "viewport" ? undefined : rootBackendNodeId ? 40 : axDepth;
       const result = await send("Accessibility.getFullAXTree", fetchDepth == null ? {} : { depth: fetchDepth });
       const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
+      await clearStaleOptionDisabled(send, nodes);
       _signal?.throwIfAborted();
       const snapshotOptions = {
         tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,

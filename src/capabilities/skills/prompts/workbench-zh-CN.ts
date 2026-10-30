@@ -14,7 +14,7 @@ export default `# 技能工作台
 7. 创建新 skill 时调用本 skill 暴露的“创建技能”Skill 工具；写入或编辑 \`plugin.json\`、\`scripts/*.js\`、\`references/*.md\` 等资源时调用“编辑技能资源”，一次只改一个资源且一次只做一个动作；修改已有 skill 正文或元信息时调用“更新技能”；删除时调用“删除技能”。
 8. Skill 脚本不要承载完整流程，只封装可重复、边界明确、适合 LLM tool 调用的局部动作；skill 本身就是用户可选择的入口，不要额外设计 Skill slash command。
 9. 写入或更新后，轻舟会刷新 Skill 注册表；显式声明的新工具和工具结果渲染应立即对当前对话生效。
-10. Skill 脚本默认使用 \`runtime:"page"\` 注入当前任务网页，调用前必须有 workingTabId 或显式传当前任务拥有的 tabId。与页面无关、需要自身设置或网络 API 的脚本使用 \`runtime:"inner"\`：通过 \`$plugin.config\` 读取 manifest 设置，通过标准 \`fetch\` 访问 \`network.allowedOrigins\` 声明的来源。不要给用户自定义 Skill 配置 \`runtime:"host"\`；host 只用于轻舟 core 显式注册的受控后台动作。
+10. Skill 脚本默认使用 \`runtime:"page"\` 注入当前任务网页，页面工具会自动获得可选参数 \`tabRef\`：传当前任务拥有的标签页别名或正整数 ID（也可用数字字符串），省略时使用当前任务工作标签页。在 \`plugin.json\` 中声明时，使用 \`tabRef\` 和 \`type:["integer","string"]\`。未知别名会报错，不会回退到工作标签页。与页面无关、需要自身设置或网络 API 的脚本使用 \`runtime:"inner"\`：通过 \`$plugin.config\` 读取 manifest 设置，通过标准 \`fetch\` 访问 \`network.allowedOrigins\` 声明的来源。不要给用户自定义 Skill 配置 \`runtime:"host"\`；host 只用于轻舟 core 显式注册的受控后台动作。
 11. Skill 脚本工具会自动拥有必填的 \`timeout\` 调用参数；不要把超时写进业务 schema。单位是秒，\`timeout <= 0\` 表示无限等待，\`timeout > 0\` 表示最多等待对应秒数；调用 Skill 工具、\`run_script\` 或 \`run_skill_script\` 时由模型按任务复杂度主动选择。
 12. Skill 工具曝光由 skill 的 \`scope\` 决定，不在 manifest 里额外配置：\`scope:"resident"\` 常驻曝光；\`scope:"site"\` 在当前页面匹配 skill 的 \`domains/urlPatterns\` 时曝光，也可由当前会话 \`load_skill\` 后曝光；\`scope:"global"\` 只在当前会话 \`load_skill\` 后曝光。\`builtin\`、\`readOnly\` 和 \`source\` 只描述来源与权限，不改变加载策略。
 13. 接入外部 MCP 时，先 \`load_skill("qingzhou-mcp")\`，按该 skill 完成 registry 搜索、未注册 URL 探测和必要的最小试调用。只有确认要长期复用时，才把选中的 MCP server 和工具绑定写入目标 skill；已注册 MCP 必须通过对应 Skill 工具名调用。
@@ -27,7 +27,7 @@ export default `# 技能工作台
 
 - 基于网页创建或更新 Skill 时，先从当前任务的页面上下文或 \`list_tabs\` 返回的 \`pageMode\` 确认目标页模式，不凭窗口宽度或 URL 猜测；模式缺失或正在切换时，先重新观察确认。
 - 如果流程是在 \`pageMode:"mobile"\` 下采集或验证的，必须在生成的 \`SKILL.md\` / content 的前置条件中写明“在移动模式下验证”，并写清复用步骤：新页面用 \`open_tab\` 的 \`mode:"mobile"\` 打开；已有任务所属页面用 \`set_page_mode\` 的 \`mode:"mobile"\` 切换。切换会刷新页面，操作前重新读取页面或截图，不复用旧元素引用和坐标。
-- 记录实际验证过的模式；只验证移动模式时，不宣称桌面模式也适用。两种模式流程不同则分别说明。模式要求放在 Skill 正文中，不新增 manifest 字段，也不固化创建时的 tabId。
+- 记录实际验证过的模式；只验证移动模式时，不宣称桌面模式也适用。两种模式流程不同则分别说明。模式要求放在 Skill 正文中，不新增 manifest 字段，也不固化创建时的 tabRef。
 
 ## Skill content 与 Skill 脚本的分工
 
@@ -117,7 +117,7 @@ export default `# 技能工作台
       "parameters": {
         "type": "object",
         "properties": {
-          "tabId": { "type": "integer", "description": "目标标签页 ID" },
+          "tabRef": { "type": ["integer", "string"], "description": "当前任务拥有的标签页别名或正整数 ID；省略时使用工作标签页" },
           "limit": { "type": "integer", "description": "最多返回多少条链接" }
         }
       }
@@ -187,7 +187,7 @@ export default `# 技能工作台
 
 ## 脚本约定
 
-Skill 脚本与 \`run_script.code\` 使用同一种源码形态：默认写成单个 \`async () => { ... }\` 函数表达式，由轻舟自动调用。不要写顶层 \`return\`、IIFE、\`main();\` 或把结果包在 \`result\` 字段里。\`runtime:"page"\` 只在当前任务 workingTabId 或显式传入的自有 tabId 上执行；\`runtime:"inner"\` 在无 DOM 的 Worker 中执行，不需要 tab，可用标准 Web APIs、\`$plugin.config\`、\`fetch\` 和 \`tools/tool\`。
+Skill 脚本与 \`run_script.code\` 使用同一种源码形态：默认写成单个 \`async () => { ... }\` 函数表达式，由轻舟自动调用。不要写顶层 \`return\`、IIFE、\`main();\` 或把结果包在 \`result\` 字段里。\`runtime:"page"\` 在当前任务工作标签页或用 \`tabRef\` 指定的自有页面上执行；\`runtime:"inner"\` 在无 DOM 的 Worker 中执行，不需要 tab，可用标准 Web APIs、\`$plugin.config\`、\`fetch\` 和 \`tools/tool\`。
 
 \`\`\`js
 async () => {
@@ -206,7 +206,7 @@ async () => {
 }
 \`\`\`
 
-两种脚本都可用 \`args/input\`、\`$plugin\`、\`tools/tool\` 和 Web APIs；page 额外可用 \`window/document/tabId\`。inner 没有 DOM，网络来源和 method 必须在 manifest \`network\` 中声明。不要使用 Node.js、\`fs/path/process/require\`、npm 包、本地 shell 或服务器文件系统。
+两种脚本都可用 \`args/input\`、\`$plugin\`、\`tools/tool\` 和 Web APIs；page 额外可用 \`window/document\` 和宿主解析后的数字 \`tabId\`。该运行时值不是作者声明的页面目标参数；调用页面工具时使用 \`tabRef\`。inner 没有 DOM，网络来源和 method 必须在 manifest \`network\` 中声明。不要使用 Node.js、\`fs/path/process/require\`、npm 包、本地 shell 或服务器文件系统。
 
 ### 页面 state 与安全返回规范
 

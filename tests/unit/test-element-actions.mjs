@@ -38,8 +38,8 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false } = {})
       || (method === "Input.dispatchTouchEvent" && params.type === "touchEnd")) {
       if (state.checked !== undefined) state.checked = !state.checked;
     }
-    await onCommand(method, params);
-    return {};
+    const produced = await onCommand(method, params);
+    return produced === undefined ? {} : produced;
   };
   registerPageElementTools({
     registerTool(definition) { if (definition.name === "act_on_element") execute = definition.execute; },
@@ -282,3 +282,60 @@ for (const mobile of [false, true]) {
     assertNoReplay(f);
   });
 }
+
+function frameBox(y) {
+  return { model: { content: [8, y, 308, y, 308, y + 80, 8, y + 80] } };
+}
+
+test("an in-view iframe click keeps the shifted point and does not scroll", async () => {
+  const f = fixture({ frameId: "child" });
+  f.onCommand(method => {
+    if (method === "DOM.getFrameOwner") return { backendNodeId: 5 };
+    if (method === "DOM.getBoxModel") return frameBox(40);
+    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } };
+  });
+  const clicked = await f.call({ action: "click" });
+  assert.equal(clicked.clickDispatched, true);
+  assert.equal(clicked.inputDelivered, true);
+  assert.equal(clicked.element.state.clickablePointInViewport, true);
+  assert.equal(clicked.element.inViewport, true);
+  assert.equal(f.messages.some(message => message.action === "scrollElementIntoView"), false);
+  const release = f.commands.find(command => command.method === "Input.dispatchMouseEvent" && command.params.type === "mouseReleased");
+  assert.deepEqual([release.params.x, release.params.y], [28, 60]);
+});
+
+test("an off-screen iframe click scrolls into the page viewport before dispatch", async () => {
+  const f = fixture({ frameId: "child" });
+  let top = 1800;
+  f.onContent(action => { if (action === "scrollElementIntoView") top = 80; });
+  f.onCommand(method => {
+    if (method === "DOM.getFrameOwner") return { backendNodeId: 5 };
+    if (method === "DOM.getBoxModel") return frameBox(top);
+    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } };
+  });
+  const clicked = await f.call({ action: "click" });
+  assert.equal(clicked.code, undefined);
+  assert.equal(clicked.clickDispatched, true);
+  assert.equal(clicked.inputDelivered, true);
+  assert.equal(clicked.element.state.clickablePointInViewport, true);
+  assert.equal(f.messages.filter(message => message.action === "scrollElementIntoView").length, 1);
+  const release = f.commands.find(command => command.method === "Input.dispatchMouseEvent" && command.params.type === "mouseReleased");
+  assert.deepEqual([release.params.x, release.params.y], [28, 100]);
+  assert.equal(f.commands.filter(command => command.method === "Input.dispatchMouseEvent").length, 2);
+});
+
+test("an iframe click that stays outside the page viewport fails instead of reporting success", async () => {
+  const f = fixture({ frameId: "child" });
+  f.onCommand(method => {
+    if (method === "DOM.getFrameOwner") return { backendNodeId: 5 };
+    if (method === "DOM.getBoxModel") return frameBox(1800);
+    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } };
+  });
+  const missed = await f.call({ action: "click" });
+  assert.equal(missed.code, "CLICK_POINT_OUT_OF_VIEWPORT");
+  assert.notEqual(missed.inputDelivered, true);
+  assert.equal(f.messages.filter(message => message.action === "scrollElementIntoView").length, 1);
+  assert.equal(f.commands.some(command => command.method === "Input.dispatchMouseEvent"), false);
+  assert.equal(f.receipts.size, 0);
+  assertNoReplay(f);
+});

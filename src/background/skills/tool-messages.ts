@@ -11,9 +11,9 @@ const messages = defineMessages("skill-tools", {
     "zh-CN": "必填。Skill 脚本超时，单位秒；<= 0 表示无限等待，> 0 表示最多等待对应秒数。",
     "en": "Required. Skill script timeout in seconds: <= 0 means no time limit; > 0 sets the maximum duration."
   },
-  "tabId": {
-    "zh-CN": "本次调用的目标网页标签页 ID；省略时使用当前任务 workingTabId。",
-    "en": "Target web tab ID for this call. Defaults to the current task's workingTabId."
+  "tabRef": {
+    "zh-CN": "本次调用的目标网页：当前任务的标签页别名或正整数标签页 ID（也可用数字字符串）；省略时使用当前任务工作标签页。",
+    "en": "Target web page: a current-task tab alias or positive integer tab ID (numeric strings also work). Defaults to the current task's working tab."
   },
   "source": {
     "zh-CN": "来源扩展: {name}",
@@ -36,8 +36,8 @@ const messages = defineMessages("skill-tools", {
     "en": "Runs in the internal Worker (no web tab needed); can read $plugin.config and fetch origins allowed by the manifest."
   },
   "pageTarget": {
-    "zh-CN": "页面目标: 使用显式传入的当前任务拥有 tabId，或当前任务 workingTabId。",
-    "en": "Page target: uses an explicit tabId owned by the current task, or the current task's workingTabId."
+    "zh-CN": "页面目标: 用 tabRef 指定当前任务拥有的标签页别名或正整数 ID；省略时使用当前任务工作标签页。",
+    "en": "Page target: pass tabRef as an alias or positive integer ID of a tab owned by the current task; omit it to use the current task's working tab."
   },
   "requiredTimeout": {
     "zh-CN": "必须传入 timeout（秒）：<= 0 表示无限等待，> 0 表示最多等待对应秒数。",

@@ -148,7 +148,7 @@ async function createHarness() {
     const opened = await call("open_tab", { url: `http://127.0.0.1:${server.address().port}/` });
     expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
     await expect.poll(async () => { try { return (await state()).ready; } catch { return "loading"; } }).toBe("complete");
-    return { call, state, close };
+    return { call, state, close, page: browser.pages().find(page => page.url().startsWith('http://127.0.0.1:')) };
   } catch (error) {
     await close();
     throw error;
@@ -171,6 +171,70 @@ async function tree(h) {
   expect(last, JSON.stringify(last)).not.toHaveProperty("code");
   return last.snapshot;
 }
+
+test("find_elements binds open shadow hits to inspectable, clickable node UIDs", async ({}, testInfo) => {
+  const h = await createHarness();
+  try {
+    // No AX snapshot is needed to create a find_elements target.
+    const found = await h.call('find_elements', { roles: ['button'] });
+    expect(found, JSON.stringify(found)).not.toHaveProperty('code');
+    expect(found.results.some(hit => hit.text === 'Closed')).toBe(false);
+    const buy = found.results.find(hit => hit.text === 'Buy');
+    expect(buy?.target, JSON.stringify(found)).toMatch(/^uid:/);
+    for (const hit of found.results) {
+      expect(hit.target).toMatch(/^uid:/);
+      expect(hit).not.toHaveProperty('_elementRef');
+      expect(hit).not.toHaveProperty('line');
+      expect(hit).not.toHaveProperty('lineRange');
+    }
+    const inspection = await h.call('inspect_element', { target: buy.target });
+    expect(inspection).toMatchObject({ tag: 'button', text: 'Buy', target: buy.target });
+    expect(inspection).not.toHaveProperty('lineRange');
+    const dom = await h.call('read_dom', { selector: buy.target });
+    expect(dom.content).toContain('Buy');
+    expect(dom.content).not.toContain('Header');
+    const clicked = await h.call('act_on_element', { target: buy.target, action: 'click' });
+    expect(clicked, JSON.stringify(clicked)).toMatchObject({ clickDispatched: true });
+    const state = await h.state();
+    expect(state.hits).toMatchObject({ buy: 1, header: 0, closed: 0 });
+    await testInfo.attach('shadow-find-target', {
+      body: JSON.stringify({ hit: buy, inspection, dom, clicked, hits: state.hits }, null, 2), contentType: 'application/json',
+    });
+
+    await h.page.evaluate(() => {
+      const host = document.createElement('div');
+      document.querySelector('#open-host').shadowRoot.append(host);
+      const root = host.attachShadow({ mode: 'open' });
+      root.innerHTML = '<button id="nested">Nested find</button>';
+      root.firstElementChild.addEventListener('click', () => { window.hits.nested = (window.hits.nested || 0) + 1; });
+    });
+    const nested = await h.call('find_elements', { selector: '#nested', roles: ['button'] });
+    const target = nested.results[0].target;
+    expect(target).toMatch(/^uid:/);
+    const scoped = await h.call('find_elements', { selector: target, roles: ['button'] });
+    expect(scoped.results[0].target).toMatch(/^uid:/);
+    expect((await h.call('inspect_element', { target: scoped.results[0].target })).text).toBe('Nested find');
+    expect(await h.call('act_on_element', { target, action: 'click' })).toMatchObject({ clickDispatched: true });
+    expect((await h.state()).hits.nested).toBe(1);
+    await h.page.evaluate(() => {
+      const root = document.querySelector('#open-host').shadowRoot.lastElementChild.shadowRoot;
+      root.firstElementChild.replaceWith(root.firstElementChild.cloneNode(true));
+    });
+    expect(await h.call('inspect_element', { target })).toHaveProperty('code', 'STALE_ELEMENT_UID');
+    expect(await h.call('act_on_element', { target, action: 'click' })).toHaveProperty('code', 'STALE_ELEMENT_UID');
+    expect((await h.state()).hits.nested).toBe(1);
+    const refreshed = await h.call('find_elements', { selector: '#nested' });
+    expect((await h.call('inspect_element', { target: refreshed.results[0].target })).text).toBe('Nested find');
+
+    await h.page.reload();
+    expect(await h.call('inspect_element', { target: buy.target })).toHaveProperty('code', 'STALE_ELEMENT_UID');
+    const afterReload = await h.call('find_elements', { roles: ['button'], pattern: '^Buy$' });
+    expect(await h.call('act_on_element', { target: afterReload.results[0].target, action: 'click' })).toMatchObject({ clickDispatched: true });
+    expect((await h.state()).hits.buy).toBe(1);
+  } finally {
+    await h.close();
+  }
+});
 
 test.describe("shadow hit testing", () => {
   test.describe.configure({ mode: "serial", timeout: 180000 });

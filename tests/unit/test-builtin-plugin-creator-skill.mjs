@@ -20,6 +20,8 @@ import {
   SKILL_MANIFEST_SCHEMA_VERSION,
 } from "../../src/shared/skills/skill-manifest.js";
 import { SKILL_SETTING_FIELD_TYPES } from "../../src/shared/skills/skill-settings.js";
+import { withLanguage } from "../../src/shared/i18n/index.js";
+import { modelT } from "../../src/capabilities/skills/model-messages.js";
 
 const storage = {
   _skills: {
@@ -125,6 +127,24 @@ function storedSkill(name) {
 
 function hasSkill(list, name) {
   return list.some(skill => skillMatchesName(skill, name));
+}
+
+for (const language of ['en', 'zh-CN']) {
+  const workbench = findBuiltinSkill(BUILTIN_SKILL_WORKBENCH_NAME, language);
+  const examples = [...workbench.content.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]));
+  const pageTool = examples.find(example => example.id === 'page-inspector').tools[0];
+  assert.deepEqual(pageTool.parameters.properties.tabRef.type, ['integer', 'string']);
+  assert.equal(pageTool.parameters.properties.tabId, undefined);
+  assert.match(workbench.content, /tabRef/);
+  // The one remaining mention explains the host-resolved script runtime value, not call arguments.
+  assert.equal((workbench.content.match(/\btabId\b/g) || []).length, 1);
+  for (const resource of workbench.resources.filter(resource => resource.type === 'script')) {
+    assert.doesNotMatch(resource.content, /\btabId\b/, `${language}: ${resource.path}`);
+  }
+  const guidance = withLanguage(language, () => modelT('runtimeGuidance'));
+  assert.match(guidance, /tabRef/);
+  assert.equal((guidance.match(/\btabId\b/g) || []).length, 1);
+  assert.doesNotMatch(findBuiltinSkill(BUILTIN_SITE_SKILL_AUTHOR_SKILL_NAME, language).content, /\btabId\b/);
 }
 
 const builtin = findBuiltinSkill(BUILTIN_SKILL_WORKBENCH_NAME);
@@ -871,7 +891,7 @@ const bilibiliManifestContent = JSON.stringify({
     parameters: {
       type: "object",
       properties: {
-        tabId: { type: "integer", description: "目标标签页 ID" },
+        tabRef: { type: ["integer", "string"], description: "目标标签页别名或正整数 ID" },
         limit: { type: "integer", description: "最多返回多少条视频，默认 20，最大 200" },
       },
     },

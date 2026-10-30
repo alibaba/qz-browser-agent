@@ -341,14 +341,14 @@ return await tools.import_skill_from_page_zip(payload);`,
   "scripts/import-git-repository.js": `const opened = await tools.open_tab({ url: args.repositoryUrl });
 return await tools.import_git_skill_repository({
   repositoryUrl: args.repositoryUrl,
-  tabId: opened.id,
+  tabRef: opened.id,
   overwrite: args.overwrite === true,
 });`,
   "scripts/install-skill-to-git.js": `const opened = await tools.open_tab({ url: args.repositoryUrl });
-await tools.use_tab({ tabId: opened.id });
+await tools.use_tab({ tabRef: opened.id });
 return await tools.install_skill_to_git({
   name: args.name,
-  tabId: opened.id,
+  tabRef: opened.id,
   commitMessage: args.commitMessage,
 });`,
 };

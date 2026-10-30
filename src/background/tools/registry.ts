@@ -25,6 +25,19 @@ export function withCommonToolParameters(parameters: ToolSchema): ToolSchema {
   return next;
 }
 
+/** Expose references to the model; execution keeps numeric tabId after host resolution. */
+export function withTabReferenceParameters(parameters: ToolSchema): ToolSchema {
+  if (!parameters.properties.tabId) return parameters;
+  return {
+    ...parameters,
+    properties: {
+      ...Object.fromEntries(Object.entries(parameters.properties).filter(([key]) => key !== "tabId")),
+      tabRef: { type: ["integer", "string"], description: t("tabRef") },
+    },
+    ...(parameters.required ? { required: parameters.required.map(field => field === "tabId" ? "tabRef" : field) } : {}),
+  };
+}
+
 export interface CoreToolSnapshot {
   readonly language: string;
   get(name: string): RegisteredTool | undefined;
@@ -96,13 +109,7 @@ export function createToolRegistry() {
         if (runtime.model?.noImages?.omitParameters?.some(field => normalizedParameters.required?.includes(field))) {
           throw new TypeError(`Tool ${name}: noImages may only omit optional parameters`);
         }
-        // The host resolves tabRef before strict numeric runtime validation. Legacy tabId stays input-compatible.
-        const modelParameters = runtime.page && parameters.properties.tabId
-          ? { ...normalizedParameters,
-            properties: { ...Object.fromEntries(Object.entries(normalizedParameters.properties).filter(([key]) => key !== "tabId")),
-              tabRef: { type: ["integer", "string"] as const, description: t("tabRef") } },
-            ...(normalizedParameters.required ? { required: normalizedParameters.required.map(field => field === "tabId" ? "tabRef" : field) } : {}) }
-          : normalizedParameters;
+        const modelParameters = runtime.page ? withTabReferenceParameters(normalizedParameters) : normalizedParameters;
         const identity = toolIdentity({ name, title: runtime.title, familyId: runtime.familyId, rendererId: runtime.rendererId });
         const presentation = getCoreToolMetadata(identity.capabilityId);
         return [name, materialize({

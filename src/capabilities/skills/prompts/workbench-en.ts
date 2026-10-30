@@ -14,7 +14,7 @@ Use this skill when the user wants to create, edit, delete, import, or publish a
 7. Use this skill's create tool for new skills, resource-editing tool for \`plugin.json\`, \`scripts/*.js\`, and \`references/*.md\`, update tool for existing content or metadata, and delete tool for removal. Edit one resource with one action per call.
 8. Scripts should implement reusable, well-defined local operations suitable for tool calls, not entire workflows. The skill itself is the user-selectable entry point; do not add Skill slash commands.
 9. qz refreshes the Skill registry after a write or update. Newly declared tools and result views should become available to the current conversation immediately.
-10. Scripts default to \`runtime:"page"\` on the current task's page. A workingTabId or an explicitly supplied task-owned tabId is required. For page-independent scripts using their own settings or network APIs, use \`runtime:"inner"\`: read manifest settings through \`$plugin.config\` and use standard \`fetch\` only for origins declared in \`network.allowedOrigins\`. Do not assign \`runtime:"host"\` to user-created Skills; it is reserved for controlled Background actions explicitly registered by qz core.
+10. Scripts default to \`runtime:"page"\` on the current task's page. Page tools automatically receive an optional \`tabRef\` parameter: pass a task-owned tab alias or positive integer ID (numeric strings also work), or omit it to use the current task's working tab. If declaring it in \`plugin.json\`, use \`tabRef\` with \`type:["integer","string"]\`. Unknown aliases fail rather than falling back to the working tab. For page-independent scripts using their own settings or network APIs, use \`runtime:"inner"\`: read manifest settings through \`$plugin.config\` and use standard \`fetch\` only for origins declared in \`network.allowedOrigins\`. Do not assign \`runtime:"host"\` to user-created Skills; it is reserved for controlled Background actions explicitly registered by qz core.
 11. Skill script tools automatically receive a required \`timeout\` argument; do not add it to the business schema. Values are in seconds: \`timeout <= 0\` waits indefinitely; \`timeout > 0\` sets the maximum wait. Choose it deliberately for Skill tools, \`run_script\`, and \`run_skill_script\` according to task complexity.
 12. Tool availability follows the skill's \`scope\`, not an extra manifest setting. \`resident\` is always available; \`site\` is available when the page matches domains/urlPatterns or after the current conversation calls \`load_skill\`; \`global\` is available only after \`load_skill\` in the current conversation. \`builtin\`, \`readOnly\`, and \`source\` describe origin and permissions, not loading policy.
 13. For external MCP, first \`load_skill("qingzhou-mcp")\` and follow its registry search, unregistered-URL inspection, and minimal test-call workflow. Persist selected server/tool bindings only when ongoing reuse is confirmed. Call registered MCP tools by their Skill tool names.
@@ -27,7 +27,7 @@ Use this skill when the user wants to create, edit, delete, import, or publish a
 
 - When creating or updating a Skill from a webpage, confirm the target page's mode using the current task's page context or the \`pageMode\` returned by \`list_tabs\`. Do not infer it from the window width or URL. If the mode is missing or changing, observe the page again to confirm it first.
 - If the workflow was captured or tested with \`pageMode:"mobile"\`, the generated \`SKILL.md\` / content must state “Tested in mobile mode” in its prerequisites and explain how to reproduce that setup: open a new page with \`open_tab\` and \`mode:"mobile"\`, or switch an existing task-owned page with \`set_page_mode\` and \`mode:"mobile"\`. Switching modes reloads the page; read the page or take a new screenshot before interacting, without reusing old element references or coordinates.
-- Record only the modes actually tested. Mobile-only testing does not establish desktop compatibility; document separate workflows if the modes differ. Keep mode requirements in the Skill body, without adding manifest fields or hard-coding the tabId used during authoring.
+- Record only the modes actually tested. Mobile-only testing does not establish desktop compatibility; document separate workflows if the modes differ. Keep mode requirements in the Skill body, without adding manifest fields or hard-coding the tabRef used during authoring.
 
 ## Content and scripts
 
@@ -117,7 +117,7 @@ qz supports remote HTTP MCP only, not local stdio. \`qingzhou-mcp\` handles disc
       "parameters": {
         "type": "object",
         "properties": {
-          "tabId": { "type": "integer", "description": "Target tab ID" },
+          "tabRef": { "type": ["integer", "string"], "description": "Task-owned tab alias or positive integer ID; defaults to the working tab" },
           "limit": { "type": "integer", "description": "Maximum number of links to return" }
         }
       }
@@ -187,7 +187,7 @@ Scripts read settings through \`$plugin.config.<key>\`. Secret values are popula
 
 ## Script conventions
 
-Skill scripts use the same source form as run_script.code: normally one \`async () => { ... }\` function expression, which qz invokes. Do not use top-level return, an IIFE, main(), or a result wrapper. \`runtime:"page"\` runs only on workingTabId or an explicit task-owned tabId. \`runtime:"inner"\` runs in a Worker without a DOM or tab requirement, with standard Web APIs, \`$plugin.config\`, fetch, and tools/tool.
+Skill scripts use the same source form as run_script.code: normally one \`async () => { ... }\` function expression, which qz invokes. Do not use top-level return, an IIFE, main(), or a result wrapper. \`runtime:"page"\` runs on the current task's working tab or a task-owned page selected with \`tabRef\`. \`runtime:"inner"\` runs in a Worker without a DOM or tab requirement, with standard Web APIs, \`$plugin.config\`, fetch, and tools/tool.
 
 \`\`\`js
 async () => {
@@ -206,7 +206,7 @@ async () => {
 }
 \`\`\`
 
-Both runtimes provide args/input, $plugin, tools/tool, and Web APIs. page additionally provides window/document/tabId. inner has no DOM; network origins and methods must be declared in the manifest's network settings. Do not use Node.js, fs/path/process/require, npm packages, local shell commands, or the server filesystem.
+Both runtimes provide args/input, $plugin, tools/tool, and Web APIs. page additionally provides window/document and the host-resolved numeric tabId. This runtime value is not an author-declared targeting parameter; use tabRef when calling page tools. inner has no DOM; network origins and methods must be declared in the manifest's network settings. Do not use Node.js, fs/path/process/require, npm packages, local shell commands, or the server filesystem.
 
 ### Page state and safe return values
 
