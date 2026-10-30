@@ -377,8 +377,9 @@ assert.equal(activeSchemaNames.includes("qingzhou_skill_author__edit_skill_resou
 const activeXhsToolSchema = activeSchemas.find(schema => schema.function.name === "xhs_booster__collect_notes");
 assert.equal(activeXhsToolSchema.function.parameters.properties.timeout.type, "number");
 assert.deepEqual(activeXhsToolSchema.function.parameters.required, ["timeout"]);
-assert.ok(["number", "integer"].includes(activeXhsToolSchema.function.parameters.properties.tabId.type));
-assert.equal(activeXhsToolSchema.function.parameters.required.includes("tabId"), false, "plugin page tools should default to the current working tab");
+assert.deepEqual(activeXhsToolSchema.function.parameters.properties.tabRef.type, ["integer", "string"]);
+assert.equal(activeXhsToolSchema.function.parameters.properties.tabId, undefined);
+assert.equal(activeXhsToolSchema.function.parameters.required.includes("tabRef"), false, "plugin page tools should default to the current working tab");
 assert.match(
   toolsSource,
   /resolveToolTimeoutMs\(definition, executionArgs\)/,

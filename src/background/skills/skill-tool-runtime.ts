@@ -3,6 +3,7 @@ import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { findBuiltinSkill } from "../../shared/skills/builtin-skills.js";
 import { materializeContribution } from "../../shared/capabilities.js";
 import { ToolExecutionError } from "../tools/arguments.js";
+import { withTabReferenceParameters } from "../tools/registry.js";
 import type { ToolContext } from "../../sdk/background.js";
 import type { ToolSchema, ToolParameter } from "../../shared/contracts/tool.js";
 import type { SkillManifest, SkillTool, SkillMcpServer, SkillActivationContext } from "../../shared/skills/skill-manifest.js";
@@ -158,12 +159,13 @@ function buildActiveSkillToolSchemas(options: SkillToolOptions) {
     if (!skillMatchesContext(plugin, context, { loadedPluginSkillNames })) continue;
     for (const tool of plugin.tools || []) {
       if (tool.hidden) continue;
+      const parameters = getSkillToolParameters(tool);
       schemas.push({
         type: "function" as const,
         function: {
           name: tool.name,
           description: buildSkillToolDescription(plugin, tool),
-          parameters: getSkillToolParameters(tool),
+          parameters: isSkillPageTool(tool) ? withTabReferenceParameters(parameters) : parameters,
         },
         _qingzhouPlugin: {
           pluginId: plugin.id,
@@ -176,7 +178,7 @@ function buildActiveSkillToolSchemas(options: SkillToolOptions) {
   return schemas;
 }
 
-/** Returns the exact parameter contract used by both model exposure and execution. */
+/** Runtime parameter contract, before model-facing tabRef projection. */
 export function getSkillToolParameters(tool: Partial<SkillTool> = {}) {
   return withSkillToolControlParameters(tool.parameters || { type: "object", properties: {} }, tool);
 }
@@ -767,7 +769,8 @@ function buildSkillToolDescription(plugin: SkillManifest, tool: SkillTool) {
       : skillToolT("optionalTimeout"),
     renderer ? buildSkillRendererReturnContract(renderer) : "",
   ].filter(Boolean);
-  return parts.join("\n");
+  const description = parts.join("\n");
+  return pageTool ? description.replace(/\btabId\b/g, "tabRef") : description;
 }
 
 function withSkillToolControlParameters(parameters: ToolSchema, tool: Partial<SkillTool> = {}): ToolSchema {
@@ -803,8 +806,8 @@ function isSkillScriptTool(tool: Partial<SkillTool> = {}) {
   return Boolean(tool?.script) && (tool.runtime || "page") !== "mcp";
 }
 
-function isSkillPageTool(tool: Partial<SkillTool> = {}) {
-  return (tool.runtime || "page") !== "host" && (tool.runtime || "page") !== "mcp" && tool.needsPage !== false;
+export function isSkillPageTool(tool: Partial<SkillTool> = {}) {
+  return (tool.runtime || "page") === "page" && tool.needsPage !== false;
 }
 
 function normalizeSkillToolTabIdProperty(property?: ToolParameter): ToolParameter {

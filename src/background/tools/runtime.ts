@@ -72,6 +72,7 @@ import {
   getSkillToolDefinition,
   getSkillToolParameters,
   getHostCoreToolTarget,
+  isSkillPageTool,
   isSkillToolActive,
   listSkillMcpServers,
   listSkillMcpTools,
@@ -356,6 +357,7 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
     ...entry.tool,
     ...identity,
     parameters: getSkillToolParameters(entry.tool),
+    page: isSkillPageTool(entry.tool) ? "owned" : undefined,
     model: hostDefinition?.model,
     // Skill execution may invoke arbitrary tools; manifests cannot opt out of this boundary.
     behavior: { ...hostDefinition?.behavior, barrier: true },
