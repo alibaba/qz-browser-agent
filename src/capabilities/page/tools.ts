@@ -176,7 +176,7 @@ registerTool({
     const result = await readBound(target, context, call => sendToContent(target.tabId, "findElements", {
       pattern, flags, selector: scopedSelector(target), roles, tags, types, limit, includeHidden,
     }, call, context));
-    return addElementTargetsToFindResult(result);
+    return addElementTargetsToFindResult(result, target.tabId, context, target.ref);
   },
 });
 

@@ -505,7 +505,8 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
         return { nodeIds: found.map(idFor) };
       }
       case "describe":
-        return described(command.backendNodeId ? nodeFor(command.backendNodeId) : nodeFor(Number(command.nodeId || 0)));
+        return described(command.objectId ? state.objects.get(command.objectId)?.node || null
+          : command.backendNodeId ? nodeFor(command.backendNodeId) : nodeFor(Number(command.nodeId || 0)));
       case "push":
         return { nodeIds: (command.backendNodeIds || []).map(id => nodeFor(Number(id)) ? Number(id) : 0) };
       case "rects": {
@@ -541,11 +542,17 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
       }
       case "invoke": {
         const bound = state.objects.get(String(command.objectId || ""));
-        if (!bound) return failed(new Error("Cannot find object"));
+        if (command.objectId && !bound) return failed(new Error("Cannot find object"));
         const fn = page.__qzInvoke;
         if (typeof fn !== "function") throw new Error("Content script bridge is missing");
-        let value: unknown = fn.call(bound.node, bound.node, command.payload);
+        let value: unknown = fn.call(bound?.node, bound?.node || null, command.payload);
         if (command.awaitPromise !== false && value && typeof (value as Promise<unknown>).then === "function") value = await value;
+        if (command.returnByValue === false && value && typeof value === "object" && "nodeType" in value && value.nodeType === 1) {
+          const node = value as DomNode;
+          const objectId = `ff-node-${idFor(node)}`;
+          state.objects.set(objectId, { node, group: String(command.objectGroup || "") });
+          return { result: { type: "object", subtype: "node", objectId } };
+        }
         return { result: remote(value) };
       }
       case "call": {
@@ -692,14 +699,14 @@ export function firefoxConsoleBridge(): void {
 export type PageCommand =
   | { op: "document" }
   | { op: "query"; nodeId: number; selector: string }
-  | { op: "describe"; nodeId?: number; backendNodeId?: number }
+  | { op: "describe"; nodeId?: number; backendNodeId?: number; objectId?: string }
   | { op: "push"; backendNodeIds: number[] }
   | { op: "box"; backendNodeId: number }
   | { op: "rects"; backendNodeIds: number[] }
   | { op: "resolve"; backendNodeId: number; objectGroup?: string }
   | { op: "call"; objectId: string; functionDeclaration: string; arguments?: { value?: unknown }[]; awaitPromise?: boolean }
   | { op: "probe" }
-  | { op: "invoke"; objectId: string; payload?: unknown; awaitPromise?: boolean }
+  | { op: "invoke"; objectId: string; payload?: unknown; awaitPromise?: boolean; returnByValue?: boolean; objectGroup?: string }
   | { op: "evaluate"; expression: string; awaitPromise?: boolean }
   | { op: "release"; objectGroup?: string }
   | { op: "ax"; depth?: number }

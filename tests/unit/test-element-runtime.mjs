@@ -13,6 +13,7 @@ let exposeOopif = false;
 let childLoaderId = "child-loader";
 let navigateDuringBind = false;
 let childDocumentAvailable = true;
+let findBindingError = null;
 const scriptCalls = [];
 globalThis.chrome = {
   runtime: { id: "extension-id" },
@@ -116,7 +117,14 @@ const runtime = createElementRuntime({
         const bridge = Number(params.contextId) === 8 ? childBridge : true;
         return { result: { value: { extensionId: "extension-id", bridge } } };
       }
-      if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true, action: params.arguments?.[0]?.value?.action || "" } } };
+      if (method === "Runtime.callFunctionOn") {
+        if (params.arguments?.[0]?.value?.action === 'resolveFindElement') {
+          if (findBindingError) throw findBindingError;
+          return { result: params.arguments[0].value.elementRef === 'removed'
+            ? { subtype: 'null', value: null } : { subtype: 'node', objectId: 'found-shadow-node' } };
+        }
+        return { result: { value: { ok: true, action: params.arguments?.[0]?.value?.action || "" } } };
+      }
       if (method === "Runtime.releaseObjectGroup") return {};
       throw new Error(`unexpected CDP method ${method}`);
     };
@@ -215,6 +223,39 @@ assert.equal(commands.slice(beforeStale).some(command => command.method === "DOM
 const bound = await runtime.bindBackendNodes(5, ["button.dup", "#only"], context);
 assert.equal(bound.loaderId, "loader-live");
 assert.deepEqual(bound.ids, [0, 44], "a selector that matches two nodes must not bind the first");
+
+{
+  const light = { results: [{ selector: '#only', tag: 'button', actionable: true, line: 2, lineRange: [2, 2] }] };
+  const before = debuggerUses;
+  assert.equal(JSON.stringify(await runtime.addElementTargetsToFindResult(light, 5, context)),
+    '{"results":[{"selector":"#only","tag":"button","actionable":true,"line":2,"lineRange":[2,2],"target":"css:#only"}]}');
+  assert.equal(debuggerUses, before, 'light-DOM finds must not attach the debugger');
+  const input = { results: [light.results[0], { selector: '', text: 'Shadow', actionable: true, _elementRef: 'live' }] };
+  const found = await runtime.addElementTargetsToFindResult(input, 5, context);
+  assert.equal(JSON.stringify(found.results[0]), JSON.stringify({ ...light.results[0], target: 'css:#only' }));
+  const hit = found.results[1];
+  assert.match(hit.target, /^uid:t5\./);
+  assert.equal(hit.actionable, true);
+  assert.equal(Object.hasOwn(hit, '_elementRef'), false);
+  assert.equal(runtime.elementUidTabId([hit.target]), 5);
+  const ref = await runtime.resolveElementReference(5, { target: hit.target }, context);
+  assert.equal(ref.ref.backendNodeId, 44);
+  assert.equal(ref.ref.loaderId, 'loader-live');
+  assert.equal((await runtime.callElement(5, ref, 'inspectElement', {}, context)).action, 'inspectElement');
+  await assert.rejects(runtime.resolveElementReference(5, { target: hit.target }, { sessionId: 'another-session' }), { code: 'ELEMENT_UID_SESSION_MISMATCH' });
+  assert.ok(commands.some(command => command.method === 'DOM.describeNode' && command.params.objectId === 'found-shadow-node'));
+  assert.ok(commands.some(command => command.method === 'Runtime.releaseObjectGroup' && command.params.objectGroup.startsWith('qz-uid-find-')));
+  const removed = await runtime.addElementTargetsToFindResult({ results: [{ selector: '', actionable: true, _elementRef: 'removed' }] }, 5, context);
+  assert.deepEqual(removed, { results: [{ selector: '', actionable: false }] });
+  try {
+    findBindingError = new Error('Debugger unavailable');
+    const failed = await runtime.addElementTargetsToFindResult(input, 5, context);
+    assert.deepEqual(failed.results[1], { selector: '', text: 'Shadow', actionable: false });
+    assert.deepEqual(failed.results[0], found.results[0]);
+    findBindingError = new ToolExecutionError('OPERATION_ABORTED', 'cancelled');
+    await assert.rejects(runtime.addElementTargetsToFindResult(input, 5, context), { code: 'OPERATION_ABORTED' });
+  } finally { findBindingError = null; }
+}
 
 const beforeChildBind = commands.length;
 const childScope = { frameId: "child", loaderId: "child-loader" };

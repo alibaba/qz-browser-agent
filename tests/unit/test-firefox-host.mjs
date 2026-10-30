@@ -1317,7 +1317,7 @@ test("isolated content calls run without compiling a function", async () => {
     return nativeFunction(...args);
   };
   globalThis.chrome = { runtime: { id: "qz-browser-agent@heleifz.github.io" } };
-  globalThis.__qzInvoke = (node, payload) => ({
+  globalThis.__qzInvoke = (node, payload) => payload?.action === 'resolveFindElement' ? document.documentElement : ({
     ok: true,
     action: payload && payload.action,
     nodeName: node && node.nodeName,
@@ -1362,6 +1362,22 @@ test("isolated content calls run without compiling a function", async () => {
       });
       assert.equal(invoked.result.value.action, "ping");
       assert.equal(invoked.result.value.nodeName, "#document");
+      const found = await browser.debugger.sendCommand({ tabId: 8 }, 'Runtime.callFunctionOn', {
+        executionContextId: isolatedId, functionDeclaration: ISOLATED_CONTENT_INVOKE,
+        arguments: [{ value: { action: 'resolveFindElement', elementRef: 'shadow-token' } }],
+        awaitPromise: true, returnByValue: false, objectGroup: 'find-nodes',
+      });
+      assert.equal(found.result.subtype, 'node');
+      const described = await browser.debugger.sendCommand({ tabId: 8 }, 'DOM.describeNode', { objectId: found.result.objectId });
+      assert.equal(described.node.nodeName, 'HTML');
+      assert.ok(described.node.backendNodeId > 0);
+      await browser.debugger.sendCommand({ tabId: 8 }, 'Runtime.releaseObjectGroup', { objectGroup: 'find-nodes' });
+      const released = await browser.debugger.sendCommand({ tabId: 8 }, 'DOM.describeNode', { objectId: found.result.objectId });
+      assert.equal(released.node.backendNodeId, 0);
+      await assert.rejects(browser.debugger.sendCommand({ tabId: 8 }, 'Runtime.callFunctionOn', {
+        executionContextId: -1, functionDeclaration: ISOLATED_CONTENT_INVOKE,
+        arguments: [{ value: { action: 'resolveFindElement' } }],
+      }), /Cannot find context/);
       assert.equal(compiled, 0);
       const unknown = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.callFunctionOn", {
         objectId: resolved.object.objectId,
