@@ -78,6 +78,12 @@ const skillToolRegistrySnapshot = prepareSkillToolRegistryFromSkills([{
       format: SKILL_MANIFEST_FORMAT, schemaVersion: SKILL_MANIFEST_SCHEMA_VERSION, id: 'tab-skill',
       tools: [
         { name: 'page', runtime: 'page' }, { name: 'default' },
+        { name: 'authored', parameters: { type: 'object', properties: {
+          tabRef: { type: ['integer', 'string'], description: 'Page to inspect' },
+        }, required: ['tabRef'] } },
+        { name: 'legacy', description: 'Inspect the page selected by tabId', parameters: { type: 'object', properties: {
+          tabId: { type: 'integer', description: 'Page selected by tabId' },
+        }, required: ['tabId'] } },
         { name: 'inner', runtime: 'inner' }, { name: 'host', runtime: 'host' },
         { name: 'mcp', runtime: 'mcp', mcp: { server: 'fixture', tool: 'read' } },
         { name: 'no_page', runtime: 'page', needsPage: false },
@@ -88,22 +94,23 @@ const skillToolRegistrySnapshot = prepareSkillToolRegistryFromSkills([{
 }]);
 const skillCall = (localName, args = {}) => call(`skill-${localName}`, `tab_skill__${localName}`, { timeout: 5, ...args });
 
-for (const language of ['en', 'zh-CN']) test(`Skill page schemas expose tabRef while runtime keeps tabId (${language})`, () => {
+const pageSkillNames = ['page', 'default', 'authored', 'legacy'];
+for (const language of ['en', 'zh-CN']) test(`Skill author and model schemas agree on tabRef (${language})`, () => {
   const f = fixture({ skillToolRegistrySnapshot });
   const options = { ...f.context(language), language };
   for (const schemas of [getActiveSkillToolSchemasSync(options), f.runtime.getSchemas(options)]) {
-    for (const localName of ['page', 'default']) {
+    for (const localName of pageSkillNames) {
       const schema = schemas.find(item => item.function.name === `tab_skill__${localName}`).function;
-      const builtin = f.runtime.getSchemas(options).find(item => item.function.name === 'read_ref').function;
-      assert.deepEqual(schema.parameters.properties.tabRef, builtin.parameters.properties.tabRef);
+      assert.deepEqual(schema.parameters.properties.tabRef.type, ['integer', 'string']);
+      assert.doesNotMatch(schema.parameters.properties.tabRef.description, /\btabId\b/);
       assert.equal(schema.parameters.properties.tabId, undefined);
-      assert.deepEqual(schema.parameters.required, ['timeout']);
+      assert.deepEqual(schema.parameters.required, ['timeout', ...(['authored', 'legacy'].includes(localName) ? ['tabRef'] : [])]);
       assert.match(schema.description, /\btabRef\b/);
       assert.doesNotMatch(schema.description, /\btabId\b/);
       const definition = f.runtime.resolveDefinition(schema.name, options);
       assert.equal(definition.page, 'owned');
-      assert.equal(definition.parameters.properties.tabId.type, 'number');
-      assert.equal(definition.parameters.properties.tabRef, undefined);
+      assert.deepEqual(definition.parameters, schema.parameters);
+      assert.equal(definition.parameters.properties.tabId, undefined);
       assert.equal(definition.behavior.barrier, true);
       assert.deepEqual(f.runtime.getBatchTabPolicy(schema.name, { tabRef: 'dy' }, options),
         { kind: 'target', implicit: true, observation: false });
@@ -117,10 +124,27 @@ for (const language of ['en', 'zh-CN']) test(`Skill page schemas expose tabRef w
       assert.deepEqual(f.runtime.getBatchTabPolicy(schema.name, { tabRef: 'dy' }, options), { kind: 'barrier' });
     }
   }
-  assert.equal(getSkillToolParameters({ runtime: 'inner', script: 'read.js' }).properties.tabId, undefined);
+  for (const tool of [{}, { runtime: 'page' }]) {
+    assert.deepEqual(getSkillToolParameters(tool).properties.tabRef.type, ['integer', 'string']);
+    assert.equal(getSkillToolParameters(tool).properties.tabId, undefined);
+  }
 });
 
-for (const localName of ['page', 'default']) test(`Skill ${localName} resolves aliases, numeric refs and the working tab through the script host`, async () => {
+test('Legacy selector normalization leaves installed declarations intact and deduplicates required fields', () => {
+  const tool = skillToolRegistrySnapshot.toolIndex.get('tab_skill__legacy').tool;
+  const before = JSON.stringify(tool);
+  const parameters = getSkillToolParameters(tool);
+  assert.equal(parameters.properties.tabId, undefined);
+  assert.deepEqual(parameters.required, ['timeout', 'tabRef']);
+  assert.equal(JSON.stringify(tool), before);
+  assert.equal(tool.parameters.properties.tabId.type, 'integer');
+  assert.deepEqual(getSkillToolParameters({ ...tool, parameters: {
+    ...tool.parameters, properties: { ...tool.parameters.properties, tabRef: { type: 'string', description: 'Canonical target' } },
+    required: ['tabId', 'tabRef'],
+  } }).required, ['timeout', 'tabRef']);
+});
+
+for (const localName of pageSkillNames) test(`Skill ${localName} resolves aliases, numeric refs and the working tab through the script host`, async () => {
   const f = fixture({ skillToolRegistrySnapshot });
   await f.run([open('dy'), open('other')]);
   const name = `tab_skill__${localName}`;
@@ -132,6 +156,7 @@ for (const localName of ['page', 'default']) test(`Skill ${localName} resolves a
     assert.equal(f.executed.at(-1).tabId, 101);
     assert.equal(Object.hasOwn(f.executed.at(-1), 'tabRef'), false);
     assert.equal(Object.hasOwn(f.executed.at(-1).args, 'tabRef'), false);
+    assert.equal(f.executed.at(-1).args.tabId, 101);
   }
 });
 
@@ -158,12 +183,15 @@ test('Skill page alias consumers remain commit barriers in an Agent batch', asyn
   await f.run(items);
   assert.ok(f.events.filter(event => event.type === 'tool_execution_end').every(event => !event.isError));
   assert.equal(f.executed.find(item => item.name === 'skill').tabId, 101);
-  await f.run([skillCall('default', { tabRef: 'dy' })]);
-  assert.equal(f.executed.at(-1).tabId, 101);
+  for (const localName of ['default', 'authored', 'legacy']) {
+    await f.run([skillCall(localName, { tabRef: 'dy' })]);
+    assert.equal(f.events.filter(event => event.type === 'tool_execution_end').at(-1).isError, false);
+    assert.equal(f.executed.at(-1).tabId, 101);
+  }
 });
 
 for (const [localName, tabRef, reason] of [
-  ['page', 'missing', 'unknown_reference'], ['default', 'missing', 'unknown_reference'],
+  ...pageSkillNames.map(name => [name, 'missing', 'unknown_reference']),
   ...['bad ref', 0, -1, 1.5, null, {}].map(ref => ['page', ref, 'invalid_reference']),
   ...['inner', 'host', 'mcp', 'no_page'].map(name => [name, 'dy', 'invalid_reference']),
 ]) test(`Skill ${localName} rejects ${JSON.stringify(tabRef)} as ${reason} before dispatch`, async () => {

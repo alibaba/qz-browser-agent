@@ -39,7 +39,7 @@ const manifest = {
       type: "object",
       properties: {
         keyword: { type: "string" },
-        tabId: { type: "integer" },
+        tabRef: { type: ["integer", "string"] },
       },
     },
   }],
@@ -379,6 +379,7 @@ assert.equal(activeXhsToolSchema.function.parameters.properties.timeout.type, "n
 assert.deepEqual(activeXhsToolSchema.function.parameters.required, ["timeout"]);
 assert.deepEqual(activeXhsToolSchema.function.parameters.properties.tabRef.type, ["integer", "string"]);
 assert.equal(activeXhsToolSchema.function.parameters.properties.tabId, undefined);
+assert.deepEqual(runtime.getSkillToolParameters(manifest.tools[0]), activeXhsToolSchema.function.parameters);
 assert.equal(activeXhsToolSchema.function.parameters.required.includes("tabRef"), false, "plugin page tools should default to the current working tab");
 assert.match(
   toolsSource,

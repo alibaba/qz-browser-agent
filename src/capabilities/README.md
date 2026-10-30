@@ -287,6 +287,13 @@ activation. An explicit `load_skill` can load any enabled Skill by name. Resourc
 package. The framework marks embedded Skills read-only; removing the capability removes them on the
 next build.
 
+Page Skill tools (`runtime: "page"` or omitted, with `needsPage !== false`) receive an optional
+`tabRef` parameter. Use `tabRef` in `plugin.json` and calls, with `type: ["integer", "string"]`:
+a task-owned tab alias, a positive integer ID, or a numeric string. Omit it to use the task's working
+tab; unknown aliases fail. The host resolves it before running the script. Legacy installed parameter
+declarations normalize at read time without changing their stored packages. Other runtimes and
+`needsPage: false` receive no page-targeting parameter.
+
 For controlled Background execution, add `skillHosts` and use `registerSkillHost` to bind a
 registered manifest tool to a `target` or implement `execute(args, context)`; these options are
 mutually exclusive. Calls pass task identity, cancellation, permission, and effect checks. Trusted

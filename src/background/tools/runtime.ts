@@ -440,7 +440,9 @@ export function getBatchTabPolicy(name: string, args: unknown, options: ToolOpti
       ...(definition.behavior?.parallelTab ? { parallel: !barrier } : {}),
       tabId: lane };
   }
-  if (!definition.parameters.properties.tabId || !pageAccess) return barrier ? { kind: "barrier" } : null;
+  if (!(definition.parameters.properties.tabRef || definition.parameters.properties.tabId) || !pageAccess) {
+    return barrier ? { kind: "barrier" } : null;
+  }
   // Retain targeting metadata for tabRef even when the declaration disables parallel execution.
   return { kind: "target", implicit: input.tabId == null,
     observation: !barrier && parallelReadTab(definition, { ...input, tabId: 1 }) !== null,
@@ -478,6 +480,18 @@ function getLocalizedToolSchemas(options: ToolOptions, snapshot: ReturnType<type
       }, policy))
     : [];
   return [...builtinSchemas, ...skillSchemas];
+}
+
+/** The execution ABI uses numeric tabId after resolving the author/model's tabRef. */
+function resolvedPageParameters(definition: RuntimeTool): ToolSchema {
+  const parameters = definition.parameters;
+  if (!definition.page || !parameters.properties.tabRef) return parameters;
+  const { tabRef, ...properties } = parameters.properties;
+  return {
+    ...parameters,
+    properties: { ...properties, tabId: { ...tabRef, type: "integer" } },
+    ...(parameters.required ? { required: parameters.required.map(field => field === "tabRef" ? "tabId" : field) } : {}),
+  };
 }
 
 /**
@@ -526,7 +540,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       throw new ToolExecutionError("UNKNOWN_TOOL", `Unknown tool: ${name}`, { name });
     }
     assertToolAllowedByPolicy(name, normalizeToolPolicy(context));
-    parameters = definition.parameters || parameters;
+    parameters = resolvedPageParameters(definition);
     if (Object.hasOwn(record(args), "tabRef")) {
       if (!definition.page || !parameters.properties.tabId || !resolvePageAccess(definition, record(args))) {
         throw tabReferenceError("invalid_reference", record(args).tabRef, language);

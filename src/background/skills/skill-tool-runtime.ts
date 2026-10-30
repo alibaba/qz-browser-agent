@@ -3,7 +3,6 @@ import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { findBuiltinSkill } from "../../shared/skills/builtin-skills.js";
 import { materializeContribution } from "../../shared/capabilities.js";
 import { ToolExecutionError } from "../tools/arguments.js";
-import { withTabReferenceParameters } from "../tools/registry.js";
 import type { ToolContext } from "../../sdk/background.js";
 import type { ToolSchema, ToolParameter } from "../../shared/contracts/tool.js";
 import type { SkillManifest, SkillTool, SkillMcpServer, SkillActivationContext } from "../../shared/skills/skill-manifest.js";
@@ -60,9 +59,9 @@ const SKILL_SCRIPT_TOOL_TIMEOUT_SECONDS_PROPERTY = {
   type: "number",
   get description() { return skillToolT("scriptTimeout"); },
 } as const;
-const SKILL_TOOL_TAB_ID_PROPERTY = {
-  type: "number",
-  get description() { return skillToolT("tabId"); },
+const SKILL_TOOL_TAB_REF_PROPERTY = {
+  type: ["integer", "string"],
+  get description() { return skillToolT("tabRef"); },
 } as const;
 
 export function subscribeSkillToolRegistry(listener: (event: Fields) => unknown) {
@@ -165,7 +164,7 @@ function buildActiveSkillToolSchemas(options: SkillToolOptions) {
         function: {
           name: tool.name,
           description: buildSkillToolDescription(plugin, tool),
-          parameters: isSkillPageTool(tool) ? withTabReferenceParameters(parameters) : parameters,
+          parameters,
         },
         _qingzhouPlugin: {
           pluginId: plugin.id,
@@ -178,7 +177,7 @@ function buildActiveSkillToolSchemas(options: SkillToolOptions) {
   return schemas;
 }
 
-/** Runtime parameter contract, before model-facing tabRef projection. */
+/** Shared author/model parameter contract; legacy selectors normalize without rewriting storage. */
 export function getSkillToolParameters(tool: Partial<SkillTool> = {}) {
   return withSkillToolControlParameters(tool.parameters || { type: "object", properties: {} }, tool);
 }
@@ -770,6 +769,7 @@ function buildSkillToolDescription(plugin: SkillManifest, tool: SkillTool) {
     renderer ? buildSkillRendererReturnContract(renderer) : "",
   ].filter(Boolean);
   const description = parts.join("\n");
+  // Older installed descriptions may still name the legacy selector.
   return pageTool ? description.replace(/\btabId\b/g, "tabRef") : description;
 }
 
@@ -793,11 +793,16 @@ function withSkillToolControlParameters(parameters: ToolSchema, tool: Partial<Sk
       ...restProperties,
     };
     next.required = uniqueRequired(["timeout", ...(Array.isArray(next.required) ? next.required : [])]);
-    if (isSkillPageTool(tool)) {
-      next.properties.tabId = normalizeSkillToolTabIdProperty(next.properties.tabId);
-    }
   } else if (!next.properties.timeout) {
     next.properties.timeout = { ...SKILL_TOOL_TIMEOUT_SECONDS_PROPERTY };
+  }
+  if (isSkillPageTool(tool)) {
+    const { tabId: legacyTabId, ...properties } = next.properties;
+    next.properties = {
+      ...properties,
+      tabRef: normalizeSkillToolTabRefProperty(properties.tabRef || legacyTabId),
+    };
+    if (next.required) next.required = uniqueRequired(next.required.map(field => field === "tabId" ? "tabRef" : field));
   }
   return next;
 }
@@ -810,19 +815,11 @@ export function isSkillPageTool(tool: Partial<SkillTool> = {}) {
   return (tool.runtime || "page") === "page" && tool.needsPage !== false;
 }
 
-function normalizeSkillToolTabIdProperty(property?: ToolParameter): ToolParameter {
-  const input = property && typeof property === "object" && !Array.isArray(property)
-    ? property
-    : SKILL_TOOL_TAB_ID_PROPERTY;
-  const currentDescription = String(input.description || "").trim();
-  const description = currentDescription && currentDescription.includes("当前任务已拥有")
-    ? currentDescription
-    : [currentDescription, SKILL_TOOL_TAB_ID_PROPERTY.description].filter(Boolean).join(" ");
-  return {
-    ...input,
-    type: input.type || "number",
-    description,
-  };
+function normalizeSkillToolTabRefProperty(property?: ToolParameter): ToolParameter {
+  const input = property && typeof property === "object" && !Array.isArray(property) ? property : {};
+  const currentDescription = String(input.description || "").trim().replace(/\btabId\b/g, "tabRef");
+  const description = [currentDescription, SKILL_TOOL_TAB_REF_PROPERTY.description].filter(Boolean).join(" ");
+  return { ...input, ...SKILL_TOOL_TAB_REF_PROPERTY, description };
 }
 
 function pickSkillToolControlArgs(args: Fields = {}) {

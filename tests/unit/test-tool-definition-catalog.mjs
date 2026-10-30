@@ -322,7 +322,7 @@ function assertPageRoleTerminologyContract() {
   const accessibilityTools = resolveToolDefinition("get_ax_tree").description;
   const browserContentProfile = ["wait", "tabs", "accessibility", "documents", "media"]
     .map(name => source(`src/capabilities/${name}/browser-content.ts`)).join("\n");
-  const pluginRuntime = getSkillToolParameters({ script: "scripts/example.js", runtime: "page" }).properties.tabId.description;
+  const pluginRuntime = getSkillToolParameters({ script: "scripts/example.js", runtime: "page" }).properties.tabRef.description;
   assert.match(
     tabTools,
     /active=true 表示用户可见标签页，isWorkingTab=true 表示当前任务工作标签页/,
@@ -340,8 +340,8 @@ function assertPageRoleTerminologyContract() {
   );
   assert.match(
     pluginRuntime,
-    /本次调用的目标网页标签页 ID；省略时使用当前任务 workingTabId。/,
-    "plugin page tools should describe only their local tabId default",
+    /标签页别名或正整数标签页 ID.*省略时使用当前任务工作标签页。/,
+    "plugin page tools should describe tabRef and its working-tab default",
   );
   assert.match(
     accessibilityTools,
