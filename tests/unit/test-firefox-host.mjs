@@ -904,7 +904,7 @@ test("duplicate iframe src values follow the sibling index", async () => {
   });
 });
 
-test("auto-attach announces a cross-origin frame once and detaches it when it leaves", async () => {
+test("auto-attach announces every frame once and detaches it when it leaves", async () => {
   const events = [];
   let frames = [
     { frameId: 0, parentFrameId: -1, url: "https://example.test/" },
@@ -923,7 +923,7 @@ test("auto-attach announces a cross-origin frame once and detaches it when it le
   await browser.debugger.attach({ tabId: 3 }, "1.3");
   await browser.debugger.sendCommand({ tabId: 3 }, "Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
   await browser.debugger.sendCommand({ tabId: 3 }, "Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
-  assert.deepEqual(events.filter(method => method === "Target.attachedToTarget"), ["Target.attachedToTarget", "Target.attachedToTarget"]);
+  assert.deepEqual(events.filter(method => method === "Target.attachedToTarget"), Array(3).fill("Target.attachedToTarget"));
   assert.equal(events.includes("Target.detachedFromTarget"), false);
   frames = frames.filter(frame => frame.frameId !== 9);
   await committed({ tabId: 3, frameId: 0, url: "https://example.test/" });
@@ -1093,7 +1093,7 @@ test("the accessibility walk names shadow and nested-frame boundaries", async ()
     assert.ok(tree.nodes.some(node => values(node).includes("cross-origin nested frame is not included")));
     assert.ok(tree.nodes.some(node => values(node).includes("nested frame has no document")));
     assert.equal(tree.nodes.some(node => values(node).includes("nested frame document is not included")), false);
-    assert.ok(tree.nodes.some(node => node.role.value === "link"));
+    assert.equal(tree.nodes.some(node => node.role.value === "link"), false, "child document nodes are bound in their own frame session");
     delete globalThis.__qzFirefoxPage;
     const button = {
       nodeName: "BUTTON", nodeType: 1, textContent: "Go",
@@ -1229,13 +1229,15 @@ test("a full-document capture becomes one pdf page", async () => {
   });
 });
 
-test("a click follows a link and skips a cancelled click", async () => {
+test("clicks dispatch events without explicit navigation or submission", async () => {
+  const events = [];
   const assigned = [];
+  const opened = [];
   const submitted = [];
   const link = {
     nodeName: "A", nodeType: 1, href: "https://example.test/next",
     getAttribute(name) { return name === "href" ? link.href : null; },
-    dispatchEvent() { return link.allow; },
+    dispatchEvent(event) { events.push(event.type); return link.allow; },
     closest() { return link; },
     focus() {},
     allow: true,
@@ -1243,7 +1245,7 @@ test("a click follows a link and skips a cancelled click", async () => {
   const button = {
     nodeName: "BUTTON", nodeType: 1, textContent: "Go",
     getAttribute() { return null; },
-    dispatchEvent() { return true; },
+    dispatchEvent(event) { events.push(event.type); return true; },
     closest(selector) { return selector === "form" ? button.form : null; },
     form: { requestSubmit(target) { submitted.push(target); } },
     focus() {},
@@ -1255,36 +1257,45 @@ test("a click follows a link and skips a cancelled click", async () => {
     defaultView: { scrollX: 0, scrollY: 0, innerWidth: 800, innerHeight: 600 },
   };
   const browser = debuggerBrowser();
-  const previous = Object.getOwnPropertyDescriptor(globalThis, "location");
-  Object.defineProperty(globalThis, "location", {
-    configurable: true, writable: true, value: { assign(url) { assigned.push(url); } },
-  });
+  const overrides = {
+    location: { assign(url) { assigned.push(url); } },
+    open(...args) { opened.push(args); },
+    PointerEvent: class { constructor(type, init) { Object.assign(this, { type }, init); } },
+  };
+  const previous = new Map(Object.keys(overrides).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(overrides)) {
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  }
   try {
     await withPage(document, async () => {
       installFirefoxDebugger(browser);
       await browser.debugger.attach({ tabId: 6 }, "1.3");
-      const click = async () => {
-        await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mousePressed", x: 1, y: 1, button: "left", clickCount: 1 });
-        await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mouseReleased", x: 1, y: 1, button: "left", clickCount: 1 });
+      const click = async (clickCount = 1) => {
+        events.length = 0;
+        await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mousePressed", x: 1, y: 1, button: "left", clickCount });
+        await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mouseReleased", x: 1, y: 1, button: "left", clickCount });
+        assert.deepEqual(events, ["pointerdown", "mousedown", "pointerup", "mouseup", clickCount > 1 ? "dblclick" : "click"]);
+        assert.deepEqual(assigned, []);
+        assert.deepEqual(opened, []);
+        assert.deepEqual(submitted, []);
       };
       await click();
-      assert.deepEqual(assigned, ["https://example.test/next"]);
-      assigned.length = 0;
+      link.target = "_blank";
+      await click();
       link.allow = false;
       await click();
-      assert.deepEqual(assigned, []);
       link.href = "javascript:alert(1)";
       link.allow = true;
       await click();
-      assert.deepEqual(assigned, []);
       target = button;
       await click();
-      assert.equal(submitted.length, 1);
-      assert.equal(submitted[0], button);
+      await click(2);
     });
   } finally {
-    if (previous) Object.defineProperty(globalThis, "location", previous);
-    else delete globalThis.location;
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
   }
 });
 
@@ -1400,14 +1411,14 @@ test("isolated content calls run without compiling a function", async () => {
   }
 });
 
-test("firefox clicks mark extension events and toggle a checkbox the page left unchanged", async () => {
+for (const type of ["checkbox", "radio"]) test(`firefox clicks mark extension events without manually changing a ${type}`, async () => {
   const events = [];
   const box = {
     nodeType: 1,
     nodeName: "INPUT",
     disabled: false,
     checked: false,
-    getAttribute(name) { return name === "type" ? "checkbox" : null; },
+    getAttribute(name) { return name === "type" ? type : null; },
     focus() {},
     dispatchEvent(event) {
       events.push(event);
@@ -1428,11 +1439,12 @@ test("firefox clicks mark extension events and toggle a checkbox the page left u
       await browser.debugger.sendCommand({ tabId: 9 }, "Input.dispatchMouseEvent", { type: "mouseReleased", x: 4, y: 4, button: "left", clickCount: 1 });
     };
     await click();
-    assert.equal(box.checked, true);
+    assert.equal(box.checked, false);
+    assert.deepEqual(events.map(event => event.type), ["mousedown", "mouseup", "click"]);
     const clickEvent = events.find(event => event.type === "click");
     assert.ok(clickEvent);
     assert.equal(globalThis.__qzExtensionInputEvents.has(clickEvent), true);
-    assert.ok(events.some(event => event.type === "change"));
+    assert.equal(events.some(event => event.type === "change"), false);
     const before = events.length;
     box.checked = false;
     box.dispatchEvent = event => {

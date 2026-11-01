@@ -4,6 +4,12 @@ import { isPageTabUrl } from "#sdk/shared/browser";
 import { t } from "./i18n.js";
 import { productText } from "#sdk/shared/product-text";
 
+// Firefox rejects scripting.executeScript with this message when the main frame
+// has been removed and the call returns no results (bug 2047009). A same-URL
+// reload can already report status complete while that frame is still missing.
+const FIREFOX_FRAME_MISSING = "Missing host permission for the tab";
+const FRAME_MISSING_RETRIES = 20;
+
 /** Confirm the new main document using existing tabs/scripting permissions. */
 export async function navigateTab(tabId: number, url: string, assertTabAllowed: ToolExtensionAPI["assertTabAllowed"], signal?: AbortSignal) {
   let disposed = false;
@@ -57,18 +63,22 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     listenForCompletion = previousId === null && isPageTabUrl(before.url) && !sameDocument;
     if (listenForCompletion) chrome.tabs.onUpdated.addListener(onUpdated);
     await wait(chrome.tabs.update(tabId, { url }));
+    let missingFrames = 0;
     for (;;) {
       const tab = await getTab();
       if (!tab.pendingUrl && tab.url && tab.url !== "about:blank") {
         try {
           const currentId = await documentId();
           check();
+          missingFrames = 0;
           if (listenForCompletion ? completed && tab.status === "complete"
             : currentId !== previousId || (sameDocument && tab.url === destination)) return;
         } catch (error) {
           check();
           if (error instanceof ToolExecutionError) throw error;
-          if (tab.status === "complete") {
+          const frameMissing = String(error).includes(FIREFOX_FRAME_MISSING);
+          if (frameMissing) missingFrames += 1;
+          if (tab.status === "complete" && !(frameMissing && missingFrames <= FRAME_MISSING_RETRIES)) {
             throw new ToolExecutionError("NAVIGATION_FAILED", t("navigationFailed"), { tabId, url: tab.url, cause: String(error) });
           }
         }

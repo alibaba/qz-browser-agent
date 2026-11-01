@@ -11,6 +11,8 @@ import type { PageCommand } from "./page-command.js";
 import { bytesToBase64, jpegsToPdf } from "./pdf-raster.js";
 import { cropDataUrl, decodeDataUrl, stitchTiles, stripDataUrl } from "./screenshot-image.js";
 import type { ImageClip } from "./screenshot-image.js";
+import type { DebuggerCommandScope } from "../tools/cdp-runtime.js";
+import { createFirefoxEnterInput } from "./enter-input.js";
 
 const MARK = Symbol.for("qz.firefox.debugger");
 const COMPAT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -28,13 +30,17 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
   const autoAttach = new Set<number>();
   const contexts = new Map<number, ContextRecord[]>();
   const generations = new Map<string, number>();
+  const enterInput = createFirefoxEnterInput(generations);
   const emulation = new Map<number, { userAgent: string; touch: boolean }>();
   const savedWindows = new Map<number, SavedWindow>();
   const announced = new Map<number, Map<string, string>>();
   const streams = new Map<string, { bytes: Uint8Array; offset: number }>();
+  const pointerFrames = new Map<string, number>();
   let nextContext = 1;
   let nextStream = 1;
   const emit = (tabId: number, method: string, params?: object) => onEvent.dispatch({ tabId }, method, params);
+  const emitContext = (tabId: number, frameId: number, method: string, params: object) =>
+    onEvent.dispatch({ tabId, ...(frameId ? { sessionId: `ff-${tabId}-${frameId}` } : {}) }, method, params);
   const network = createNetworkWatch(chromeApi, emit);
 
   chromeApi.runtime?.onMessage?.addListener((message, sender) => {
@@ -48,6 +54,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const frameId = Number(details.frameId);
     if (!attached.has(tabId)) return;
     bump(generations, tabId, frameId);
+    enterInput.committed();
     if (runtimeEnabled.has(tabId)) {
       void replaceFrameContext(tabId, frameId, String(details.url || ""));
       void installConsole(tabId).catch(() => {});
@@ -66,16 +73,26 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     onEvent, onDetach,
     async attach(target) { attached.add(tabIdOf(target)); },
     async detach(target) { await release(tabIdOf(target), true); },
-    sendCommand(target, method, params) {
-      const tabId = tabIdOf(target);
-      if (!attached.has(tabId)) return Promise.reject(new Error("Debugger is not attached to the tab"));
-      return dispatch(tabId, frameFromSession(tabId, target?.sessionId), method, fields(params));
-    },
+    sendCommand(target, method, params) { return sendCommand(target, method, params); },
+    sendCommandWithScope: sendCommand,
   };
   api[MARK] = true;
   chromeApi.debugger = api;
 
-  async function dispatch(tabId: number, frameId: number, method: string, params: Fields): Promise<unknown> {
+  function sendCommand(target: DebugSource, method: string, params?: object, scope?: DebuggerCommandScope) {
+    const tabId = tabIdOf(target);
+    const active: DebuggerCommandScope = { signal: scope?.signal, check() {
+      scope?.check();
+      scope?.signal?.throwIfAborted();
+      if (!attached.has(tabId)) throw new Error("Debugger is not attached to the tab");
+    } };
+    return Promise.resolve().then(() => {
+      active.check();
+      return dispatch(tabId, frameFromSession(tabId, target?.sessionId), method, fields(params), active);
+    });
+  }
+
+  async function dispatch(tabId: number, frameId: number, method: string, params: Fields, scope: DebuggerCommandScope): Promise<unknown> {
     // Runtime.disable must not drop the hook. It stays until the debugger detaches.
     if (method === "Page.enable" || method === "Page.disable" || method === "Runtime.disable" || method === "Runtime.terminateExecution") return {};
     if (method === "Page.getFrameTree") return frameTree(tabId, frameId);
@@ -118,16 +135,32 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     if (method === "Runtime.releaseObjectGroup") return run(tabId, frameId, { op: "release", objectGroup: String(params.objectGroup || "") });
     if (method === "Runtime.awaitPromise") return { result: { type: "undefined" } };
     if (method === "Input.dispatchMouseEvent") {
-      return run(tabId, frameId, { op: "input", input: { kind: "mouse", type: String(params.type || ""), x: numberValue(params.x), y: numberValue(params.y), button: String(params.button || "left"), clickCount: numberValue(params.clickCount) || 1, deltaX: numberValue(params.deltaX), deltaY: numberValue(params.deltaY) } });
+      const key = `${tabId}:${frameId}`, type = String(params.type || "");
+      const x = numberValue(params.x), y = numberValue(params.y);
+      const target = type === "mouseReleased" && (x < 0 || y < 0)
+        ? { frameId: pointerFrames.get(key) ?? frameId, x, y } : await inputFrame(tabId, frameId, x, y);
+      if (type === "mousePressed") pointerFrames.set(key, target.frameId);
+      try {
+        return await run(tabId, target.frameId, { op: "input", input: { kind: "mouse", type, x: target.x, y: target.y, button: String(params.button || "left"), clickCount: numberValue(params.clickCount) || 1, deltaX: numberValue(params.deltaX), deltaY: numberValue(params.deltaY) } });
+      } finally { if (type === "mouseReleased") pointerFrames.delete(key); }
     }
     if (method === "Input.dispatchKeyEvent") {
-      return run(tabId, frameId, { op: "input", input: { kind: "key", type: String(params.type || ""), key: String(params.key || ""), code: String(params.code || ""), keyCode: numberValue(params.windowsVirtualKeyCode), modifiers: numberValue(params.modifiers), text: String(params.text || ""), commands: stringList(params.commands) } });
+      const enter = params.key === "Enter" && numberValue(params.modifiers) === 0;
+      const prepare = async () => (await inputFrame(tabId, frameId, 0, 0, true, scope.check, !enter)).frameId;
+      const dispatchKey = (target: number) => run(tabId, target, { op: "input", input: { kind: "key", type: String(params.type || ""), key: String(params.key || ""), code: String(params.code || ""), keyCode: numberValue(params.windowsVirtualKeyCode), modifiers: numberValue(params.modifiers), text: String(params.text || ""), commands: stringList(params.commands) } }, "ISOLATED", !enter);
+      if (enter) {
+        return enterInput.send(tabId, frameId, params.type === "keyUp", prepare, dispatchKey, scope);
+      }
+      return dispatchKey(await prepare());
     }
     if (method === "Input.dispatchTouchEvent") {
       const point = fields(arrayValue(params.touchPoints)[0]);
       return run(tabId, frameId, { op: "input", input: { kind: "touch", type: String(params.type || ""), x: numberValue(point.x), y: numberValue(point.y) } });
     }
-    if (method === "Input.insertText") return run(tabId, frameId, { op: "input", input: { kind: "text", text: String(params.text || "") } });
+    if (method === "Input.insertText") {
+      const target = await inputFrame(tabId, frameId, 0, 0, true);
+      return run(tabId, target.frameId, { op: "input", input: { kind: "text", text: String(params.text || "") } });
+    }
     if (method === "Emulation.setUserAgentOverride") return setUserAgent(tabId, String(params.userAgent || ""));
     if (method === "Emulation.setDeviceMetricsOverride") return resizeWindow(tabId, numberValue(params.width) || 412, numberValue(params.height) || 915);
     if (method === "Emulation.clearDeviceMetricsOverride") return restoreWindow(tabId);
@@ -149,12 +182,14 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
 
   async function release(tabId: number, restore: boolean) {
     attached.delete(tabId);
+    enterInput.release(tabId);
     runtimeEnabled.delete(tabId);
     autoAttach.delete(tabId);
     contexts.delete(tabId);
     announced.delete(tabId);
     network.disable(tabId);
     for (const handle of streams.keys()) if (handle.startsWith(`ff-io-${tabId}-`)) streams.delete(handle);
+    for (const key of pointerFrames.keys()) if (key.startsWith(`${tabId}:`)) pointerFrames.delete(key);
     if (restore) await restoreWindow(tabId).catch(() => {});
     emulation.delete(tabId);
   }
@@ -163,12 +198,12 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const all = await readFrames(tabId);
     if (frameId > 0) {
       const frame = all.find(item => item.frameId === frameId) || { frameId, parentFrameId: -1, url: "" };
-      const children = all.filter(item => item.parentFrameId === frame.frameId && sameOrigin(frame.url, item.url));
-      return { frameTree: { frame: frameRecord(tabId, frame), childFrames: children.map(item => ({ frame: frameRecord(tabId, item) })) } };
+      return { frameTree: { frame: frameRecord(tabId, frame), childFrames: [] } };
     }
     const main = all.find(item => item.frameId === 0) || all[0] || { frameId: 0, parentFrameId: -1, url: "" };
-    const children = all.filter(item => item.frameId !== main.frameId && item.parentFrameId === main.frameId && sameOrigin(main.url, item.url));
-    return { frameTree: { frame: frameRecord(tabId, main), childFrames: children.map(item => ({ frame: frameRecord(tabId, item) })) } };
+    // Firefox scripting owns a separate node/object registry in every frame,
+    // including same-origin frames. Expose each through its own debugger session.
+    return { frameTree: { frame: frameRecord(tabId, main), childFrames: [] } };
   }
 
   function frameRecord(tabId: number, frame: FrameInfo) {
@@ -197,13 +232,35 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const owners = fields(await run(tabId, frame.parentFrameId, { op: "owners" }));
     const listed = arrayValue(owners.frames).map(fields);
     const siblings = all.filter(item => item.parentFrameId === frame.parentFrameId).sort((left, right) => left.frameId - right.frameId);
-    const index = siblings.findIndex(item => item.frameId === frame.frameId);
-    const at = index >= 0 ? listed[index] : undefined;
-    const match = listed.find(item => item.childUrl && item.childUrl === frame.url)
-      || preferOwner(listed.filter(item => item.url && frame.url === item.url), at)
-      || preferOwner(listed.filter(item => item.url && frame.url && frame.url.startsWith(String(item.url)) && frame.url !== item.url), at)
-      || at;
-    return { backendNodeId: numberValue(match?.backendNodeId) };
+    return { backendNodeId: frameOwnerNodeId(frame, siblings, listed) };
+  }
+
+  async function inputFrame(tabId: number, frameId: number, x: number, y: number, active = false, check = () => {}, retryWorld = true) {
+    // CDP pointer coordinates are relative to the target viewport. scripting input
+    // must be dispatched in the hit frame so its listeners and receipt see it.
+    check();
+    const frames = await readFrames(tabId);
+    check();
+    const visited = new Set<number>();
+    while (!visited.has(frameId)) {
+      visited.add(frameId);
+      const hit = fields(await run(tabId, frameId, { op: "inputFrame", x, y, active }, "ISOLATED", retryWorld));
+      check();
+      if (!hit.backendNodeId) break;
+      const candidates = frames.filter(frame => frame.parentFrameId === frameId);
+      if (!candidates.length) break;
+      // Reuse this dispatch's frame snapshot and one owner list per visited parent.
+      const owners = fields(await run(tabId, frameId, { op: "owners" }, "ISOLATED", retryWorld));
+      check();
+      const listed = arrayValue(owners.frames).map(fields);
+      const siblings = [...candidates].sort((left, right) => left.frameId - right.frameId);
+      const child = candidates.find(candidate => frameOwnerNodeId(candidate, siblings, listed) === hit.backendNodeId);
+      if (!child) break;
+      frameId = child.frameId;
+      x = numberValue(hit.x);
+      y = numberValue(hit.y);
+    }
+    return { frameId, x, y };
   }
 
   async function publishAutoAttach(tabId: number) {
@@ -213,14 +270,13 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     if (main) {
       for (const frame of all) {
         if (frame.frameId === main.frameId) continue;
-        if (sameOrigin(main.url, frame.url)) continue;
         const sessionId = `ff-${tabId}-${frame.frameId}`;
         const targetId = `ff-target-${tabId}-${frame.frameId}`;
         next.set(sessionId, targetId);
         if (announced.get(tabId)?.has(sessionId)) continue;
         emit(tabId, "Target.attachedToTarget", {
           sessionId, waitingForDebugger: false,
-          targetInfo: { type: "iframe", targetId, url: frame.url, parentFrameId: "0" },
+          targetInfo: { type: "iframe", targetId, url: frame.url, parentFrameId: String(frame.parentFrameId) },
         });
       }
     }
@@ -244,7 +300,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
   async function replaceFrameContext(tabId: number, frameId: number, url: string) {
     const current = contexts.get(tabId) || [];
     for (const context of current) {
-      if (context.frameId === frameId) emit(tabId, "Runtime.executionContextDestroyed", { executionContextId: context.id });
+      if (context.frameId === frameId) emitContext(tabId, frameId, "Runtime.executionContextDestroyed", { executionContextId: context.id });
     }
     contexts.set(tabId, [...current.filter(context => context.frameId !== frameId), ...createContexts(tabId, frameId, url)]);
   }
@@ -256,7 +312,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
       nextContext += 1;
       const uniqueId = `ff-${tabId}-${frameId}-${world}-${generations.get(`${tabId}:${frameId}`) || 0}`;
       created.push({ id, uniqueId, frameId, world });
-      emit(tabId, "Runtime.executionContextCreated", {
+      emitContext(tabId, frameId, "Runtime.executionContextCreated", {
         context: {
           id, uniqueId, name: "",
           origin: world === "ISOLATED" ? `chrome-extension://${chromeApi.runtime?.id || ""}` : originOf(url),
@@ -498,18 +554,19 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     return {};
   }
 
-  async function run(tabId: number, frameId: number, command: PageCommand, world: ScriptWorld = "ISOLATED") {
-    const [result] = await execute({ tabId, frameIds: [frameId] }, world, firefoxPageCommand, [command, world]);
+  async function run(tabId: number, frameId: number, command: PageCommand, world: ScriptWorld = "ISOLATED", retryWorld = true) {
+    const [result] = await execute({ tabId, frameIds: [frameId] }, world, firefoxPageCommand, [command, world], retryWorld);
     return result;
   }
 
-  async function execute<Args extends unknown[]>(target: ScriptTarget, world: ScriptWorld, func: (...args: Args) => unknown, args: Args): Promise<unknown[]> {
+  async function execute<Args extends unknown[]>(target: ScriptTarget, world: ScriptWorld, func: (...args: Args) => unknown, args: Args, retryWorld = true): Promise<unknown[]> {
     const scripting = chromeApi.scripting;
     if (!scripting?.executeScript) throw new Error("scripting.executeScript is unavailable");
     let results: ScriptResult[];
     try {
       results = await scripting.executeScript({ target, world, injectImmediately: true, args, func });
     } catch (error) {
+      if (!retryWorld) throw error;
       const message = error instanceof Error ? error.message : String(error);
       if (!/world|MAIN|ISOLATED/i.test(message)) throw error;
       results = await scripting.executeScript({ target, injectImmediately: true, args, func });
@@ -555,20 +612,21 @@ function stackFrame(stack: unknown) {
   return { functionName: line || "", url: "", lineNumber: 0, columnNumber: 0 };
 }
 
+/** Match DOM owners using siblings in ascending frame-id order. */
+function frameOwnerNodeId(frame: FrameInfo, siblings: FrameInfo[], listed: Fields[]): number {
+  const index = siblings.findIndex(item => item.frameId === frame.frameId);
+  const at = index >= 0 ? listed[index] : undefined;
+  const match = preferOwner(listed.filter(item => item.childUrl && item.childUrl === frame.url), at)
+    || preferOwner(listed.filter(item => item.url && frame.url === item.url), at)
+    || preferOwner(listed.filter(item => item.url && frame.url && frame.url.startsWith(String(item.url)) && frame.url !== item.url), at)
+    || at;
+  return numberValue(match?.backendNodeId);
+}
+
 function preferOwner(matches: Fields[], at: Fields | undefined): Fields | undefined {
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) return at && matches.includes(at) ? at : matches[0];
   return undefined;
-}
-
-function sameOrigin(parentUrl: string, url: string): boolean {
-  if (!url || url === "about:blank") return true;
-  try {
-    const child = new URL(url);
-    if (child.protocol === "about:" || child.protocol === "javascript:") return true;
-    if (child.origin === "null") return false;
-    return child.origin === new URL(parentUrl).origin;
-  } catch { return false; }
 }
 
 function originOf(url: string): string {
@@ -634,6 +692,7 @@ interface DebuggerApi {
   attach(target: DebugSource, version: string): Promise<void>;
   detach(target: DebugSource): Promise<void>;
   sendCommand(target: DebugSource, method: string, params?: object): Promise<unknown>;
+  sendCommandWithScope(target: DebugSource, method: string, params: object, scope: DebuggerCommandScope): Promise<unknown>;
 }
 interface DebuggerChrome {
   debugger?: DebuggerApi;

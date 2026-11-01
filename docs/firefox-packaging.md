@@ -69,6 +69,12 @@ package, because the shared module ships in both. Use it for inline strings in s
 Catalog copy that should exist in only one package goes through the locale rewrite above, so the
 Chrome catalog keeps the Chrome sentence alone.
 
+The debugger adapter gives every child frame its own session and isolated-world node registry,
+including same-origin frames. Accessibility snapshots graft those frame-local trees; UID resolution
+and pointer delivery return to the owning frame. Plain CSS selectors remain document-local.
+Unmodified Enter on a single-line form input follows implicit submission rules. Page key events
+remain synthetic, so sites that require trusted keyboard events can still reject them.
+
 Firefox API stand-ins install from the boot modules, which run before the shared graph:
 
 - [background/firefox-boot.ts](../src/background/firefox-boot.ts) imports `background/firefox/host.ts`, then `background/service-worker.ts`.
@@ -78,7 +84,11 @@ Firefox API stand-ins install from the boot modules, which run before the shared
 hooks on the `chrome` object, then the shared service worker reads that object. It supplies
 Firefox's missing `Tab.pendingUrl` through main-frame request and commit events. Request IDs keep
 errors from replaced requests from clearing a newer navigation; commits, errors, no-content responses
-and tab removal clear the pending field. This adapter uses the package's existing permissions.
+and tab removal clear the pending field. Firefox can deliver the main-frame commit before
+`onBeforeRequest`. A request whose own timestamp is at or before the commit of that same URL does
+not set `pendingUrl` again, and a completed tab already showing the pending URL drops it. A newer
+request, including a same-URL reload, stays pending until its own commit. This adapter uses the
+package's existing permissions.
 The host also sets
 `qzSessionAutomationsEnabled` to false, clears `qingzhou.automation.scheduler`, and arms the
 Firefox MCP wake (`qzFirefoxMcpWake`) before that service worker starts. The wake pings a parent

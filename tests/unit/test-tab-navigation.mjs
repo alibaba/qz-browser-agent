@@ -178,6 +178,23 @@ test("a transient injection failure during loading is retried", async () => {
   await pending;
 });
 
+test("a Firefox frame missing on a completed same-URL reload is retried", async () => {
+  const f = fixture(url);
+  f.onUpdate(() => f.commit(1, { status: "complete", error: "Error: Missing host permission for the tab" }));
+  f.onProbe(() => { if (f.probes.length >= 4) delete f.pages.get(1).error; });
+  await navigateTab(1, url);
+  assert.equal(f.pages.get(1).documentId, "1:new");
+  assert.ok(f.probes.length >= 4);
+});
+
+test("a persistent Firefox frame-missing error on a completed tab still fails", async () => {
+  const f = fixture(url);
+  f.onUpdate(() => f.commit(1, { status: "complete", error: "Error: Missing host permission for the tab" }));
+  await assert.rejects(navigateTab(1, url), error => error.code === "NAVIGATION_FAILED"
+    && String(error.details.cause).includes("Missing host permission for the tab"));
+  assert.equal(f.probes.length, 22);
+});
+
 test("a blocked redirect is rejected before injecting a document probe", async () => {
   const f = fixture();
   checkAllowed = async id => {

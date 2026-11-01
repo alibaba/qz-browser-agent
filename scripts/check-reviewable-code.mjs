@@ -27,7 +27,7 @@ const REVIEWED = new Map([
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
     reason: "Existing user/Agent script executor in an isolated sandbox Worker; no extension APIs. See policy risk in the audit guide.",
   }],
-  ["dynamic-code:e136e43b84343cc0a3da1b6bc56cef3508f4850dcfc4d34cc6d30c8946279645", {
+  ["dynamic-code:e78830823858460286c6355bfb8af085dd3762df57a4feb3d1c7a38e237fc8a5", {
     files: /^background\/(?:firefox\/page-command|service-worker)\.js$/u,
     reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for the reviewed CDP callers, including explicit user/Agent page scripts. Compiles in the page realm only, never the isolated world or extension context.",
   }],
@@ -55,7 +55,7 @@ const REVIEWED = new Map([
     files: /^background\/tools\/element-runtime\.js$/u,
     reason: "Unbundled invokeBound: same ISOLATED_CONTENT_INVOKE bridge constant and value arguments as the bundled reviewed function.",
   }],
-  ["cdp-execution:f3b1d7fbbdc9be7986c55c8a3a1989d231c1a3e2fcb18fc8d8ac5415d1d994d0", {
+  ["cdp-execution:e2f317664c8f22585c687339240b5fa6400b1515ae838e69259566344c16a2d3", {
     files: /^capabilities\/script\/tools\.js$/u,
     reason: "Unbundled createScriptTools: same reviewed page-script factory, without bundled shorthand expansion.",
   }],
