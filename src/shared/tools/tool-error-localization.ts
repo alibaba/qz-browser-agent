@@ -265,6 +265,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   SKILL_NETWORK_URL_INVALID: { label: "toolError.SKILL_NETWORK_URL_INVALID.label" },
   SKILL_NETWORK_URL_TOO_LONG: { label: "toolError.SKILL_NETWORK_URL_TOO_LONG.label" },
   SKILL_NOT_FOUND: { label: "toolError.SKILL_NOT_FOUND.label" },
+  SKILL_NAME_AMBIGUOUS: { label: "toolError.SKILL_NAME_AMBIGUOUS.label" },
   SKILL_PLUGIN_JSON_INVALID: { label: "toolError.SKILL_PLUGIN_JSON_INVALID.label" },
   SKILL_PLUGIN_MANIFEST_INVALID: { label: "toolError.SKILL_PLUGIN_MANIFEST_INVALID.label", message: "toolError.SKILL_PLUGIN_MANIFEST_INVALID.message" },
   SKILL_READ_ONLY: { label: "toolError.SKILL_READ_ONLY.label" },
@@ -546,6 +547,11 @@ function localizeByCode(code: string, details: Record<string, unknown> = {}) {
       return t("toolFailure.skillScriptMissing", { suffix: detailSuffix([details.skillName, details.script].filter(Boolean).join("/")) });
     case "PLUGIN_NOT_FOUND":
       return t("toolFailure.pluginMissing", { suffix: detailSuffix(details.pluginId) });
+    case "SKILL_NAME_AMBIGUOUS":
+      return t("toolFailure.skillNameAmbiguous", {
+        name: String(details.name || ""),
+        names: (Array.isArray(details.candidates) ? details.candidates : []).map(candidate => String(objectValue(candidate).name || "")).join(", "),
+      });
     case "SKILL_NOT_FOUND":
       return t("toolFailure.skillMissing", { suffix: detailSuffix(details.name) });
     case "SKILL_RESOURCE_NOT_FOUND":

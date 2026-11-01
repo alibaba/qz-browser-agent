@@ -342,6 +342,7 @@
   "skills.commitMessage": "رسالة commit",
   "skills.filesWithMatchingNamesWillBeUpdatedExtraRemoteFiles": "ستُحدّث الملفات المطابقة معًا في commit واحد. وسيُحتفظ بالملفات الأخرى في المستودع.",
   "skills.cancel": "إلغاء",
+  "skills.skillNameAmbiguous": "توجد عدة مهارات باسم «{name}»، لذا لم تُنفّذ العملية لتعذّر تحديد المهارة المقصودة. استخدم أحد هذه الأسماء من list_skills: {names}.",
   "skills.skillNotFound": "المهارة «{name}» غير موجودة",
   "skills.resourceNotFound": "مورد المهارة «{path}» غير موجود",
   "skills.managementInternalOnly": "manage_skill أداة داخلية لمساحة عمل مهارات qz.",

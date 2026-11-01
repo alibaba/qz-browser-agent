@@ -243,6 +243,32 @@ assert.equal(documentResource.document.docModelId, "model_skill_test");
 assert.equal(loadedDocumentResources[0].input.resource.encoding, "base64");
 assert.equal(loadedDocumentResources[0].runtime.context.sessionId, "s1");
 assert.equal(loadedDocumentResources[0].runtime.context.source, "mcp_bridge");
+{
+  const { loadSkill } = await import("../../src/background/skills/runtime.js");
+  const { normalizeModernSkill } = await import("../../src/shared/skills/skill-utils.js");
+  const { createMemoryStorage } = await import("../support/memory-storage.mjs");
+  const rows = ["rt1", "rt2"].map(name => normalizeModernSkill({ name, displayName: "Shared title", content: name }));
+  const storage = createMemoryStorage({ _skills: Object.fromEntries(rows.map(row => [row.name, row])) });
+  const previousChrome = globalThis.chrome, previousLoad = skills.load;
+  const loadedCount = loadedNames.length;
+  try {
+    globalThis.chrome = { storage: { local: storage } };
+    skills.load = loadSkill;
+    for (const operation of [
+      () => runtime.getSkill({ name: "Shared title" }),
+      () => runtime.getSkillResource({ name: "Shared title", path: "notes.md" }),
+    ]) await assert.rejects(operation, error => {
+      assert.equal(error.code, "SKILL_NAME_AMBIGUOUS");
+      assert.deepEqual(error.details, { name: "Shared title", candidates: rows.map(({ name, displayName }) => ({ name, displayName })) });
+      return true;
+    });
+    assert.equal(loadedNames.length, loadedCount, "ambiguous loads record no loaded skill");
+    assert.equal((await runtime.getSkill({ name: "rt2" })).name, "rt2");
+  } finally {
+    globalThis.chrome = previousChrome;
+    skills.load = previousLoad;
+  }
+}
 assert.equal((await runtime.getSkill({ name: "missing" })).code, "SKILL_NOT_FOUND");
 assert.equal((await runtime.getSkillResource({ name: "research", path: "missing.md" })).code, "SKILL_RESOURCE_NOT_FOUND");
 

@@ -63,11 +63,88 @@ test.beforeEach(async ({ page }) => {
   await page.locator("#btn-edit-skill").click();
 });
 
+test("loaded extension creates and imports a Skill whose ID is another Skill's display name", async () => {
+  test.setTimeout(90_000);
+  const { launchIsolatedExtensionMcp, extensionRequest, assertNoUnexpectedDiagnostics } = await import("../support/isolated-extension-mcp.mjs");
+  const { callTool } = await import("../../services/mcp-bridge/src/client.mjs");
+  const environment = await launchIsolatedExtensionMcp({ profilePrefix: "qz-skill-create-identity-" });
+  try {
+    const page = environment.page;
+    const seed = await page.evaluate(async () => {
+      const { normalizeModernSkill } = await import(chrome.runtime.getURL("shared/skills/skill-utils.js"));
+      return normalizeModernSkill({
+        name: "rt6", displayName: "rt5", description: "Existing skill", content: "Keep rt6 unchanged",
+        metadata: { privateMarker: "rt6-only" }, createdAt: "2026-01-01 00:00:00",
+        resources: [{ path: "notes.md", content: "rt6 resource" }],
+      });
+    });
+    const seeded = await extensionRequest(page, "save_workspace_skill", { name: "rt6", skill: seed, expected: null }, "skill_workspace_saved");
+    expect(seeded.registryReady).toBe(true);
+    const rt6 = seeded.skill;
+    const execute = (name, args) => callTool(environment.bridge.endpoint, "qingzhou_execute_tool", { name, args, timeoutSeconds: 30 });
+    const loaded = await execute("load_skill", { name: "skill-workbench" });
+    expect(loaded.result.name).toBe("skill-workbench");
+    const created = await execute("qingzhou_skill_author__create_skill", { timeout: 30, name: "rt5", description: "New skill", content: "New rt5 body" });
+    expect(created.result).toMatchObject({ saved: true, name: "rt5" });
+    const stored = await page.evaluate(async () => (await chrome.storage.local.get("_skills"))._skills);
+    expect(stored.rt6).toEqual(rt6);
+    expect(stored.rt5.content).toBe("New rt5 body");
+    expect(stored.rt5.metadata).toEqual({});
+    expect(stored.rt5.resources).toEqual([]);
+    expect(stored.rt5.createdAt).not.toBe(rt6.createdAt);
+
+    // Start the sidebar import with the same QA state: only rt6, titled rt5.
+    const removed = await extensionRequest(page, "delete_workspace_skill", { name: "rt5", expected: stored.rt5 }, "skill_workspace_deleted");
+    expect(removed.ok).toBe(true);
+    await page.locator('[data-tab="skills"]').click();
+    const archive = await page.evaluate(async () => {
+      const { exportSkillsZip } = await import(chrome.runtime.getURL("shared/skills/skill-package.js"));
+      const blob = await exportSkillsZip([{ name: "rt5", description: "Imported skill", content: "Imported rt5 body" }]);
+      return Array.from(new Uint8Array(await blob.arrayBuffer()));
+    });
+    await page.locator("#skills-import-file").setInputFiles({ name: "rt5.zip", mimeType: "application/zip", buffer: Buffer.from(archive) });
+    await expect(page.locator('.skill-card[data-name="rt5"]')).toBeVisible();
+    const imported = await page.evaluate(async () => (await chrome.storage.local.get("_skills"))._skills);
+    expect(imported.rt6).toEqual(rt6);
+    expect(imported.rt5.content).toBe("Imported rt5 body");
+    expect(imported.rt5.metadata.privateMarker).toBeUndefined();
+    expect(imported.rt5.resources).toEqual([]);
+    expect(imported.rt5.createdAt).not.toBe(rt6.createdAt);
+    assertNoUnexpectedDiagnostics(environment.diagnostics);
+  } finally {
+    await environment.close();
+  }
+});
+
 async function save(page, value) {
   await page.locator("#skill-body-text").fill(value);
   await page.locator("#btn-save-skill-edit-top").click();
   await expect.poll(() => page.evaluate(() => window.__skillsTest.calls.filter(call => call.type === "save_workspace_skill").length)).toBeGreaterThan(0);
 }
+
+test("deleting a selected ID preserves siblings sharing its title or using that ID as a title", async ({ page }) => {
+  await page.evaluate(async () => {
+    const { normalizeModernSkill } = await import("/extension/shared/skills/skill-utils.js");
+    const state = window.__skillsTest;
+    const rows = [
+      normalizeModernSkill({ name: "alpha", displayName: "beta", content: "keep alpha" }),
+      normalizeModernSkill({ name: "gamma", displayName: "Shared title", content: "keep gamma" }),
+      normalizeModernSkill({ name: "beta", displayName: "Shared title", content: "delete beta" }),
+    ];
+    await state.storage.set({ _skills: Object.fromEntries(rows.map(row => [row.name, row])) });
+    state.lifetime.abort();
+    state.feature = await state.remount();
+    state.feature.showDetail("beta");
+  });
+  await expect(page.locator("#skill-detail-name")).toHaveText("Shared title");
+  await page.locator("#btn-skill-actions").click();
+  await page.locator("#btn-delete-skill").click();
+  await expect.poll(() => page.evaluate(() => Object.keys(window.__skillsTest.storage.snapshot()._skills))).toEqual(["alpha", "gamma"]);
+  expect(await page.evaluate(() => {
+    const call = window.__skillsTest.calls.find(call => call.type === "delete_workspace_skill");
+    return { name: call.payload.name, expected: call.payload.expected.name };
+  })).toEqual({ name: "beta", expected: "beta" });
+});
 
 test("saving preserves newer edits and uses the saved snapshot for the next save", async ({ page }) => {
   await save(page, "first edit");

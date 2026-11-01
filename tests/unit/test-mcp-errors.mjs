@@ -34,6 +34,24 @@ test("typed extension errors keep recovery metadata through a real MCP client wi
   assert.equal(bridge.state.inflight.size, 0);
 });
 
+test("ambiguous Skill errors preserve only candidate identities through a real MCP client", async t => {
+  const bridge = await bridgeFixture(t);
+  const candidates = ["rt1", "rt2"].map(name => ({ name, displayName: "Shared title" }));
+  const pending = callTool(bridge.endpoint, "qingzhou_get_skill", { name: "Shared title" });
+  const rejected = assert.rejects(pending, error => {
+    assert.equal(error.code, "SKILL_NAME_AMBIGUOUS");
+    assert.deepEqual(error.details, { name: "Shared title", candidates });
+    return true;
+  });
+  const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+  completeBrowser(bridge.state, request.id, {
+    ok: false, code: "SKILL_NAME_AMBIGUOUS", error: "Ambiguous skill name",
+    details: { name: "Shared title", candidates: candidates.map(candidate => ({ ...candidate, privateField: "omit" })), privateField: "omit" },
+  });
+  await rejected;
+  assert.equal(bridge.state.pending.size, 0);
+});
+
 test("MCP typed errors have an explicit JSON envelope and omit arbitrary provider details", async t => {
   const bridge = await bridgeFixture(t);
   const client = new Client({ name: "errors-test", version: "1" });

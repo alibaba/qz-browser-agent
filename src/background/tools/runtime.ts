@@ -9,7 +9,7 @@ import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { chat, getConfig, saveConfig, applyModelPreset, deleteModelPreset, listModels, listProviderSummaries } from "../llm/index.js";
 import { createCapabilityChat } from "../llm/capability-chat.js";
 import { setCurrentRuntimeConfig } from "../runtime-config.js";
-import { listSkills, loadSkill, saveSkill, updateSkill, deleteSkill, loadSkillResource, loadSkillScript } from "../skills/runtime.js";
+import { listSkills, loadSkill, loadSkillByIdentity, saveSkill, updateSkill, deleteSkill, loadSkillResource, loadSkillScript } from "../skills/runtime.js";
 import type { ToolContext } from "../../sdk/background.js";
 import type { ToolRuntimeDependencies } from "../../sdk/background/services.js";
 import type { ToolDefinition, ToolSchema, ToolParameter, ToolModelPolicy, ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
@@ -1653,7 +1653,7 @@ const capabilityHost: ToolExtensionAPI = Object.freeze({
     deletePreset: (id: unknown, signal?: AbortSignal) => updateModelRuntime(() => deleteModelPreset(id, signal)),
     listModels, listProviders: listProviderSummaries, chat: createCapabilityChat(chat),
   }),
-  skills: Object.freeze({ list: listSkills, load: loadSkill, save: saveSkill, update: updateSkill,
+  skills: Object.freeze({ list: listSkills, load: loadSkill, loadByIdentity: loadSkillByIdentity, save: saveSkill, update: updateSkill,
     delete: deleteSkill, loadResource: loadSkillResource, loadScript: loadSkillScript }), ToolExecutionError, getToolRuntimeDependencies, element: elementRuntime,
   clampLimit, clampNumber, secondsToMs, makeSessionTabTargetError,
   getBookmarks: () => chrome.bookmarks, getHistory: () => chrome.history, getSecurityGuardrails, matchBlockedUrl,

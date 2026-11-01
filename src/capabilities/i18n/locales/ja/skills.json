@@ -342,6 +342,7 @@
   "skills.commitMessage": "コミットメッセージ",
   "skills.filesWithMatchingNamesWillBeUpdatedExtraRemoteFiles": "同名のファイルを1回のコミットでまとめて更新します。リポジトリ内の他のファイルは保持されます。",
   "skills.cancel": "キャンセル",
+  "skills.skillNameAmbiguous": "「{name}」という名前のスキルが複数あり、特定できないため操作は実行されませんでした。list_skills にある次のいずれかの name を使用してください：{names}。",
   "skills.skillNotFound": "スキル「{name}」が見つかりません",
   "skills.resourceNotFound": "スキルのリソース「{path}」が見つかりません",
   "skills.managementInternalOnly": "manage_skillは軽舟スキルワークベンチの内部ツールです。",

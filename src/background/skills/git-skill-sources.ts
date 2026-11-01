@@ -16,7 +16,7 @@ import {
 } from "../../shared/skills/git-skill-sources.js";
 import { importSkillsZip, skillToSkillMarkdown } from "../../shared/skills/skill-package.js";
 import {
-  getSkillDisplayName,
+  skillEntriesByIdentity,
   modernSkillValuesFromRecord,
   normalizeModernSkill,
   normalizeSkillLookup,
@@ -447,7 +447,7 @@ export function createGitSkillSourceService(options: GitSourceOptions) {
     }
     const installedDigests: Record<string, string> = {};
     for (const skill of rows) {
-      deleteSkillEntriesByLookup(nextSkills, skill.name);
+      for (const { key } of skillEntriesByIdentity(nextSkills, skill.name)) delete nextSkills[key];
       const installed = withGitSkillOrigin(skill, sourceDraft, {
         skillName: skill.name,
         importedAt: checkedAt,
@@ -888,16 +888,6 @@ function archiveBranch(value: unknown = "") {
     return url.searchParams.get("sha") || url.searchParams.get("ref") || "";
   } catch (_error) {
     return "";
-  }
-}
-
-function deleteSkillEntriesByLookup(skills: Fields = {}, name = "") {
-  const target = normalizeSkillLookup(name);
-  for (const key of Object.keys(skills)) {
-    const skill = skills[key];
-    if (normalizeSkillLookup(key) === target || normalizeSkillLookup(record(skill).name) === target || normalizeSkillLookup(getSkillDisplayName(record(skill))) === target) {
-      delete skills[key];
-    }
   }
 }
 

@@ -362,6 +362,7 @@ export default defineMessages("skills", {
   commitMessage: { "zh-CN": "提交说明", en: "Commit message" },
   filesWithMatchingNamesWillBeUpdatedExtraRemoteFiles: { "zh-CN": "同名文件会更新；远端多出的文件不会删除。全部文件在一次 commit 中原子提交。", en: "Matching files will be updated together in a single commit. Other files in the repository will be kept." },
   cancel: { "zh-CN": "取消", en: "Cancel" },
+  skillNameAmbiguous: { "zh-CN": "有多个技能都叫“{name}”，无法确定是哪一个，操作未执行。请改用 list_skills 里的 name：{names}。", en: "Several skills are named \"{name}\", so the action did not run. Use one of these names from list_skills: {names}." },
   skillNotFound: { "zh-CN": "未找到技能“{name}”", en: "Skill \"{name}\" not found" },
   resourceNotFound: { "zh-CN": "未找到技能资源“{path}”", en: "Skill resource \"{path}\" not found" },
   managementInternalOnly: { "zh-CN": "manage_skill 是轻舟技能工作台内部工具。", en: "manage_skill is an internal tool for the qz skill workbench." },

@@ -505,6 +505,23 @@ test("initial name conflicts and later local edits require explicit overwrite", 
   assert.equal((await harness.repository.readSnapshot()).skills["content-one"].content, "# One v2");
 });
 
+test("Git installs preserve siblings with the same title or a title equal to the installed ID", async () => {
+  const neighbours = [
+    normalizeModernSkill({ name: "sibling", displayName: "target", content: "keep" }),
+    normalizeModernSkill({ name: "same-title", displayName: "Shared title", content: "keep too" }),
+  ];
+  const harness = createHarness({ skills: Object.fromEntries(neighbours.map(row => [row.name, row])) });
+  harness.imported = () => [normalizeModernSkill({ name: "target", displayName: "Shared title", content: `version ${harness.archiveVersion}` })];
+  const bound = await harness.service.bind({ repositoryUrl: REPOSITORY_URL });
+  assert.equal(bound.ok, true);
+  for (const row of neighbours) assert.deepEqual((await harness.repository.readSnapshot()).skills[row.name], row);
+  harness.archiveVersion = 2;
+  assert.equal((await harness.service.update({ sourceId: bound.source.id })).ok, true);
+  const { skills } = await harness.repository.readSnapshot();
+  assert.equal(skills.target.content, "version 2");
+  for (const row of neighbours) assert.deepEqual(skills[row.name], row);
+});
+
 test("repository updates remove deleted source skills and unbind keeps imported content", async () => {
   const harness = createHarness();
   const bound = await harness.service.bind({ repositoryUrl: REPOSITORY_URL });

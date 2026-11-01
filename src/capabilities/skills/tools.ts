@@ -26,7 +26,7 @@ export function registerAnalysisSkillsTools({
   publishSkillRegistryChange,
   summarizeToolArgsForTrace,
   models: { chat: llmChat },
-  skills: { list: listSkills, load: loadSkill, save: saveSkill, update: updateSkill, delete: deleteSkill, loadResource: loadSkillResource },
+  skills: { list: listSkills, load: loadSkill, loadByIdentity: loadSkillByIdentity, save: saveSkill, update: updateSkill, delete: deleteSkill, loadResource: loadSkillResource },
 }: AnalysisSkillsHost) {
 registerTool({
   name: "ask_llm",
@@ -284,7 +284,7 @@ async function executeCreateSkillAction({ name, displayName, description, conten
       details: { name },
     };
   }
-  const existing = await loadSkill(name, context.language);
+  const existing = await loadSkillByIdentity(name);
   toolTrace(`[skill] create existing name=${name || ""} exists=${existing ? 1 : 0} elapsedMs=${Date.now() - startedAt}`);
   if (existing) {
     return {

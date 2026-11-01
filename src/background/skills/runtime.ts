@@ -35,6 +35,7 @@ import {
   normalizeSkillResources,
   normalizeStringList,
   skillMatchesName,
+  skillEntriesByIdentity,
   SKILL_SCOPE_GLOBAL,
   SKILL_SCOPE_RESIDENT,
   SKILL_SCOPE_SITE,
@@ -93,7 +94,15 @@ export async function loadSkill(name = "", language = getLanguage()) {
   const builtin = findBuiltinSkill(name, language);
   if (builtin) return builtin;
   const skills = await _getAll();
-  const found = findSkillEntry(skills, name);
+  const found = withLanguage(language, () => findSkillEntry(skills, name));
+  return found ? normalizeSkill(found.skill) : null;
+}
+
+/** Find an existing user Skill by storage identity, never by display name. */
+export async function loadSkillByIdentity(name = "") {
+  const skills = await _getAll();
+  const found = skillEntriesByIdentity(skills, normalizeModernSkill({ name }).name)
+    .find(({ skill }) => isModernSkillRecord(skill));
   return found ? normalizeSkill(found.skill) : null;
 }
 
@@ -105,7 +114,7 @@ export async function saveSkill(name = "", description: string, content: string,
   const skills = await _getAll();
   const expected = structuredClone(skills);
   const now = nowBeijingDateTime();
-  const existing = findSkillEntry(skills, name)?.skill || null;
+  const existing = skillEntriesByIdentity(skills, normalizeModernSkill({ name }).name)[0]?.skill || null;
   const cleanMetadata = Object.fromEntries(
     Object.entries(metadata || {}).filter(([, value]) => value !== undefined),
   );
@@ -120,7 +129,7 @@ export async function saveSkill(name = "", description: string, content: string,
   });
   if (skillManifestContentChanged(existing, draft)) validateSkillManifest(draft);
   await validateSkillMcpConfig(draft, { refresh: true });
-  deleteSkillEntriesByLookup(skills, draft.name);
+  for (const { key } of skillEntriesByIdentity(skills, draft.name)) delete skills[key];
   skills[draft.name] = draft;
   await _saveAll(skills, expected);
   return draft;
@@ -150,8 +159,8 @@ export async function updateSkill(name = "", patch: Fields = {}) {
       throw new SkillEditError("SKILL_READ_ONLY", t("skill.builtinRename", { name: String(targetName) }), { name, targetName });
     }
     const targetDraft = normalizeModernSkill({ ...draft, name: targetName });
-    const conflict = findSkillEntry(skills, targetDraft.name) || findSkillEntry(skills, getSkillDisplayName(targetDraft));
-    if (conflict && conflict.key !== found.key) {
+    const conflict = skillEntriesByIdentity(skills, targetDraft.name).find(entry => entry.key !== found.key);
+    if (conflict) {
       throw new Error(`Skill "${targetName}" already exists`);
     }
     changes.push({ field: "name", from: draft.name, to: targetName });
@@ -320,8 +329,9 @@ export async function deleteSkill(name = "") {
   }
   const skills = await _getAll();
   const expected = structuredClone(skills);
-  const removed = deleteSkillEntriesByLookup(skills, name);
-  if (!removed) return false;
+  const found = findSkillEntry(skills, name);
+  if (!found) return false;
+  delete skills[found.key];
   await _saveAll(skills, expected);
   return true;
 }
@@ -332,24 +342,21 @@ function findSkillEntry(skills: Fields, name: unknown) {
   if (skills[rawName] && isModernSkillRecord(skills[rawName])) {
     return { key: rawName, skill: fields(skills[rawName]) };
   }
-  const key = Object.keys(skills).find(item => {
+  const keys = Object.keys(skills).filter(item => {
     if (!isModernSkillRecord(skills[item])) return false;
     return skillMatchesName(fields(skills[item]), rawName) || normalizeSkillLookup(item) === normalizeSkillLookup(rawName);
   });
-  return key ? { key, skill: fields(skills[key]) } : null;
-}
-
-function deleteSkillEntriesByLookup(skills: Fields, name: string) {
-  const target = String(name || "").trim();
-  if (!target) return 0;
-  let removed = 0;
-  for (const key of Object.keys(skills || {})) {
-    if (skillMatchesName(fields(skills[key]), target) || normalizeSkillLookup(key) === normalizeSkillLookup(target)) {
-      delete skills[key];
-      removed += 1;
-    }
+  if (keys.length > 1) {
+    const candidates = keys.map(key => {
+      const skill = normalizeSkill(skills[key]);
+      return { name: skill.name, displayName: getSkillDisplayName(skill) };
+    });
+    throw new SkillEditError("SKILL_NAME_AMBIGUOUS", t("toolFailure.skillNameAmbiguous", {
+      name: rawName, names: candidates.map(candidate => candidate.name).join(", "),
+    }), { name: rawName, candidates });
   }
-  return removed;
+  const key = keys[0];
+  return key ? { key, skill: fields(skills[key]) } : null;
 }
 
 function parseSkillManifestJson(content = "") {

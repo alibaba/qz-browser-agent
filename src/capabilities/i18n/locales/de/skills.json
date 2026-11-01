@@ -342,6 +342,7 @@
   "skills.commitMessage": "Commit-Nachricht",
   "skills.filesWithMatchingNamesWillBeUpdatedExtraRemoteFiles": "Passende Dateien werden gemeinsam in einem Commit aktualisiert. Andere Dateien im Repository bleiben erhalten.",
   "skills.cancel": "Abbrechen",
+  "skills.skillNameAmbiguous": "Mehrere Skills heißen „{name}“, daher wurde die Aktion nicht ausgeführt. Verwenden Sie einen dieser Namen aus list_skills: {names}.",
   "skills.skillNotFound": "Skill „{name}“ nicht gefunden",
   "skills.resourceNotFound": "Skill-Ressource „{path}“ nicht gefunden",
   "skills.managementInternalOnly": "manage_skill ist ein internes Tool der qz-Skill-Werkstatt.",

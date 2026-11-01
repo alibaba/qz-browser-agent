@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { withLanguage } from "../../src/shared/i18n/index.js";
+import { t as skillT } from "../../src/capabilities/skills/i18n.js";
 import { readFileSync, readdirSync } from "node:fs";
 import {
   hasLocalizedToolFailureCode,
@@ -131,6 +133,18 @@ assert.equal(
   assert.equal(diagnostic.category, "工具桥接");
   assert.equal(diagnostic.originalCategory, "tool_bridge");
 }
+
+for (const [language, label, message] of [
+  ["zh-CN", "技能名称有歧义", "有多个技能都叫“Shared title”，无法确定是哪一个，操作未执行。请改用 list_skills 里的 name：rt1, rt2。"],
+  ["en", "Ambiguous skill name", 'Several skills are named "Shared title", so the action did not run. Use one of these names from list_skills: rt1, rt2.'],
+]) withLanguage(language, () => {
+  const candidates = ["rt1", "rt2"].map(name => ({ name, displayName: "Shared title" }));
+  const payload = localizeToolFailurePayload({ code: "SKILL_NAME_AMBIGUOUS", error: "original", details: { name: "Shared title", candidates } });
+  assert.equal(payload.codeLabel, label);
+  assert.equal(payload.error, message);
+  assert.deepEqual(payload.details.candidates, candidates);
+  assert.equal(skillT("skillNameAmbiguous", { name: "Shared title", names: "rt1, rt2" }), message);
+});
 
 console.log("tool error localization tests passed");
 

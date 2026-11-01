@@ -342,6 +342,7 @@
   "skills.commitMessage": "Mensagem de commit",
   "skills.filesWithMatchingNamesWillBeUpdatedExtraRemoteFiles": "Arquivos correspondentes serão atualizados juntos em um único commit. Os demais arquivos do repositório serão mantidos.",
   "skills.cancel": "Cancelar",
+  "skills.skillNameAmbiguous": "Várias habilidades se chamam “{name}”, por isso a ação não foi executada. Use um destes nomes de list_skills: {names}.",
   "skills.skillNotFound": "Habilidade “{name}” não encontrada",
   "skills.resourceNotFound": "Recurso de habilidade “{path}” não encontrado",
   "skills.managementInternalOnly": "manage_skill é uma ferramenta interna da área de habilidades do qz.",

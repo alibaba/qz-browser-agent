@@ -401,6 +401,23 @@ test("result posting carries the exact pairing, instance and worker fence; error
   assert.equal(result.code, "SKILL_NOT_FOUND"); assert.deepEqual(result.details, { name: "fixture" });
 });
 
+test("ambiguous Skill errors pass candidate identities through the extension bridge", async t => {
+  const candidates = ["rt1", "rt2"].map(name => ({ name, displayName: "Shared title" }));
+  const f = setup(t), r = f.start({ dispatch() {
+    throw Object.assign(new Error("Ambiguous skill name"), {
+      code: "SKILL_NAME_AMBIGUOUS",
+      details: { name: "Shared title", candidates: candidates.map(row => ({ ...row, privateField: "omit" })), privateField: "omit" },
+    });
+  } });
+  await drain();
+  f.setRequests([{ id: "ambiguous-id", method: "get_skill" }]);
+  await r.connect();
+  await until(() => f.calls.some(c => c.path.endsWith("/result")));
+  const result = f.calls.find(c => c.path.endsWith("/result")).body;
+  assert.equal(result.code, "SKILL_NAME_AMBIGUOUS");
+  assert.deepEqual(result.details, { name: "Shared title", candidates });
+});
+
 test("pair credentials are durable before networking and survive a lost pairing response", async t => {
   const f = setup(t), r = f.start(); await drain(); let first;
   f.setResponder((path, body) => {

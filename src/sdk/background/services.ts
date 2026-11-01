@@ -126,6 +126,7 @@ export interface ModelService {
 export interface SkillService {
   list(language?: string): Promise<SkillRecord[]>;
   load(name?: string, language?: string): Promise<SkillRecord | null>;
+  loadByIdentity(name?: string): Promise<SkillRecord | null>;
   save(name: string | undefined, description: string, content: string, metadata?: Record<string, unknown>): Promise<SkillRecord>;
   update(name?: string, patch?: Record<string, unknown>): Promise<{ skill: SkillRecord; changes: Record<string, unknown>[]; diagnostics: Record<string, unknown>[]; updated: boolean } | null>;
   delete(name?: string): Promise<boolean>;

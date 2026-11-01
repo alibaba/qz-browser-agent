@@ -342,6 +342,7 @@
   "skills.commitMessage": "Сообщение коммита",
   "skills.filesWithMatchingNamesWillBeUpdatedExtraRemoteFiles": "Совпадающие файлы обновятся одним коммитом. Остальные файлы репозитория будут сохранены.",
   "skills.cancel": "Отмена",
+  "skills.skillNameAmbiguous": "Несколько навыков имеют имя «{name}», поэтому действие не выполнено. Используйте одно из этих имён из list_skills: {names}.",
   "skills.skillNotFound": "Навык «{name}» не найден",
   "skills.resourceNotFound": "Ресурс навыка «{path}» не найден",
   "skills.managementInternalOnly": "manage_skill — внутренний инструмент мастерской навыков qz.",

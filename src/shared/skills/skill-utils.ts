@@ -117,6 +117,15 @@ export function skillLookupAliases(skill: Data = {}) {
   ].filter(Boolean);
 }
 
+/** Storage replacement matches identity only, never display names or lookup aliases. */
+export function skillEntriesByIdentity(skills: Data, name: string) {
+  const target = normalizeSkillLookup(name);
+  if (!target) return [];
+  return Object.entries(skills)
+    .filter(([key, skill]) => normalizeSkillLookup(key) === target || normalizeSkillLookup(objectInput(skill).name) === target)
+    .map(([key, skill]) => ({ key, skill: objectInput(skill) }));
+}
+
 export function normalizeSkillLookup(value: unknown = "") {
   return String(value || "").toLowerCase().replace(/[-_\s]/g, "");
 }

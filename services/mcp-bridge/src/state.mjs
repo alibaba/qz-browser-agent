@@ -14,9 +14,14 @@ export class BridgeError extends Error {
     super(`${code}: ${message}`);
     this.code = code;
     const fields = code === "DOWNLOAD_INTERRUPTED" ? ["downloadId", "filename", "reason"]
-      : code === "SKILL_NOT_FOUND" ? ["name"] : code === "SKILL_RESOURCE_NOT_FOUND" ? ["name", "path"] : [];
+      : ["SKILL_NOT_FOUND", "SKILL_NAME_AMBIGUOUS"].includes(code) ? ["name"] : code === "SKILL_RESOURCE_NOT_FOUND" ? ["name", "path"] : [];
     this.details = Object.fromEntries(fields.filter(key => typeof details?.[key] === "string" || typeof details?.[key] === "number")
       .map(key => [key, details[key]]));
+    if (code === "SKILL_NAME_AMBIGUOUS" && Array.isArray(details?.candidates)) {
+      this.details.candidates = details.candidates.map(candidate => ({
+        name: String(candidate?.name || ""), displayName: String(candidate?.displayName || ""),
+      }));
+    }
     if (["SKILL_NOT_FOUND", "SKILL_RESOURCE_NOT_FOUND"].includes(code) && Array.isArray(details?.available)) {
       this.details.available = details.available.filter(value => typeof value === "string");
     }

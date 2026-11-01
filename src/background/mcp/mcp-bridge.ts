@@ -480,6 +480,14 @@ function bounded<T>(promise: Promise<T>, signal: AbortSignal, ms: number): Promi
 }
 function errorDetails(error: unknown) {
   const value = record(error), details = record(value.details);
+  if (value.code === "SKILL_NAME_AMBIGUOUS") {
+    return {
+      name: String(details.name || ""),
+      candidates: (Array.isArray(details.candidates) ? details.candidates : []).map(candidate => ({
+        name: String(record(candidate).name || ""), displayName: String(record(candidate).displayName || ""),
+      })),
+    };
+  }
   const keys = value.code === "DOWNLOAD_INTERRUPTED" ? ["downloadId", "filename", "reason"]
     : value.code === "SKILL_NOT_FOUND" ? ["name"] : value.code === "SKILL_RESOURCE_NOT_FOUND" ? ["name", "path"] : [];
   return Object.fromEntries(keys.filter(key => typeof details[key] === "string" || typeof details[key] === "number").map(key => [key, details[key]]));

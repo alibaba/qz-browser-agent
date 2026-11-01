@@ -342,6 +342,7 @@
   "skills.commitMessage": "提交訊息",
   "skills.filesWithMatchingNamesWillBeUpdatedExtraRemoteFiles": "同名檔案將在一次提交中一併更新，儲存庫中的其他檔案將予以保留。",
   "skills.cancel": "取消",
+  "skills.skillNameAmbiguous": "有多個技能都叫「{name}」，無法確定是哪一個，操作未執行。請改用 list_skills 裡的 name：{names}。",
   "skills.skillNotFound": "找不到技能「{name}」",
   "skills.resourceNotFound": "找不到技能資源「{path}」",
   "skills.managementInternalOnly": "manage_skill 是輕舟技能工作台的內部工具。",
