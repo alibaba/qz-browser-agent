@@ -76,7 +76,10 @@ exemptions. Whitespace/comments and esbuild's numeric name suffixes do not alter
 Changes to a reviewed function require a new review and fingerprint. Three CDP functions
 (`createScriptTools`, `invokeBound`, and page-mode `apply`) have separate bundled and unbundled
 fingerprints: only esbuild's shorthand-property expansion after renaming differs between the forms.
-This is a source-change gate, not a whole-program data-flow proof.
+This is a source-change gate, not a whole-program data-flow proof. Regression tests audit real
+production builds (unbundled Chrome, bundled Chrome and Firefox) in temporary directories, then
+mutate those artifacts to verify identity-source, extra-sink and output-path rejection. Standalone
+TypeScript transforms do not substitute for the production pipeline when reviewing fingerprints.
 
 | Sink | Reason |
 | --- | --- |
@@ -86,7 +89,7 @@ This is a source-change gate, not a whole-program data-flow proof.
 | `startWorkerRun` | Creates a sandbox Blob Worker from the exact packaged inner-runner; the embedded source is scanned separately. |
 | Inner-runner's execution function | Existing user/Agent JavaScript execution in a manifest-declared sandbox Worker. Its code is readable and its extension/service access is through validated host messages. |
 | `evaluateCdpScript` | Run-owned CDP evaluation, with cancellation and stale-owner rejection. This is a second intentional user/Agent execution environment, not sandbox execution. |
-| `createScriptTools`, `runScriptWithCdpToolBridgeUnlocked`, `runScriptAsFunctionBody` | Existing page-script entry, message bridge and explicit-return fallback. The entire factory fingerprint includes the builders that combine packaged trace/guard code with user/Agent source; Session/run identity and target ownership remain required. |
+| `createScriptTools`, `runScriptWithCdpToolBridgeUnlocked`, `runScriptAsFunctionBody` | Existing page-script entry, message bridge and explicit-return fallback. The entire factory fingerprint includes the builders that combine packaged trace/guard code with user/Agent source; Session/run identity and target ownership remain required. Parent invocation IDs are JSON-serialized into the existing bridge messages; they are resolved against live Background calls and do not supply executable source. |
 | Page-mode `apply` | Evaluates only the literal `navigator.userAgent`. |
 | `contentContextId`, `invokeBound` | Static isolated-world identity probe and literal bridge function; arguments travel as CDP values rather than code. |
 | Firefox `page-command` invoke | Firefox-only emulation of CDP `Runtime.callFunctionOn` for the same callers. It compiles the declaration with the page realm's `Function`, never in the isolated world or extension context. The Chrome package does not contain it. |
