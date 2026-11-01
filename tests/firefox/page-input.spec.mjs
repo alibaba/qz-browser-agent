@@ -56,7 +56,7 @@ test("uid and css input succeed once on a page without a content CSP", async ({ 
         target: { tabId: ${Number(tabId)} },
         world: "ISOLATED",
         func: () => ({
-          bound: document.__qzInputReceiptsV2Bound === true,
+          bound: document.__qzInputReceiptsV4Bound === true,
           marked: globalThis.__qzExtensionInputEvents instanceof WeakSet,
         }),
       });
