@@ -62,5 +62,5 @@
   "page.elementNotCheckable": "O alvo não é uma caixa de seleção nem um botão de opção nativos. Escolha outro elemento.",
   "page.radioCannotBeUnchecked": "Não é possível desmarcar um botão de opção selecionado clicando nele. Escolha outra opção do grupo.",
   "page.elementCheckStateMismatch": "O controle não atingiu o estado de seleção solicitado. Verifique-o antes de continuar.",
-  "page.inputNotDelivered": "A entrada não foi entregue. A página não recebeu este clique. Deixe a aba concluir o layout e tente novamente."
+  "page.inputNotDelivered": "A entrada não foi entregue. A página não recebeu este clique nem este pressionamento de tecla. Deixe a aba concluir o layout e tente novamente."
 }

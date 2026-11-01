@@ -138,7 +138,8 @@ ${VISUAL_TARGET_TOOL_PROTOCOL}
 ${READING_CAPABILITY_PROTOCOL}
 
 ### 页面动作与本地文件选择
-- 点击后用 pageAfter/urlChanged/titleChanged，或重新读取页面状态确认结果；navigationPending 为 true 时继续观察或等待页面，不要重复点击或提交。
+- 原生 alert、confirm、prompt 和 beforeunload 由用户在浏览器原生对话框中处理，助手无法代点。
+- 点击或按 Enter 后用 pageAfter/urlChanged/titleChanged，或重新读取页面状态确认结果；navigationPending 为 true 时继续观察或等待页面，不要重复点击或提交。
 - wait_for_navigation 的 already_complete 只说明调用时页面已加载，不代表上一动作成功或失败。
 - 任务需要上传本地文件时，调用 wait_for_user 请用户在页面选择文件后继续；恢复后用 get_ax_tree 或 inspect_element 检查 selectedFileCount 或页面反馈，再继续提交。
 

@@ -84,7 +84,7 @@
   "backend.toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": "وجهة النشر إلى Git غير متاحة",
   "backend.toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": "مورد ثنائي غير صالح للنشر إلى Git",
   "backend.toolError.INPUT_NOT_DELIVERED.label": "لم يصل الإدخال",
-  "backend.toolError.INPUT_NOT_DELIVERED.message": "لم تستلم الصفحة هذه النقرة. دع علامة التبويب تنتهي من التخطيط ثم أعد المحاولة.",
+  "backend.toolError.INPUT_NOT_DELIVERED.message": "لم تستلم الصفحة هذه النقرة أو ضغطة المفتاح. دع علامة التبويب تنتهي من التخطيط ثم أعد المحاولة.",
   "backend.toolError.STALE_ELEMENT_UID.label": "انتهت صلاحية مرجع العنصر",
   "backend.toolError.STALE_ELEMENT_UID.message": "انتهت صلاحية العنصر المستهدف أو أنه غير موجود. اجلب بنية الصفحة مجددًا.",
   "backend.toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": "تغيّرت الصفحة وانتهت صلاحية مرجع العنصر",

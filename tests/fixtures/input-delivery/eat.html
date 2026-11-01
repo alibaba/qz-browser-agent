@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>QZ eat input</title>
+<script>
+// Swallow every pointer/mouse/touch/click/keydown at window capture before anyone else (unless ?off=1)
+const OFF=new URLSearchParams(location.search).get('off')==='1';
+function L(s){fetch('/__log?eat '+encodeURIComponent(s)).catch(()=>{})}
+if(!OFF)for(const t of ['pointerdown','mousedown','touchstart','click','keydown'])window.addEventListener(t,e=>{e.stopImmediatePropagation();L('ate '+t+' trusted='+e.isTrusted)},true);
+L('load off='+OFF);
+</script>
+<form id="f" action="/fast.html" method="get"><input id="q" name="q" type="search"><button id="go">Go</button></form>
+<button id="b" onclick="out.textContent='clicked';L('button clicked')">Press me</button><div id="out">none</div>

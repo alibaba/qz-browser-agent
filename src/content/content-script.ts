@@ -43,7 +43,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-10-28-shadow-find-target";
+  const QZ_CONTENT_VERSION = "2026-10-31-fill-target";
   const findElementRefs = new Map<string, WeakRef<Element>>();
   const findElementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let findElementRefSequence = 0;
@@ -2043,26 +2043,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     },
 
     async readElementActionState({ selector, index = 0 }) {
-      // Let page event handlers commit or roll back native actions; background tabs may not paint.
-      await new Promise<void>(resolve => {
-        const timeout = window.setTimeout(() => {
-          window.cancelAnimationFrame(frame);
-          resolve();
-        }, 50);
-        const frame = window.requestAnimationFrame(() => {
-          window.clearTimeout(timeout);
-          resolve();
-        });
-      });
+      await settleElementAction();
       const targetResult = queryElement(selector, index);
       if ("error" in targetResult) return targetResult;
       const { element: el } = targetResult;
-      return {
-        ...getElementSummary(el),
-        value: getElementValue(el, true),
-        focused: elementHasFocus(el),
-        checked: "checked" in el ? !!el.checked : undefined,
-      };
+      return elementActionState(el);
     },
 
     resolveCheckTarget({ selector, index = 0 }) {
@@ -3026,6 +3011,23 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       if (el.getAttribute("aria-label")) item.label = el.getAttribute("aria-label");
       return item;
     });
+  }
+
+  function settleElementAction() {
+    // Let page handlers commit native actions; background tabs may not paint.
+    return new Promise<void>(resolve => {
+      const timeout = window.setTimeout(() => { window.cancelAnimationFrame(frame); resolve(); }, 50);
+      const frame = window.requestAnimationFrame(() => { window.clearTimeout(timeout); resolve(); });
+    });
+  }
+
+  function elementActionState(el: Element) {
+    return {
+      ...getElementSummary(el),
+      value: getElementValue(el, true),
+      focused: el.isConnected && elementHasFocus(el),
+      checked: "checked" in el ? !!el.checked : undefined,
+    };
   }
 
   const FILL_ROOT_LIMIT = 8;

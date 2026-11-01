@@ -136,7 +136,8 @@ ${VISUAL_TARGET_TOOL_PROTOCOL}
 ${READING_CAPABILITY_PROTOCOL}
 
 ### Page actions and local file selection
-- After clicking or submitting, check pageAfter/urlChanged/titleChanged or re-read page state to confirm the result; when navigationPending is true, observe or wait for the page instead of repeating the click or submission.
+- The user answers native alert, confirm, prompt, and beforeunload dialogs in the browser. The agent cannot click them.
+- After clicking, submitting, or pressing Enter, check pageAfter/urlChanged/titleChanged or re-read page state to confirm the result; when navigationPending is true, observe or wait for the page instead of repeating the click or submission.
 - wait_for_navigation returning already_complete means only that the page was already loaded when called, not that the preceding action succeeded or failed.
 - When a task requires uploading a local file, call wait_for_user so the user can select the file on the page and continue; after resuming, verify selectedFileCount or page feedback with get_ax_tree or inspect_element before submitting.
 

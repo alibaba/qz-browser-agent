@@ -84,7 +84,7 @@
   "backend.toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": "Git 發佈目標無法使用",
   "backend.toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": "Git 發佈的二進位資源無效",
   "backend.toolError.INPUT_NOT_DELIVERED.label": "輸入未送達",
-  "backend.toolError.INPUT_NOT_DELIVERED.message": "頁面沒有收到這次點擊。請先讓分頁完成排版後再試。",
+  "backend.toolError.INPUT_NOT_DELIVERED.message": "頁面沒有收到這次點擊或按鍵。請先讓分頁完成排版後再試。",
   "backend.toolError.STALE_ELEMENT_UID.label": "元素參照已失效",
   "backend.toolError.STALE_ELEMENT_UID.message": "目標元素已失效或不存在，請重新取得頁面結構。",
   "backend.toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": "頁面已變更，元素參照失效",

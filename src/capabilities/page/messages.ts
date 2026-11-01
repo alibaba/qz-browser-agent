@@ -65,7 +65,7 @@ export default defineMessages("page", {
   "elementNotCheckable": { "zh-CN": "目标不是原生复选框或单选框，请重新选择元素。", en: "The target is not a native checkbox or radio button. Choose another element." },
   "radioCannotBeUnchecked": { "zh-CN": "不能通过点击取消已选中的单选框，请选择同组的其他选项。", en: "A selected radio button cannot be cleared by clicking it. Choose another option in the group." },
   "elementCheckStateMismatch": { "zh-CN": "点击后未达到指定的勾选状态，请检查元素后再继续。", en: "The control did not reach the requested checked state. Inspect it before continuing." },
-  "inputNotDelivered": { "zh-CN": "输入未送达。页面没有收到这次点击，请先让标签页完成排版后再试。", en: "Input was not delivered. The page received no click. Let the tab finish laying out, then try again." },
+  "inputNotDelivered": { "zh-CN": "输入未送达。页面没有收到这次点击或按键，请先让标签页完成排版后再试。", en: "Input was not delivered. The page received no click or key press. Let the tab finish laying out, then try again." },
 }, { historicalLabels: [
   "readArticle", "readHtml", "selectElement", "findElements",
   "inspectElement", "interactWithElement", "clickElement", "fillInput",

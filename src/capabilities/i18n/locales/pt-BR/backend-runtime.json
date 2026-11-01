@@ -84,7 +84,7 @@
   "backend.toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": "Destino de publicação Git indisponível",
   "backend.toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": "Recurso binário inválido para publicação Git",
   "backend.toolError.INPUT_NOT_DELIVERED.label": "Entrada não entregue",
-  "backend.toolError.INPUT_NOT_DELIVERED.message": "A página não recebeu este clique. Deixe a aba concluir o layout e tente novamente.",
+  "backend.toolError.INPUT_NOT_DELIVERED.message": "A página não recebeu este clique nem este pressionamento de tecla. Deixe a aba concluir o layout e tente novamente.",
   "backend.toolError.STALE_ELEMENT_UID.label": "A referência do elemento expirou",
   "backend.toolError.STALE_ELEMENT_UID.message": "O elemento de destino expirou ou não existe. Obtenha a estrutura da página novamente.",
   "backend.toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": "A página mudou; a referência do elemento expirou",

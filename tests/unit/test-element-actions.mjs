@@ -11,14 +11,14 @@ globalThis.chrome = {
 };
 const context = { sessionId: "owner", runId: "run", runProfile: { platform: { os: "linux" } } };
 
-function fixture({ checked, mobile = false, frameId = "", hidden = false } = {}) {
+function fixture({ checked, mobile = false, frameId = "", hidden = false, observedNavigation = null, attached = true, receiptCount = 1 } = {}) {
   const commands = [], messages = [], observations = [], controller = new AbortController();
   const receipts = new Set();
   chrome.scripting = { async executeScript({ args }) {
     if (!args) return [{ frameId: 0, documentId: "fixture", result: { width: 800, height: 600 } }];
     const [id, arm] = args;
     if (arm) receipts.add(id); else receipts.delete(id);
-    return [{ frameId: 0, documentId: "fixture", result: arm ? 0 : 1 }];
+    return [{ frameId: 0, documentId: "fixture", result: arm ? 0 : receiptCount }];
   } };
   const state = { value: "old", checked };
   let execute, onCommand = async () => {}, onContent = async () => {};
@@ -27,7 +27,8 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false } = {})
     clickablePoint: hidden ? null : { x: 20, y: 20 }, clickablePointInViewport: true, inViewport: true });
   const content = async (action, params) => {
     messages.push({ action, params });
-    await onContent(action, params);
+    const reply = await onContent(action, params);
+    if (reply !== undefined) return reply;
     return { ...inspection(), ...(action === "prepareElementFill" ? { fillMode: "text" } : {}) };
   };
   const send = async (method, params = {}) => {
@@ -57,11 +58,15 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false } = {})
     async getTabPageState() { return { url: "https://example.test/", title: "Fixture" }; },
     pageStateDelta: (before, after) => ({ pageBefore: before, pageAfter: after, urlChanged: before.url !== after.url, titleChanged: before.title !== after.title }),
     async prepareKnownPageNavigation() { return null; },
-    commitObservedPageNavigation: input => { observations.push(input); return null; },
+    commitObservedPageNavigation: input => { observations.push(input); return observedNavigation; },
     sendCdp: async (_tabId, method, params) => send(method, params),
-    withDebugger: async (_tabId, callback) => callback({}, send),
+    getDebuggerConnectionId: () => attached ? 1 : null,
+    withDebugger: async (_tabId, callback) => {
+      assert.equal(attached, true, 'CSS selection must not attempt to attach');
+      return callback({}, send);
+    },
   });
-  return { commands, messages, observations, controller, state, receipts,
+  return { commands, messages, observations, controller, state, receipts, inspection,
     call: args => execute({ tabId: 7, target: "css:#target", ...args }, controller.signal, context),
     onCommand: hook => { onCommand = hook; }, onContent: hook => { onContent = hook; } };
 }
@@ -143,6 +148,25 @@ test("a committed URL still undergoes navigation security checks while resources
   } finally { chrome.tabs.get = get; }
 });
 
+for (const documentChanged of [false, true, null]) test(`Firefox Enter keeps pending and document evidence separate (${documentChanged})`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = fixture(), get = chrome.tabs.get, execute = chrome.scripting.executeScript;
+  const pressed = () => f.commands.some(command => command.method === 'Input.dispatchKeyEvent');
+  t.mock.method(chrome.tabs, 'get', async (...args) => ({ ...await get(...args), ...(pressed() ? { status: 'loading', pendingUrl: 'https://example.test/' } : {}) }));
+  t.mock.method(chrome.scripting, 'executeScript', async options => (await execute(options)).map(frame => ({
+    ...frame, documentId: documentChanged === null ? undefined : pressed() && documentChanged ? 'new-document' : 'same-document',
+  })));
+  const pending = f.call({ action: 'press', key: 'Enter' });
+  await new Promise(setImmediate);
+  t.mock.timers.tick(180);
+  await new Promise(setImmediate);
+  t.mock.timers.tick(10000);
+  const result = await pending;
+  assert.equal(result.urlChanged, false);
+  assert.equal(result.navigationPending, true);
+  assert.equal(result.navigated, documentChanged === true ? true : null);
+});
+
 test("page changes during click preparation form the baseline instead of being attributed to the click", async t => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const f = fixture(), get = chrome.tabs.get;
@@ -215,6 +239,242 @@ for (const method of ["href_navigation", "content_fallback"]) {
   }
 }
 
+test('select dispatches Content once and does not enable page events or replay a lost response', async () => {
+  const f = fixture();
+  f.onContent((action, params) => {
+    if (action !== 'actOnElement') return;
+    assert.equal(params.elementAction, 'select');
+    throw new Error('selection response lost');
+  });
+  await assert.rejects(f.call({ action: 'select', value: 'choice' }), /selection response lost/);
+  assert.equal(f.messages.filter(message => message.action === 'actOnElement').length, 1);
+  assert.equal(f.commands.some(command => command.method === 'Page.enable'), false);
+});
+
+test('CSS select succeeds without a debugger connection or attachment permission', async () => {
+  const f = fixture({ attached: false });
+  f.onContent((action, params) => {
+    if (action !== 'actOnElement') return;
+    assert.equal(params.elementAction, 'select');
+    return { selected: true };
+  });
+  assert.equal((await f.call({ action: 'select', value: 'choice' })).selected, true);
+  assert.equal(f.messages.filter(message => message.action === 'actOnElement').length, 1);
+  assert.deepEqual(f.commands, []);
+});
+
+const pressFields = ["action", "target", "selector", "uid", "index", "tabId", "key", "pressed", "method", "inputDelivered", "element"];
+const navigationFields = ["pageBefore", "pageAfter", "urlChanged", "titleChanged", "navigationPending", "navigated", "_pageUrl", "_pageTitle"];
+
+for (const args of [{ key: "Enter" }, { value: "Enter" }, { key: " Enter " }]) {
+  for (const hidden of [false, true]) test(`press ${JSON.stringify(args)} observes before input (hidden=${hidden}) and appends navigation`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const pageBefore = { url: "https://example.test/", title: "Fixture" };
+    const pageAfter = hidden ? pageBefore : { url: "https://example.test/done", title: "Done" };
+    const observedNavigation = hidden ? null : { url: pageAfter.url, rateLimitRecorded: false };
+    const f = fixture({ hidden, observedNavigation });
+    let changed = false;
+    t.mock.method(chrome.tabs, "get", async () => ({ ...(changed ? pageAfter : pageBefore), status: "complete" }));
+    const added = t.mock.method(chrome.tabs.onUpdated, "addListener");
+    f.onCommand(method => {
+      if (!method.startsWith("Input.")) return;
+      assert.equal(navigationListeners.size, 1, "observe before the focusing click as well as the key");
+      changed = true;
+    });
+    const pending = f.call({ action: "press", ...args });
+    await new Promise(setImmediate);
+    t.mock.timers.tick(180);
+    const result = await pending;
+    assert.deepEqual(Object.keys(result), [...pressFields, ...navigationFields, ...(hidden ? [] : ["observedNavigation"])]);
+    assert.deepEqual(result, {
+      action: "press", target: "css:#target", selector: "#target", uid: undefined, index: 0, tabId: 7,
+      key: args.key || args.value, pressed: true, method: "cdp", inputDelivered: true, element: f.inspection(),
+      pageBefore, pageAfter, urlChanged: !hidden, titleChanged: !hidden, navigationPending: false, navigated: !hidden,
+      _pageUrl: pageAfter.url, _pageTitle: pageAfter.title, ...(observedNavigation ? { observedNavigation } : {}),
+    });
+    assert.equal(added.mock.callCount(), 1);
+    assert.equal(f.observations.length, 1);
+    assert.equal(f.observations[0].prepared, null);
+    assert.equal(f.commands.filter(command => command.params.type === "keyDown").length, 1);
+    assert.equal(navigationListeners.size, 0);
+    assert.equal(f.receipts.size, 0);
+    assertNoReplay(f);
+  });
+}
+
+for (const key of ["Shift+Enter", "Ctrl+Enter", "Alt+Enter", "Meta+Enter", "Escape", "Tab", "a"]) {
+  test(`press ${key} does not observe or wait and keeps its exact JSON structure`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const f = fixture();
+    const added = t.mock.method(chrome.tabs.onUpdated, "addListener");
+    t.mock.method(chrome.tabs, "get", () => { throw new Error("non-Enter must not probe navigation"); });
+    // A supplied key wins over value:'Enter'. No timer is advanced in this test.
+    const result = await f.call({ action: "press", key, value: "Enter" });
+    assert.equal(JSON.stringify(result), JSON.stringify({
+      action: "press", target: "css:#target", selector: "#target", index: 0, tabId: 7,
+      key, pressed: true, method: "cdp", inputDelivered: true, element: f.inspection(),
+    }));
+    assert.deepEqual(Object.keys(result), pressFields);
+    assert.equal(added.mock.callCount(), 0);
+    assert.equal(f.observations.length, 0);
+    assert.equal(f.receipts.size, 0);
+  });
+}
+
+for (const boundary of ["mousePressed", "mouseReleased", "keyDown", "keyUp"]) {
+  test(`press Enter disposes and never replays a lost ${boundary} response`, async () => {
+    const f = fixture();
+    f.onCommand((method, params) => {
+      if (!method.startsWith("Input.")) return;
+      assert.equal(navigationListeners.size, 1);
+      if (params.type === boundary) throw new Error("input response lost");
+    });
+    await assert.rejects(f.call({ action: "press", key: "Enter" }), /input response lost/);
+    assert.equal(f.commands.filter(command => command.params.type === "mousePressed").length, 1);
+    assert.equal(f.commands.filter(command => command.params.type === "keyDown").length, boundary.startsWith("key") ? 1 : 0);
+    assert.equal(navigationListeners.size, 0);
+    assert.equal(f.receipts.size, 0);
+    assertNoReplay(f);
+  });
+}
+
+for (const boundary of ["observer setup", "mouseReleased", "keyDown", "observation wait"]) {
+  test(`press Enter cancellation at ${boundary} disposes without further dispatch or fallback`, async t => {
+    const f = fixture();
+    if (boundary === "observer setup") t.mock.method(chrome.tabs.onUpdated, "addListener", listener => {
+      navigationListeners.add(listener);
+      queueMicrotask(() => f.controller.abort());
+    });
+    f.onCommand((_method, params) => { if (params.type === boundary) f.controller.abort(); });
+    const pending = f.call({ action: "press", key: "Enter" });
+    const rejected = assert.rejects(pending, { code: "OPERATION_ABORTED" });
+    if (boundary === "observation wait") {
+      await new Promise(setImmediate);
+      assert.equal(navigationListeners.size, 1);
+      f.controller.abort();
+    }
+    await rejected;
+    assert.equal(f.commands.filter(command => command.params.type === "mousePressed").length, boundary === "observer setup" ? 0 : 1);
+    assert.equal(f.commands.filter(command => command.params.type === "keyDown").length, ["keyDown", "observation wait"].includes(boundary) ? 1 : 0);
+    assert.equal(navigationListeners.size, 0);
+    assert.equal(f.receipts.size, 0);
+    assertNoReplay(f);
+  });
+}
+
+for (const navigated of [false, true]) test(`zero click receipts wait for navigation before denial (${navigated})`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = fixture({ receiptCount: 0 });
+  t.mock.method(chrome.tabs, 'get', async () => ({
+    url: navigated && f.commands.some(command => command.params.type === 'mouseReleased')
+      ? 'https://example.test/done' : 'https://example.test/', title: 'Fixture', status: 'complete',
+  }));
+  const pending = f.call({ action: 'click' });
+  await new Promise(setImmediate);
+  assert.equal(f.receipts.size, 1, 'receipt stays armed until the navigation observation finishes');
+  t.mock.timers.tick(180);
+  const result = await pending;
+  assert.equal(result.code, navigated ? undefined : 'INPUT_NOT_DELIVERED');
+  if (navigated) assert.equal(result.navigated, true);
+  assert.equal(f.commands.filter(command => command.params.type === 'mouseReleased').length, 1);
+  assert.equal(f.receipts.size, 0);
+  assert.equal(navigationListeners.size, 0);
+  assertNoReplay(f);
+});
+
+test('click cancellation during final receipt read rejects success without replay', async t => {
+  const f = fixture(), execute = chrome.scripting.executeScript;
+  t.mock.method(chrome.scripting, 'executeScript', async options => {
+    if (options.args?.[1] === false) f.controller.abort();
+    return execute(options);
+  });
+  await assert.rejects(f.call({ action: 'click' }), { code: 'OPERATION_ABORTED' });
+  assert.equal(f.receipts.size, 0);
+  assert.equal(navigationListeners.size, 0);
+  assert.equal(f.commands.filter(command => command.params.type === 'mouseReleased').length, 1);
+  assertNoReplay(f);
+});
+
+test("press Enter disposes on a confirmed focusing-click miss without sending the key", async t => {
+  const f = fixture();
+  const execute = chrome.scripting.executeScript;
+  t.mock.method(chrome.scripting, "executeScript", async options => {
+    const frames = await execute(options);
+    return options.args?.[1] === false ? frames.map(frame => ({ ...frame, result: 0 })) : frames;
+  });
+  const added = t.mock.method(chrome.tabs.onUpdated, "addListener");
+  const result = await f.call({ action: "press", key: "Enter" });
+  assert.equal(result.code, "INPUT_NOT_DELIVERED");
+  assert.equal(result.inputDelivered, false);
+  assert.equal(added.mock.callCount(), 1);
+  assert.equal("pageBefore" in result, false);
+  assert.equal(f.commands.some(command => command.method === "Input.dispatchKeyEvent"), false);
+  assert.equal(navigationListeners.size, 0);
+  assert.equal(f.receipts.size, 0);
+  assertNoReplay(f);
+});
+
+test("press Enter observation failure after dispatch disposes without replay", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const f = fixture(), get = chrome.tabs.get;
+  t.mock.method(chrome.tabs, "get", async (...args) => {
+    if (f.commands.some(command => command.params.type === "keyDown")) throw new Error("tab closed while observing");
+    return get(...args);
+  });
+  const pending = f.call({ action: "press", key: "Enter" });
+  const rejected = assert.rejects(pending, /tab closed while observing/);
+  await new Promise(setImmediate);
+  t.mock.timers.tick(180);
+  await rejected;
+  assert.equal(f.commands.filter(command => command.params.type === "keyDown").length, 1);
+  assert.equal(navigationListeners.size, 0);
+  assert.equal(f.receipts.size, 0);
+  assertNoReplay(f);
+});
+
+for (const outcome of ["success", "error reply", "throw", "cancel", "observation failure"]) {
+  test(`press Enter Content fallback observes once and disposes on ${outcome}`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const observedNavigation = { url: "https://example.test/done", rateLimitRecorded: false };
+    const f = fixture({ observedNavigation });
+    let inspections = 0, fallbackCalls = 0;
+    f.onContent(action => {
+      if (action === "inspectElement" && ++inspections === 2) throw new Error("CDP preparation failed");
+      if (action !== "actOnElement") return;
+      fallbackCalls++;
+      assert.equal(navigationListeners.size, 1);
+      if (outcome === "throw") throw new Error("fallback response lost");
+      if (outcome === "cancel") f.controller.abort();
+      return outcome === "error reply" ? { error: "Not editable", code: "NOT_EDITABLE" } : { pressed: true, key: "Enter" };
+    });
+    t.mock.method(chrome.tabs, "get", async () => {
+      if (fallbackCalls && outcome === "observation failure") throw new Error("tab closed while observing");
+      return { url: fallbackCalls ? observedNavigation.url : "https://example.test/", title: "Fixture", status: "complete" };
+    });
+    const pending = f.call({ action: "press", value: "Enter" });
+    const rejected = ["throw", "cancel", "observation failure"].includes(outcome)
+      ? assert.rejects(pending, outcome === "cancel" ? { code: "OPERATION_ABORTED" } : /fallback response lost|tab closed while observing/) : null;
+    await new Promise(setImmediate);
+    t.mock.timers.tick(180);
+    if (rejected) await rejected;
+    else {
+      const result = await pending;
+      assert.equal(result.method, outcome === "error reply" ? "content_failed" : "content_fallback");
+      assert.equal(result.navigated, true);
+      assert.equal(result.urlChanged, true);
+      assert.equal(result.navigationPending, false);
+      assert.equal(result._pageUrl, observedNavigation.url);
+      assert.deepEqual(result.observedNavigation, observedNavigation);
+      assert.deepEqual(Object.keys(result).slice(-9), [...navigationFields, "observedNavigation"]);
+      assert.equal("submitDispatched" in result, false);
+    }
+    assert.equal(fallbackCalls, 1);
+    assert.equal(f.commands.some(command => command.method.startsWith("Input.")), false);
+    assert.equal(navigationListeners.size, 0);
+    assert.equal(f.receipts.size, 0);
+  });
+}
+
 test("a lost insertText response does not replay input or submit", async () => {
   const f = fixture();
   f.onCommand(method => { if (method === "Input.insertText") throw new Error("lost insert response"); });
@@ -239,6 +499,38 @@ for (const boundary of ["prepare", "insert", "readback"]) {
     assertNoReplay(f);
   });
 }
+
+test("a replaced field is not refilled or submitted", async () => {
+  const f = fixture();
+  f.onContent(action => {
+    if (action !== "readElementActionState") return;
+    return { error: "Element not found", code: "ELEMENT_NOT_FOUND" };
+  });
+  const result = await f.call({ action: "fill", value: "new", submit: true });
+  assert.equal(result.code, "ELEMENT_NOT_FOUND");
+  assert.equal(result.submitDispatched, undefined);
+  assert.equal(f.commands.filter(command => command.method === "Input.insertText").length, 1);
+  assert.equal(f.commands.some(command => command.params.key === "Enter"), false);
+  assert.equal(f.messages.some(message => message.action === "refreshElementFill"), false);
+  assertNoReplay(f);
+});
+
+for (const submit of [false, true]) test(`ordinary fill keeps its result without input receipts (submit=${submit})`, async t => {
+  const f = fixture();
+  const injections = t.mock.method(chrome.scripting, 'executeScript');
+  const result = await f.call({ action: "fill", value: "new", submit });
+  assert.equal(result.code, undefined);
+  if (submit) assert.equal(result.navigated, false);
+  assert.equal(injections.mock.calls.some(call => call.arguments[0].target?.allFrames), false);
+  assert.equal(f.commands.filter(command => command.params.key === 'Enter' && command.params.type === 'keyDown').length, Number(submit));
+  assert.equal(result.filled, true);
+  assert.equal(result.submitDispatched, submit);
+  assert.equal(result.value, "new");
+  assert.equal(f.commands.filter(command => command.method === "Input.insertText").length, 1);
+  assert.deepEqual(Object.keys(result.element).sort(), ["checked", "clickablePoint", "clickablePointInViewport", "disabled", "editable", "focused", "inViewport", "readOnly", "tag", "type", "value"].sort());
+  assert.equal(f.messages.some(message => message.action === "refreshElementFill" || message.action === "releaseElementFill"), false);
+  assertNoReplay(f);
+});
 
 test("a replacement non-checkable input cannot count as a successful check", async () => {
   const f = fixture({ checked: false });

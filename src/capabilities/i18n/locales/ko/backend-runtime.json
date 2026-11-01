@@ -84,7 +84,7 @@
   "backend.toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": "Git 게시 대상을 사용할 수 없습니다",
   "backend.toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": "Git 게시용 바이너리 리소스가 올바르지 않습니다",
   "backend.toolError.INPUT_NOT_DELIVERED.label": "입력이 전달되지 않음",
-  "backend.toolError.INPUT_NOT_DELIVERED.message": "페이지가 이 클릭을 받지 못했습니다. 탭 레이아웃이 끝난 뒤 다시 시도하세요.",
+  "backend.toolError.INPUT_NOT_DELIVERED.message": "페이지가 이 클릭 또는 키 입력을 받지 못했습니다. 탭 레이아웃이 끝난 뒤 다시 시도하세요.",
   "backend.toolError.STALE_ELEMENT_UID.label": "요소 참조가 만료되었습니다",
   "backend.toolError.STALE_ELEMENT_UID.message": "대상 요소가 만료되었거나 없습니다. 페이지 구조를 다시 가져오세요.",
   "backend.toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": "페이지가 바뀌어 요소 참조가 만료되었습니다",

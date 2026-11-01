@@ -84,7 +84,7 @@
   "backend.toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": "Destino de publicación Git no disponible",
   "backend.toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": "Recurso binario no válido para publicar en Git",
   "backend.toolError.INPUT_NOT_DELIVERED.label": "Entrada no entregada",
-  "backend.toolError.INPUT_NOT_DELIVERED.message": "La página no recibió este clic. Deja que la pestaña termine de componerse y vuelve a intentarlo.",
+  "backend.toolError.INPUT_NOT_DELIVERED.message": "La página no recibió este clic ni esta pulsación de tecla. Deja que la pestaña termine de componerse y vuelve a intentarlo.",
   "backend.toolError.STALE_ELEMENT_UID.label": "La referencia del elemento ha caducado",
   "backend.toolError.STALE_ELEMENT_UID.message": "El elemento de destino ha caducado o no existe. Obtén de nuevo la estructura de la página.",
   "backend.toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": "La página cambió; la referencia del elemento caducó",

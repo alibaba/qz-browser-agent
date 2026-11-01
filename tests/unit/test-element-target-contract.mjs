@@ -1,3 +1,4 @@
+import "../support/default-locale.mjs";
 import assert from "node:assert/strict";
 import { transformSync } from "esbuild";
 import { readFileSync, existsSync } from "node:fs";
@@ -89,7 +90,7 @@ async function assertPromptAndUiUseTarget() {
   assert.match(prompt, /把它作为当前关注范围：[\s\S]*inspect_element[\s\S]*get_ax_tree[\s\S]*read_article\/read_dom/, "system prompt should inspect the picked region before answering or acting");
   assert.match(prompt, /不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域/, "system prompt should keep attention on the picked region");
   assert.match(prompt, /selector 时表示 CSS 范围(?:\/|或)过滤条件，可传原始 CSS，也可传 target 格式/, "system prompt should define selector compatibility");
-  assert.match(prompt, /点击后用 pageAfter\/urlChanged\/titleChanged，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click results");
+  assert.match(prompt, /点击或按 Enter 后用 pageAfter\/urlChanged\/titleChanged，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click or Enter results");
   assert.match(prompt, /already_complete 只说明调用时页面已加载/, "system prompt should clarify wait_for_navigation already_complete");
   assert.doesNotMatch(read("src/background/agent/prompts/zh-CN.js"), /`(?:uid:|css:)/, "target examples in ESM template strings should avoid raw Markdown backticks");
   const registry = createToolRegistry();
