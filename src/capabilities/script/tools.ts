@@ -11,7 +11,7 @@ type Fields = Record<string, unknown>;
 type Guardrails = { rules?: readonly Pick<SecurityGuardrails["rules"][number], "action" | "type" | "value">[] };
 type ScriptHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "evaluateCdpScript" | "skills"> & Partial<Pick<ToolExtensionAPI, "getToolRuntimeDependencies">> & { scriptTimeoutProperty: ToolParameter };
-interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; depth?: number; reason?: string; scriptArgs?: Fields; securityGuardrails?: Guardrails }
+interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; parentCallId?: string; depth?: number; reason?: string; scriptArgs?: Fields; securityGuardrails?: Guardrails }
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
@@ -561,6 +561,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
     const response = await sendRunScriptInnerMessage({
       type: "run_script_inner_execute",
       requestId,
+      parentCallId: context.toolExecutionId || "",
       source,
       sessionId,
       runId,
@@ -705,7 +706,7 @@ async function runScriptWithCdpToolBridgeUnlocked(tabId: number, code: string, c
     if (errorCode(err) === "OPERATION_ABORTED") throw err;
     return makePageContextUnavailableResult(err, { tabId, reason, phase: "tool_bridge_install" });
   }
-  const expression = buildCdpToolBridgeExpression(code, { tabId, sessionId, runId, depth, reason, scriptArgs, securityGuardrails });
+  const expression = buildCdpToolBridgeExpression(code, { tabId, sessionId, runId, parentCallId: context.toolExecutionId || "", depth, reason, scriptArgs, securityGuardrails });
   try {
     const evalResult = await evaluateCdpScript(tabId, {
       expression,
@@ -757,13 +758,14 @@ async function ensureRunScriptToolBridge(tabId: number, context: ToolContext) {
   }
 }
 
-function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, depth, reason, scriptArgs = {}, securityGuardrails = {} }: ScriptOptions) {
+function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, parentCallId, depth, reason, scriptArgs = {}, securityGuardrails = {} }: ScriptOptions) {
   const source = wrapRunScriptSource(String(code || ""));
   return `
 (async () => {
   const __qzSourceTabId = ${JSON.stringify(tabId)};
   const __qzSessionId = ${JSON.stringify(sessionId)};
   const __qzRunId = ${JSON.stringify(runId || "")};
+  const __qzParentCallId = ${JSON.stringify(parentCallId || "")};
   const __qzDepth = ${JSON.stringify(depth)};
   const __qzReason = ${JSON.stringify(reason)};
   const input = ${JSON.stringify(scriptArgs || {})};
@@ -823,6 +825,7 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, d
         sessionId: __qzSessionId,
         runId: __qzRunId,
         depth: __qzDepth + 1,
+        parentCallId: __qzParentCallId,
         reason: __qzReason,
       }, "*");
     });

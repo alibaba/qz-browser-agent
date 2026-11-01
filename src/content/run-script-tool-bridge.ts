@@ -16,6 +16,7 @@ if (!bridgeScope.__QZ_RUN_SCRIPT_TOOL_BRIDGE_INSTALLED__) {
       sessionId: typeof message.sessionId === 'string' ? message.sessionId : '',
       runId: typeof message.runId === 'string' ? message.runId : '',
       depth: Math.max(0, Math.floor(Number(message.depth) || 0)),
+      parentCallId: String(message.parentCallId || ''),
     }, (response: unknown) => {
       const runtimeError = chrome.runtime.lastError;
       window.postMessage({

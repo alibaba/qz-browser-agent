@@ -96,7 +96,13 @@ messages retain their existing automatic continuation after a run fails or is st
 failure before handoff releases the reservation without repeatedly retrying the unconsumed message.
 
 Observers follow the Session across runs and return successfully when a snapshot shows completion,
-empty queues, and no pending execution. Messages accepted after that snapshot belong to later work.
+empty queues, and no pending execution. The snapshot's `usage` sums provider usage recorded on each
+model call and counts tool calls, screenshots, and context compressions from the transcript.
+Tool counts use the persisted `startedExecution` admission fact, so stopping queued calls does
+not count them as executed. Interrupted calls that started still count. Legacy transcripts without
+that fact retain the historical status-based interpretation; their aborted queues cannot be
+reconstructed reliably. This display metadata is not added to model messages.
+Messages accepted after that snapshot belong to later work.
 Removing a queued message also allows its waiting sender to finish without streaming an earlier
 answer. Failure, stop, timeout, and cancellation end observation without resubmitting messages.
 
@@ -124,6 +130,15 @@ result. Templates contain defaults or placeholders; callers fill them from the u
 Native Chrome permission requests remain paused until the user grants access in the Side Panel.
 External approval checks the actual permission and returns `requiresUserAction` while it is absent.
 The [CLI guide](cli.md#respond-to-a-task) covers input and response commands.
+
+Native alert, confirm, prompt, and beforeunload dialogs stay in the browser for the user to answer.
+The agent does not click them. Element actions do not open a sidebar wait card and do not return a
+dialog receipt. Stop leaves the dialog in place. See [Page dialogs](firefox-differences.md#page-dialogs).
+
+Script bridges carry an opaque live parent-call ID; parent cancellation or settlement revokes
+descendant calls, including unawaited children. Settlement cancels only descendant authority, leaving
+the successful tool's own signal unchanged. Parent lookup requires the exact Session and run; an
+absent run and its empty wire value match only each other and still require the live opaque parent ID.
 
 ## Message transport
 
@@ -235,7 +250,8 @@ reconnect; previous page actions remain completed. User detachment ends automati
 `open_tab` and `navigate` share the [navigation gate](../src/capabilities/tabs/navigation.ts), using
 `tabs` and `scripting`. A constant main-frame script obtains Chrome's document ID after a tab
 security check. The gate waits for `pendingUrl` to clear and a new document ID to become accessible.
-Fragment navigation can keep the same document.
+Fragment navigation can keep the same document. Firefox can report the tab complete
+before the main frame accepts a document probe; that empty result is retried briefly.
 
 The old-document probe has a 100 ms deadline. If it expires or fails, the fallback also requires a
 `tabs.onUpdated` completion event. Polls run 50 ms apart; every awaited Chrome operation races
@@ -252,7 +268,11 @@ and the wait. A web `pendingUrl` also gates reads of an existing document during
 same-URL reload, so a navigation timeout cannot turn into a successful read of the old page.
 Committed documents remain readable while subresources load. Firefox's host supplies its missing
 `pendingUrl` field from main-frame request and commit events; request IDs isolate cancelled and
-replaced requests. Readers need no Session-level navigation registry. Content reads inject
+replaced requests. A commit delivered before its request does not re-arm `pendingUrl` when the
+request timestamp is at or before that commit. Each tab retains the newest 64 destination timestamps.
+Without commit evidence, a complete tab showing the same URL does not retire a request. A newer
+request, including a same-URL reload, stays pending until its own commit.
+Readers need no Session-level navigation registry. Content reads inject
 immediately into the main frame. The initial presence ping has a short probe budget; installation
 and its acknowledgement use the call's existing deadline and cancellation signal. The installed bridge
 is idempotent. A presence ping also reports whether DOMContentLoaded has fired. Content reads wait

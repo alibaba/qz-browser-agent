@@ -5,7 +5,7 @@ const record = (value: unknown): Record<string, unknown> => value !== null && ty
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 interface PendingRun {
   resolve(result: unknown): void; reject(error: unknown): void;
-  sessionId: string; runId: string; depth: number;
+  sessionId: string; runId: string; depth: number; parentCallId: string;
   fetches: Map<string, AbortController>;
 }
 
@@ -150,7 +150,7 @@ function runInnerScript(msg: Record<string, unknown>): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const pending: PendingRun = { resolve, reject,
       sessionId: String(msg.sessionId || ""), runId: String(msg.runId || ""),
-      depth: Math.max(0, Math.floor(Number(msg.depth) || 0)), fetches: new Map() };
+      depth: Math.max(0, Math.floor(Number(msg.depth) || 0)), parentCallId: String(msg.parentCallId || ""), fetches: new Map() };
     pendingRuns.set(requestId, pending);
     void ensureSandboxFrame().then(() => {
       if (pendingRuns.get(requestId) !== pending) return;
@@ -226,6 +226,7 @@ async function relayInnerToolCall(data: Record<string, unknown>) {
     sessionId: pending.sessionId,
     runId: pending.runId,
     depth: pending.depth + 1,
+    parentCallId: pending.parentCallId,
     inner: true,
   }));
   if (pendingRuns.get(requestId) !== pending) return;

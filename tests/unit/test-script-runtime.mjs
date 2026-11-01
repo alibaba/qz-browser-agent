@@ -31,7 +31,7 @@ async function fixture(mode) {
   const originals = { fetch, open: XMLHttpRequest.prototype.open, beacon: navigator.sendBeacon, console: { ...console } };
   return {
     context, calls,
-    run: (code, options = {}) => definitions.get('run_script').execute({ code, target: 'page', tabId: 7, timeout: 5, ...options }, undefined, { sessionId: 'task', runId: 'run' }),
+    run: (code, options = {}) => definitions.get('run_script').execute({ code, target: 'page', tabId: 7, timeout: 5, ...options }, undefined, { sessionId: 'task', runId: 'run', toolExecutionId: 'parent-call' }),
     restored() {
       assert.equal(context.fetch, originals.fetch);
       assert.equal(XMLHttpRequest.prototype.open, originals.open);
@@ -61,6 +61,23 @@ for (const mode of ['development', 'production']) {
     assert.equal(bridged.result, 'function');
     assert.equal(f.calls.filter(c => c.kind === 'bridge').length, 1);
     f.restored();
+  });
+
+  test(`${mode}: page tool messages retain the parent invocation identity`, async () => {
+    const f = await fixture(mode);
+    runInContext(`
+      const listeners = new Set();
+      window.addEventListener = (_type, listener) => listeners.add(listener);
+      window.removeEventListener = (_type, listener) => listeners.delete(listener);
+      window.postMessage = message => {
+        globalThis.lastToolMessage = message;
+        for (const listener of listeners) listener({ source: window, data: {
+          source: 'qz-run-script-tool-response', id: message.id, response: { ok: true, result: 42 }
+        } });
+      };
+    `, f.context);
+    assert.equal((await f.run('async () => await tools.read_article({})')).result, 42);
+    assert.equal(f.context.lastToolMessage.parentCallId, 'parent-call');
   });
 
   test(`${mode}: actual page expression serializes cyclic, exceptional and binary values`, async () => {

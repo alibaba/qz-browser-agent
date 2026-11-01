@@ -72,10 +72,11 @@ test("cancelling before ready settles once and never starts the late script", as
 test("tool relay preserves identity and drops responses after run cancellation", async () => {
   const f = fixture(); let release;
   f.setTool(() => new Promise(resolve => { release = resolve; }));
-  f.send(execute("tool")); f.sandbox({ type: "ready" }); await tick();
+  f.send({ ...execute("tool"), parentCallId: "parent-call" }); f.sandbox({ type: "ready" }); await tick();
   f.sandbox({ type: "tool_call", requestId: "tool", callId: "call", toolName: "read", args: {} }); await tick();
   const call = f.sent.find(message => message.type === "run_script_tool_call");
   assert.equal(call.sessionId, "s"); assert.equal(call.runId, "r"); assert.equal(call.depth, 1);
+  assert.equal(call.parentCallId, "parent-call");
   f.send({ type: "run_script_inner_cancel", requestId: "tool" });
   release({ ok: true, result: "late" }); await tick();
   assert.equal(f.posted.some(message => message.type === "tool_response"), false);

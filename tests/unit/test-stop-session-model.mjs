@@ -366,8 +366,8 @@ assert.doesNotMatch(
 
 assert.match(
   runScriptBridge,
-  /const stoppedError = stoppedBridgeError\(sessionId,\s*runId,\s*toolName\)/,
-  "run_script bridge should reject tool calls from stopped runs",
+  /const stoppedError = stoppedBridgeError\(sessionId,\s*runId,\s*toolName,\s*signal\)/,
+  "run_script bridge should reject tool calls from stopped runs and cancelled parents",
 );
 
 assert.match(

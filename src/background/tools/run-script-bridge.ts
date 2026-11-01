@@ -3,6 +3,7 @@ import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
 import { positiveArtifactNumber as positiveNumber } from "../../shared/tools/artifact-projection.js";
 import type { ToolContext } from "../../sdk/background.js";
+import { getToolCallParent } from "./call-lifecycle.js";
 import type { RegisteredTool } from "./registry.js";
 import type { ToolBehavior } from "../../shared/contracts/tool.js";
 import { toolBehaviorEnabled } from "./behavior.js";
@@ -80,12 +81,20 @@ export function createRunScriptBridge({
 
     const sessionId = normalizeSessionId(message.sessionId);
     const runId = String(message.runId || "").trim();
-    const stoppedError = stoppedBridgeError(sessionId, runId, toolName);
+    // Current script transports always include a parent ID. Legacy direct host
+    // calls without the field retain their run-scoped cancellation contract.
+    const parent = getToolCallParent(message.parentCallId, sessionId, runId);
+    const runSignal = supervisor.getAbortSignal(sessionId, runId);
+    const signal = message.parentCallId !== undefined && !parent ? AbortSignal.abort()
+      : parent?.signal && runSignal ? AbortSignal.any([parent.signal, runSignal]) : parent?.signal || runSignal || undefined;
+    const stoppedError = stoppedBridgeError(sessionId, runId, toolName, signal);
     if (stoppedError) return respondFailure(stoppedError, { toolName });
 
     if (toolName === "__list_tools__") {
       const toolContext = await resolveToolContext(sessionId, runId);
       language = toolContext.language || language;
+      const contextStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
+      if (contextStopped) return respondFailure(contextStopped, { toolName });
       return {
         ok: true,
         result: {
@@ -111,7 +120,6 @@ export function createRunScriptBridge({
     try {
       const toolContext = await resolveToolContext(sessionId, runId);
       language = toolContext.language || language;
-      const signal = supervisor.getAbortSignal(sessionId, runId) || undefined;
       const contextStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (contextStopped) return respondFailure(contextStopped, { toolName });
       const toolArgs = plainObject(message.args);
