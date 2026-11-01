@@ -198,6 +198,29 @@ export function renderInputNotice(input, options = {}) {
   return out.finish();
 }
 
+function formatUsage(usage) {
+  if (!usage || typeof usage !== "object") return "";
+  const count = value => {
+    const number = Number(value);
+    return Number.isFinite(number) ? String(Math.max(0, Math.trunc(number))) : "0";
+  };
+  const cost = Number(usage.costUsd);
+  const text = Number.isFinite(cost) ? cost.toFixed(6).replace(/\.?0+$/u, "") : "";
+  const shown = ["inputTokens", "outputTokens", "cachedTokens", "costUsd", "modelCalls", "toolCalls", "screenshots", "contextCompressions"]
+    .some(key => Number(usage[key]) > 0);
+  if (!shown) return "";
+  return [
+    `input ${count(usage.inputTokens)}`,
+    `output ${count(usage.outputTokens)}`,
+    `cached ${count(usage.cachedTokens)}`,
+    `cost $${text || "0"}`,
+    `model calls ${count(usage.modelCalls)}`,
+    `tool calls ${count(usage.toolCalls)}`,
+    `screenshots ${count(usage.screenshots)}`,
+    `compressions ${count(usage.contextCompressions)}`,
+  ].join(", ");
+}
+
 function snapshotView(out, snapshot, { streamed = false, clientId = "" } = {}) {
   const status = taskStatus(snapshot);
   out.line(label(status), tone(status));
@@ -212,6 +235,8 @@ function snapshotView(out, snapshot, { streamed = false, clientId = "" } = {}) {
   if (response && !streamed) {
     out.line(); out.line("Latest response", "muted"); out.line(response);
   }
+  const usage = formatUsage(snapshot.usage);
+  if (usage) out.field("Usage", usage);
 }
 
 function taskList(out, sessions, client = "") {

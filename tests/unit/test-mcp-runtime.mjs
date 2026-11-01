@@ -253,6 +253,10 @@ const snapshot = await runtime.getSnapshot("s1", {
   traceLimit: 5,
 });
 assert.equal(snapshot.artifacts.total, 0);
+assert.deepEqual(snapshot.usage, {
+  inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0,
+  modelCalls: 0, toolCalls: 0, screenshots: 0, contextCompressions: 0,
+});
 assert.equal(snapshot.toolCount, 1);
 assert.deepEqual(snapshot.trace, ["s1 trace"]);
 assert.equal(snapshot.tail[0].compact, true);

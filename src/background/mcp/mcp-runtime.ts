@@ -1,5 +1,6 @@
 import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
+import { summarizeSessionUsage } from "../../shared/session/session-usage.js";
 import type { createSessionCommands } from "../session/commands.js";
 import type { createSessionAgentHost } from "../session/agent-host.js";
 import type { createSessionRuntimeState } from "../session/runtime-state.js";
@@ -231,6 +232,7 @@ export function createMcpRuntime({
       ? agent.exportSession()
       : await sessions.getConversation(id).catch(() => null);
     const transcript = await sessions.getTranscript(id, conversation).catch(() => []);
+    const usage = summarizeSessionUsage({ conversation, transcript });
     const compact = options.compact !== false;
     const rendered = compact ? transcript.map(sessions.compactTranscriptEvent) : transcript;
     const limit = clampNumber(options.num || options.tailCount, 1, 200, 50);
@@ -254,6 +256,7 @@ export function createMcpRuntime({
       tailCount: Math.min(rendered.length, limit),
       compact,
       artifacts: sessionArtifacts,
+      usage,
     };
     if (options.includeTools === true) {
       const listed = await listTools({ sessionId: id, dynamicContext: options.dynamicContext || {} });

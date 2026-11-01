@@ -367,15 +367,18 @@ export function createCompactMessage({
   contextWindow = 0,
   inputTokensBefore = 0,
   inputTokensAfter = 0,
-}: {compactId?: string; summary?: string; plan?: Partial<PlanFields>; contextWindow?: number; inputTokensBefore?: number; inputTokensAfter?: number} = {}) {
+  usage = null,
+}: {compactId?: string; summary?: string; plan?: Partial<PlanFields>; contextWindow?: number; inputTokensBefore?: number; inputTokensAfter?: number; usage?: Record<string, unknown> | null} = {}) {
   const cleanSummary = String(summary || "").trim() || "[compact failed]";
   const id = String(compactId || "").trim();
+  const recordedUsage = usage && typeof usage === "object" && !Array.isArray(usage) ? usage : null;
   return {
     role: "user",
     content: formatCompactContent(cleanSummary),
     _kind: COMPACT_MESSAGE_KIND,
     _origin: COMPACT_MESSAGE_ORIGIN,
     trim: false,
+    ...(recordedUsage ? { _usage: recordedUsage } : {}),
     _compact: {
       id,
       compactId: id,

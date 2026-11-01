@@ -338,6 +338,8 @@ individual connection request remains bounded (180 seconds by default). A timeou
 watching. Run the returned `qz watch TASK_ID --stream --client CLIENT_UUID` recovery command to
 resume observation of the same task in the same browser; `qz cancel TASK_ID` stops the task.
 
+`show` JSON includes `usage` for the whole task. `create --wait`, `send --wait`, `watch`, and the other waiting commands include the same object on `snapshot.usage`. The fields are `inputTokens`, `outputTokens`, `cachedTokens`, `costUsd`, `modelCalls`, `toolCalls`, `screenshots`, and `contextCompressions`. Token and cost totals sum the provider usage stored on each recorded model call, including context compression. `inputTokens` counts prompt tokens that were not read from cache, including tokens written into the cache. `cachedTokens` counts cache reads. `costUsd` is dollars reported by the provider (`cost_in_usd_ticks / 10^10`, or `cost_usd` when the provider reports dollars directly). A call that does not report a price adds zero. Sessions saved before this codec change did not keep cost fields, so `costUsd` is 0 for those historical calls. `toolCalls` counts tools that were invoked. `screenshots` counts completed successful calls whose name contains `screenshot`, and `act_on_screen` when it returns a screenshot. `contextCompressions` counts completed context compressions. `contextUsage` remains the latest context reading.
+
 `show` returns `task_not_found` with exit code 1 when the selected browser has no matching task.
 `watch` retains the `task_deleted` error code and directs you to `qz tasks --client CLIENT_UUID`.
 Check the task ID and `qz browsers` before retrying; the task may have been deleted or belong to

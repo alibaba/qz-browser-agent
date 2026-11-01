@@ -1026,6 +1026,7 @@ function assertAgentHasCompactionBarrier() {
   assert.match(agent, /await this\._compactionPromise\.catch/, "LLM sends should wait for an active compact barrier");
   assert.match(agent, /compact llm start/, "compact summarization should trace the non-streaming LLM request start");
   assert.match(agent, /compact llm done/, "compact summarization should trace the non-streaming LLM request completion");
+  assert.match(agent, /usage: usage \|\| summaryMsg\._usage/, "compaction should keep the summarizer call's provider usage");
   assert.match(agent, /_stampAssistantUsageContext\(stream\.state\.message,\s*sendBoundaryId,\s*sendUsageContextFingerprint\)/, "streamed assistant usage should be stamped with its request context");
   assert.match(agent, /_stampAssistantUsageContext\(alignedMessage,\s*sendBoundaryId,\s*sendUsageContextFingerprint\)/, "fallback assistant usage should be stamped with its request context");
   assert.match(agent, /_prepareSendWindowOrBlock/, "LLM sends should be gated by a single prepared send-window budget check");

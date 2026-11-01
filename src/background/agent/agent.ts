@@ -1561,6 +1561,7 @@ export class Agent {
         plan,
         contextWindow: this._contextWindow(),
         inputTokensBefore: tokens,
+        usage: usage || summaryMsg._usage || null,
       });
       const compactDocuments = normalizeMessageDocuments(
         this.messages.slice(1, plan.cutIndex).flatMap(message => message?.documents || []),
@@ -2697,11 +2698,11 @@ export class Agent {
     }, this._runLanguage, this._toolRuntime.getTabAliases?.(this.sessionId) || {});
     const identity = { sessionId: this.sessionId, runId: this._currentRunId };
     const started = new Set<ModelToolCall>();
-    const emitStart = (call: ModelToolCall, toolName: string, toolIdentity: object, args: unknown) => {
+    const emitStart = (call: ModelToolCall, toolName: string, toolIdentity: object, args: unknown, startedExecution: boolean) => {
       if (started.has(call)) return;
       started.add(call);
       this._emit({ type: "tool_execution_start", spanId: this._makeToolSpanId(call.id), toolCallId: call.id, toolName,
-        ...toolIdentityEventFields(toolIdentity), args });
+        ...toolIdentityEventFields(toolIdentity), args, startedExecution });
     };
     const settled = new Map<ModelToolCall, ReturnType<typeof failure>>();
     let ledgerIndex = 0;
@@ -2715,7 +2716,7 @@ export class Agent {
         settled.delete(call);
         const { id, toolName, toolIdentity, args, result, isError } = outcome;
         // Preparation failures and skipped calls still receive a paired ledger entry.
-        emitStart(call, toolName, toolIdentity, args);
+        emitStart(call, toolName, toolIdentity, args, false);
         this._emit({
           type: "tool_execution_end", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
           ...toolIdentityEventFields(toolIdentity), args, result, isError,
@@ -2758,7 +2759,7 @@ export class Agent {
           const toolRuntimeContext = await this._collectToolRuntimeContext();
           args = await this._enrichToolCallArgsWithPageContext(toolName, args, toolRuntimeContext);
           assertActive();
-          emitStart(tc, toolName, toolIdentity, args);
+          emitStart(tc, toolName, toolIdentity, args, true);
           const result = executionResult = await this._toolRuntime.execute(toolName, args, callSignal, {
             preserveWorkingTab: batch.observation(tc),
             deferToolCommit: parallel,

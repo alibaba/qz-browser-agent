@@ -228,7 +228,7 @@
   },
   {
     "name": "qingzhou_get_session_snapshot",
-    "description": "Read a task snapshot: session, runtime, current input, transcript, recent messages, artifacts, and optional trace/tools. Pending input includes field IDs, option values, instructions, and responseTemplate for answering directly. Tool transcript argsState/argsGenerating distinguish generating arguments from final empty arguments.",
+    "description": "Read a task snapshot: session, runtime, current input, transcript, recent messages, artifacts, cumulative usage, and optional trace/tools. usage sums recorded model calls (inputTokens, outputTokens, cachedTokens, costUsd, modelCalls) plus toolCalls, screenshots, and contextCompressions. Pending input includes field IDs, option values, instructions, and responseTemplate for answering directly. Tool transcript argsState/argsGenerating distinguish generating arguments from final empty arguments.",
     "inputSchema": {
       "properties": {
         "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
