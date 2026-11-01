@@ -22,6 +22,10 @@ function gitExecutable() {
 function pathWithoutMagick() {
   const directory = mkdtempSync(join(tmpdir(), "qz-no-magick-"));
   symlinkSync(gitExecutable(), join(directory, "git"));
+  // Some environments expose git as a `#!/usr/bin/env bash` wrapper. env
+  // resolves bash from PATH, so the stripped directory must still contain it.
+  const bash = ["/bin/bash", "/usr/bin/bash"].find(candidate => existsSync(candidate));
+  if (bash) symlinkSync(bash, join(directory, "bash"));
   return directory;
 }
 
