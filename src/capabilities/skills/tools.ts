@@ -244,13 +244,19 @@ async function executeListSkillsAction({ scope = "all" } = {}, context: ToolCont
   const filtered = normalizedScope === "all"
     ? skills
     : skills.filter(skill => String(skill.scope || "global") === normalizedScope);
-  const names = filtered.map(skill => skill.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const items = filtered
+    .map(skill => ({
+      name: skill.name,
+      displayName: getSkillDisplayName(skill) || skill.name,
+    }))
+    .filter(item => item.name)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.displayName.localeCompare(b.displayName));
   return {
     action: "list_skills",
     scope: normalizedScope,
-    count: names.length,
-    names,
-    items: names.map(name => ({ name })),
+    count: items.length,
+    names: items.map(item => item.name),
+    items,
   };
 }
 
