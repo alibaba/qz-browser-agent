@@ -811,6 +811,11 @@ function handleMessagesWheel(event: WheelEvent) {
     return;
   }
   beginChatUserScroll();
+  // A downward wheel at the outer tail has nowhere to go. With fractional
+  // layout Chromium's native wheel clamp can move it one pixel *backwards*
+  // from the programmatic tail, even though neither layout nor content changed.
+  // Keep horizontal scrolling and ctrl-wheel zoom gestures native.
+  if (delta > 0 && !event.ctrlKey && event.deltaX === 0 && chatBottomDistance() === 0) event.preventDefault();
   if (wheelOwner.innerCandidate && handOffWheelFromInnerBoundary(delta)) event.preventDefault();
   if (delta < 0) pauseInnerTailTargetsForOuterHistoryScroll(event.target);
   handleChatScrollIntent(delta < 0 ? "up" : "down");
