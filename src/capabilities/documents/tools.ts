@@ -26,7 +26,7 @@ import {
   normalizeBlocks,
   normalizeSheets,
 } from "./document-utils.js";
-import { createDocumentBytes, inferDocumentFormat, mimeTypeForFormat, parseDocumentBytes } from "#sdk/background/documents";
+import { createDocumentBytes, createDownloadUrl, inferDocumentFormat, mimeTypeForFormat, parseDocumentBytes } from "#sdk/background/documents";
 
 import {
   DocumentReadProjectionError,
@@ -65,11 +65,14 @@ registerTool({
     const text = String(content ?? "");
     mimeType = resolveSaveFileMimeType(filename, mimeType, text);
     filename = resolveSaveFileFilename(filename, mimeType);
-    // Use a data URL because Service Workers lack URL.createObjectURL.
-    const base64 = btoa(unescape(encodeURIComponent(text)));
-    const url = `data:${mimeType};base64,${base64}`;
-    const id = await chrome.downloads.download({ url, filename, saveAs: false });
-    return { downloadId: id, filename, mimeType, size: text.length };
+    // Chrome's Service Worker gets a data: URL; Firefox rejects those here and gets a blob: URL.
+    const { url, release } = createDownloadUrl(mimeType, { text });
+    try {
+      const id = await chrome.downloads.download({ url, filename, saveAs: false });
+      return { downloadId: id, filename, mimeType, size: text.length };
+    } finally {
+      release();
+    }
   },
 });
 
@@ -827,12 +830,17 @@ async function downloadDocumentArtifactRecord(artifact: Partial<DocumentArtifact
     if (!stored?.base64) throw new ToolExecutionError("DOCUMENT_ARTIFACT_EMPTY", t("documentArtifactHasNoContent"), { artifactId: artifact.artifactId || artifact.id });
     artifact = stored;
   }
-  const url = `data:${artifact.mimeType || mimeTypeForFormat(artifact.format || "")};base64,${artifact.base64}`;
-  const downloadId = await chrome.downloads.download({
-    url,
-    filename: resolvedFilename,
-    saveAs: Boolean(saveAs),
-  });
+  const { url, release } = createDownloadUrl(artifact.mimeType || mimeTypeForFormat(artifact.format || ""), { base64: artifact.base64 || "" });
+  let downloadId: number;
+  try {
+    downloadId = await chrome.downloads.download({
+      url,
+      filename: resolvedFilename,
+      saveAs: Boolean(saveAs),
+    });
+  } finally {
+    release();
+  }
   return {
     downloadId,
     filename: resolvedFilename,
