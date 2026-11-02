@@ -1,18 +1,21 @@
-import { bytesToBase64 } from "../../shared/bytes.js";
+import { createDownloadUrl } from "../../shared/download-url.js";
 import { productText } from "../../shared/product-text.js";
 
 interface DownloadInput { bytes: Uint8Array; filename: string; mimeType: string }
 type Downloads = Pick<typeof chrome.downloads, "download" | "search">;
 interface DownloadWait { waitMs?: number; pollMs?: number }
 
-/** Service Workers use data URLs; binary contents stay out of the MCP response. */
-export async function downloadMcpFile(input: DownloadInput, downloads: Downloads = chrome.downloads, wait: DownloadWait = {}) {
+/** Chrome's Service Worker uses data URLs, Firefox blob URLs; binary contents stay out of the MCP response. */
+export async function downloadMcpFile(input: DownloadInput, downloads: Downloads = chrome.downloads, wait: DownloadWait = {}, urlApi: Parameters<typeof createDownloadUrl>[2] = URL) {
   const filename = safeMcpFilename(input.filename);
   const mimeType = input.mimeType;
-  const downloadId = await downloads.download({
-    url: `data:${mimeType};base64,${bytesToBase64(input.bytes)}`,
-    filename, saveAs: false,
-  });
+  const { url, release } = createDownloadUrl(mimeType, { bytes: input.bytes }, urlApi);
+  let downloadId: number;
+  try {
+    downloadId = await downloads.download({ url, filename, saveAs: false });
+  } finally {
+    release();
+  }
   if (!Number.isInteger(downloadId) || downloadId < 0) {
     throw Object.assign(new Error(productText("Chrome did not accept the download.", "Firefox did not accept the download.")), { code: "DOWNLOAD_FAILED" });
   }

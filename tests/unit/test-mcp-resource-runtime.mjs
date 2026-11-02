@@ -167,13 +167,30 @@ test("download metadata returns the real local file URL without opening the file
   const result = await downloadMcpFile({ bytes: new Uint8Array([1, 2]), filename: "../bad:name.csv", mimeType: "text/csv" }, {
     download: async options => { requests.push(options); return 42; },
     search: async query => { assert.deepEqual(query, { id: 42 }); return [{ filename: "/Users/example/Downloads/中文 #.csv", state: "complete" }]; },
-  });
+  }, {}, {}); // Chrome's Service Worker: no URL.createObjectURL
   assert.deepEqual(requests, [{ url: "data:text/csv;base64,AQI=", filename: "_bad_name.csv", saveAs: false }]);
   assert.equal(result.state, "complete");
   assert.equal(result.fileUrl, "file:///Users/example/Downloads/%E4%B8%AD%E6%96%87%20%23.csv");
   assert.equal(result.bytes, 2);
   assert.equal(Object.hasOwn(result, "url"), false);
   assert.equal(safeMcpFilename("CON.txt"), "_CON.txt");
+});
+
+test("Firefox downloads use a blob URL (it rejects data: URLs) and revoke it later", async () => {
+  const requests = [], created = [], revoked = [];
+  const urlApi = {
+    createObjectURL: blob => { created.push(blob); return "blob:moz-extension://qz/1"; },
+    revokeObjectURL: url => { revoked.push(url); },
+  };
+  await downloadMcpFile({ bytes: new Uint8Array([1, 2]), filename: "a.csv", mimeType: "text/csv" }, {
+    download: async options => { requests.push(options); return 7; },
+    search: async () => [{ filename: "/tmp/a.csv", state: "complete" }],
+  }, {}, urlApi);
+  assert.deepEqual(requests, [{ url: "blob:moz-extension://qz/1", filename: "a.csv", saveAs: false }]);
+  assert.equal(created.length, 1);
+  assert.equal(created[0].type, "text/csv");
+  assert.deepEqual([...new Uint8Array(await created[0].arrayBuffer())], [1, 2]);
+  assert.deepEqual(revoked, [], "not revoked before the download had time to start");
 });
 
 test("downloads distinguish interrupted from accepted but unfinished downloads", async () => {
