@@ -333,3 +333,79 @@ test('published loading popups survive a run change while ownership confirmation
   assert.deepEqual(await next.observed(), [], 'old confirmations cannot enter the next run receipt');
   next.dispose();
 });
+
+let popupTriggerSerial = 0;
+async function popupWaitRuntime(f, trigger) {
+  globalThis.chrome = {
+    runtime: { getURL: path => path },
+    storage: { local: { async get() { return {}; } } },
+    tabs: { async get(id) { return { ...f.tabs.get(id), status: 'complete' }; } },
+  };
+  const tools = await import('../../src/background/tools/runtime.js');
+  const name = `__popup_wait_trigger_${++popupTriggerSerial}`;
+  tools.defineTool({ name, description: 'Popup trigger', page: 'owned',
+    behavior: { mayOpenPopup: true, reportsExecution: true },
+    parameters: { type: 'object', properties: { tabRef: { type: 'integer' } }, required: ['tabRef'] },
+    async execute(_args, _signal, context) {
+      context.operation.dispatch();
+      await trigger();
+      context.operation.confirm();
+      return {};
+    },
+  });
+  let triggerFinished;
+  const triggered = new Promise(resolve => { triggerFinished = resolve; });
+  const runtime = tools.createToolRuntime({
+    sessions: {
+      resolveTargetTab: async ({ tabId }) => ({ ok: true, tabId, ownedByCurrentTask: true }),
+      listOwnedTabIds: id => getOwnedTabIds(f.runtimes.get(id)),
+      beginPopupCapture: f.host.beginPopupCapture,
+      observePopup: f.host.observePopup,
+    },
+    async invokeNestedTool(context, tool, args, signal) {
+      const result = await runtime.execute(tool, args, signal, context);
+      triggerFinished();
+      return result;
+    },
+  });
+  return { triggered, run: (args = {}, signal) => runtime.execute('wait_for_popup', {
+    tabRef: 1, timeout: 1, trigger: { name, args: { tabRef: 1 } }, ...args,
+  }, signal, { sessionId: 'a', runId: 'run-a' }) };
+}
+
+for (const arrival of ['during trigger', 'after trigger']) test(`triggered popup wait retains authority for confirmation ${arrival}`, async () => {
+  const f = fixture(); let finishPersist, arriving;
+  f.persist(() => new Promise(resolve => { finishPersist = resolve; }));
+  const runtime = await popupWaitRuntime(f, () => {
+    if (arrival === 'during trigger') arriving = arrive(f, f.popup(3));
+  });
+  const waiting = runtime.run();
+  await runtime.triggered;
+  if (arrival === 'after trigger') arriving = arrive(f, f.popup(3));
+  assert.equal(f.host.owns('a', 3), true, 'the explicit wait keeps creation authority after its trigger settles');
+  f.persist(async () => {}); finishPersist();
+  await arriving;
+  assert.equal((await waiting).tabRef, 3, 'confirmation reaches the live parent after the child call is revoked');
+  await arrive(f, f.popup(4));
+  assert.equal(f.host.owns('a', 4), false, 'a settled wait cannot claim later tabs');
+});
+
+for (const terminal of ['passive', 'abort', 'timeout']) test(`${terminal} popup wait cannot claim late tabs`, async () => {
+  const f = fixture(), controller = new AbortController();
+  const runtime = await popupWaitRuntime(f, () => {});
+  const waiting = runtime.run({ timeout: terminal === 'abort' ? 1 : 0.2,
+    ...(terminal === 'passive' ? { trigger: undefined } : {}) }, controller.signal);
+  const rejected = assert.rejects(waiting, { code: terminal === 'abort' ? 'OPERATION_ABORTED' : 'TOOL_TIMEOUT' });
+  if (terminal === 'passive') {
+    await new Promise(setImmediate);
+    await arrive(f, f.popup(3));
+    assert.equal(f.host.owns('a', 3), false, 'a passive observer does not authorize ownership');
+  } else {
+    await runtime.triggered;
+    if (terminal === 'abort') controller.abort();
+  }
+  await rejected;
+  await arrive(f, f.popup(4));
+  assert.equal(f.host.owns('a', 4), false);
+  assert.deepEqual(f.removed, [], 'late user tabs remain untouched after the wait ends');
+});

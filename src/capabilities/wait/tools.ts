@@ -426,7 +426,10 @@ registerTool({
 });
 
 registerTool({
-  name: "wait_for_popup", behavior: eventWaitBehavior, tabLifecycle: "created",
+  name: "wait_for_popup",
+  // A trigger may finish before the browser reports and persists its popup.
+  // Keep that authority until this bounded wait settles; passive waits cannot claim tabs.
+  behavior: { ...eventWaitBehavior, mayOpenPopup: args => !!args.trigger }, tabLifecycle: "created",
   get description() { return toolT("waitForPopupDescription"); },
   get parameters() { return { type: "object", properties: { ...pageWaitProperties(),
     tabAlias: { type: "string", description: toolT("waitForPopupAlias") }, trigger: waitTriggerParameter,
