@@ -1,3 +1,6 @@
+import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
+import { copyToolResultPresentation, getToolResultPresentation, presentToolResult, toolFailurePresentation, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { scriptReceipt } from "../../shared/contracts/script-receipt.js";
 import { scheduleToolCalls } from "../tools/tool-scheduler.js";
 import { planTabBatch } from "../tools/tab-batch.js";
 import { t as promptT } from "./prompts/messages.js";
@@ -8,7 +11,7 @@ import {
   buildContextCapsuleMessage, buildDocumentCapsuleMessage, buildGoalSnapshotCapsuleMessage,
   buildGoalDeletedContextEventMessage, buildSiteSkillContextEventMessage, formatGoalForCompaction,
   formatDynamicContext, shouldExposeGoalContext, isGoalSnapshotCapsuleMessage,
-  collectDynamicContext, collectSiteSkillPreviewContext, collectToolRuntimeContext,
+  collectDynamicContext, collectSiteSkillPreviewContext,
   collectSiteSkillCandidateUrls, siteSkillSignature, normalizeDynamicContext,
 } from "./context.js";
 import type { DynamicContext, DynamicContextProvider, GoalContext, GoalDeletedSnapshot, SiteSkill } from "./context.js";
@@ -27,6 +30,7 @@ import { buildRunProfile, buildRunProfilePromptSection } from "./run-profile.js"
 import {
   buildCompactionPlan,
   compactThreshold,
+  DEFAULT_CONTEXT_RESERVE_TOKENS,
   createCompactMessage,
   estimateContextTokens,
   estimateToolSchemaTokens,
@@ -52,7 +56,6 @@ import { nowBeijingDateTime } from "../../shared/time-utils.js";
 import {
   buildSecurityGuardrailPromptSection,
 } from "../../shared/security-guardrails.js";
-import { formatTab } from "../../shared/tab-utils.js";
 import { toolIdentityEventFields } from "../../shared/tools/tool-identity.js";
 import { normalizeMessageDocuments } from "../../shared/documents/document-attachments.js";
 import {
@@ -87,7 +90,6 @@ interface AgentToolPort {
   getParallelReadTab?(name: string, args: unknown, context: Facts): number | null;
   getTabAliases?(sessionId: string): Record<string, number>;
   getBatchTabPolicy?(name: string, args: unknown, context: Facts): ToolBatchTabPolicy | null;
-  hasUidElementTargets?(name: string, args: unknown, context: Facts): boolean;
   commitToolResult?(result: unknown, signal: AbortSignal, context: Facts): Promise<void>;
   discardToolResult?(result: unknown, context: Facts): Promise<void>;
   getSchemas(context: Facts): object[];
@@ -138,7 +140,6 @@ const MAX_EMPTY_LLM_ATTEMPTS = 2;
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CONTEXT_WINDOW = 262000;
-const RESERVE_TOKENS = 16000;      // Reserved for the response
 const KEEP_RECENT_TOKENS = 40000;  // Recent tokens retained during compaction
 const TOOL_RESULT_RECENT_ROUNDS = 2;
 const IMAGE_MESSAGE_RECENT_LIMIT = 8;
@@ -239,11 +240,8 @@ function parseToolCallArguments(value: unknown): unknown {
   }
 }
 
-function sanitizeToolResultForLLM(result: unknown, policy: Readonly<ToolModelPolicy>): unknown {
-  const projected = policy.projectResult ? policy.projectResult(result) : result;
-  if (projected == null || typeof projected !== "object" || Array.isArray(projected)) return projected;
-  const { _display, _debug, _rawCdp, ...out } = record(projected);
-  return out;
+function projectToolResultForModel(result: unknown, policy: Readonly<ToolModelPolicy>): unknown {
+  return policy.projectResult ? policy.projectResult(result) : result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1479,7 +1477,7 @@ export class Agent {
         messageTokens,
         inputTokens: tokens,
         contextWindow: this._contextWindow(),
-        reserveTokens: RESERVE_TOKENS,
+        reserveTokens: this._reserveTokens(),
         maxKeepTokens: KEEP_RECENT_TOKENS,
         force,
         retainLatestRound: trigger === "manual" || trigger === "slash_command",
@@ -1489,7 +1487,7 @@ export class Agent {
     this._traceContextEstimate("compact_check", contextEstimate, {
       compactThreshold: plan.threshold,
       contextWindow: this._contextWindow(),
-      reserveTokens: RESERVE_TOKENS,
+      reserveTokens: this._reserveTokens(),
       toolSchemaCount: Array.isArray(toolSchemas) ? toolSchemas.length : 0,
       storedMessageCount: this.messages.length,
       sendMessageCount: contextEstimate.messageCount,
@@ -1585,7 +1583,7 @@ export class Agent {
       this._traceContextEstimate("compact_after", updatedEstimate, {
         compactThreshold: this._compactThreshold(),
         contextWindow: this._contextWindow(),
-        reserveTokens: RESERVE_TOKENS,
+        reserveTokens: this._reserveTokens(),
         toolSchemaCount: Array.isArray(toolSchemas) ? toolSchemas.length : 0,
         storedMessageCount: this.messages.length,
         boundaryId: this._currentContextBoundaryId(),
@@ -2191,7 +2189,7 @@ export class Agent {
       snapshot = {
         contextUsageId: this._makeSpanId("ctx", ++this._contextUsageSeq),
         contextWindow,
-        reserveTokens: RESERVE_TOKENS,
+        reserveTokens: this._reserveTokens(),
         threshold: this._compactThreshold(),
         inputTokensEstimate: Math.ceil(estimate),
         messageCount: Math.max(0, Number(extra.messageCount) || 0),
@@ -2258,7 +2256,11 @@ export class Agent {
   }
 
   _compactThreshold(runProfile = this._runProfile) {
-    return compactThreshold(this._contextWindow(runProfile), RESERVE_TOKENS);
+    return compactThreshold(this._contextWindow(runProfile), this._reserveTokens(runProfile));
+  }
+
+  _reserveTokens(runProfile = this._runProfile) {
+    return Math.max(DEFAULT_CONTEXT_RESERVE_TOKENS, runProfile?.model?.outputReserveTokens || 0);
   }
 
   _makeSpanId(kind: string, id: unknown) {
@@ -2671,27 +2673,23 @@ export class Agent {
       toolRegistrySnapshot: this._toolRegistrySnapshot,
       language: this._runLanguage,
     };
-    const failure = (tc: ModelToolCall, error: unknown, args: unknown = parseToolCallArguments(getToolCallArgumentsValue(tc)), toolIdentity?: object) => {
+    const failure = (tc: ModelToolCall, error: unknown, args: unknown = parseToolCallArguments(getToolCallArgumentsValue(tc)), toolIdentity?: object, presentation?: ToolResultPresentation) => {
       const err = record(error);
       const details = record(err.details);
       const toolName = normalizeToolCallName(tc);
       // An empty identity renders as a bare "tool" fallback; resolve it when the caller has none.
       const identity = toolIdentity && Object.keys(toolIdentity).length ? toolIdentity : this._toolRuntime.getIdentity(toolName, lookup);
-      const result = {
-        error: err.message || String(error),
-        code: err.name === "AbortError" ? "OPERATION_ABORTED" : err.code || "TOOL_EXECUTION_FAILED",
-        ...(err.codeLabel ? { codeLabel: err.codeLabel } : {}),
-        details,
-        ...(details._tabId != null ? { _tabId: details._tabId } : {}),
-        ...(details._pageTitle ? { _pageTitle: details._pageTitle } : {}),
-        ...(details._pageUrl ? { _pageUrl: details._pageUrl } : {}),
-      };
-      return { call: tc, id: tc.id, toolName, toolIdentity: identity, args, result: result as unknown, isError: true };
+      const result = copyToolResultPresentation(error, toolError(
+        err.name === "AbortError" || err.name === "TimeoutError" ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED"),
+        String(err.message || err.error || error),
+        { hint: typeof err.hint === "string" ? err.hint : undefined, details },
+      ));
+      return { call: tc, id: tc.id, toolName, toolIdentity: identity, args, result: result as unknown, isError: true, resultPresentation: toolFailurePresentation(error, presentation) };
     };
     const batch = planTabBatch(toolCalls, tc => {
       const args = parseToolCallArguments(getToolCallArgumentsValue(tc));
       let policy = this._toolRuntime.getBatchTabPolicy?.(normalizeToolCallName(tc), args, lookup);
-      if (policy?.kind === "create" && (!this._toolRuntime.commitToolResult || !this._toolRuntime.discardToolResult)) policy = { ...policy, parallel: false };
+      if (policy?.kind === "create" && !policy.targeted && (!this._toolRuntime.commitToolResult || !this._toolRuntime.discardToolResult)) policy = { ...policy, parallel: false };
       if (!this._toolRuntime.getBatchTabPolicy && this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), args, lookup) != null)
         policy = { kind: "target", implicit: false, observation: true };
       return { args, policy };
@@ -2714,14 +2712,16 @@ export class Agent {
         ledgerIndex++;
         if (!outcome) continue;
         settled.delete(call);
-        const { id, toolName, toolIdentity, args, result, isError } = outcome;
+        const { id, toolName, toolIdentity, args, result, isError, resultPresentation } = outcome;
         // Preparation failures and skipped calls still receive a paired ledger entry.
         emitStart(call, toolName, toolIdentity, args, false);
         this._emit({
           type: "tool_execution_end", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
-          ...toolIdentityEventFields(toolIdentity), args, result, isError,
+          ...toolIdentityEventFields(toolIdentity), args,
+          result: presentToolResult(result, resultPresentation),
+          isError,
         });
-        for (const msg of this._buildToolResultMessages(id, result, isError, toolName)) {
+        for (const msg of this._buildToolResultMessages(id, result, isError, toolName, resultPresentation)) {
           if (msg?.role === "tool") toolMessages.push(msg);
           else followUpMessages.push(msg);
         }
@@ -2732,6 +2732,9 @@ export class Agent {
       maxInFlight: this._toolRuntime.maxInFlight,
       dependencies: batch.dependencies,
       independent: batch.independent,
+      lane: batch.lane,
+      observer: batch.passive,
+      orchestration: batch.orchestration,
       completed: (tc, outcome) => batch.complete(tc, outcome.result, outcome.isError),
       cancelled: tc => failure(tc, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }),
       tab: tc => {
@@ -2739,12 +2742,13 @@ export class Agent {
         catch { return null; } // Invalid references become per-call errors in execute, not scheduler failures.
       },
       reject: (tc, error) => failure(tc, error),
-      execute: async (tc, callSignal, parallel) => {
+      execute: async (tc, callSignal, parallel, scope) => {
         const { id } = tc;
         const toolName = normalizeToolCallName(tc);
         let args = parseToolCallArguments(getToolCallArgumentsValue(tc));
         let toolIdentity: object = {};
         let executionResult: unknown;
+        const resultPresentation: ToolResultPresentation = {};
         let acceptingUpdates = true;
         const assertActive = () => {
           if (callSignal.aborted) throw Object.assign(new Error(t("agent.toolStopped")), { code: "OPERATION_ABORTED" });
@@ -2756,11 +2760,11 @@ export class Agent {
             toolRegistrySnapshot: this._toolRegistrySnapshot,
             language: this._runLanguage,
           });
-          const toolRuntimeContext = await this._collectToolRuntimeContext();
-          args = await this._enrichToolCallArgsWithPageContext(toolName, args, toolRuntimeContext);
           assertActive();
           emitStart(tc, toolName, toolIdentity, args, true);
           const result = executionResult = await this._toolRuntime.execute(toolName, args, callSignal, {
+            resultPresentation,
+            nestedToolScope: scope,
             preserveWorkingTab: batch.observation(tc),
             deferToolCommit: parallel,
             deferCreatedTabSelection: batch.parallelCreate(tc),
@@ -2773,8 +2777,6 @@ export class Agent {
             runId: identity.runId,
             spanId: this._makeToolSpanId(id),
             toolCallId: id,
-            workingTabId: toolRuntimeContext.workingTabId || null,
-            workingTab: toolRuntimeContext.workingTab || null,
             sourceWindowId: this._dynamicContextSnapshot?.sourceWindowId ?? null,
             dynamicContext: this._dynamicContextSnapshot,
             loadedPluginSkillNames: this._loadedSkillToolNames,
@@ -2785,12 +2787,12 @@ export class Agent {
           });
           acceptingUpdates = false;
           assertActive();
-          return { call: tc, id, toolName, toolIdentity, args, result,
-            isError: Boolean(record(result).error || record(result).ok === false || record(result).isError === true) };
+          return { call: tc, id, toolName, toolIdentity, args, result, resultPresentation,
+            isError: isToolFailure(result) };
         } catch (error) {
           acceptingUpdates = false;
           await this._toolRuntime.discardToolResult?.(executionResult, identity);
-          return failure(tc, error, args, toolIdentity);
+          return failure(tc, error, args, toolIdentity, resultPresentation);
         }
       },
       commit: async outcome => {
@@ -2807,7 +2809,7 @@ export class Agent {
           pendingMessages = await this._applyToolResultEffects(outcome.toolName, result, isError);
           assertActive();
         } catch (error) {
-          result = { error: record(error).message, code: record(error).code || "TOOL_EXECUTION_FAILED", details: record(error).details };
+          result = failure(outcome.call, error, undefined, outcome.toolIdentity).result;
           isError = true;
         }
         await this._toolRuntime.discardToolResult?.(outcome.result, identity);
@@ -2819,9 +2821,9 @@ export class Agent {
         // Only this cursor publishes state, effects, bindings, final events and model messages.
         batch.settle(outcome.call, result, isError);
         if (["BATCH_TAB_DEPENDENCY_FAILED", "OPERATION_ABORTED"].includes(String(record(result).code))) {
-          const normalized = failure(outcome.call, { ...record(result), message: record(result).error }, undefined, outcome.toolIdentity);
+          const normalized = failure(outcome.call, result, undefined, outcome.toolIdentity, outcome.resultPresentation);
           settled.set(outcome.call, normalized);
-        } else settled.set(outcome.call, { ...outcome, result, isError });
+        } else settled.set(outcome.call, { ...outcome, result, isError, resultPresentation: isError ? toolFailurePresentation(result, outcome.resultPresentation) : outcome.resultPresentation });
         flushLedger();
       },
     }).finally(() => flushLedger(true));
@@ -2904,68 +2906,34 @@ export class Agent {
     });
   }
 
-  async _collectToolRuntimeContext() {
-    return collectToolRuntimeContext(this._dynamicContextProvider, {
-      reason: "tool", signal: this._abortCtrl?.signal, runId: this._currentRunId || "",
-    }, this._dynamicContextSnapshot?.workingTab || null);
-  }
-
-  async _enrichToolCallArgsWithPageContext(toolName: string, args: unknown = {}, toolRuntimeContext: Awaited<ReturnType<Agent["_collectToolRuntimeContext"]>> | null = null) {
-    const policy = this._toolModelPolicy(toolName);
-    if (!policy.pageContext) return args;
-    if (!args || typeof args !== "object" || Array.isArray(args)) return args;
-    const input = { ...record(args) };
-    const working = toolRuntimeContext?.workingTab || this._dynamicContextSnapshot?.workingTab || null;
-    const explicitTabId = Number(input.tabId);
-    const workingTabId = Number(toolRuntimeContext?.workingTabId || working?.id);
-    // A uid pins its element's registered tab; substituting the working tab would
-    // target the wrong page. The tool resolves the uid's own tab downstream.
-    if (!(Number.isFinite(explicitTabId) && explicitTabId > 0) && policy.pageContext !== "explicit"
-      && this._toolRuntime.hasUidElementTargets?.(toolName, input, {
-        skillToolRegistrySnapshot: this._skillToolRegistrySnapshot,
-        toolRegistrySnapshot: this._toolRegistrySnapshot,
-        language: this._runLanguage,
-      })) {
-      return input;
-    }
-    const tabId = Number.isFinite(explicitTabId) && explicitTabId > 0
-      ? explicitTabId
-      : (Number.isFinite(workingTabId) && workingTabId > 0 && policy.pageContext !== "explicit" ? workingTabId : null);
-
-    if (tabId) {
-      input.tabId = tabId;
-      input._tabId = input._tabId ?? tabId;
-      try {
-        const tab = await this._browserContext.getTab?.(tabId);
-        const formattedTab = tab ? formatTab(tab, { titleLimit: 120 }) : { title: "", url: "" };
-        if (formattedTab.title && !input._pageTitle) input._pageTitle = formattedTab.title;
-        const tabUrl = formattedTab.url;
-        if (!input._pageUrl) input._pageUrl = tabUrl;
-      } catch (_err) {
-        if (Number(working?.id) === tabId) {
-          if (working?.title && !input._pageTitle) input._pageTitle = working.title;
-          if (working?.url && !input._pageUrl) input._pageUrl = working.url;
-        }
-      }
-    } else if (policy.pageUrlArgument && input[policy.pageUrlArgument] && !input._pageUrl) {
-      input._pageUrl = input[policy.pageUrlArgument];
-    }
-
-    return input;
-  }
-
   /**
    * Build one or two tool result messages. OpenAI tool messages require text content;
    * send an image in an additional user message.
    */
-  _buildToolResultMessages(toolCallId: string, result: unknown, isError: boolean, toolName = "") {
+  _buildToolResultMessages(toolCallId: string, result: unknown, isError: boolean, toolName = "", resultPresentation: ToolResultPresentation = {}) {
     const messages = [];
     const policy = this._toolModelPolicy(toolName);
+
+    if (policy.scriptResult || !isError && policy.preserveResult) {
+      const modelResult = policy.scriptResult ? scriptReceipt(result, {
+        format: policy.scriptResult, isError, presentation: resultPresentation,
+      }) : result;
+      messages.push({ role: "tool", tool_call_id: toolCallId, _toolIsError: isError,
+        content: typeof modelResult === "string" ? modelResult : JSON.stringify(modelResult) ?? "undefined" });
+      const images = { ...getToolResultPresentation(result), ...resultPresentation }._images || [];
+      if (images.length && this._runProfile?.features?.imageInput !== false) {
+        messages.push({ role: "user", _origin: "tool_image", content: [
+          { type: "text", text: policy.imagePrompt || promptT("toolImage") },
+          ...images.map(image => ({ type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}`, detail: "low" } })),
+        ] });
+      }
+      return messages;
+    }
 
     if (!isError && result && record(result)._image) {
       const imageDataUrl = record(result)._image;
       const { _image, _imageDetail, ...rest } = record(result);
-      const sanitizedRest = sanitizeToolResultForLLM(rest, policy);
+      const sanitizedRest = projectToolResultForModel(rest, policy);
       const textPart = Object.keys(record(sanitizedRest)).length > 0 ? JSON.stringify(sanitizedRest) : promptT("imageReceived");
       const allowImages = this._runProfile?.features?.imageInput !== false;
       const imageDetail = ["low", "auto", "high"].includes(String(_imageDetail || "").toLowerCase())
@@ -2976,6 +2944,7 @@ export class Agent {
       messages.push({
         role: "tool",
         tool_call_id: toolCallId,
+        _toolIsError: isError,
         content: allowImages
           ? textPart
           : `${textPart}\n${IMAGE_PLACEHOLDER} ${promptT("imageUnavailable")}`,
@@ -2995,10 +2964,11 @@ export class Agent {
         ],
       });
     } else {
-      const sanitized = sanitizeToolResultForLLM(result, policy);
+      const sanitized = projectToolResultForModel(result, policy);
       messages.push({
         role: "tool",
         tool_call_id: toolCallId,
+        _toolIsError: isError,
         content: typeof sanitized === "string" ? sanitized : JSON.stringify(sanitized),
       });
     }

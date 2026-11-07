@@ -884,7 +884,7 @@ function buildHeaders(config: RuntimeConfig, options: ModelOptions = {}) {
 
 function buildRequestBody(config: RuntimeConfig, messages: ModelMessage[], tools: object[], stream: boolean, options: ModelOptions = {}) {
   const providerDef: Partial<ProviderDefinition> = options.providerDefinition || {};
-  const outputTokenParam = providerDef.outputTokenParam || "max_tokens";
+  const outputTokenParam = providerDef.outputTokenParam;
   const modelParameters = config.modelParameters || {};
   const body: Record<string, unknown> & { tools?: FunctionTool[] } = {
     ...(providerDef.requestDefaults || {}),
@@ -893,7 +893,8 @@ function buildRequestBody(config: RuntimeConfig, messages: ModelMessage[], tools
     messages: convertOpenAiMessagesForRequest(messages, config, providerDef),
     stream,
   };
-  if (!Object.prototype.hasOwnProperty.call(modelParameters, outputTokenParam)) {
+  // Chat Completions limits are optional. Only an explicit provider policy supplies a default.
+  if (outputTokenParam && ![outputTokenParam, "max_tokens", "max_completion_tokens"].some(key => Object.hasOwn(body, key))) {
     body[outputTokenParam] = resolveRequestMaxOutputTokens(options);
   }
   if (stream) {

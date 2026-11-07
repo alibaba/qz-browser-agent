@@ -58,6 +58,7 @@ assertHiddenContextDoesNotEnterCompactionInput();
 assertUserImageTranscriptDoesNotExposeOmittedPlaceholder();
 assertToolSchemasCountTowardBudget();
 await assertAgentUsesVerifiedUsageAnchor();
+await assertAgentReservesRequestedOutputBudget();
 assertCompactionPrefersCompleteRoundsBeforeToolBoundaries();
 assertContextCapsulePrefixDoesNotCauseNoopCompact();
 assertClosedToolChainCanCompactWithoutRetainedTail();
@@ -797,6 +798,47 @@ async function assertAgentUsesVerifiedUsageAnchor() {
   const invalidated = agent._estimateSendWindowContext(null, tools);
   assert.equal(invalidated.source, "estimate", "changing an older request prefix must invalidate the usage anchor");
   assert.ok(invalidated.toolSchemaTokens > 0);
+}
+
+async function assertAgentReservesRequestedOutputBudget() {
+  for (const outputReserveTokens of [0, 8192, 32768, 65536]) {
+    const agent = await createBudgetTestAgent(`output-budget-${outputReserveTokens}`, { contextWindow: 131072 });
+    Object.assign(agent._runProfile.model, { maxOutputTokens: 32768, outputReserveTokens });
+    agent.messages = [system(), user("previous research")];
+    const previousWindow = agent._buildPreparedSendWindow();
+    const response = assistant("research findings", { total_tokens: 102589 });
+    agent._stampAssistantUsageContext(response, previousWindow.sendBoundaryId, previousWindow.sendUsageContextFingerprint);
+    agent.messages.push(response, user("continue the research"));
+    const events = [], checks = [];
+    agent._emit = event => events.push(event);
+    agent._traceContextEstimate = (stage, estimate, details) => checks.push({ stage, estimate, ...details });
+    let summaries = 0;
+    agent._modelGateway.chat = async () => {
+      summaries++;
+      return { message: assistant("research summary") };
+    };
+
+    const prepared = await agent._prepareSendWindowOrBlock(new AbortController().signal);
+    const reserveTokens = Math.max(16000, outputReserveTokens);
+    const threshold = 131072 - reserveTokens;
+    assert.equal(prepared.ok, true);
+    assert.equal(prepared.contextEstimate.threshold, threshold);
+    assert.equal(summaries, outputReserveTokens > 16000 ? 1 : 0);
+    if (summaries) {
+      assert.equal(prepared.status, "compacted_within_budget");
+      assert.ok(prepared.beforeContextEstimate.tokens >= 102589);
+      assert.equal(prepared.compaction.plan.threshold, threshold);
+      for (const check of checks.filter(check => ["compact_check", "compact_after"].includes(check.stage))) {
+        assert.equal(check.reserveTokens, reserveTokens);
+        assert.equal(check.compactThreshold, threshold);
+      }
+    }
+    agent._emitSendWindowContextUsage(prepared.sendMessages, { contextEstimate: prepared.contextEstimate });
+    const usage = events.findLast(event => event.type === "context_usage");
+    assert.equal(usage.reserveTokens, reserveTokens);
+    assert.equal(usage.threshold, threshold);
+    assert.ok(usage.inputTokensEstimate + outputReserveTokens < 131072);
+  }
 }
 
 function assertCompactionPrefersCompleteRoundsBeforeToolBoundaries() {
