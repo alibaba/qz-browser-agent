@@ -1,4 +1,5 @@
 const request = ["timeout", "client"];
+export const DRIVE_SESSION_REQUIRED = "Pass the sessionId from qz session create.";
 const waiting = [...request, "wait", "stream"];
 const output = ["json", "plain", "no-color", "help"];
 const filename = options => options.filename ? { filename: options.filename } : {};
@@ -8,8 +9,17 @@ const route = (tool, args = () => ({}), options = []) => ({ tool, args, options 
 // CLI syntax, documentation, and direct MCP routes have one declaration per command.
 // Task execution and form responses retain their explicit handlers in cli.mjs.
 export const COMMANDS = {
-  connect: { options: [...request, "port", "no-open", "name"], summary: "Connect the browser",
-    help: ["qz connect [--client NAME|UUID] [--port PORT] [--timeout SECONDS]", "Reuse a connected browser or open the connection page for first pairing.", "qz connect --no-open [--name NAME] --json", "Return a binding URL immediately. Open it in the target browser profile.", "--name assigns or changes that profile's name. Without --no-open, its binding page opens immediately.", "Use --port for a custom local service port. An existing service remains running.", "qz browsers"],
+  cleanup: { options: [], summary: "Stop local services and clean runtime files",
+    help: ["qz cleanup", "Stop registered qz local services across installations and remove their runtime files and logs.",
+      "Uses ~/.qz-browser-agent/run, or QZ_STATE_DIR when set. Browser registrations, tabs, tasks and saved data are preserved.",
+      "Active CLI requests and direct-drive scripts are interrupted. Tasks running in the side panel continue.",
+      "The next browser command starts its service automatically. Use qz cancel TASK_ID or qz session cancel ID to stop a task.",
+      "Services whose identity cannot be verified are reported and left running; an incomplete cleanup exits with code 1."],
+  },
+  connect: { options: [...request, "port", "name"], summary: "Print a browser connection URI",
+    help: ["qz connect uri [--name NAME | --client NAME|UUID] [--port PORT]", "Print the connection URL without opening a browser or interrupting tasks.",
+      "Open the URL in the intended browser profile with qz installed. --name names a new profile; --client selects a registered profile.",
+      "Session and script commands prepare their connection automatically. Use this URL when choosing among browser profiles."],
   },
   create: { options: [...waiting, "title", "parent"], summary: "Start a task",
     help: ['qz create "PROMPT" [--title TITLE] [--wait | --stream]', "Start a browser task. The title is optional.",
@@ -49,7 +59,7 @@ export const COMMANDS = {
     help: ["qz reject TASK_ID [--wait-id ID] [--wait | --stream]", "Decline the pending request. --wait and --stream follow the task across runs until its work completes and accepted message queues are empty. Use qz cancel TASK_ID to stop the whole task."],
   },
   cancel: { options: request, summary: "Stop a task",
-    help: ["qz cancel TASK_ID", "Stop a task's active run.", "qz stop stops the local service instead."],
+    help: ["qz cancel TASK_ID", "Stop a task's active run.", "Use qz session cancel ID to end a direct-drive session."],
   },
   data: { options: request, summary: "List, export, or delete tables",
     help: ["qz data [list]", "List saved data tables with their exact names.",
@@ -109,16 +119,41 @@ export const COMMANDS = {
   status: { options: [], summary: "Check the connection",
     help: ["qz status", "Show the local service and browser connection status."],
   },
-  mcp: { options: [], summary: "Print the MCP URL",
-    help: ["qz mcp [--json]", "Print the running service's MCP URL for an external agent.", "Run qz connect first."],
+  session: { options: request, summary: "Create, inspect, or cancel a browser session",
+    help: ["qz session create --title TITLE", "Create a session with a readable title and print sessionId on stdout.",
+      "qz session list", "List sessions and their current status.",
+      "qz session show ID", "Read one session's title and status.",
+      "qz session cancel ID [--keep TAB_REF ...]", "End the session and clean up its created tabs, including while a script is running. Repeat --keep to return selected tabs to the user.",
+      "Pass the same sessionId on every qz script --session ID call. Scripts never create or reuse a session implicitly."],
+    actions: {
+      create: route("qingzhou_create_drive_session", ({ options }) => ({ title: options.title.trim() }), ["title"]),
+      list: route("qingzhou_list_drive_sessions"),
+      show: route("qingzhou_get_drive_session", ({ id }) => ({ sessionId: id })),
+      cancel: route("qingzhou_stop_session", ({ id, options }) => ({ sessionId: id, ...(options.keep ? { keepTabRefs: options.keep } : {}) }), ["keep"]),
+    },
+  },
+  script: { options: [...request, "session", "args"], summary: "Run a browser script",
+    help: ["qz script --session ID [FILE|-] [--args JSON]", "Run JavaScript orchestration outside the page. stdout is {ok,result,trace}: execution status, the returned business value (or error), and ordered trace messages.",
+      "--session ID is required. Create one session per task with qz session create --title TITLE and pass its sessionId.",
+      "Read a local file or use - for stdin. Write top-level await and return; --args passes a JSON value as args (aliased as input).",
+      "Call browser tools via tools.<name>(...) with explicit tabRef values; awaited calls return business values directly and throw on failure. Use tools.evaluate({tabRef,code,args}) for in-page DOM/window access.",
+      "Discover compact signatures with tools.list_tools() and full schemas with tools.list_tools({names:[...]}).",
+      "--timeout sets the script timeout in seconds (0 < seconds <= 3600) and defaults to 120. The request waits 60 seconds longer.",
+      "stdout is always {ok,result,trace}: ok reports execution success, result holds the returned value (null for undefined) or {code,message,hint?,details?}, and trace lists errors and explicit trace()/console output in order without levels. Exit codes: 0 success, 1 execution or connection failure, 2 invalid arguments.",
+      "qz script --session ID task.js --args '{\"query\":\"example\"}'", "qz script --session ID - <<'JS'"],
+  },
+  skill: { options: ["lang"], summary: "Print the browser guide",
+    help: ["qz skill", "Print the direct-drive browser guide without connecting.",
+      "Read this guide once at the start of a browser task."],
+  },
+  mcp: { options: ["profile"], summary: "Print the MCP URL",
+    help: ["qz mcp [--profile full|drive] [--json]", "Print the MCP URL. The default catalog is the direct-drive set.",
+      "--profile full prints the task and diagnostic catalog.", "The local service starts automatically."],
   },
   install: { options: [], summary: "Install the Chrome extension",
-    help: ["qz install", "Open qz in the Chrome Web Store.", "Click Add to Chrome, then run qz connect."],
+    help: ["qz install", "Open qz in the Chrome Web Store.", "Click Add to Chrome, then run qz session create --title TITLE."],
   },
-  stop: { options: [], summary: "Stop the local service",
-    help: ["qz stop", "Stop the local service and disconnect all browsers.", "Use qz cancel TASK_ID to stop a task.", "qz connect"],
-  },
-  help: { options: [] },
+  help: { options: ["lang"] },
 };
 
 export function commandOptions(command, action = "list") {

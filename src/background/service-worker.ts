@@ -1,3 +1,5 @@
+import { presentToolResult } from "../shared/contracts/tool-result-presentation.js";
+import { toolIdentityEventFields } from "../shared/tools/tool-identity.js";
 import { initializeLanguage, whenLanguageReady, readLanguagePreference, saveLanguagePreference, getAvailableLanguages } from "../shared/i18n/index.js";
 import { firefoxExtension } from "../shared/product-text.js";
 import { matchConfiguredModelCapabilities } from "../shared/models/model-capabilities.js";
@@ -75,6 +77,8 @@ import {
   subscribeSkillToolRegistry,
 } from "./skills/skill-tool-runtime.js";
 import { createSerialQueue } from "./internal/serial-queue.js";
+import { createDriveSessionRetention } from "./session/drive-retention.js";
+import { removeOwnedSessionResources } from "./session/resource-cleanup.js";
 import {
   getLastTranscriptToolName,
 } from "../shared/session/session-codec.js";
@@ -482,7 +486,7 @@ const sessionTabs = createSessionTabs({
   rootSessionId: ROOT_SESSION_ID,
 });
 // Keep Chrome listener registration synchronous; commands await startup dependencies.
-const languageReady = initializeLanguage({ watch: true });
+const languageReady = initializeLanguage({ watch: true, onChange: () => sessionTabs.scheduleGroupSync("language") });
 const sessionRuntimeReady = Promise.all([
   sessionRuntimeState.hydrate(), languageReady, dataConsent.ready,
   initializeProviderHeaderRules({ runtime: chrome.runtime, dnr: chrome.declarativeNetRequest, fetch }),
@@ -525,6 +529,8 @@ sessionCommands = createSessionCommands({
   copyChatMessageDocuments: chatDocumentAttachments.copyMessageDocuments,
   removeChatSessionDocuments: chatDocumentAttachments.removeSessionDocuments,
   removeSessionObservations: async id => productRuntime.removeSession(id),
+  removeSessionResources: removeOwnedSessionResources,
+  onDriveSettled: () => driveRetention.request(),
   blockChatDocumentParsing: chatDocumentAttachments.blockSession,
   observeAgentEvent: (sessionId, event) => lifecycle.emit(sessionId, event, "committed"),
   getAutomationRuntime: () => automationRuntime,
@@ -700,6 +706,7 @@ const locationService = createLocationService({
   locate: sidepanelChannel.requestLocation,
 });
 toolRuntime = createToolRuntime({
+  invokeNestedTool: (parent, name, args, signal) => runScriptBridge.invokeTool(parent, name, args, signal),
   requestLocation: locationService.request,
   skillSettings,
   skillNetwork,
@@ -728,6 +735,8 @@ toolRuntime = createToolRuntime({
     runAutomation: automationRuntime.run,
     listAutomationRuns: automationRuntime.listRuns,
     reserveCreatedTab: sessionTabs.reserveCreatedTab,
+    beginPopupCapture: sessionTabs.beginPopupCapture,
+    observePopup: sessionTabs.observePopup,
     getTabAliases: sessionTabs.getTabAliases,
     reserveTabAlias: sessionTabs.reserveTabAlias,
     commitTabAlias: sessionTabs.commitTabAlias,
@@ -760,8 +769,19 @@ const runScriptBridge = createRunScriptBridge({
   canManageSessions: sessionCommands.canManageSessionTools,
   buildRunProfile,
   getRunToolContext: async (sessionId, runId) => {
-    const entry = await sessionAgentHost.getLiveEntry(sessionId);
-    return entry?.agent?.getRunToolContext(runId) || null;
+    const [entry, metadata] = await Promise.all([sessionAgentHost.getLiveEntry(sessionId), sessionRepository.getMetadata(sessionId)]);
+    return { ...entry?.agent?.getRunToolContext(runId), externalDrive: metadata?.source === "external-drive" };
+  },
+  recordNestedTool: observation => {
+    if (observation.externalDrive) return mcpRuntime.recordNestedTool(observation);
+    const { sessionId, runId, name: toolName, args, toolCallId, parentSpanId } = observation;
+    if (!toolCallId || !sessionSupervisor.isRunCurrent(sessionId, runId)) return Promise.resolve(false);
+    const meta = { runId, toolCallId, spanId: `tool:${toolCallId}`, parentSpanId, toolName, args,
+      ...toolIdentityEventFields(toolRuntime.getIdentity(toolName)) };
+    return Promise.resolve(observation.phase === "start"
+      ? sessionAgentHost.handleEvent(sessionId, { ...meta, type: "tool_execution_start", startedExecution: observation.startedExecution })
+      : sessionAgentHost.handleEvent(sessionId, { ...meta, type: "tool_execution_end", isError: observation.isError,
+        result: presentToolResult(observation.result, observation.resultPresentation) }));
   },
   applyNestedToolResult: async ({ sessionId, ...payload }) => {
     const entry = await sessionAgentHost.getLiveEntry(sessionId);
@@ -787,8 +807,20 @@ const mcpRuntime = createMcpRuntime({
     getAgent: sessionAgentHost.getAgent,
     getTranscript: sessionTranscript.get,
     listMetadata: getSessions,
+    createMetadata: input => sessionCommands.createSessionMetadataRuntime(input),
+    stop: (sessionId, meta) => sessionCommands.stopSessionRuntime(sessionId, meta || {}),
+    getStoredRuntime: sessionId => {
+      try { return sessionSupervisor.getRuntime(sessionId); }
+      catch { return null; }
+    },
     getConversation: sessionTranscript.getConversation,
     compactTranscriptEvent: sessionCommands.compactTranscriptEvent,
+    recordToolEvent: event => {
+      const sessionId = normalizeSessionId(event.sessionId);
+      if (!sessionId || typeof event.type !== "string") return;
+      sessionAgentHost.handleEvent(sessionId, event as Parameters<typeof sessionAgentHost.handleEvent>[1]);
+    },
+    persistTranscript: sessionId => sessionCommands.saveSessionRecordRuntime({ sessionId }),
     getRuntime: sessionCommands.getSessionRuntimeState,
   },
   tools: {
@@ -817,6 +849,25 @@ const mcpRuntime = createMcpRuntime({
   },
   dispatchSidepanel: (message, port) => sidepanelTransport.dispatch(message, port),
   storageKey: qingzhouMcpBridgeStorageKey,
+  onDriveSettled: () => driveRetention.request(),
+});
+
+const driveRetention = createDriveSessionRetention({
+  listMetadata: sessionRepository.listMetadata,
+  getRuntime: sessionSupervisor.getRuntime,
+  isActive: sessionSupervisor.isActive,
+  retire: mcpRuntime.drive.retireForRetention,
+  remove: async (id, canRemove) => {
+    const result = await sessionCommands.deleteSessionRuntime(id, { source: "drive_retention" }, undefined, canRemove);
+    return result.deleted === true;
+  },
+});
+
+sessionRuntimeReady.then(async () => {
+  await mcpRuntime.restoreDriveSessions();
+  await driveRetention.request();
+}).catch(error => {
+  console.warn("[轻舟] restore drive cleanup failed:", error);
 });
 
 const mcpResources = createMcpResourceRuntime();
@@ -828,20 +879,23 @@ const mcpManagement = createMcpManagementRuntime({
 });
 
 let mcpBridge: ReturnType<typeof startQingzhouMcpBridge> | undefined;
-const connectMcp = createMcpConnectPage({
+const mcpConnectPage = createMcpConnectPage({
   extensionId: chrome.runtime.id,
+  ready: dataConsent.ready,
   assertConsent: dataConsent.assertAccepted,
   connect: (input, assertCurrent) => getMcpBridge().connect(input, assertCurrent),
+  status: () => mcpBridge?.status() || getQingzhouMcpConnectionStatus(),
   getTab: tabId => chrome.tabs.get(tabId),
+  listTabs: () => chrome.tabs.query({}),
+  createTab: () => chrome.tabs.create({}),
+  removeTab: tabId => chrome.tabs.remove(tabId),
 });
 
 const backgroundApi = createBackgroundApi({
   system: {
-    connectMcp,
-    mcpConnectionStatus: (sender: chrome.runtime.MessageSender) => {
-      assertMcpSettingsSender(sender, chrome.runtime.id);
-      return mcpBridge?.status() || getQingzhouMcpConnectionStatus();
-    },
+    connectMcp: mcpConnectPage.connect,
+    closeMcpConnectPage: mcpConnectPage.close,
+    mcpConnectionStatus: mcpConnectPage.status,
     connectMcpFromSettings: (sender: chrome.runtime.MessageSender, input: CliConnectionInput) => {
       assertMcpSettingsSender(sender, chrome.runtime.id);
       return getMcpBridge().connect(input);
@@ -869,6 +923,9 @@ const backgroundApi = createBackgroundApi({
   sessions: {
     list: sessionCommands.listSessionsRuntime,
     create: sessionCommands.createSessionFromApi,
+    createDrive: (params: Record<string, unknown>) => mcpRuntime.createDriveSession(params),
+    listDrive: (params: Record<string, unknown>) => mcpRuntime.listDriveSessions(params),
+    getDrive: (params: Record<string, unknown>) => mcpRuntime.getDriveSession(params),
     rename: sessionCommands.renameSessionRuntime,
     remove: sessionCommands.deleteSessionRuntime,
     send: mcpRuntime.sendMessage,
@@ -902,6 +959,7 @@ const backgroundApi = createBackgroundApi({
   },
   tools: {
     list: mcpRuntime.listTools,
+    get: mcpRuntime.getTool,
     execute: mcpRuntime.executeTool,
     acceptRunScriptInnerMessage: toolRuntime.handleRunScriptInnerRuntimeMessage,
     executeRunScriptCall: runScriptBridge.handleToolCall,
@@ -999,6 +1057,8 @@ const backgroundApi = createBackgroundApi({
   },
 }, path => {
   if (["system.ready", "system.contentLanguage", "system.sessionImportLabels", "system.ping", "system.acceptDataConsent", "exchange.revealForImport", "system.mcpConnectionStatus", "system.disconnectMcp", "sessions.stop"].includes(path)) return;
+  // Connection pages can wake a cold worker; their owner awaits stored consent before checking it.
+  if (["system.connectMcp", "system.closeMcpConnectPage"].includes(path)) return;
   dataConsent.assertAccepted();
 });
 
@@ -1031,11 +1091,37 @@ function getMcpBridge() {
 }
 dataConsent.whenAccepted.then(getMcpBridge).catch(error => console.debug("[qz] MCP bridge startup failed:", error));
 
+chrome.webNavigation.onCreatedNavigationTarget.addListener(target => {
+  sessionTabs.handlePopupCreated(target).catch(error => console.warn("[轻舟] persist popup ownership failed:", error));
+});
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   void releaseTabCdp(tabId);
   sessionTabs.handleTabRemoved(tabId).catch((error) => {
     console.warn("[轻舟] persist tab removal failed:", error);
   });
+});
+
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  const owner = sessionTabs.findOwner(activeInfo.tabId);
+  if (!owner) return;
+  void getSessions().then(sessions => {
+    if (sessions[owner.sessionId]?.source !== "external-drive") return;
+    if (mcpRuntime.drive.isBusy(owner.sessionId)) return;
+    mcpRuntime.drive.markHandoff(owner.sessionId, activeInfo.tabId);
+  }).catch(() => {});
+});
+
+chrome.debugger?.onDetach?.addListener((source, reason) => {
+  const tabId = source.tabId;
+  if (reason !== "canceled_by_user" || typeof tabId !== "number") return;
+  const owner = sessionTabs.findOwner(tabId);
+  if (!owner) return;
+  void getSessions().then(sessions => {
+    if (sessions[owner.sessionId]?.source !== "external-drive") return;
+    mcpRuntime.drive.markHandoff(owner.sessionId, tabId);
+    mcpRuntime.drive.abort(owner.sessionId);
+  }).catch(() => {});
 });
 
 chrome.notifications?.onClicked?.addListener((notificationId) => {
