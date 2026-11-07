@@ -351,6 +351,8 @@
   "backend.locationPanelUnavailableLabel": "Seitenleiste getrennt",
   "backend.locationResponseTimeout": "Standortzeit überschritten. Erlaube den Standort im Browser und schalte die Standortdienste ein, oder nenne einfach eine Stadt oder Region.",
   "backend.locationResponseTimeoutLabel": "Standortzeit überschritten",
+  "backend.toolError.SKILL_OUTPUT_INVALID.label": "Skill-Ausgabe entspricht nicht der Vorgabe",
+  "backend.toolError.SKILL_OUTPUT_INVALID.message": "Der Skill hat einen Wert zurückgegeben, der nicht den festgelegten Ausgabeanforderungen entspricht.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "Ungültige Kandidaten. Bis zu 50 Einträge mit eindeutigen, nicht leeren String-IDs und Titeln zurückgeben.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "Ungültige Kandidaten",
   "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "Ungültige Auswahl. Das Tool erneut ausführen und aus den aktuellen Kandidaten auswählen.",

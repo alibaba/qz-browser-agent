@@ -4,6 +4,7 @@ import { discoverSkillManifests } from "../../src/shared/skills/skill-manifest.j
 import { createSkillSettingsService } from "../../src/background/skills/skill-settings.js";
 import { enrichSkillToolIdentity, setSkillToolUiCatalog } from "../../src/sidepanel/tools/skill-tool-ui-registry.js";
 import { appendErrorSection } from "../../src/sidepanel/tools/generic-result-renderer.js";
+import { withLanguage } from "../../src/shared/i18n/index.js";
 
 // Literal installed-package data deliberately does not derive its protocol from the current constants.
 const installedSkill = {
@@ -142,9 +143,9 @@ test("Skill error details display historical and current tool names with stable 
     [{ tool: "", skillToolName: "", pluginToolName: "legacy" }, "legacy"],
   ]) {
     const sections = [];
-    appendErrorSection({ appendChild: section => sections.push(section) }, {
+    withLanguage("zh-CN", () => appendErrorSection({ appendChild: section => sections.push(section) }, {
       code: "PLUGIN_TOOL_EXECUTION_FAILED", error: "Skill 工具执行失败", details,
-    });
+    }));
     assert.equal(sections.length, 1);
     assert.equal(sections[0].className, "tool-friendly-section tool-error-section");
     assert.equal(sections[0].innerHTML.match(/<span>工具<\/span>\s*<b>([^<]*)<\/b>/)?.[1], expected);

@@ -114,7 +114,7 @@ for (const language of ['en', 'zh-CN']) test(`Skill author and model schemas agr
       assert.deepEqual(schema.parameters.properties.tabRef.type, ['integer', 'string']);
       assert.doesNotMatch(schema.parameters.properties.tabRef.description, /\btabId\b/);
       assert.equal(schema.parameters.properties.tabId, undefined);
-      assert.deepEqual(schema.parameters.required, ['timeout', 'tabRef']);
+      assert.deepEqual(schema.parameters.required, ['tabRef']);
       assert.deepEqual(schema.parameters.properties.tabRef, withLanguage(language, () => getSkillToolParameters({}).properties.tabRef));
       assert.match(schema.description, /\btabRef\b/);
       assert.equal(schema.description.split('\n')[0], skillToolRegistrySnapshot.toolIndex.get(schema.name).tool.description,
@@ -147,7 +147,7 @@ test('Legacy page controls normalize at manifest discovery without rewriting ins
   const before = JSON.stringify(tool);
   const parameters = getSkillToolParameters(tool);
   assert.equal(parameters.properties.tabId, undefined);
-  assert.deepEqual(parameters.required, ['timeout', 'tabRef']);
+  assert.deepEqual(parameters.required, ['tabRef']);
   assert.equal(JSON.stringify(tool), before);
   assert.equal(tool.parameters.properties.tabId, undefined);
   assert.deepEqual(tool.parameters.required, ['tabRef']);
@@ -169,7 +169,7 @@ test('Legacy page controls normalize at manifest discovery without rewriting ins
   assert.equal(mixed.parameters.properties.tabId, undefined);
   assert.deepEqual(mixed.parameters.properties.tabRef, { type: ['integer', 'string'] });
   assert.deepEqual(mixed.parameters.required, ['tabRef']);
-  assert.deepEqual(getSkillToolParameters(mixed).required, ['timeout', 'tabRef']);
+  assert.deepEqual(getSkillToolParameters(mixed).required, ['tabRef']);
 });
 
 for (const localName of pageSkillNames) test(`Skill ${localName} resolves explicit references and rejects implicit page fallback through the script host`, async () => {

@@ -150,7 +150,8 @@ export function createRunScriptBridge({
         return respondFailure({
           error: t("drive.toolForbidden", { name: toolName }),
           code: "DRIVE_TOOL_FORBIDDEN",
-          details: { toolName },
+          details: { tool: toolName, status: "not_started", executed: false,
+            mayHaveTakenEffect: false, automaticReplay: false },
         }, { toolName });
       }
 

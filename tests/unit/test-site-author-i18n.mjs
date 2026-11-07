@@ -24,40 +24,39 @@ test("site Skill examples preserve their executable contracts across languages",
       let requests = 0;
       const script = vm.runInNewContext(`(async () => {${source}\n})`, {
         args: { tabRef: 'research', ...args },
-        tools: { async evaluate({ tabRef, code, args: pageArgs }) {
+        qz: { tab(tabRef) {
+          assert.notEqual(args.limit, 51, 'reject invalid input before page access');
           assert.equal(tabRef, 'research');
-          const pageScript = vm.runInNewContext(`(${code.toString()})`, {
-            URL, location: { href: "https://example.com/list" },
-            fetch: async (url, options) => {
-              assert.equal(url, 'https://example.com/api/hot');
-              assert.equal(options.credentials, 'include');
-              requests += 1;
-              return response;
-            },
-          });
-          return pageScript(pageArgs);
+          return { async evaluate(code, pageArgs) {
+            const pageScript = vm.runInNewContext(`(${code.toString()})`, {
+              URL, location: { href: "https://example.com/list" },
+              fetch: async (url, options) => {
+                assert.equal(url, 'https://example.com/api/hot');
+                assert.equal(options.credentials, 'include');
+                requests += 1;
+                return response;
+              },
+            });
+            return pageScript(pageArgs);
+          } };
         } },
       });
       return { result: JSON.parse(JSON.stringify(await script())), requests };
     };
-    const invalid = await run({ limit: 51 });
-    assert.equal(invalid.result.code, "ARGUMENT");
-    assert.equal(invalid.requests, 0, "reject invalid arguments before accessing the page API");
-
-    const auth = await run({ limit: 3 }, { status: 401, ok: false });
-    assert.equal(auth.result.code, "AUTH_REQUIRED");
-    assert.deepEqual(auth.result.rows, []);
-    const network = await run({ limit: 3 }, { status: 500, ok: false });
-    assert.equal(network.result.code, "COMMAND_EXEC");
-    const empty = await run({}, { status: 200, ok: true, json: async () => ({}) });
-    assert.equal(empty.result.code, "EMPTY_RESULT");
+    await assert.rejects(run({ limit: 51 }), { code: "ARGUMENT" });
+    await assert.rejects(run({ limit: 3 }, { status: 401, ok: false }), /登录|sign-in/i);
+    await assert.rejects(run({ limit: 3 }, { status: 500, ok: false }), /HTTP 500/);
+    await assert.rejects(run({}, { status: 200, ok: true, json: async () => ({}) }), /Expected data.items array/);
+    const empty = await run({}, { status: 200, ok: true, json: async () => ({ data: { items: [] } }) });
+    assert.equal(empty.result.count, 0);
+    assert.deepEqual(empty.result.rows, []);
     assert.ok(empty.result.emptyReason);
 
     const valid = await run({ limit: 1 }, { status: 200, ok: true, json: async () => ({ data: { items: [
       { title: "  Sample  ", author: "A", url: "/item/1" },
       { title: "Second", url: "/item/2" },
     ] } }) });
-    assert.deepEqual(valid.result, { ok: true, code: "OK", count: 1,
-      rows: [{ rank: 1, title: "Sample", author: "A", url: "https://example.com/item/1" }], emptyReason: "" });
+    assert.deepEqual(valid.result, { count: 1,
+      rows: [{ rank: 1, title: "Sample", author: "A", url: "https://example.com/item/1" }], emptyReason: null });
   }
 });

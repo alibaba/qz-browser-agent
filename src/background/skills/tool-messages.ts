@@ -3,6 +3,14 @@ import { createTranslator } from "../../shared/i18n/index.js";
 
 /** Host-authored instructions wrap Skill content without rewriting the installed package. */
 const messages = defineMessages("skill-tools", {
+  "outputMismatch": {
+    "zh-CN": "Skill 工具 {name} 已执行，但返回值不符合其 outputSchema。",
+    "en": "Skill tool {name} executed, but its returned value does not match its outputSchema."
+  },
+  "outputContract": {
+    "zh-CN": "返回结构和示例：list_tools({names:[{name}]}) 中的 outputSchema。",
+    "en": "Return structure and examples: outputSchema in list_tools({names:[{name}]})."
+  },
   "toolTimeout": {
     "zh-CN": "本次 Skill 工具超时，单位秒；省略时使用默认超时。",
     "en": "Timeout in seconds for this Skill tool call. Uses the default timeout if omitted."

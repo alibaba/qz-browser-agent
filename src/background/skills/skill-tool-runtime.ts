@@ -242,9 +242,10 @@ async function executeScriptSkillTool(plugin: SkillManifest, tool: SkillTool, in
   }
   const controlArgs = isDocumentHostTool(tool)
     ? pickDocumentHostControlArgs(inputArgs)
-    : tool.runtime === "script" ? { timeout: orchestrationTimeout(inputArgs, name) / 1000 }
     : isSkillScriptTool(tool)
-      ? pickRequiredScriptSkillToolControlArgs(inputArgs, name)
+      ? tool.runtime === "host"
+        ? pickRequiredScriptSkillToolControlArgs(inputArgs, name)
+        : { timeout: orchestrationTimeout(inputArgs, name) / 1000 }
       : pickSkillToolControlArgs(inputArgs);
   const skillConfig = await resolveSkillExecutionConfig(plugin, tool, runtime.skillSettings);
   assertSkillExecutionActive(signal);
@@ -742,9 +743,10 @@ function buildSkillToolDescription(plugin: SkillManifest, tool: SkillTool) {
     tool.runtime === "script" || tool.runtime === "inner" ? skillToolT("innerRuntime") : "",
     pageTool ? skillToolT("pageTarget") : "",
     scriptTool
-      ? (isDocumentHostTool(tool) ? skillToolT("documentHostTimeout") : tool.runtime === "script" ? skillToolT("defaultScriptTimeout") : skillToolT("requiredTimeout"))
+      ? (isDocumentHostTool(tool) ? skillToolT("documentHostTimeout") : tool.runtime === "host" ? skillToolT("requiredTimeout") : skillToolT("defaultScriptTimeout"))
       : skillToolT("optionalTimeout"),
-    renderer ? buildSkillRendererReturnContract(renderer) : "",
+    tool.outputSchema !== undefined ? skillToolT("outputContract", { name: JSON.stringify(tool.name) })
+      : renderer ? buildSkillRendererReturnContract(renderer) : "",
   ].filter(Boolean);
   return parts.join("\n");
 }
@@ -772,14 +774,14 @@ function withSkillToolControlParameters(parameters: ToolSchema, tool: Partial<Sk
   } else if (isSkillScriptTool(tool)) {
     const { timeout: _timeout, ...restProperties } = next.properties;
     next.properties = {
-      timeout: tool.runtime === "script"
-        ? { type: "number", description: skillToolT("defaultScriptTimeout") }
-        : { ...SKILL_SCRIPT_TOOL_TIMEOUT_SECONDS_PROPERTY },
+      timeout: tool.runtime === "host"
+        ? { ...SKILL_SCRIPT_TOOL_TIMEOUT_SECONDS_PROPERTY }
+        : { type: "number", description: skillToolT("defaultScriptTimeout") },
       ...restProperties,
     };
-    next.required = uniqueRequired(tool.runtime === "script"
-      ? (next.required || []).filter(field => field !== "timeout")
-      : ["timeout", ...(Array.isArray(next.required) ? next.required : [])]);
+    next.required = uniqueRequired(tool.runtime === "host"
+      ? ["timeout", ...(Array.isArray(next.required) ? next.required : [])]
+      : (next.required || []).filter(field => field !== "timeout"));
   } else if (!next.properties.timeout) {
     next.properties.timeout = { ...SKILL_TOOL_TIMEOUT_SECONDS_PROPERTY };
   }

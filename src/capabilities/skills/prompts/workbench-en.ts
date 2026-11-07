@@ -8,14 +8,14 @@ Use this skill when the user wants to create, edit, delete, import, or publish a
 1. Decide whether the Skill needs tools. Do not create \`plugin.json\` for guidance, preferences, or procedures alone. Add resources when the Skill needs model-callable tools or custom result views.
 2. For system instructions, persistent knowledge, long-term preferences, domain rules, writing rules, or delivery standards, create or update a resident skill with \`scope: "resident"\`. Its content should contain durable rules suitable for full injection into the system context. Do not edit the Kernel Prompt.
 3. Use a stable lowercase English ID for \`name\` (the standard Agent Skill name), and put the localized name in \`displayName\`. Supply content, scope, and any required domains/urlPatterns. resources may be empty.
-4. When tools are needed, explain the procedure, prerequisite navigation, page-state checks, when to call each Skill tool, and recovery steps in the content. Declare tools and result views in the root \`plugin.json\`; put scripts in \`scripts/*.js\`.
-5. Before designing a result view, call this skill's renderer-discovery tool, choose a renderer, and make the script's return value match its schema exactly.
+4. When tools are needed, explain the procedure, prerequisite navigation, page-state checks, when to call each Skill tool, and recovery steps in the content. Refer to tools by name and their schemas instead of duplicating parameter signatures or result fields in the Skill body. Declare tools and result views in the root \`plugin.json\`; put scripts in \`scripts/*.js\`.
+5. Before designing a result view, call this skill's renderer-discovery tool, choose a renderer, and map the script's business fields to its paths.
 6. To inspect the full installed Skill system, call this skill's listing tool with \`all/global/site/resident\`. Review the existing names before deciding to create a new skill or update one.
 7. Use this skill's create tool for new skills, resource-editing tool for \`plugin.json\`, \`scripts/*.js\`, and \`references/*.md\`, update tool for existing content or metadata, and delete tool for removal. Edit one resource with one action per call.
 8. Scripts should implement reusable, well-defined local operations suitable for tool calls, not entire workflows. The skill itself is the user-selectable entry point; do not add Skill slash commands.
-9. qz refreshes the Skill registry after a write or update. Newly declared tools and result views should become available to the current conversation immediately.
+9. qz refreshes the Skill registry after a write or update. Newly declared tools and result views should become available to the current conversation immediately. Query each registered tool by name with \`qz.listTools({names:[...]})\` to retrieve its input schema and the same \`outputSchema\` used to validate its returned business value; keep the general tool catalog compact instead of copying full schemas into it.
 10. New Skill scripts use \`runtime:"script"\`, the same page-independent outer execution mode as \`run_script\`. Use the \`qz\` SDK: bind \`qz.tab(tabRef)\` for page operations, use \`page.locator(query)\` for element actions and waits, and self-contained \`page.evaluate(code,args?)\` functions for DOM access and page-authenticated requests. If a tool operates on a caller-selected page, declare \`tabRef\` with \`type:["integer","string"]\` in \`required\`; scripts that open their own pages use the reference returned by \`qz.openTab\`. Read settings through \`$plugin.config\` and use outer \`fetch\` only for origins declared in \`network.allowedOrigins\`.
-11. New Skill script tools share \`run_script\` semantics: scripts return plain business JSON; awaited tool calls (including Skill calls) return business values directly and throw on failure. The model receives \`{ok,result,trace}\`, where \`trace\` lists only errors and explicit \`trace()\`/\`console\` output in order (including from nested scripts)—use \`trace()\` at key checkpoints to aid failure recovery. Renderer paths resolve relative to the returned business value. Use \`Promise.all\` for independent tab workflows and \`await\` all calls before returning. The host injects an optional \`timeout\` in seconds (default 120; 0 disables the per-call deadline while preserving parent cancellation and deadlines); do not declare \`timeout\` in the business schema. Legacy scripts retain their declared calling contract.
+11. New Skill script tools share \`run_script\` semantics: success and normal empty results return plain business JSON; execution failures throw. Awaited tool calls (including Skill calls) return business values directly and throw on failure. The model receives \`{ok,result,trace}\`, where \`trace\` lists only errors and explicit \`trace()\`/\`console\` output in order (including from nested scripts)—use \`trace()\` at key checkpoints to aid failure recovery. The tool's \`outputSchema\` describes the final business value delivered to the caller, not this host receipt. Use \`Promise.all\` for independent tab workflows and \`await\` all calls before returning. The host injects an optional \`timeout\` in seconds (default 120; 0 disables the per-call deadline while preserving parent cancellation and deadlines); do not declare \`timeout\` in the business schema. Legacy scripts retain their execution and business-value contracts.
 12. Tool availability follows the skill's \`scope\`, not an extra manifest setting. \`resident\` is always available; \`site\` is available when the page matches domains/urlPatterns or after the current conversation calls \`load_skill\`; \`global\` is available only after \`load_skill\` in the current conversation. \`builtin\`, \`readOnly\`, and \`source\` describe origin and permissions, not loading policy.
 13. For external MCP, first \`load_skill("qingzhou-mcp")\` and follow its registry search, unregistered-URL inspection, and minimal test-call workflow. Persist selected server/tool bindings only when ongoing reuse is confirmed. Call registered MCP tools by their Skill tool names.
 14. Discover a Skill ZIP URL with the existing page or Network tools. Pass its source page's tabRef and the URL to the page-ZIP import tool. That tool does not scan or guess download links. It downloads in the page's authenticated context; Background handles extraction, validation, and Skill storage. Do not assemble base64 or parse ZIP files in page scripts.
@@ -32,9 +32,9 @@ Use this skill when the user wants to create, edit, delete, import, or publish a
 ## Content and scripts
 
 - \`SKILL.md\` / skill content explains how to complete the task. For a video-search skill, for example, describe opening the site, searching, filtering, visiting details, recognizing success, and handling verification or empty results.
-- \`plugin.json\` is optional. It exposes scripts in the model's tool schema and renders results with qz components.
+- \`plugin.json\` is optional. It exposes scripts in the model's tool schema and renders results with qz components. Every new \`tools[]\` entry must declare a JSON Schema draft-07 \`outputSchema\`; specify field meanings, required fields, nullability, and array item shapes there. Copy the complete business value returned by a small-input call (e.g. \`limit:1\`) into \`outputSchema.examples\`; do not manually remove items or fields, or change values.
 - \`scripts/*.js\` is optional. A script becomes a tool only when explicitly declared in \`plugin.json.tools[]\` with \`runtime:"script"\`. Keep scripts focused on reusable operations; use the same outer execution mode for page actions, computation, Skill settings, and external APIs.
-- If a tool needs multiple prerequisite steps, its description or skill content must say to read the workflow with \`load_skill\` first and then run the script on the appropriate page.
+- If a tool needs multiple prerequisite steps, its description or skill content must say to read content and full tool contracts in tools from \`load_skill\`, then invoke the returned tool names on the required page with explicit \`tabRef\`.
 - Use this skill's exposed Skill tools to create, update, and delete skills, so authoring logic, directory rules, and result views use the same entry point. Do not call bare core tools directly.
 
 ## Package imports and Git distribution
@@ -50,7 +50,7 @@ qz supports remote HTTP MCP only, not local stdio. \`qingzhou-mcp\` handles disc
 
 1. Before editing, \`load_skill("qingzhou-mcp")\`. Use its inspection results, tools[].name/description/inputSchema, minimal test calls, and the user's goal to select bindings. Do not wrap every server tool by default.
 2. Set a top-level category in \`plugin.json\` using a stable, user-facing business category such as Research, Data, Travel, or Development. Use \`{ "id": "mcp", "label": "MCP" }\` only for a general MCP gateway spanning multiple use cases.
-3. Read the available renderer registry and choose a standard renderer such as table/list/fields/summary/article/image_grid/tree/markdown/text based on real test-call results. Map structuredContent or JSON text directly; use text/markdown for natural-language-only results. Do not invent fields.
+3. Read the available renderer registry and choose a standard renderer such as table/list/fields/summary/article/image_grid/tree/markdown/text based on real test-call results. Derive \`outputSchema\` and its example from that same business value. Map structuredContent or JSON text directly; use text/markdown for natural-language-only results. Do not invent fields. The example below uses the fixture's observed \`text\` result; inspect the actual server before adapting this binding.
 4. Declare the server in plugin.json.mcpServers. For each selected tool, set \`runtime:"mcp"\`, \`mcp:{ server, tool }\`, and a renderer matching its result. Set the renderer on the tool or in top-level renderers.tools.
 5. Before saving, qz verifies that enabled servers complete tools/list. Fix the URL/headers or explicitly set a temporarily unavailable server to \`enabled:false\`. Do not bypass validation.
 6. Reload the saved skill with \`load_skill(name)\`. Follow the qingzhou-mcp registry workflow to verify pluginTool.name, make the real call through that Skill tool, and confirm the intended renderer is used instead of a generic text fallback.
@@ -85,6 +85,12 @@ qz supports remote HTTP MCP only, not local stdio. \`qingzhou-mcp\` handles disc
           "libraryName": { "type": "string", "description": "Library or framework name" }
         },
         "required": ["libraryName"]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": { "text": { "type": "string" } },
+        "required": ["text"],
+        "examples": [{ "text": "resolved:react" }]
       },
       "renderer": {
         "type": "text",
@@ -121,6 +127,27 @@ qz supports remote HTTP MCP only, not local stdio. \`qingzhou-mcp\` handles disc
           "limit": { "type": "integer", "description": "Maximum number of links to return" }
         },
         "required": ["tabRef"]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": ["string", "null"], "description": "Page title; null when absent." },
+          "url": { "type": "string" },
+          "linkCount": { "type": "integer", "minimum": 0, "description": "Number of returned links." },
+          "textLength": { "type": "integer", "minimum": 0 },
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": { "text": { "type": "string" }, "href": { "type": "string" } },
+              "required": ["text", "href"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["title", "url", "linkCount", "textLength", "links"],
+        "additionalProperties": false,
+        "examples": [{ "title": "Example", "url": "https://example.com/research", "linkCount": 1, "textLength": 12, "links": [{ "text": "Link", "href": "https://example.com/link" }] }]
       }
     }
   ],
@@ -175,14 +202,7 @@ Scripts read settings through \`$plugin.config.<key>\`. Secret values remain out
   "network": {
     "allowedOrigins": [{ "setting": "endpoint" }],
     "allowedMethods": ["GET", "POST"]
-  },
-  "tools": [{
-    "name": "query_api",
-    "title": "Query API",
-    "runtime": "script",
-    "script": "scripts/query-api.js",
-    "parameters": { "type": "object", "properties": { "query": { "type": "string" } } }
-  }]
+  }
 }
 \`\`\`
 
@@ -197,7 +217,7 @@ return await page.evaluate(({ limit }) => {
     .slice(0, limit)
     .map(a => ({ text: a.innerText.trim(), href: a.href }));
   return {
-    title: document.title,
+    title: document.title?.trim() || null,
     url: location.href,
     linkCount: links.length,
     textLength: document.body?.innerText?.length || 0,
@@ -218,7 +238,7 @@ For large state objects, prefer DOM-first or Network-first extraction. Use state
 
 trace() should record only URLs, counts, field names, error codes, and a few samples. Treat "Object reference chain is too long", "Converting circular structure to JSON", "DataCloneError", "Maximum call stack size exceeded", and similar CDP serialization errors as STATE_SERIALIZATION / SERIALIZATION. Switch to DOM-first, Network-first, or projected state fields, then retest the actual Skill tool.
 
-For tools with a UI renderer, return the renderer's expected structure directly, without a result wrapper:
+For display renderers, paths resolve inside the returned business value, without a result wrapper. A selection renderer reads the script's candidate data; its tool's outputSchema describes the final {selectedIds, selectedItems, totalItems} returned after confirmation:
 
 - summary/compact/metrics/fields: an object matching titlePath, subtitlePath, and fields[].path.
 - table: \`{ rows: [...] }\` by default; row fields must match columns[].path. If itemsPath/valuePath is configured, it must resolve to an array. For pagination/truncation, totalPath points to the full row count and truncatedPath to the truncation flag.
@@ -257,7 +277,7 @@ Return \`{ summary: {...}, data: { rows:[...], totalRows: 10, truncated: false }
 
 - name is a stable lowercase English ID containing only letters, digits, and hyphens. displayName is the localized name. For Chinese skills, supply displayName explicitly rather than putting the Chinese name only in the content heading.
 - Supply a category for Skill organization and automatic tool grouping in the conversation. Use a business category users recognize instead of relying on the default.
-- The renderer-discovery tool defines the available renderers.tools types. Read the registry before creating a Skill with a UI; choose a renderer and design the return value to match its schema.
+- The renderer-discovery tool defines the available renderers.tools types. Read the registry before creating a Skill with a UI, then map the declared output fields to the selected renderer.
 - Configured renderers use qz's standard views and grouping. Tools without renderers use generic script-result presentation.
 - Compose existing components with layout.blocks for complex views; do not invent a one-off visual structure.
 - For user configuration, declare generic settings.fields and qz adds a card under Settings → Skills.
@@ -266,8 +286,8 @@ Return \`{ summary: {...}, data: { rows:[...], totalRows: 10, truncated: false }
 ## Quality requirements
 
 - Keep Skill IDs and tool names short, stable, lowercase, and English. Put localized text in displayName/title/label.
-- Match returned JSON to the renderer schema. Specify the script's return shape for any UI renderer; avoid result wrappers, raw JSON strings, or unstructured text.
+- Keep returned business JSON, \`outputSchema\`, its real examples, and renderer paths consistent; avoid result wrappers, raw JSON strings, or unstructured text. The same field must retain the same meaning across search and detail tools. Prefer source timestamps with explicit timezone and precision; when an absolute date is unknown, return null and preserve the original date text. Missing titles are nullable, never fabricated from other fields.
 - Audit serialization before writing, reviewing, or fixing scripts/*.js. Project small page-state fields; exclude DOM/Window/Response/Proxy/framework internals/raw state/large response bodies from results and traces.
 - Put site domains/urlPatterns at the skill's top level. Do not add manifest exposure modes or manual/resident exposure settings.
 - Do not overwrite existing user skills. Read them with load_skill or load_skill_resource before editing.
-- Deliver Skills the user can continue editing and export directly.`;
+- Before delivery, call the generated tools by their registered names with at least a minimal valid input and a boundary case, checking actual returned business values against their schemas. Chain real outputs through the intended workflow, such as search → detail → consume the returned fields; adapt the chain to the tools actually created. Copying script code into \`run_script\` does not substitute for invoking those tools. Deliver Skills the user can continue editing and export directly.`;

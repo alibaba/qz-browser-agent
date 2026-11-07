@@ -11,7 +11,7 @@ type ManageSkillInput = Omit<Partial<ToolArguments<typeof SKILL_AUTHOR_TOOL_PARA
 import { requireToolFields, toolError } from "#sdk/background/tools";
 import { isBuiltinSkillName } from "#sdk/shared/skills";
 import { SKILL_AUTHOR_TOOL_PARAMETERS, SKILL_CONTENT_EDIT_SCHEMA, SKILL_RESOURCE_EDIT_SCHEMA } from "./workbench.js";
-import { getSkillDisplayName, isBase64SkillResource, isSkillDocumentResource, skillResourceByteSize } from "#sdk/shared/skills";
+import { getSkillDisplayName, isBase64SkillResource, isDiscoverableUserSkill, isSkillDocumentResource, matchSkillUrl, skillResourceByteSize, summarizeSkill } from "#sdk/shared/skills";
 
 import { findSkillManifestResource, parseSkillManifest } from "#sdk/shared/skills";
 
@@ -73,6 +73,7 @@ registerTool({
     type: "object",
     properties: {
       scope: { type: "string", enum: ["all", "global", "site", "resident"], description: modelT("listSkillsScope") },
+      url: { type: "string", description: modelT("listSkillsUrl") },
     },
   } as const; },
   execute: (args, _signal, context = {}) => executeListSkillsAction(args, context),
@@ -123,6 +124,7 @@ registerTool({
       updatedAt: skill.updatedAt,
       runtime: modelT("runtimeGuidance"),
       content: skill.content,
+      tools: context.listTools?.(undefined, { skillName: skill.name }).tools ?? [],
       resources: summarizeSkillResources(skill.resources, { includeContent: includeResources }),
       ...summarizeSkillMcpFields(skill),
     };
@@ -240,17 +242,16 @@ function assertManageSkillName(input: ManageSkillInput = {}, action = "") {
   });
 }
 
-async function executeListSkillsAction({ scope = "all" } = {}, context: ToolContext = {}) {
+async function executeListSkillsAction({ scope = "all", url = "" } = {}, context: ToolContext = {}) {
   const normalizedScope = normalizeListSkillsScope(scope);
   const skills = await listSkills(context.language);
-  const filtered = normalizedScope === "all"
-    ? skills
-    : skills.filter(skill => String(skill.scope || "global") === normalizedScope);
+  const filtered = skills
+    .filter(skill => !context.externalDrive || isDiscoverableUserSkill(skill))
+    .filter(skill => normalizedScope === "all" || skill.scope === normalizedScope)
+    .filter(skill => !url || skill.scope !== "site"
+      || ((skill.domains.length > 0 || skill.urlPatterns.length > 0) && matchSkillUrl(skill, url)));
   const items = filtered
-    .map(skill => ({
-      name: skill.name,
-      displayName: getSkillDisplayName(skill) || skill.name,
-    }))
+    .map(summarizeSkill)
     .filter(item => item.name)
     .sort((a, b) => a.name.localeCompare(b.name) || a.displayName.localeCompare(b.displayName));
   return {

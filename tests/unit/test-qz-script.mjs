@@ -147,6 +147,20 @@ test("script output keeps ordered wire traces separate from business trace field
   }
 });
 
+test("script stdout preserves host qz_skills beside business results and authored traces", async () => {
+  const context = { qz_skills: [{ name: "my-shop", displayName: "My shop", description: "Collect shop items.",
+    scope: "site", domains: ["example.com"], urlPatterns: ["https://example.com/items/*"] }] };
+  for (const ok of [true, false]) {
+    const result = ok ? { context: { skills: ["authored business data"] } } : { code: "ELEMENT_NOT_FOUND", message: "Target is absent" };
+    const payload = wire(ok, result, ["read page"]);
+    payload.result.context = context;
+    const deps = setup({ callTool: async () => payload });
+    assert.equal(await main(["script", "--session", "s"], deps), ok ? 0 : 1);
+    assert.deepEqual(JSON.parse(deps.stdout.text), { ...receipt(ok, result, ["read page"]), context });
+    assert.equal(deps.stderr.text, "");
+  }
+});
+
 test("script receipts preserve successful and failed results without inspecting authored fields", async () => {
   const recovery = { line: 7, value: { trace: [{ level: "business", message: "Authored recovery data." }], traces: ["authored"] } };
   const failure = { code: "SCRIPT_EVALUATION_FAILED", message: "Page failed", details: recovery };

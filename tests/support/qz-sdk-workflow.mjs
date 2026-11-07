@@ -75,8 +75,12 @@ export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo 
     let value;
     try { value = JSON.parse(stdout.text); } catch { throw new Error(JSON.stringify(entry)); }
     if (argv[0] === 'script') {
-      expect(Object.keys(value).sort(), JSON.stringify(entry)).toEqual(['ok', 'result', 'trace']);
+      const hasContext = Object.hasOwn(value, 'context');
+      expect(Object.keys(value).sort(), JSON.stringify(entry)).toEqual(hasContext
+        ? ['context', 'ok', 'result', 'trace'] : ['ok', 'result', 'trace']);
       expect(value.ok, JSON.stringify(entry)).toBe(exitCode === 0);
+      if (value.ok) expect(hasContext, JSON.stringify(entry)).toBe(true);
+      if (hasContext) expect(value.context, JSON.stringify(entry)).toEqual({ qz_skills: [] });
     }
     return value;
   };

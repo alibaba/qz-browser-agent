@@ -14,6 +14,7 @@ export interface SkillRecord extends Data {
   resources: SkillResource[]; format: string; schemaVersion: number; createdAt: unknown; updatedAt: unknown;
 }
 interface SkillTarget { href: string; host: string; path: string; pathWithSearch: string }
+interface SkillUrlRules { domains?: readonly string[]; urlPatterns?: readonly string[]; excludePatterns?: readonly string[] }
 type SiteSkillMatch = SkillRecord & { matchScore: number; matchedDomain?: string; matchedPattern?: string };
 const objectInput = (value: unknown): Data => value && typeof value === "object" ? value as Data : {};
 
@@ -321,21 +322,22 @@ export function normalizeStringList(value: unknown) {
 }
 
 export function matchSiteSkills(skills: unknown, url: unknown, { limit = 3 } = {}): SiteSkillMatch[] {
-  const target = parseTargetUrl(url);
-  if (!target) return [];
   const max = Math.max(1, Math.min(20, Math.floor(Number(limit) || 3)));
   return (Array.isArray(skills) ? skills : [])
     .map(normalizeSkill)
-    .map(skill => ({ skill, match: matchSiteSkill(skill, target) }))
-    .filter(item => item.match.matched)
+    .filter(skill => skill.scope === SKILL_SCOPE_SITE && skill.status !== "disabled" && skill.domains.length)
+    .flatMap(skill => {
+      const match = matchSkillUrl(skill, url);
+      return match ? [{ skill, match }] : [];
+    })
     .sort((a, b) => b.match.score - a.match.score || a.skill.name.localeCompare(b.skill.name))
     .slice(0, max)
-	    .map(item => ({
-	      ...item.skill,
-	      matchScore: item.match.score,
-	      matchedDomain: item.match.domain,
-	      matchedPattern: item.match.pattern,
-	    }));
+    .map(item => ({
+      ...item.skill,
+      matchScore: item.match.score,
+      matchedDomain: item.match.domain,
+      matchedPattern: item.match.pattern,
+    }));
 }
 
 export function matchSiteSkillsForUrls(skills: unknown, urls: unknown, { limit = 5 } = {}) {
@@ -385,25 +387,27 @@ export function matchesSkillSearch(skill: unknown, query: unknown) {
   return haystack.includes(q);
 }
 
-function matchSiteSkill(skill: SkillRecord, target: SkillTarget) {
-  if (skill.scope !== SKILL_SCOPE_SITE || skill.status === "disabled") return { matched: false, score: 0 };
-  const domain = matchDomain(skill.domains, target.host);
-  if (!domain) return { matched: false, score: 0 };
-  const excluded = skill.excludePatterns.some(pattern => patternMatches(pattern, target));
-  if (excluded) return { matched: false, score: 0 };
+/** Discovery and automatic tool activation use the same URL rules; callers own scope and status. */
+export function matchSkillUrl(rules: SkillUrlRules = {}, rawUrl: unknown = "") {
+  const target = parseTargetUrl(rawUrl);
+  if (!target) return null;
+  const domains = normalizeStringList(rules.domains);
+  const domain = matchDomain(domains, target.host);
+  if (domains.length && !domain) return null;
+  if (normalizeStringList(rules.excludePatterns).some(pattern => patternMatches(pattern, target))) return null;
 
+  const patterns = normalizeStringList(rules.urlPatterns);
   let pattern = "";
   let patternScore = 0;
-  if (skill.urlPatterns.length === 0) {
+  if (patterns.length === 0) {
     patternScore = 5;
   } else {
-    pattern = skill.urlPatterns.find(item => patternMatches(item, target)) || "";
-    if (!pattern) return { matched: false, score: 0 };
+    pattern = patterns.find(item => patternMatches(item, target)) || "";
+    if (!pattern) return null;
     patternScore = 20 + Math.min(30, pattern.length);
   }
 
   return {
-    matched: true,
     domain,
     pattern,
     score: domain.length + patternScore,
@@ -463,5 +467,6 @@ function wildcardMatches(pattern: string, target: SkillTarget) {
     .split("*")
     .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .join(".*");
-  return safeRegexTest(`^${escaped}$`, target.href) || safeRegexTest(`^${escaped}$`, target.pathWithSearch);
+  // Path fragments retain the activation contract, including existing exclusion rules.
+  return safeRegexTest(`^${escaped}$`, target.href) || safeRegexTest(escaped, target.pathWithSearch);
 }

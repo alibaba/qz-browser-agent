@@ -37,6 +37,19 @@ test('a declared legacy receipt unwraps once and keeps host traces ahead of lega
   });
 });
 
+test('only host context supplies Skill discovery, independently of authored result and trace', () => {
+  const context = { qz_skills: [{ name: 'research', displayName: 'Research', description: 'Verify sources.', scope: 'global' }] };
+  const value = { context: { qz_skills: [{ name: 'authored' }] }, trace: ['business trace'] };
+  assert.deepEqual(scriptReceipt(value, { format: 'value', isError: false, context }), {
+    ok: true, result: value, trace: [], context,
+  });
+  assert.equal(scriptReceipt(value, { format: 'value', isError: false }).context, undefined);
+  assert.deepEqual(scriptReceipt(value, { format: 'value', isError: false, context: { qz_skills: [] } }).context, { qz_skills: [] });
+  assert.deepEqual(scriptReceipt(toolError('SCRIPT_EVALUATION_FAILED', 'Failed.'), {
+    format: 'value', isError: true, context,
+  }), { ok: false, result: { code: 'SCRIPT_EVALUATION_FAILED', message: 'Failed.' }, trace: [], context });
+});
+
 test('failure receipts lift diagnostic trace out of ToolError details and retain public recovery fields', () => {
   const error = { code: 'element_not_found', message: 'No matching element.', hint: 'Find the element again.',
     details: { tabRef: 'checkout', target: 'uid:t7.1.2', line: 4, column: 9, trace: ['legacy failure'], sessionId: 'private' } };

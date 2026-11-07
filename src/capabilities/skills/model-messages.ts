@@ -20,16 +20,20 @@ const messages = defineMessages("skills-model", {
     en: "Optional data text to analyze (appended after prompt, up to 300,000 chars).",
   },
   listSkills: {
-    "zh-CN": "列出可加载的 Skill 名称；用 load_skill({name}) 加载指令并激活工具。",
-    en: "List available Skill names. Use load_skill({name}) to load instructions and activate tools.",
+    "zh-CN": "列出可加载 Skill 的名称、描述和范围；可传 url 筛选匹配的站点 Skill，全局和常驻 Skill 仍保留。用 load_skill({name}) 加载指令并激活工具。",
+    en: "List available Skills with their names, descriptions and scopes. An optional url filters site Skills while keeping global and resident Skills. Use load_skill({name}) to load instructions and activate tools.",
   },
   listSkillsScope: {
     "zh-CN": "技能范围，默认 all。",
     en: "Skill scope. Default: all.",
   },
+  listSkillsUrl: {
+    "zh-CN": "可选页面 URL，用于筛选匹配的站点 Skill；全局和常驻 Skill 不受影响。",
+    en: "Optional page URL for matching site Skills; global and resident Skills remain available.",
+  },
   loadSkill: {
-    "zh-CN": "加载指定 Skill 的完整 Markdown 指令（content）、资源索引（resources，含 plugin.json、scripts、references 等）及运行环境说明，并在当前会话激活该 Skill 声明的扩展工具。需要读取单个资源文件内容时，调用 load_skill_resource(name, path)。",
-    en: "Load a Skill's full Markdown instructions (content), resource index (resources, including plugin.json, scripts, and references), and runtime guidance, and activate its declared Skill tools for the current session. Call load_skill_resource(name, path) to read an individual resource file.",
+    "zh-CN": "加载指定 Skill 的完整 Markdown 指令（content）、资源索引（resources，含 plugin.json、scripts、references 等）、完整工具契约（tools：调用名、说明、参数及已声明的 outputSchema 和样例）及运行环境说明，并在当前会话激活这些工具。需要读取单个资源文件内容时，调用 load_skill_resource(name, path)。",
+    en: "Load a Skill's full Markdown instructions (content), resource index (resources, including plugin.json, scripts, and references), full tool contracts (tools: calling names, descriptions, parameters, and declared outputSchema with examples), and runtime guidance, and activate those tools for the current session. Call load_skill_resource(name, path) to read an individual resource file.",
   },
   skillName: {
     "zh-CN": "必填。Skill 名称。",
@@ -118,11 +122,11 @@ const messages = defineMessages("skills-model", {
   runtimeGuidance: {
     "zh-CN": `Skill 运行在轻舟浏览器扩展中（非 Node.js 或服务器）：
 - content 编写浏览器 SOP；读取 references/模板/脚本等单文件用 load_skill_resource(name, path)（DOCX/XLSX/PDF 自动返回预览与 docModelId，续读长文档先加载 qingzhou-documents 再调用 qingzhou_documents__document_read_chunk）。
-- 页面工具必须用 tabRef 声明并显式传入目标页面（当前任务拥有的标签页别名，或 open_tab、list_tabs 返回的引用；未知别名直接报错）。
+- 按 content 的流程和页面前置条件操作；从 tools 读取调用名、参数及返回值契约，再通过 qz.call(name,args) 调用。页面工具必须用 tabRef 声明并显式传入目标页面（当前任务拥有的标签页别名，或 open_tab、list_tabs 返回的引用；未知别名直接报错）。
 - 新建脚本统一使用 runtime:"script" 外层模式（支持顶层 await/return，提供 args、$plugin、qz、trace()；用 qz.tab(tabRef) 绑定页面，定位与动作使用 page.locator(query)，页面内 DOM 与登录态请求通过 page.evaluate(code,args) 执行）。按已加载 Skill 声明的参数和网络权限调用，保留存量脚本原有执行模式。新脚本中 await 工具调用（含 Skill 工具）成功直接返回业务值，失败抛错；宿主向模型返回 {ok,result,trace}（trace 仅按序记录报错与显式 trace()/console 输出）。不支持 fs/path/process/require/npm/shell；导航与点击通过外层 SDK 执行，扩展工具用 qz.call(name,args)。`,
     en: `Skills run in the qz browser extension (not Node.js or a server):
 - Content describes browser SOPs; read individual references, templates, or scripts with load_skill_resource(name, path) (DOCX/XLSX/PDF automatically return a preview and docModelId; load qingzhou-documents and call qingzhou_documents__document_read_chunk if truncated).
-- Declare and pass page targets explicitly as tabRef, using a task-owned tab alias or the reference returned by open_tab or list_tabs (unknown aliases fail).
+- Follow the workflow and page prerequisites in content; read calling names, arguments, and output contracts from tools, then invoke qz.call(name,args). Declare and pass page targets explicitly as tabRef, using a task-owned tab alias or the reference returned by open_tab or list_tabs (unknown aliases fail).
 - New scripts use the outer runtime:"script" mode (top-level await/return with args, $plugin, qz, and trace(); bind qz.tab(tabRef), use page.locator(query) for element actions, and page.evaluate(code,args) for in-page DOM and authenticated requests). Follow the loaded Skill's declared arguments and network permissions while preserving existing scripts' execution modes. Awaited tool calls inside new scripts (including Skill calls) return business values directly and throw on failure; the host returns {ok,result,trace} to the model (trace contains only errors and explicit trace()/console output in order). Scripts cannot use fs/path/process/require/npm/shell; perform navigation and clicks through the outer SDK and call extension tools with qz.call(name,args).`,
   },
 });

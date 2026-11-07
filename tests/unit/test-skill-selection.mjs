@@ -160,7 +160,9 @@ test('real tool runtime stops collection timeout before human wait, isolates Ses
       waits(qz);
       qz.registerTool({ name:'run_skill_script', parameters:{type:'object',properties:{}}, timeout:0,
         execute: async args => { if(args.args.slow) await new Promise(resolve=>setTimeout(resolve,200));
-          return {ok:true,hasResult:true,result:{jobs:args.args.bad?[{}]:${JSON.stringify(jobs)}}}; }
+          const jobs = ${JSON.stringify(jobs)};
+          if(args.args.badOutput) jobs[0].role = 42;
+          return {ok:true,hasResult:true,result:{jobs:args.args.bad?[{}]:jobs}}; }
       });
     }}];`).toString('base64')}`;
   const hooks = registerHooks({ resolve(specifier, context, next) {
@@ -172,7 +174,17 @@ test('real tool runtime stops collection timeout before human wait, isolates Ses
   const { prepareSkillToolRegistryFromSkills } = await import('../../src/background/skills/skill-tool-runtime.js');
   const snapshot = prepareSkillToolRegistryFromSkills([{ name: 'selection', scope: 'resident', format: 'qingzhou.skill', schemaVersion: QINGZHOU_SKILL_SCHEMA_VERSION,
     resources: [{ path: 'plugin.json', type: 'json', content: JSON.stringify({ format: 'qingzhou.plugin', schemaVersion: 1, id: 'selection',
-      tools: [{ name: 'choose', runtime: 'inner', script: 'scripts/choose.js', parameters: { type: 'object', properties: { slow: { type: 'boolean' }, bad: { type: 'boolean' } } }, renderer }] }) },
+      tools: [{ name: 'choose', runtime: 'inner', script: 'scripts/choose.js',
+        parameters: { type: 'object', properties: { slow: { type: 'boolean' }, bad: { type: 'boolean' }, badOutput: { type: 'boolean' } } },
+        outputSchema: { type: 'object', required: ['selectedIds', 'selectedItems', 'totalItems'], additionalProperties: false,
+          properties: {
+            selectedIds: { type: 'array', items: { type: 'string' } },
+            selectedItems: { type: 'array', items: { type: 'object', required: ['key', 'company', 'role'],
+              properties: { key: { type: 'string' }, company: { type: 'string' }, role: { type: 'string' } } } },
+            totalItems: { type: 'integer', minimum: 0 },
+          },
+          examples: [{ selectedIds: ['job-a'], selectedItems: [jobs[0]], totalItems: 2 }],
+        }, renderer }] }) },
     { path: 'scripts/choose.js', type: 'script', content: 'async () => ({})' }] }]);
   const supervisor = createSessionSupervisor({ createAgent: () => {
     let emit = () => {};
@@ -216,4 +228,12 @@ test('real tool runtime stops collection timeout before human wait, isolates Ses
     && error.codeLabel === 'Invalid candidates'
     && error.message === 'Invalid candidates. Return up to 50 items, each with a unique nonempty string ID and a title.');
   assert.equal(supervisor.isWaitingForUser('invalid'), false);
+  const badOutput = run('bad-output', { badOutput: true });
+  const waitBadOutput = await waitFor('bad-output');
+  assert.equal(supervisor.resolveUserWait({ sessionId: 'bad-output', waitId: waitBadOutput.waitId, payload: selected(['job-a']) }), true);
+  const invalidOutput = await badOutput;
+  assert.equal(invalidOutput.code, 'SKILL_OUTPUT_INVALID');
+  assert.equal(invalidOutput.details.executed, true);
+  assert.ok(invalidOutput.details.issues.some(issue => issue.path === '#/selectedItems/0/role' && issue.keyword === 'type'));
+  assert.equal(getToolResultPresentation(invalidOutput)._plugin.id, 'selection');
 });

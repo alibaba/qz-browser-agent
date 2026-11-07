@@ -595,7 +595,10 @@ for (const stage of ["context", "metadata"]) {
       if (mode === 'single') for (const call of calls) {
         results.push(await runtime.executeTool({ sessionId: 'drive-s', name: call.name, args: call.args, scriptApiVersion: 2 }));
       }
-      assert.deepEqual(results.map(item => item.result), values.map(value => ({ok:true,result:value ?? null,trace:[]})));
+      assert.deepEqual(results.map(item => item.result), values.map(value => ({ok:true,result:value ?? null,trace:[],
+        ...(mode === 'single' ? { context: { qz_skills: [{ name: 'research', displayName: 'Research',
+          description: 'Web research workflow', scope: 'global' }] } } : {}),
+      })));
       assert.ok(results.every(item => item.scriptApiVersion === 2));
       assert.deepEqual(results[1].images, [{ mimeType: 'image/png', data: 'aGk=' }]);
       assert.equal(driveNotes.length, values.length);

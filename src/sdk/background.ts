@@ -50,8 +50,8 @@ export interface ToolContext extends SkillActivationContext {
   toolExecutionId?: string;
   /** Host-only nested dispatch. The live parent owns cancellation and recording. */
   invokeTool?(name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal; operation?: ToolOperationEvidence }): Promise<unknown>;
-  /** The same policy-filtered catalog used by native and script callers. */
-  listTools?(names?: readonly string[]): { tools: Record<string, unknown>[] };
+  /** Policy-filtered catalog; skillName previews a Skill load with its full tool contracts. */
+  listTools?(names?: readonly string[], options?: { skillName: string }): { tools: Record<string, unknown>[] };
   /** Confirm already-observed task popups within this call's deadline; never waits for future pages. */
   observedPopups?(): Promise<PageObservation[]>;
   /** Opaque scheduler authority; never accepted from a page message. */

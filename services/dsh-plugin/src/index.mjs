@@ -53,7 +53,8 @@ function scriptReceipt(called) {
     || (receipt.ok && called.exitCode !== 0)) {
     throw new HarnessError("qz returned an incompatible script receipt. Update qz and the browser extension together.", "QZ_INVALID_RECEIPT");
   }
-  return { ok: receipt.ok, result: receipt.result, trace: receipt.trace };
+  return { ok: receipt.ok, result: receipt.result, trace: receipt.trace,
+    ...(receipt.context !== undefined ? { context: receipt.context } : {}) };
 }
 
 function endedReceipt(session, code = "DRIVE_SESSION_ENDED", trace = []) {
@@ -97,6 +98,7 @@ export async function apply(ctx, config = {}) {
         receipt: { type: "object", required: true, additionalProperties: false, properties: {
           ok: { type: "boolean", required: true }, result: { type: "json", required: true },
           trace: { type: "array", required: true, items: { type: "string" } },
+          context: { type: "json" },
         } },
         session: { type: "object", required: true, additionalProperties: false, properties: {
           sessionId: { type: "string", required: true }, title: { type: "string", required: true },
@@ -152,7 +154,10 @@ export async function apply(ctx, config = {}) {
           return { receipt, session, durationMs: Date.now() - started, images };
         } catch (error) {
           const failed = errorReceipt(error);
-          if (!error.receipt && receipt) failed.trace = receipt.trace;
+          if (!error.receipt && receipt) {
+            failed.trace = receipt.trace;
+            if (receipt.context !== undefined) failed.context = receipt.context;
+          }
           failures.set(exec.token, failed);
           throw new HarnessError(JSON.stringify(failed), failed.result.code, { cause: error });
         }

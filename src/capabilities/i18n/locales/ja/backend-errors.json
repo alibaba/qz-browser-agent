@@ -351,6 +351,8 @@
   "backend.locationPanelUnavailableLabel": "サイドパネルが未接続です",
   "backend.locationResponseTimeout": "位置情報の取得がタイムアウトしました。ブラウザーの位置情報を許可し、システムの位置情報サービスをオンにするか、都市や地域を教えてください。",
   "backend.locationResponseTimeoutLabel": "位置情報の取得がタイムアウトしました",
+  "backend.toolError.SKILL_OUTPUT_INVALID.label": "スキルの出力形式が一致しません",
+  "backend.toolError.SKILL_OUTPUT_INVALID.message": "スキルが返した値は、宣言された出力仕様に適合しません。",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "候補の形式が無効です。一意で空でない文字列 ID とタイトルを持つ項目を最大 50 件返してください。",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "候補の形式が無効です",
   "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "選択が無効です。ツールを再実行し、現在の候補から選択してください。",

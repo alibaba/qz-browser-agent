@@ -116,11 +116,21 @@ export function auditSkin(session) {
 export function readOverflow(session, { settings = false } = {}) {
   return session.extension("sidebar", `
     const doc = content.document;
+    const ready = () => {
+      const app = doc.querySelector("#app");
+      return app && !app.hasAttribute("data-workspace-booting") && !app.hasAttribute("data-consent-pending");
+    };
+    const started = Date.now();
+    while (!ready() && Date.now() - started < 12000) await new Promise(resolve => content.setTimeout(resolve, 50));
+    if (!ready()) throw new Error("Sidebar did not finish initializing before layout inspection.");
     const settingsButton = doc.querySelector("#btn-settings");
     const closeButton = doc.querySelector("#btn-close-settings");
     const settingsOpen = () => !!closeButton && closeButton.getClientRects().length > 0;
     if (${settings} !== settingsOpen()) (${settings} ? settingsButton : closeButton)?.click();
-    await new Promise(resolve => content.setTimeout(resolve, 400));
+    const toggled = Date.now();
+    while (${settings} !== settingsOpen() && Date.now() - toggled < 5000) await new Promise(resolve => content.setTimeout(resolve, 50));
+    if (${settings} !== settingsOpen()) throw new Error("Settings did not reach the requested visibility.");
+    await new Promise(resolve => content.requestAnimationFrame(() => content.requestAnimationFrame(resolve)));
     const width = content.innerWidth;
     const root = doc.documentElement;
     const offenders = [];

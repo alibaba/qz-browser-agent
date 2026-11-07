@@ -11,7 +11,7 @@ const messages = defineMessages("script-tools", {
   evaluateCode: {"zh-CN": "自包含的普通函数、箭头函数或 async 函数表达式（脚本中可直接传函数，JSON 调用传函数字符串）。", "en": "A self-contained ordinary, arrow, or async function expression (pass a function in scripts or its source string in JSON calls)."},
   evaluateWaitUntil: {"zh-CN": "执行前的文档就绪状态：domcontentloaded（默认，等待 HTML 解析与延迟脚本完成）或 commit（导航提交后即可执行，适合早期观察）；均不等待图片或网络空闲。", "en": "Document readiness before execution: domcontentloaded (default; waits for HTML parsing and deferred scripts) or commit (allows early observation after navigation commits). Neither waits for images or network idle."},
   evaluateArgs: {"zh-CN": "作为函数唯一参数传入的 JSON 值。", "en": "A JSON value passed as the function's single argument."},
-  listToolsDescription: {"zh-CN": "查询当前会话可用工具。省略 names 返回所有可发现工具的紧凑签名；传入 names 返回指定工具定义的完整参数 schema。", "en": "Inspect tools available in this session. Omit names for compact signatures of all discoverable tools; pass names for the complete parameter schemas of specific tools."},
+  listToolsDescription: {"zh-CN": "查询当前会话可用工具。省略 names 返回所有可发现工具的紧凑签名；传入 names 返回完整参数 schema，以及工具声明的 outputSchema（返回结构和示例）。", "en": "Inspect tools available in this session. Omit names for compact signatures of all discoverable tools; pass names for complete parameter schemas and each tool's declared outputSchema (return structure and examples)."},
   runSkillScriptDescription: {
     "zh-CN": "内部工具：执行已加载 Skill 包内的脚本资源（模型不直接调用）。page 必须使用当前任务已拥有的网页 tab；inner 运行在轻舟内部 Worker，不需要网页 tab。",
     en: "Internal tool: execute a script resource from a loaded Skill package (not called directly by the model). page requires a web tab owned by the current task; inner runs in qz's internal Worker without a web tab.",

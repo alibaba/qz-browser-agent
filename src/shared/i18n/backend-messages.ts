@@ -2,6 +2,8 @@ import { defineMessages } from "./definition.js";
 
 /** Browser, session and tool host messages. Protocol identifiers remain language neutral. */
 export const backendMessages = defineMessages("backend", {
+  "toolError.SKILL_OUTPUT_INVALID.label": { "zh-CN": "Skill 返回格式不符", "en": "Skill output mismatch" },
+  "toolError.SKILL_OUTPUT_INVALID.message": { "zh-CN": "Skill 返回值不符合声明的输出契约。", "en": "The Skill returned a value that does not match its declared output contract." },
   "toolError.SKILL_SELECTION_INVALID_ITEMS.label": { "zh-CN": "候选结果格式无效", "en": "Invalid candidates" },
   "toolError.SKILL_SELECTION_INVALID_ITEMS.message": { "zh-CN": "候选结果格式不正确。请返回最多 50 项，并为每项提供唯一、非空的字符串 ID 和标题。", "en": "Invalid candidates. Return up to 50 items, each with a unique nonempty string ID and a title." },
   "toolError.SKILL_SELECTION_INVALID_ANSWER.label": { "zh-CN": "选择结果无效", "en": "Invalid selection" },

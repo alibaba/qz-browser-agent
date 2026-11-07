@@ -316,6 +316,15 @@ Unknown aliases fail. The host resolves the reference before execution. Legacy i
 declarations normalize at read time without changing their stored packages. Page-independent tools
 receive no page-targeting parameter.
 
+Skill tools can declare `outputSchema` in `plugin.json` using JSON Schema draft-07, with small real
+return values in `outputSchema.examples`. Named `list_tools` queries expose this contract alongside
+the input parameters; compact listings omit it. The host validates the final successful business
+value, inside script receipts and after any result selection, without coercing fields. A mismatch reports
+`SKILL_OUTPUT_INVALID` with field paths; execution has already occurred and is not replayed.
+Invalid schemas or examples reject manifest updates. Existing tools without an output schema retain
+their return contract. Script tools (`script`, `page`, and `inner`) accept an optional `timeout` in
+seconds, defaulting to 120; zero disables the call deadline while retaining parent cancellation.
+
 For controlled Background execution, add `skillHosts` and use `registerSkillHost` to bind a
 registered manifest tool to a `target` or implement `execute(args, context)`; these options are
 mutually exclusive. Calls pass task identity, cancellation, permission, and effect checks. Trusted

@@ -351,6 +351,8 @@
   "backend.locationPanelUnavailableLabel": "اللوحة الجانبية غير متصلة",
   "backend.locationResponseTimeout": "انتهت مهلة الموقع. اسمح بالموقع في المتصفح وشغّل خدمات الموقع في النظام، أو أخبرني بمدينة أو منطقة.",
   "backend.locationResponseTimeoutLabel": "انتهت مهلة الموقع",
+  "backend.toolError.SKILL_OUTPUT_INVALID.label": "مخرجات المهارة غير مطابقة",
+  "backend.toolError.SKILL_OUTPUT_INVALID.message": "أعادت المهارة قيمة لا تطابق عقد المخرجات المعلن.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "خيارات غير صالحة. أعد ما يصل إلى 50 عنصرًا بمعرّفات نصية فريدة غير فارغة وعناوين.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "خيارات غير صالحة",
   "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "اختيار غير صالح. أعد تشغيل الأداة واختر من الخيارات الحالية.",

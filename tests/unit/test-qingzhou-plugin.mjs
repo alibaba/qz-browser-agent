@@ -41,7 +41,9 @@ const manifest = {
       properties: {
         keyword: { type: "string" },
         tabRef: { type: ["integer", "string"] },
+        timeout: { type: "number" },
       },
+      required: ["timeout"],
     },
   }],
   renderers: {
@@ -381,7 +383,7 @@ assert.equal(activeSchemaNames.includes("qingzhou_skill_author__create_skill"), 
 assert.equal(activeSchemaNames.includes("qingzhou_skill_author__edit_skill_resource"), false);
 const activeXhsToolSchema = activeSchemas.find(schema => schema.function.name === "xhs_booster__collect_notes");
 assert.equal(activeXhsToolSchema.function.parameters.properties.timeout.type, "number");
-assert.deepEqual(activeXhsToolSchema.function.parameters.required, ["timeout", "tabRef"]);
+assert.deepEqual(activeXhsToolSchema.function.parameters.required, ["tabRef"]);
 assert.deepEqual(activeXhsToolSchema.function.parameters.properties.tabRef.type, ["integer", "string"]);
 assert.equal(activeXhsToolSchema.function.parameters.properties.tabId, undefined);
 assert.deepEqual(runtime.getSkillToolParameters(manifest.tools[0]), activeXhsToolSchema.function.parameters);
@@ -567,16 +569,21 @@ assert.equal(result.ok, true);
 assert.equal(getToolResultPresentation(result)._plugin.id, "xhs-booster");
 assert.equal(getToolResultPresentation(result)._plugin.displayName, "小红书增强");
 assert.equal(getToolResultPresentation(result)._plugin.category.label, "采集");
-await assert.rejects(
-  () => runtime.executeSkillTool(
+for (const timeout of [undefined, 0]) {
+  await runtime.executeSkillTool(
     "xhs_booster__collect_notes",
-    { keyword: "装修", tabId: 123, timeoutMs: 45000 },
+    { keyword: "装修", tabId: 123, ...(timeout === undefined ? {} : { timeout }) },
     null,
     { workingTabId: 99 },
-    async () => ({ ok: true }),
-  ),
-  err => err?.code === "MISSING_REQUIRED_ARGUMENTS" && err?.details?.missing?.includes("timeout"),
-);
+    async (name, args) => {
+      assert.equal(name, "run_skill_script", "old page Skills retain the page runner");
+      assert.equal(args.timeout, timeout ?? 120);
+      assert.equal(args.tabId, 123);
+      assert.equal(Object.hasOwn(args.args, "timeout"), false);
+      return { ok: true };
+    },
+  );
+}
 assert.equal(Object.prototype.hasOwnProperty.call(getToolResultPresentation(result)._plugin, removedPluginGroupField), false);
 assert.equal(getToolResultPresentation(result)._plugin.tool, "xhs_booster__collect_notes");
 assert.equal(getToolResultPresentation(result)._plugin.title, "采集笔记");

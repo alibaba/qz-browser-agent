@@ -2,6 +2,7 @@ import { t } from "../i18n/backend.js";
 import {
   getSkillDisplayName,
   isModernSkillRecord,
+  matchSkillUrl,
   normalizeSkill,
   normalizeStringList as normalizeSkillStringList,
 } from "./skill-utils.js";
@@ -18,6 +19,7 @@ import {
   normalizeSkillNetwork,
   normalizeSkillSettings,
 } from "./skill-settings.js";
+import { validateSkillOutputSchema, type SkillOutputSchema } from "./skill-output-contract.js";
 
 import type { ToolParameter, ToolSchema } from '../contracts/tool.js';
 import type { ToolMetadata } from '../tools/tool-metadata.js';
@@ -36,6 +38,7 @@ export interface SkillTool extends Omit<ToolMetadata, 'sets'> {
   rendererId?: string;
   id: string; pluginId: string; skillName: string; name: string; capabilityId: string; source: string;
   localName: string; rawName: string; description: string; parameters: ToolSchema; familyTitle: string;
+  outputSchema?: SkillOutputSchema;
   script: string; runtime: 'script' | 'page' | 'inner' | 'host' | 'mcp'; mcp: { server: string; rawServer: string; tool: string } | null;
   needsPage: boolean; hidden: boolean; includeTrace: boolean; args: Data; renderer: SkillRenderer | null;
 }
@@ -259,27 +262,7 @@ export function collectSkillContextUrls(context: SkillActivationContext = {}) {
 }
 
 export function skillActivationMatchesUrl(activation: Partial<SkillActivation> = {}, rawUrl = "") {
-  let url;
-  try {
-    url = new URL(String(rawUrl || ""));
-  } catch (_err) {
-    return false;
-  }
-  const host = url.hostname.toLowerCase();
-  const href = url.href;
-  const path = `${url.pathname || "/"}${url.search || ""}`;
-  const domains = normalizeSkillStringList(activation.domains);
-  const domainMatched = domains.length
-    ? domains.some((domain) => {
-      const clean = String(domain || "").toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-      return clean && (host === clean || host.endsWith(`.${clean}`));
-    })
-    : true;
-  if (!domainMatched) return false;
-  if (normalizeSkillStringList(activation.excludePatterns).some(pattern => skillPatternMatches(pattern, href, path))) return false;
-  const patterns = normalizeSkillStringList(activation.urlPatterns);
-  if (!patterns.length) return true;
-  return patterns.some((pattern) => skillPatternMatches(pattern, href, path));
+  return matchSkillUrl(activation, rawUrl) !== null;
 }
 
 function normalizeSkillManifestOwner(skill: Data = {}) {
@@ -491,6 +474,16 @@ function normalizeSkillTools(tools: unknown, plugin: SkillManifest, diagnostics:
       continue;
     }
     seen.add(runtimeName);
+    if (Object.hasOwn(item, "outputSchema")) {
+      const issues = validateSkillOutputSchema(item.outputSchema);
+      if (issues.length) {
+        diagnostics.push(...issues.map(issue => ({
+          level: "error" as const, pluginId: plugin.id, skillName: plugin.skillName, path: SKILL_MANIFEST_PATH,
+          message: `Skill tool ${rawName} outputSchema at ${issue.path}: ${issue.message}`,
+        })));
+        continue;
+      }
+    }
     const runtime = normalizeSkillToolRuntime(item.runtime, item);
     const mcp = normalizeSkillToolMcpBinding(item, plugin, diagnostics, rawName);
     const script = normalizeSkillPath(item.script || "");
@@ -520,6 +513,7 @@ function normalizeSkillTools(tools: unknown, plugin: SkillManifest, diagnostics:
       title: capabilityMeta?.title || String(item.title || rawName).trim() || rawName,
       description: String(item.description || item.title || rawName).trim(),
       parameters,
+      ...(Object.hasOwn(item, "outputSchema") ? { outputSchema: item.outputSchema as SkillOutputSchema } : {}),
       familyId: family.id,
       familyTitle: family.title,
       profileFamily: capabilityMeta?.profileFamily || "",
@@ -841,27 +835,6 @@ function objectOrNull(value: unknown): Data | null {
 
 function cleanString(value: unknown = "") {
   return String(value ?? "").trim();
-}
-
-function skillPatternMatches(pattern = "", href = "", path = "") {
-  const text = String(pattern || "").trim();
-  if (!text) return false;
-  if (text.startsWith("regex:")) {
-    try {
-      return new RegExp(text.slice("regex:".length)).test(href);
-    } catch (_err) {
-      return false;
-    }
-  }
-  if (text.includes("*")) {
-    const escaped = text.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-    try {
-      return new RegExp(`^${escaped}$`).test(href) || new RegExp(escaped).test(path);
-    } catch (_err) {
-      return false;
-    }
-  }
-  return href.includes(text) || path.includes(text);
 }
 
 function slugIdentifier(value: unknown = "") {

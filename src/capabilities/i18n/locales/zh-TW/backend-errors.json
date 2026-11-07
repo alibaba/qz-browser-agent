@@ -351,6 +351,8 @@
   "backend.locationPanelUnavailableLabel": "側邊欄未連線",
   "backend.locationResponseTimeout": "定位逾時。請確認已允許瀏覽器定位，並開啟系統定位服務；也可直接告訴我城市或區域。",
   "backend.locationResponseTimeoutLabel": "定位逾時",
+  "backend.toolError.SKILL_OUTPUT_INVALID.label": "Skill 返回格式不符",
+  "backend.toolError.SKILL_OUTPUT_INVALID.message": "Skill 返回值不符合宣告的輸出契約。",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "候選結果格式不正確。請傳回最多 50 項，並為每項提供唯一且非空的字串 ID 和標題。",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "候選結果格式無效",
   "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "選擇結果無效。請重新執行工具，並選擇目前卡片中的候選項。",

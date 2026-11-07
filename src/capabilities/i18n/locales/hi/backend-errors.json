@@ -351,6 +351,8 @@
   "backend.locationPanelUnavailableLabel": "साइड पैनल डिस्कनेक्ट",
   "backend.locationResponseTimeout": "स्थान का समय समाप्त। ब्राउज़र में स्थान की अनुमति दें और सिस्टम की स्थान सेवाएँ चालू करें, या बस शहर या क्षेत्र बता दें।",
   "backend.locationResponseTimeoutLabel": "स्थान का समय समाप्त",
+  "backend.toolError.SKILL_OUTPUT_INVALID.label": "स्किल का आउटपुट मेल नहीं खाता",
+  "backend.toolError.SKILL_OUTPUT_INVALID.message": "स्किल ने ऐसा मान लौटाया है जो उसके घोषित आउटपुट अनुबंध से मेल नहीं खाता।",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "अमान्य विकल्प। अद्वितीय, गैर-रिक्त स्ट्रिंग ID और शीर्षक वाले अधिकतम 50 आइटम लौटाएँ।",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "अमान्य विकल्प",
   "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "अमान्य चयन। टूल दोबारा चलाएँ और मौजूदा विकल्पों में से चुनें।",

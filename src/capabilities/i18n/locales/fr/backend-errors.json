@@ -351,6 +351,8 @@
   "backend.locationPanelUnavailableLabel": "Panneau latéral déconnecté",
   "backend.locationResponseTimeout": "Délai de localisation dépassé. Autorisez la localisation dans le navigateur et activez les services de localisation du système, ou indiquez simplement une ville ou une zone.",
   "backend.locationResponseTimeoutLabel": "Délai de localisation dépassé",
+  "backend.toolError.SKILL_OUTPUT_INVALID.label": "Sortie de compétence non conforme",
+  "backend.toolError.SKILL_OUTPUT_INVALID.message": "La compétence a renvoyé une valeur qui ne respecte pas son contrat de sortie déclaré.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "Candidats non valides. Renvoyez au plus 50 éléments avec un ID textuel unique et non vide et un titre.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "Candidats non valides",
   "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "Sélection non valide. Relancez l’outil et choisissez parmi les candidats actuels.",

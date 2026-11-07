@@ -8,4 +8,7 @@ export { createZip, exportSkillsZip, importSkillsFromFileList, importSkillsZip, 
 export type { ImportFile } from "../../shared/skills/skill-package.js";
 export { SKILL_SCOPE_GLOBAL, SKILL_SCOPE_RESIDENT, SKILL_SCOPE_SITE, getSkillDisplayName, isBase64SkillResource, isSkillDocumentResource, isValidAgentSkillName, matchSiteSkillsForUrls, matchesSkillSearch, modernSkillValuesFromRecord, normalizeModernSkill, normalizeSkill, normalizeSkillLookup, skillEntriesByIdentity, skillMatchesName, skillResourceByteSize } from "../../shared/skills/skill-utils.js";
 export type { SkillRecord, SkillResource } from "../../shared/skills/skill-utils.js";
+export { matchSkillUrl } from "../../shared/skills/skill-utils.js";
+export { discoverUserSkills, isDiscoverableUserSkill, summarizeSkill } from "../../shared/skills/skill-discovery.js";
+export type { SkillSummary } from "../../shared/skills/skill-discovery.js";
 export { listSkillRendererDefinitions } from "../../shared/skills/skill-renderers.js";

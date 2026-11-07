@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import { assertScriptPageLifecycle } from "../../src/background/tools/behavior.js";
 import { withToolCallLifecycle } from "../../src/background/tools/call-lifecycle.js";
-import { createToolOperation } from "../../src/background/tools/tool-operation.js";
+import { createToolOperation, withToolOperationFailure } from "../../src/background/tools/tool-operation.js";
 import { registerMediaTools } from "../../src/capabilities/media/tools.js";
 import {
   createRunScriptArtifactCollector,
@@ -385,6 +385,17 @@ const blockedAsk = await driveBridge.handleToolCall({
 assert.equal(blockedAsk.ok, false);
 assert.equal(blockedAsk.code, "DRIVE_TOOL_FORBIDDEN");
 assert.deepEqual(driveExecutions, []);
+const blockedUseTab = await driveBridge.handleToolCall({
+  toolName: "use_tab", args: { tabRef: "page" }, sessionId: "s1", runId: "opaque-direct-run",
+});
+const outerOperation = createToolOperation();
+outerOperation.prepare({ tool: "run_script" });
+outerOperation.dispatch();
+const blockedReceipt = withToolOperationFailure(blockedUseTab.result, outerOperation);
+assert.equal(blockedReceipt.code, "DRIVE_TOOL_FORBIDDEN");
+assert.deepEqual(blockedReceipt.details, { tool: "use_tab", status: "not_started", executed: false,
+  mayHaveTakenEffect: false, automaticReplay: false });
+assert.deepEqual(driveExecutions, [], "forbidden calls retain their identity without executing");
 const driveList = await driveBridge.handleToolCall({
   toolName: "__list_tools__",
   sessionId: "s1",

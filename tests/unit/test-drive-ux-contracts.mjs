@@ -63,7 +63,8 @@ test('compact discovery includes every visible tool and named discovery preserve
 test('list_skills really executes before loading a Skill and accepts a valid page reference', async () => {
   const f = fixture();
   const listed = await f.runtime.execute('list_skills', { tabRef: 'shop' }, undefined, f.context);
-  assert.ok(listed.names.includes('qingzhou-documents'));
+  assert.ok(Array.isArray(listed.names));
+  assert.ok(!listed.names.includes('qingzhou-documents'), 'drive discovery hides built-in Skills; explicit loading remains supported');
   const loaded = await f.runtime.execute('load_skill', { name: 'qingzhou-documents', tabRef: 'shop' }, undefined, f.context);
   assert.equal(loaded.name, 'qingzhou-documents');
   const projected = projectDriveResult(loaded).value;

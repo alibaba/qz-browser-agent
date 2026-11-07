@@ -351,6 +351,8 @@
   "backend.locationPanelUnavailableLabel": "Боковая панель отключена",
   "backend.locationResponseTimeout": "Время ожидания геолокации истекло. Разрешите геолокацию в браузере и включите службы геолокации системы или просто назовите город или район.",
   "backend.locationResponseTimeoutLabel": "Время ожидания геолокации истекло",
+  "backend.toolError.SKILL_OUTPUT_INVALID.label": "Результат навыка не соответствует контракту",
+  "backend.toolError.SKILL_OUTPUT_INVALID.message": "Навык вернул значение, которое не соответствует объявленному контракту вывода.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "Неверный формат кандидатов. Верните до 50 элементов с уникальными непустыми строковыми ID и заголовками.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "Неверный формат кандидатов",
   "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "Неверный выбор. Запустите инструмент снова и выберите из текущих кандидатов.",

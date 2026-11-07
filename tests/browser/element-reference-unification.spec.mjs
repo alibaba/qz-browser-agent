@@ -34,7 +34,8 @@ test('all element readers share node UIDs, consumers accept target/legacy select
       expect(result).not.toHaveProperty('tabRef');
       if (name !== 'evaluate') return result;
       expect(response.scriptApiVersion).toBe(2);
-      expect(Object.keys(result).sort()).toEqual(['ok', 'result', 'trace']);
+      expect(Object.keys(result).sort()).toEqual(['context', 'ok', 'result', 'trace']);
+      expect(result.context).toEqual({ qz_skills: [] });
       expect(result.ok).toBe(!response.isError);
       expect(Array.isArray(result.trace)).toBe(true);
       expect(result.trace.every(line => typeof line === 'string')).toBe(true);

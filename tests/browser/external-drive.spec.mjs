@@ -423,7 +423,12 @@ async function scriptTool(dependencies, stdout, stderr, { sessionId, name, args 
 function scriptOutput(stdout, stderr) {
   expect(stderr.text, "These scripts return no images; their traces belong in stdout").toBe("");
   const value = JSON.parse(stdout.text);
-  expect(Object.keys(value).sort()).toEqual(["ok", "result", "trace"]);
+  const keys = ["ok", "result", "trace"];
+  if (value.ok || Object.hasOwn(value, "context")) {
+    keys.unshift("context");
+    expect(value.context).toEqual({ qz_skills: [] });
+  }
+  expect(Object.keys(value).sort()).toEqual(keys);
   expect(typeof value.ok).toBe("boolean");
   expect(Array.isArray(value.trace)).toBe(true);
   expect(value.trace.every(trace => typeof trace === "string")).toBe(true);

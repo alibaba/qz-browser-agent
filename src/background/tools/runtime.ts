@@ -1,7 +1,7 @@
 import { waitForPageCommit } from "./document-readiness.js";
 import { firefoxExtension } from "../../shared/product-text.js";
 import { createdTabResultId } from "../../shared/contracts/page-observation.js";
-import { bindToolResultPresentation, getToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { bindToolResultPresentation, getToolResultPresentation, toolFailurePresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { toolError, isToolFailure, pageErrorDetails, operationErrorDetails } from "../../shared/contracts/tool-error.js";
 import { resolveTabReference, tabReferenceError } from "./tab-reference.js";
 import { isTabAlias } from "../../shared/tab-reference.js";
@@ -21,6 +21,8 @@ import type { ToolRuntimeDependencies } from "../../sdk/background/services.js";
 import type { ToolDefinition, ToolSchema, ToolParameter, ToolModelPolicy, ToolBatchTabPolicy, ToolTimeoutResult } from "../../shared/contracts/tool.js";
 import type { RegisteredTool } from "./registry.js";
 import type { SkillTool, SkillManifest } from "../../shared/skills/skill-manifest.js";
+import { validateSkillOutput } from "../../shared/skills/skill-output-contract.js";
+import { skillToolT } from "../skills/tool-messages.js";
 import type { SkillRenderer } from "../../shared/skills/skill-renderers.js";
 import type { SecurityGuardrails } from "../../shared/security-guardrails.js";
 import type { CdpCommand } from "./cdp-runtime.js";
@@ -30,7 +32,7 @@ import { withToolCallLifecycle } from "./call-lifecycle.js";
 import contributions from "#capabilities/tools";
 import type { ElementReply, PagePoint } from "../../shared/contracts/page-content.js";
 type Fields = Record<string, unknown>;
-type RuntimeTool = ToolDefinition<ToolSchema, unknown, ToolContext, AbortSignal> & ReturnType<typeof normalizeToolIdentity> & { source: "core" | "plugin"; plugin?: SkillManifest; selectionRenderer?: SkillRenderer };
+type RuntimeTool = ToolDefinition<ToolSchema, unknown, ToolContext, AbortSignal> & ReturnType<typeof normalizeToolIdentity> & { source: "core" | "plugin"; plugin?: SkillManifest; selectionRenderer?: SkillRenderer; outputSchema?: SkillTool["outputSchema"] };
 type ToolOptions = NonNullable<Parameters<typeof getSkillToolDefinition>[1]>;
 type RuntimeContext = ToolContext & { [TOOL_RUNTIME_CONTEXT]?: ToolRuntimeDependencies };
 const READ_ONLY_PAGE_ACCESS = Symbol("readOnlyPageAccess");
@@ -406,10 +408,10 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
     validateArgs: args => {
       if (isDocumentHostTool(entry.tool)) documentHostTimeout(args, runtimeName);
       else if (scriptDefinition) orchestrationTimeout(args, runtimeName);
-      else if (isSkillScriptTool(entry.tool)) scriptTimeout(args, runtimeName);
+      else if (isSkillScriptTool(entry.tool)) (entry.tool.runtime === "host" ? scriptTimeout : orchestrationTimeout)(args, runtimeName);
       return hostDefinition?.validateArgs?.(args);
     },
-    timeout: scriptDefinition ? orchestrationTimeout : isSkillPageScriptTool(entry.tool) ? 0 : isDocumentHostTool(entry.tool) ? documentHostTimeout : isSkillScriptTool(entry.tool) ? scriptTimeout : DEFAULT_TOOL_TIMEOUT,
+    timeout: scriptDefinition ? orchestrationTimeout : isSkillPageScriptTool(entry.tool) ? 0 : isDocumentHostTool(entry.tool) ? documentHostTimeout : isSkillScriptTool(entry.tool) ? (entry.tool.runtime === "host" ? scriptTimeout : orchestrationTimeout) : DEFAULT_TOOL_TIMEOUT,
     legacyTimeoutMs: !isSkillScriptTool(entry.tool),
     execute: (args, signal, context) => executeSkillTool(name, args, signal, context,
       (nestedName, nestedArgs, nestedSignal, nestedContext = {}) => executeTool(
@@ -525,14 +527,20 @@ export function getToolSchemas(options: ToolOptions = {}) {
   return withLanguage(snapshot.language, () => getLocalizedToolSchemas({ ...options, language: snapshot.language }, snapshot));
 }
 
-function listContextTools(context: ToolContext, names?: readonly string[]): { tools: Fields[] } {
+function listContextTools(context: ToolContext, names?: readonly string[], options?: { skillName: string }): { tools: Fields[] } {
+  // Preview this load's activation without changing the caller's Session state.
+  if (options) context = { ...context, loadedPluginSkillNames: [options.skillName] };
   const allowed = getToolSchemas(context).filter(schema => context.externalDrive !== true
-    || isDriveToolDiscoverable(schema.function.name));
-  if (names) {
+    || isDriveToolDiscoverable(schema.function.name)).filter(schema => !options
+      || getSkillToolDefinition(schema.function.name, context)?.plugin.skillName === options.skillName);
+  if (names || options) {
     const index = new Map(allowed.map(schema => [schema.function.name, schema.function]));
-    const requested = [...new Set(names)];
+    const requested = [...new Set(names ?? index.keys())];
     for (const name of requested) if (!index.has(name)) throw new ToolExecutionError("UNKNOWN_TOOL", `Unknown or unavailable tool: ${name}`, { name });
-    return { tools: requested.map(name => ({ ...index.get(name)! })) };
+    return { tools: requested.map(name => {
+      const outputSchema = getSkillToolDefinition(name, context)?.tool.outputSchema;
+      return { ...index.get(name)!, ...(outputSchema !== undefined ? { outputSchema } : {}) };
+    }) };
   }
   return { tools: allowed.map(schema => toolSignature(schema.function)) };
 }
@@ -755,7 +763,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
                   signal: scoped.signal, openerTabId: Number(args.tabId) }) : undefined;
               scoped.invokeTool = authority.invokeNestedTool
                 ? (name, args, options) => authority.invokeNestedTool!({ ...scoped, operation: options?.operation }, name, args, options?.signal) : undefined;
-              scoped.listTools = names => listContextTools(scoped, names);
+              scoped.listTools = (names, options) => listContextTools(scoped, names, options);
               scoped.observedPopups = capture?.observed;
               try {
                 if (policy?.kind === "action" && !selectedDefinition.behavior?.reportsExecution) operation.dispatch();
@@ -788,6 +796,20 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       result = await selectSkillResults(definition.selectionRenderer, result, signal, context,
         (nestedName, nestedArgs, nestedSignal, nestedContext) => executeTool(nestedName, nestedArgs, nestedSignal,
           withToolRuntimeContext({ ...nestedContext, operation: undefined }, getToolRuntimeDependencies(context))));
+    }
+    if (definition.outputSchema !== undefined && !isToolFailure(result)) {
+      // Validate the final caller value, including any completed human selection.
+      const value = definition.model?.scriptResult === "receipt" ? record(result).result ?? null : result;
+      const issues = validateSkillOutput(definition.outputSchema, value);
+      if (issues.length) {
+        operation.confirm();
+        const presentation = toolFailurePresentation(result, context.resultPresentation);
+        if (context.resultPresentation) Object.assign(context.resultPresentation, presentation);
+        result = bindToolResultPresentation(toolError("SKILL_OUTPUT_INVALID",
+          withLanguage(language, () => skillToolT("outputMismatch", { name })), {
+            details: { tool: name, issues, executed: true, automaticReplay: false },
+          }), presentation);
+      }
     }
     const finishPostprocess = context.measurePhase?.("postprocess");
     try {

@@ -81,6 +81,17 @@ await assert.rejects(
 );
 assert.equal(storedManifest(), beforeInvalidJson, "invalid manifest schema must not mutate storage");
 
+const invalidOutput = JSON.parse(validManifest);
+invalidOutput.tools[0].outputSchema = { type: 'object', required: ['body'], examples: [{ text: 'Wrong field.' }] };
+await assert.rejects(
+  () => skills.updateSkill("Manifest 校验", {
+    resourceEdits: [{ action: 'set', path: 'plugin.json', content: JSON.stringify(invalidOutput) }],
+  }),
+  err => err?.code === 'SKILL_PLUGIN_MANIFEST_INVALID'
+    && err.details?.diagnostics?.some(item => item.message.includes('outputSchema')),
+);
+assert.equal(storedManifest(), beforeInvalidJson, 'an example violating its output contract must not mutate storage');
+
 await assert.rejects(
   () => skills.saveSkill("新坏插件", "不应写入", "正文", {
     resources: [{ path: "plugin.json", type: "json", content: "{ bad json" }],

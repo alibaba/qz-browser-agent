@@ -23,6 +23,7 @@ for (const language of ['en', 'zh-CN']) test(`${language} authored Skill example
   const scripts = [blocks(workbench, 'js')[0], ...blocks(site, 'js')];
   assert.equal(scripts.length, 3);
   for (const [index, script] of scripts.entries()) {
+    const isProbe = index === 1;
     const manifest = structuredClone(index === 0 ? workbenchManifest : siteManifest);
     const tool = manifest.tools[0];
     const skill = { format: 'qingzhou.skill', schemaVersion: 2, name: 'authored-example', scope: 'resident', resources: [
@@ -31,7 +32,7 @@ for (const language of ['en', 'zh-CN']) test(`${language} authored Skill example
     ] };
     const before = JSON.stringify(skill);
     const calls = [];
-    const fixture = await scriptExecutionFixture([skill], async message => {
+    const fixture = await scriptExecutionFixture(isProbe ? [] : [skill], async message => {
       assert.equal(message.type, 'tool_call', 'no DOM or authenticated fetch runs in the outer worker');
       assert.equal(message.toolName, 'evaluate');
       assert.equal(message.args.tabRef, 'research');
@@ -53,13 +54,17 @@ for (const language of ['en', 'zh-CN']) test(`${language} authored Skill example
       return JSON.parse(JSON.stringify(result));
     });
     assert.equal(JSON.stringify(skill), before, 'registration never rewrites the authored package');
-    const schema = getActiveSkillToolSchemasSync({ language })[0].function;
-    assert.deepEqual(schema.parameters.required, ['tabRef']);
-    const execute = limit => fixture.execute(schema.name, { tabRef: 'research', limit });
+    const schema = getActiveSkillToolSchemasSync({ language })[0]?.function;
+    if (!isProbe) assert.deepEqual(schema.parameters.required, ['tabRef']);
+    const execute = limit => isProbe
+      ? fixture.execute('run_script', { code: script, args: { tabRef: 'research', limit } })
+      : fixture.execute(schema.name, { tabRef: 'research', limit });
     const receipt = await execute(1);
-    assert.equal(receipt.ok, true, JSON.stringify(receipt));
-    assert.deepEqual(receipt.trace ?? [], [], 'successful examples do not emit automatic trace');
-    const result = receipt.result;
+    if (!isProbe) {
+      assert.equal(receipt.ok, true, JSON.stringify(receipt));
+      assert.deepEqual(receipt.trace ?? [], [], 'successful examples do not emit automatic trace');
+    }
+    const result = isProbe ? receipt : receipt.result;
     assert.equal(calls.length, 1, JSON.stringify(result));
     if (index === 0) assert.deepEqual(result, { title: 'Example', url: 'https://example.com/research',
       linkCount: 1, textLength: 12, links: [{ text: 'Link', href: 'https://example.com/link' }] });
@@ -68,8 +73,7 @@ for (const language of ['en', 'zh-CN']) test(`${language} authored Skill example
       assert.equal(result.count, 1);
       assert.equal(result.rows[0].url, 'https://example.com/one');
       const invalid = await execute(51);
-      assert.equal(invalid.ok, true, 'an authored validation result is business data');
-      assert.equal(invalid.result.code, 'ARGUMENT');
+      assert.equal(invalid.code, 'ARGUMENT');
       assert.equal(calls.length, 1, 'invalid arguments never enter the page');
     }
   }

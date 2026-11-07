@@ -90,14 +90,18 @@ test('a script Skill owns its argument schema; page-looking fields stay data unt
   assert.equal(f.networks[0].config.token, 'fixture-secret');
 });
 
-test('old inner Skill keeps its required timeout, result envelope and permissive serialization', async () => {
+test('old inner Skill defaults its timeout while retaining its result envelope and permissive serialization', async () => {
   const f = await scriptExecutionFixture([skill('return new Map([["key", 1]]);', 'inner')]);
-  assert.ok(f.runtime.resolveDefinition(name()).parameters.required.includes('timeout'));
+  const definition = f.runtime.resolveDefinition(name());
+  assert.ok(!definition.parameters.required.includes('timeout'));
+  assert.equal(definition.timeout({}, name()), 120_000);
+  assert.equal(definition.timeout({ timeout: 0 }, name()), 0);
   assert.notEqual(f.runtime.getBatchTabPolicy(name(), {})?.kind, 'script', 'manifest behavior cannot grant orchestration');
-  await assert.rejects(f.execute(name(), {}), { code: 'MISSING_REQUIRED_ARGUMENTS' });
-  const result = await f.execute(name(), { timeout: 5 });
-  assert.equal(result.ok, true);
-  assert.equal(result.result.__qz_type, 'Map');
+  for (const args of [{}, { timeout: 0 }, { timeout: 5 }]) {
+    const result = await f.execute(name(), args);
+    assert.equal(result.ok, true);
+    assert.equal(result.result.__qz_type, 'Map');
+  }
   assert.notEqual(f.messages[0].strictResult, true);
 });
 

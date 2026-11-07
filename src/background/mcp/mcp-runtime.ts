@@ -1,6 +1,7 @@
 import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
 import { bindToolResultPresentation, getToolResultPresentation, presentToolResult, toolFailurePresentation, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { scriptReceipt, SCRIPT_API_VERSION } from "../../shared/contracts/script-receipt.js";
+import { discoverUserSkills } from "../../shared/skills/skill-discovery.js";
 import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
 import { parseBeijingDateTime } from "../../shared/time-utils.js";
@@ -226,6 +227,23 @@ export function createMcpRuntime({
         taskSiteTabs: Array.isArray(runtime.visitedTaskSites) ? runtime.visitedTaskSites : [],
       },
     };
+  }
+
+  async function scriptContext(sessionId: string, runId: string, signal?: AbortSignal) {
+    if (signal?.aborted) return;
+    try {
+      const installed = await skills.list();
+      const runtime = readRuntime(sessionId);
+      const urls = (Array.isArray(runtime.visitedTaskSites) ? runtime.visitedTaskSites : [])
+        .map(tab => plainObject(tab)).filter(tab => !tab.securityGuardrailBlocked && tab.contentAccess !== "blocked")
+        .map(tab => String(tab.url || "")).filter(Boolean);
+      if (signal?.aborted || !drive.hasActiveLease(sessionId) || !sessions.supervisor.isRunCurrent(sessionId, runId)) return;
+      return { qz_skills: discoverUserSkills(installed, urls).map(({ summary }) => summary) };
+    } catch (error) {
+      // Optional discovery must not turn an already executed script into a failure.
+      console.warn("[qz] Skill discovery unavailable:", error);
+      return;
+    }
   }
 
   async function sendMessage(params: Fields = {}, signal?: AbortSignal) {
@@ -612,7 +630,8 @@ export function createMcpRuntime({
           noteDriveTool(name, prepared.args, projected.value, isError, projected.images, result, presentation, toolCallId);
           if (policy?.scriptResult) return {
             toolName: name, sessionId, runId: runId || null, isError, scriptApiVersion: SCRIPT_API_VERSION,
-            result: scriptReceipt(result, { format: policy.scriptResult, isError, presentation }),
+            result: scriptReceipt(result, { format: policy.scriptResult, isError, presentation,
+              context: await scriptContext(sessionId, runId, callSignal ?? undefined) }),
             ...(projected.images.length ? { images: projected.images } : {}),
           };
           const body = { toolName: name, sessionId, runId: runId || null, result: projected.value, isError };
@@ -623,7 +642,8 @@ export function createMcpRuntime({
           noteDriveTool(name, params.args, driveToolFailure(error), true, [], error, presentation, toolCallId);
           if (policy?.scriptResult) return {
             toolName: name, sessionId, runId: runId || null, isError: true, scriptApiVersion: SCRIPT_API_VERSION,
-            result: scriptReceipt(driveToolFailure(error), { format: policy.scriptResult, isError: true, presentation }),
+            result: scriptReceipt(driveToolFailure(error), { format: policy.scriptResult, isError: true, presentation,
+              context: await scriptContext(sessionId, runId, callSignal ?? undefined) }),
           };
           throw error;
         }
@@ -648,7 +668,8 @@ export function createMcpRuntime({
       signal?.throwIfAborted();
       callSignal?.throwIfAborted();
       for (const item of batch.results) if (!item.isError) rememberLoadedSkill(sessionId, item.name, item.result);
-      return { sessionId, runId: runId || null, results: batch.results };
+      const discovery = callsScript ? await scriptContext(sessionId, runId, callSignal ?? undefined) : undefined;
+      return { sessionId, runId: runId || null, results: batch.results, ...(discovery ? { context: discovery } : {}) };
     } catch (error) {
       if (timeoutSignal?.aborted && !signal?.aborted) {
         throw Object.assign(new Error(t("drive.batchTimeout")), { code: "DRIVE_BATCH_TIMEOUT" });
@@ -900,7 +921,7 @@ function driveToolFailure(error: unknown) {
   const err = plainObject(error);
   const name = error instanceof Error ? error.name : "";
   const aborted = name === "AbortError" || name === "TimeoutError";
-  const message = error instanceof Error && error.message ? error.message : String(error ?? "");
+  const message = typeof err.message === "string" && err.message ? err.message : String(error ?? "");
   return toolError(aborted ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED"), message, {
     hint: typeof err.hint === "string" ? err.hint : undefined,
     details: plainObject(err.details),

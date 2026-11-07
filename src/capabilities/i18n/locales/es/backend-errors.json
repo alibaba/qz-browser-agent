@@ -351,6 +351,8 @@
   "backend.locationPanelUnavailableLabel": "Panel lateral desconectado",
   "backend.locationResponseTimeout": "Se agotó el tiempo de ubicación. Permite la ubicación en el navegador y activa los servicios de ubicación del sistema, o dime una ciudad o zona.",
   "backend.locationResponseTimeoutLabel": "Tiempo de ubicación agotado",
+  "backend.toolError.SKILL_OUTPUT_INVALID.label": "Salida de habilidad no conforme",
+  "backend.toolError.SKILL_OUTPUT_INVALID.message": "La habilidad devolvió un valor que no cumple con su contrato de salida declarado.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "Candidatos no válidos. Devuelve hasta 50 elementos con ID de texto únicos y no vacíos y un título.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "Candidatos no válidos",
   "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "Selección no válida. Vuelve a ejecutar la herramienta y elige entre los candidatos actuales.",

@@ -6,6 +6,7 @@ import { mkdtemp, readFile, writeFile, rm, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { validateJsonSchemaValue } from "@deepseek-ai/dsh-tools";
 import { apply } from "../src/index.mjs";
 import { cliCommand, runCli } from "../src/cli.mjs";
 import { captureImages } from "../src/images.mjs";
@@ -16,7 +17,10 @@ import { tmpdir } from 'node:os';
 const dir = process.env.QZ_STATE_DIR;
 const argv = process.argv.slice(2);
 if (argv[0] === '--client') argv.splice(0, 2);
-const emit = (data, code = 0) => { process.stdout.write(JSON.stringify(data)); process.exitCode = code; };
+const emit = (data, code = 0) => {
+  if (argv[0] === 'script' && existsSync(dir + '/context')) data.context = JSON.parse(readFileSync(dir + '/context','utf8'));
+  process.stdout.write(JSON.stringify(data)); process.exitCode = code;
+};
 appendFileSync(dir + '/calls', JSON.stringify(argv) + '\n');
 if (argv[0] === 'session') {
   if (argv[1] === 'create') {
@@ -148,6 +152,30 @@ test("script failures preserve public details and traces; invalid output and mis
   assert.equal(imageFailure.result.code,"QZ_IMAGES_UNAVAILABLE");
   assert.deepEqual(imageFailure.trace,["form submitted"]);
   await assert.rejects(runCli({cliPath:join(f.dir,"missing-command")},["status"],"",new AbortController().signal), {code:"QZ_CLI_NOT_FOUND"});
+});
+
+test("host qz_skills reaches the model on success, script failure and attachment failure", async t => {
+  const f = await setup(t), tool = await f.install();
+  const context = { qz_skills: [
+    { name: "my-report", displayName: "My report", description: "Summarize a report.", scope: "global" },
+    { name: "my-shop", displayName: "My shop", description: "Collect shop items.", scope: "site", domains: ["example.com"], urlPatterns: ["https://example.com/items/*"] },
+  ] };
+  await writeFile(join(f.dir, "context"), JSON.stringify(context));
+  const input = { ...args("success"), args: { context: { skills: ["authored business data"] } } };
+  const value = await tool.execute(input, execution());
+  assert.deepEqual(validateJsonSchemaValue(tool.output.schema, value), []);
+  const content = tool.output.render(input, value);
+  assert.equal(content.length, 1);
+  const rendered = JSON.parse(content[0].text);
+  assert.deepEqual(rendered.context, context);
+  assert.deepEqual(rendered.result.args.context, { skills: ["authored business data"] });
+  assert.deepEqual(rendered.trace, ["ready"]);
+  for (const code of ["failure", "image"]) {
+    const failed = await failure(tool, args(code));
+    assert.deepEqual(failed.context, context);
+    assert.deepEqual(failed.trace, [code === "failure" ? "filled name" : "form submitted"]);
+    assert.equal(failed.result.code, code === "failure" ? "ELEMENT_NOT_FOUND" : "QZ_IMAGES_UNAVAILABLE");
+  }
 });
 
 test("Windows npm shims resolve to Node without shell; early IPC cancellation waits for the CLI handler", async t => {

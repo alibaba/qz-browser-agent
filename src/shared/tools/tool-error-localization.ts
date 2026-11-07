@@ -12,6 +12,7 @@ const UPPER_ERROR_CODE_RE = /^[A-Z][A-Z0-9_]+$/;
 
 // Each error owns its label and optional fixed recovery message; contextual messages stay below.
 const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message?: BackendMessageKey }>> = Object.freeze({
+  SKILL_OUTPUT_INVALID: { label: "toolError.SKILL_OUTPUT_INVALID.label", message: "toolError.SKILL_OUTPUT_INVALID.message" },
   SKILL_SELECTION_INVALID_ITEMS: { label: "toolError.SKILL_SELECTION_INVALID_ITEMS.label", message: "toolError.SKILL_SELECTION_INVALID_ITEMS.message" },
   SKILL_SELECTION_INVALID_ANSWER: { label: "toolError.SKILL_SELECTION_INVALID_ANSWER.label", message: "toolError.SKILL_SELECTION_INVALID_ANSWER.message" },
   LOCATION_CONSENT_REQUIRED: { label: "locationRequired", message: "locationRequired" },

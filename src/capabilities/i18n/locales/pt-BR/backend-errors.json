@@ -351,6 +351,8 @@
   "backend.locationPanelUnavailableLabel": "Barra lateral desconectada",
   "backend.locationResponseTimeout": "Tempo de localização esgotado. Permita a localização no navegador e ative os serviços de localização do sistema, ou diga uma cidade ou região.",
   "backend.locationResponseTimeoutLabel": "Tempo de localização esgotado",
+  "backend.toolError.SKILL_OUTPUT_INVALID.label": "Saída da habilidade incompatível",
+  "backend.toolError.SKILL_OUTPUT_INVALID.message": "A habilidade retornou um valor que não corresponde ao contrato de saída declarado.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.message": "Candidatos inválidos. Retorne até 50 itens com IDs de texto únicos e não vazios e um título.",
   "backend.toolError.SKILL_SELECTION_INVALID_ITEMS.label": "Candidatos inválidos",
   "backend.toolError.SKILL_SELECTION_INVALID_ANSWER.message": "Seleção inválida. Execute a ferramenta novamente e escolha entre os candidatos atuais.",

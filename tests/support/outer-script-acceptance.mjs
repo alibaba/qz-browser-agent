@@ -33,8 +33,12 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
     const entry = { argv, stdin, exitCode, stdout: stdout.text, stderr: stderr.text, value };
     transcript.push(entry);
     if (argv[0] === 'script') {
-      expect(Object.keys(value || {}).sort(), JSON.stringify(entry)).toEqual(['ok', 'result', 'trace']);
+      const hasContext = Object.hasOwn(value || {}, 'context');
+      expect(Object.keys(value || {}).sort(), JSON.stringify(entry)).toEqual(hasContext
+        ? ['context', 'ok', 'result', 'trace'] : ['ok', 'result', 'trace']);
       expect(value.ok, JSON.stringify(entry)).toBe(exitCode === 0);
+      if (value.ok) expect(hasContext, JSON.stringify(entry)).toBe(true);
+      if (hasContext) expect(value.context, JSON.stringify(entry)).toEqual({ qz_skills: expect.any(Array) });
       expect(Array.isArray(value.trace), JSON.stringify(entry)).toBe(true);
       expect(value.trace.every(trace => typeof trace === 'string'), JSON.stringify(entry)).toBe(true);
     }

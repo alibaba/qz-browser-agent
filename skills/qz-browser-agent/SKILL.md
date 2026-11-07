@@ -54,7 +54,9 @@ Bind `const page = qz.tab(tabRef)` and use:
 | State waits | `page.waitForURL(pattern, options?)`, `page.waitForLoad(options?)`, `page.waitForFunction(code, args?, options?)` |
 | Element operations | `page.locator(targetOrQuery)` with the methods below |
 
-Use `qz.listTools()` for compact signatures of additional capabilities and `qz.listTools({names:["list_images"]})` for selected full schemas. Invoke those capabilities and loaded Skill tools through `qz.call(name, args)`, using their catalog names and explicit `tabRef` for page calls. Read unfamiliar schemas before calling; loaded Skills can register additional tools.
+Use `qz.listTools()` for compact signatures of additional capabilities and `qz.listTools({names:["list_images"]})` for selected full schemas, including declared `outputSchema` fields and examples. Invoke those capabilities through `qz.call(name, args)`, using their catalog names and explicit `tabRef` for page calls. Read unfamiliar schemas before calling and use declared return fields.
+
+`qz_skills` are browser workflows installed in the qz extension. Each script receipt includes their summaries in `context.qz_skills`: enabled user Global and Resident workflows, plus Site workflows matching sites visited by this task. Start a new site with a short observation script and check this catalog before further work. Load a relevant workflow with `return await qz.call("load_skill", {name:"skill-name"})`. Read its `content` and `tools`: each tool includes its exact calling `name`, description, input `parameters`, and declared `outputSchema` with examples. Follow the workflow’s page prerequisites, then invoke `qz.call(name, args)` with those parameters and an explicit `tabRef` for page tools. After conversation compaction, reload the workflow if its instructions are missing. The catalog repeats on every receipt; full instructions are loaded on demand through qz, independently of the external agent's own Skill loader. Use `qz.call("list_skills", {url:"https://example.com"})` to query explicitly; omit `url` for all user workflows. Built-in Skills are hidden from discovery but remain loadable by name.
 
 Access page DOM and authenticated `fetch` inside self-contained `page.evaluate` or `page.waitForFunction` callbacks, including DOM reads used to build the outer return value. Their second argument supplies the function's input; return a JSON-serializable value. Closures, DOM nodes, functions, Page objects, and Locators cannot cross the page boundary.
 
@@ -137,13 +139,13 @@ Scripts are not transactions: completed actions remain in effect after a later f
 
 ## Documents and larger results
 
-For PDFs, load the document Skill before reading: call `qz.call("list_skills", {})`, then `qz.call("load_skill", {name:"qingzhou-documents"})`, and follow its schemas using the original PDF URL. PDF viewers do not support ordinary body reads or element actions. Keep returned `fileId`/`docModelId` values within the session and follow chunk cursors only as needed. `qz.call("load_skill_resource", {name,path})` parses packaged documents directly.
+For PDFs, load the document Skill before reading: call `qz.call("load_skill", {name:"qingzhou-documents"})`, and follow its schemas using the original PDF URL. PDF viewers do not support ordinary body reads or element actions. Keep returned `fileId`/`docModelId` values within the session and follow chunk cursors only as needed. `qz.call("load_skill_resource", {name,path})` parses packaged documents directly.
 
 Images and files remain in their artifact stores; return their references. Business results exceeding ~48,000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the query or paginate instead of treating `preview` as complete. `ToolError` is never truncated.
 
 ## Output and recovery
 
-stdout is JSON `{ok,result,trace}` on success and failure. `ok` reports execution success; `result` is the returned business value (`null` for `undefined`) or the uncaught `{code,message,hint?,details?}` error (with script line/column in `details`); `trace` lists errors and explicit `trace()`/`console` messages in order, without levels. Exit codes: `0` success, `1` execution or connection failure, `2` invalid CLI arguments.
+stdout is JSON `{ok,result,trace}` on success and failure, with `context.qz_skills` for currently available user workflows when discovery succeeds. `ok` reports execution success; `result` is the returned business value (`null` for `undefined`) or the uncaught `{code,message,hint?,details?}` error (with script line/column in `details`); `trace` lists errors and explicit `trace()`/`console` messages in order, without levels. Exit codes: `0` success, `1` execution or connection failure, `2` invalid CLI arguments.
 
 `--timeout` sets script execution seconds (default `120`, range `>0` through `3600`); the request waits 60 seconds longer. Give the calling shell a longer deadline. A timeout or interrupted connection does not undo browser actions; inspect the session and page before repeating an action.
 
