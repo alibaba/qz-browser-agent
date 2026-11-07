@@ -12,7 +12,10 @@ export default function (qz: UiExtensionAPI) {
   resources.append(root.querySelector<HTMLTemplateElement>("#settings-ui-template")!.content.cloneNode(true));
   root.body.append(resources);
   const mountedNodes: Node[] = [resources];
-  for (const [template, slot] of [["settings-notices-template", "composer-notices"], ["settings-model-template", "composer-meta"]]) {
+  for (const [template, slot] of [
+    ["settings-notices-template", "composer-notices"], ["settings-model-template", "composer-meta"],
+    ["settings-model-switch-template", "chat-header-actions"],
+  ]) {
     const content = root.querySelector<HTMLTemplateElement>(`#${template}`)?.content;
     if (content) {
       const fragment = content.cloneNode(true) as DocumentFragment;
@@ -30,6 +33,7 @@ export default function (qz: UiExtensionAPI) {
     renderWelcome: () => onboarding?.render(), getRunContext: qz.getRunContext,
     restoreComposerFocus: () => qz.chat.focus("preset_closed"),
   });
+  root.querySelector("#btn-switch-model")?.addEventListener("click", () => settings.openPresetSwitcher(), { signal });
   onboarding = createOnboardingFeature({
     messagesEl: qz.chat.messages, inputEl: qz.chat.input, welcomeHTML: qz.chat.welcomeHTML,
     template: root.querySelector<HTMLTemplateElement>("#settings-onboarding-template"),

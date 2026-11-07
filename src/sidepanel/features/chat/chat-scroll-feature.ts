@@ -320,6 +320,9 @@ function scheduleViewportCenterAnchorCapture() {
   viewportCenterCaptureFrame = requestAnimationFrame(() => {
     viewportCenterCaptureFrame = 0;
     if (viewportResizeLease || shouldFollowChatTail() || !isActive()) return;
+    // A resize can reflow text before ResizeObserver runs. Keep the old anchor
+    // until that observer restores it, rather than capturing the shifted content.
+    if (Math.abs(messagesEl.getBoundingClientRect().width - observedMessagesWidth) >= VIEWPORT_RESIZE_WIDTH_EPSILON_PX) return;
     viewportCenterAnchor = captureViewportCenterAnchor() || viewportCenterAnchor;
   });
 }
@@ -811,6 +814,15 @@ function handleMessagesWheel(event: WheelEvent) {
     return;
   }
   beginChatUserScroll();
+  // Resume from the user's destination before streamed content can move the
+  // tail beyond the native wheel's captured scroll range.
+  if (delta > 0 && !event.ctrlKey && !event.shiftKey && event.deltaX === 0 && event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
+    && wheelOwner.owner === messagesEl && !wheelOwner.innerCandidate && delta >= chatBottomDistance()) {
+    event.preventDefault();
+    setChatTailFollowing(true);
+    scrollToBottom({ immediate: true, settle: true, instant: true });
+    return;
+  }
   // A downward wheel at the outer tail has nowhere to go. With fractional
   // layout Chromium's native wheel clamp can move it one pixel *backwards*
   // from the programmatic tail, even though neither layout nor content changed.

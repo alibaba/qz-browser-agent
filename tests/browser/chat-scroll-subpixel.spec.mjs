@@ -42,6 +42,50 @@ for (const colorScheme of ["light", "dark"]) test(`native wheel at the fractiona
 });
 
 for (const colorScheme of ["light", "dark"]) {
+  test(`downward wheel resumes the tail when content grows in the same frame · ${colorScheme}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
+    await page.evaluate(async transcript => {
+      await window.qingzhouConversationBenchmark.runLiveReplay({ sessionId: "growing-tail", baseTranscript: transcript, events: [] }, { runId: transcript.at(-1).runId });
+      const messages = document.querySelector("#messages");
+      const history = document.createElement("div");
+      history.style.height = `${messages.clientHeight + 200}px`;
+      messages.querySelector(".msg-assistant .msg-content").append(history);
+    }, imageTranscript());
+    const messages = page.locator("#messages");
+    await messages.hover({ position: { x: 3, y: 80 } });
+    await page.mouse.wheel(0, -100000);
+    await expect.poll(() => messages.evaluate(node => node.scrollTop)).toBe(0);
+    const nativeGestures = await messages.evaluate(node => {
+      const input = document.createElement("textarea");
+      input.style.cssText = "height:40px;overflow-y:auto";
+      input.value = "line\n".repeat(40);
+      node.querySelector(".msg-assistant .msg-content").append(input);
+      const inner = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100000 });
+      input.dispatchEvent(inner);
+      input.remove();
+      const shifted = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100000, shiftKey: true });
+      node.dispatchEvent(shifted);
+      return [inner.defaultPrevented, shifted.defaultPrevented];
+    });
+    expect(nativeGestures).toEqual([false, false]);
+    const range = await messages.evaluate(node => {
+      const oldTail = node.scrollHeight - node.clientHeight;
+      const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100000 });
+      node.dispatchEvent(wheel);
+      const growth = document.createElement("div");
+      growth.style.height = "120px";
+      node.querySelector(".msg-assistant .msg-content").append(growth);
+      // Model native scrolling clamped to its pre-layout range. A cancelled
+      // wheel has no native default action; the controller owns its destination.
+      if (!wheel.defaultPrevented) node.scrollTop = oldTail;
+      return { oldTail, newTail: node.scrollHeight - node.clientHeight };
+    });
+    expect(range.oldTail).toBeGreaterThan(100);
+    expect(range.newTail - range.oldTail).toBeGreaterThan(100);
+    await expect.poll(() => messages.evaluate(node =>
+      Math.max(0, node.scrollHeight - node.scrollTop - node.clientHeight))).toBeLessThanOrEqual(2);
+  });
+
   test(`diagonal wheel at the chat tail scrolls wide code horizontally · ${colorScheme}`, async ({ page }) => {
     await page.emulateMedia({ colorScheme });
     const code = await appendWideCodeAtTail(page);
