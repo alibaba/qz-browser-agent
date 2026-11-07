@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import { createMcpResourceRuntime } from "../../src/background/mcp/resource-runtime.js";
 import { downloadMcpFile, listMcpDownloads, safeMcpFilename } from "../../src/background/mcp/file-download.js";
 import { parseDocumentBytes } from "../../src/shared/documents/document-codecs.js";
 import { openZip } from "../../src/shared/zip-bytes.js";
 import { createMcpTransport } from "../../src/background/transports/mcp.js";
+
+beforeEach(t => {
+  // This suite exercises the Chrome service worker; Firefox blob downloads have their own coverage.
+  const descriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: undefined });
+  t.after(() => Object.defineProperty(URL, "createObjectURL", descriptor));
+});
 
 const table = (name, columns = [], extra = {}) => ({ name, columns, count: 0, createdAt: "", updatedAt: "", ...extra });
 const row = (table, id, data) => ({ id: String(id), table, data, createdAt: "", updatedAt: "" });
