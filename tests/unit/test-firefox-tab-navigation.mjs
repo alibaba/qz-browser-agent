@@ -53,6 +53,22 @@ test("Firefox navigation events preserve replacement and same-URL reload identit
   assert.equal((await b.tabs.get(1)).pendingUrl, undefined);
 });
 
+for (const status of ["complete", "loading"]) for (const outcome of ["commit", "error", "close"]) test(`Firefox replacement keeps pending state through old-load cancellation (${status}, ${outcome})`, async () => {
+  const { browser: b, request, tab } = fixture();
+  b.webRequest.onBeforeRequest.fire(request);
+  b.webRequest.onErrorOccurred.fire({ ...request, error: "NS_BINDING_CANCELLED_OLD_LOAD" });
+  tab.status = status;
+  assert.equal((await b.tabs.get(1)).pendingUrl, request.url, "the old document is not the replacement's commit");
+  assert.equal((await b.tabs.query({}))[0].pendingUrl, request.url);
+  const replacement = { ...request, requestId: "replacement", url: "https://replacement.test/" };
+  b.webRequest.onBeforeRequest.fire(replacement);
+  assert.equal((await b.tabs.get(1)).pendingUrl, replacement.url);
+  if (outcome === "commit") b.webNavigation.onCommitted.fire({ tabId: 1, frameId: 0, url: replacement.url });
+  else if (outcome === "error") b.webRequest.onErrorOccurred.fire({ ...replacement, error: "NS_ERROR_CONNECTION_REFUSED" });
+  else b.tabs.onRemoved.fire(1);
+  assert.equal((await b.tabs.get(1)).pendingUrl, undefined, "the replacement's terminal event still ends navigation");
+});
+
 for (const end of ["error", "204", "205", "close"]) test(`Firefox pending navigation clears on ${end}`, async () => {
   const { browser: b, request } = fixture();
   b.webRequest.onBeforeRequest.fire(request);
