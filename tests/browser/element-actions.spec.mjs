@@ -16,6 +16,10 @@ const html = `<!doctype html><meta name="viewport" content="width=device-width,i
   <input id="checkbox" type="checkbox"><input id="rollback" type="checkbox"><input id="cancelled" type="checkbox">
   <input id="disabled-check" type="checkbox" disabled><input id="radio" type="radio" checked>
   <input id="hidden-check" type="checkbox" style="display:none"><label id="hidden-label" for="hidden-check">Hidden checkbox</label>
+  <div style="position:relative;width:180px;height:40px;margin:8px 0">
+    <input id="overlay-check" type="checkbox" style="position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;z-index:2">
+    <label id="overlay-label" for="overlay-check" style="position:absolute;inset:0;width:100%;height:100%;margin:0">Transparent checkbox</label>
+  </div>
   <input id="hidden-disabled" type="checkbox" style="display:none" disabled><label id="disabled-label" for="hidden-disabled">Disabled checkbox</label>
   <input id="link-check" type="checkbox" style="display:none"><label for="link-check"><a id="label-link" href="#unexpected">Another destination</a></label>
   <input id="button-check" type="checkbox" style="display:none"><label for="button-check"><button id="label-button" type="button">Other action</button></label>
@@ -43,7 +47,10 @@ async function createHarness(mode, launchOptions = {}) {
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://fixture.test");
     res.setHeader("Content-Type", "text/html");
-    if (["/navigation-download", "/navigation-no-content", "/navigation-blocked"].includes(url.pathname)) {
+    if (url.pathname === "/transit-icon.svg") {
+      res.setHeader("Content-Type", "image/svg+xml");
+      res.end('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="green"/></svg>');
+    } else if (["/navigation-download", "/navigation-no-content", "/navigation-blocked"].includes(url.pathname)) {
       navigationRequests.push(url.pathname);
       if (url.pathname === "/navigation-no-content") { res.writeHead(204); res.end(); }
       else if (url.pathname === "/navigation-download") {
@@ -133,8 +140,8 @@ async function createHarness(mode, launchOptions = {}) {
         command: (method, params) => chrome.debugger.sendCommand({ tabId }, method, params),
         screen(name, args) { return this.call(name, { tabId, ...args }, "run_script"); },
         async call(name, args, source) {
-          try { return await runtime.execute(name, args, undefined, { ...context, workingTabId: tabId, source }); }
-          catch (error) { return { error: error.message, code: error.code, details: error.details }; }
+          try { return await runtime.execute(name, name === 'open_tab' ? args : { tabRef: args.tabId ?? tabId, ...args }, undefined, { ...context, workingTabId: tabId, source }); }
+          catch (error) { return { message: error.message, code: error.code, hint: error.hint, details: error.details }; }
         },
         async state() {
           return (await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", func: () => ({
@@ -150,7 +157,7 @@ async function createHarness(mode, launchOptions = {}) {
     const call = (name, args) => worker.evaluate(({ name, args }) => elementHarness.call(name, args), { name, args });
     const state = () => worker.evaluate(() => elementHarness.state());
     const opened = await call("open_tab", { url: `http://127.0.0.1:${server.address().port}/`, mode });
-    expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
+    expect(opened, JSON.stringify(opened)).not.toHaveProperty("message");
     await expect.poll(async () => { try { return (await state()).ready; } catch { return "loading"; } }).toBe("complete");
     return { state, close, worker, submissions, navigationRequests, page: browser.pages().find(page => page.url().startsWith('http://127.0.0.1:')),
       command: (method, params) => worker.evaluate(({ method, params }) => elementHarness.command(method, params), { method, params }),
@@ -168,14 +175,14 @@ test('first screenshot stays actionable after the debugger infobar expands', asy
   try {
     await h.page.setContent(`<style>body{margin:0;overflow:hidden}input{position:fixed;left:50%;top:30%;transform:translate(-50%,-50%);width:200px;height:36px}</style><input>`);
     const shot = await h.screen('screenshot', { actionable: true });
-    expect(shot).not.toHaveProperty('error');
+    expect(shot).not.toHaveProperty('message');
     // Let the real browser chrome finish any remaining animation before using the original image.
     await h.page.waitForTimeout(300);
     const typed = await h.worker.evaluate(args => elementHarness.call('act_on_screen', args), {
       action: 'type', x: shot.coordinateSpace.width / 2, y: shot.coordinateSpace.height * 0.3,
       text: 'whale', returnScreenshot: true,
     });
-    expect(typed).not.toHaveProperty('error');
+    expect(typed).not.toHaveProperty('message');
     await expect(h.page.locator('input')).toHaveValue('whale');
   } finally { await h.close(); }
 });
@@ -216,12 +223,12 @@ for (const mode of ["desktop", "mobile"]) {
         };
       });
       const first = await h.screen('screenshot', { actionable: true });
-      expect(first).not.toHaveProperty('error');
+      expect(first).not.toHaveProperty('message');
       if (mode === 'desktop') {
         expect(await h.worker.evaluate(() => firstCaptures)).toBe(2);
         const size = await h.page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
         expect(await h.screen('act_on_screen', { action: 'click', x: 604 * first.coordinateSpace.width / size.width,
-          y: 204 * first.coordinateSpace.height / size.height, returnScreenshot: false })).not.toHaveProperty('error');
+          y: 204 * first.coordinateSpace.height / size.height, returnScreenshot: false })).not.toHaveProperty('message');
         expect(await h.page.evaluate(() => window.hits)).toBe(1);
         await h.worker.evaluate(() => { chrome.debugger.sendCommand = originalSend; });
       }
@@ -237,7 +244,7 @@ for (const mode of ["desktop", "mobile"]) {
           await h.command('Emulation.setPageScaleFactor', { pageScaleFactor: scale });
           await h.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
           const shot = await h.screen('screenshot', { actionable: true, format: 'png' });
-          expect(shot, JSON.stringify({ ...shot, _image: undefined })).not.toHaveProperty('error');
+          expect(shot, JSON.stringify({ ...shot, _image: undefined })).not.toHaveProperty('message');
           expect(shot.method.startsWith(native ? 'visible_tab' : 'cdp')).toBe(true);
           if (!native) expect(shot.coordinateSpace.width).toBe(2048);
           const points = await h.worker.evaluate(async dataUrl => {
@@ -256,10 +263,10 @@ for (const mode of ["desktop", "mobile"]) {
           }, shot._image);
           const before = await h.page.evaluate(() => window.hits);
           const click = await h.screen('act_on_screen', { action: 'click', ...points[0], returnScreenshot: false });
-          expect(click).not.toHaveProperty('error');
+          expect(click).not.toHaveProperty('message');
           expect(await h.page.evaluate(() => window.hits), JSON.stringify({ native, scale, space: shot.coordinateSpace, pixel: points[0], resolved: click.resolvedPoint })).toBe(before + 1);
           if (mode === 'desktop') {
-            expect(await h.screen('act_on_screen', { action: 'drag', ...points[1], endX: points[2].x, endY: points[2].y, returnScreenshot: false })).not.toHaveProperty('error');
+            expect(await h.screen('act_on_screen', { action: 'drag', ...points[1], endX: points[2].x, endY: points[2].y, returnScreenshot: false })).not.toHaveProperty('message');
             expect(await h.page.evaluate(() => String(getSelection()))).toBe('BCDE');
           }
         }
@@ -274,8 +281,7 @@ for (const mode of ["desktop", "mobile"]) {
     try {
       for (const [id, value] of [["text", "订单🙂"], ["textarea", "第一行\n第二行🙂  "], ["textarea", ""], ["controlled", "Accepted-轻舟"]]) {
         const filled = await h.act(id, "fill", { value });
-        expect(filled, JSON.stringify(filled)).toMatchObject({ filled: true, value, submitDispatched: false, method: "cdp" });
-        expect(filled).not.toHaveProperty("submitted");
+        expect(filled).toEqual({});
         const state = await h.state();
         expect(state.values[id]).toBe(value);
         expect(events(state, id, "input").length).toBeGreaterThan(0);
@@ -284,37 +290,38 @@ for (const mode of ["desktop", "mobile"]) {
       expect((await h.state()).acceptedValue).toBe("Accepted-轻舟");
       const spacedText = "  keep  spaces🙂  ";
       const spaced = await h.act("rich", "fill", { value: spacedText });
-      expect(spaced).toMatchObject({ filled: true, method: "cdp" });
+      expect(spaced).toEqual({});
       const spacedState = await h.state();
-      expect(spaced.value).toBe(spacedState.richRaw);
-      expect(spaced.value.replace(/\u00a0/g, " ")).toBe(spacedText);
+      expect(spacedState.richRaw.replace(/\u00a0/g, " ")).toBe(spacedText);
       expect(events(spacedState, "rich", "input").length).toBeGreaterThan(0);
       expect(events(spacedState, "rich", "input").every(event => event.trusted)).toBe(true);
-      expect(await h.act("rich", "fill", { value: "第一段\n第二段" })).toMatchObject({ filled: true, method: "content" });
+      expect(await h.act("rich", "fill", { value: "第一段\n第二段" })).toEqual({});
       expect((await h.state()).values.rich.split(/\n+/)).toEqual(["第一段", "第二段"]);
+      expect(await h.page.locator('#rich p').allTextContents()).toEqual(["第一段", "第二段"]);
 
       const mismatch = await h.act("uppercase", "fill", { value: "mixed", submit: true });
-      expect(mismatch).toMatchObject({ code: "ELEMENT_VALUE_MISMATCH", value: "MIXED" });
+      expect(mismatch).toMatchObject({ code: "ELEMENT_VALUE_MISMATCH" });
       let state = await h.state();
       expect(state.submits).toBe(0);
+      expect(state.values.uppercase).toBe("MIXED");
       expect(events(state, "uppercase", "keydown").some(event => event.key === "Enter")).toBe(false);
-      expect(await h.act("text", "fill", { value: "submit", submit: true })).toMatchObject({ filled: true, submitDispatched: true });
+      expect(await h.act("text", "fill", { value: "submit", submit: true })).toEqual({});
       state = await h.state();
       expect(state.submits).toBe(1);
       expect(events(state, "text", "keydown").filter(event => event.key === "Enter")).toEqual([
         expect.objectContaining({ trusted: true }),
       ]);
       await h.blockEnter();
-      expect(await h.act("text", "fill", { value: "cancelled", submit: true })).toMatchObject({ submitDispatched: true });
+      expect(await h.act("text", "fill", { value: "cancelled", submit: true })).toEqual({});
       expect((await h.state()).submits).toBe(1);
-      expect(await h.act("required", "fill", { value: "", submit: true })).toMatchObject({ submitDispatched: true });
+      expect(await h.act("required", "fill", { value: "", submit: true })).toEqual({});
       state = await h.state();
       expect(state.invalid).toBe(1);
       expect(state.submits).toBe(1);
 
       for (const id of ["readonly", "disabled", "refuses"]) {
-        const result = await h.act(id, "fill", { value: "must not appear", submit: true });
-        expect(result, JSON.stringify(result)).toHaveProperty("error");
+        const result = await h.act(id, "fill", { value: "must not appear", submit: true, timeout: 1 });
+        expect(result, JSON.stringify(result)).toHaveProperty("message");
         state = await h.state();
         expect(state.values[id]).toBe(id);
         expect(state.values.sink).toBe("untouched");
@@ -327,11 +334,11 @@ for (const mode of ["desktop", "mobile"]) {
       expect(events(state, "sink", "keydown").some(event => event.key === "Enter")).toBe(false);
       expect(state.submits).toBe(1);
 
-      expect(await h.act("checkbox", "check")).toMatchObject({ checked: true, changed: true, method: "cdp" });
+      expect(await h.act("checkbox", "check")).toEqual({});
       const afterCheck = await h.state();
-      expect(await h.act("checkbox", "check")).toMatchObject({ checked: true, changed: false });
+      expect(await h.act("checkbox", "check")).toEqual({});
       expect((await h.state()).events.length).toBe(afterCheck.events.length);
-      expect(await h.act("checkbox", "uncheck")).toMatchObject({ checked: false, changed: true });
+      expect(await h.act("checkbox", "uncheck")).toEqual({});
       state = await h.state();
       expect(state.checks.checkbox).toBe(false);
       expect(events(state, "checkbox", "click")).toHaveLength(2);
@@ -345,19 +352,20 @@ for (const mode of ["desktop", "mobile"]) {
       await h.page.bringToFront();
       await h.page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
       for (const id of ["rollback", "cancelled"]) {
-        expect(await h.act(id, "check")).toMatchObject({ code: "ELEMENT_CHECK_STATE_MISMATCH", checked: false });
+        expect(await h.act(id, "check")).toMatchObject({ code: "ELEMENT_CHECK_STATE_MISMATCH" });
         state = await h.state();
         expect(state.checks[id]).toBe(false);
         expect(events(state, id, "click")).toHaveLength(1);
       }
-      expect(await h.act("disabled-check", "check")).toHaveProperty("error");
-      expect(await h.act("radio", "uncheck")).toHaveProperty("error");
+      expect(await h.act("disabled-check", "check", { timeout: 1 })).toHaveProperty("message");
+      expect(await h.act("radio", "uncheck")).toHaveProperty("message");
       state = await h.state();
       expect(state.checks["disabled-check"]).toBe(false);
       expect(state.checks.radio).toBe(true);
 
-      expect(await h.act("hidden-check", "check")).toMatchObject({ checked: true, changed: true, method: "cdp" });
-      expect(await h.act("hidden-check", "uncheck")).toMatchObject({ checked: false, changed: true });
+      expect(await h.act("hidden-check", "check")).toEqual({});
+      expect((await h.state()).checks["hidden-check"]).toBe(true);
+      expect(await h.act("hidden-check", "uncheck")).toEqual({});
       state = await h.state();
       expect(state.checks["hidden-check"]).toBe(false);
       expect(events(state, "hidden-label", "click")).toHaveLength(2);
@@ -365,7 +373,7 @@ for (const mode of ["desktop", "mobile"]) {
       expect(events(state, "hidden-check", "click").every(event => event.trusted)).toBe(true);
       const safeUrl = state.url;
       for (const [id, labelTarget] of [["hidden-disabled", "disabled-label"], ["link-check", "label-link"], ["button-check", "label-button"]]) {
-        expect(await h.act(id, "check")).toHaveProperty("error");
+        expect(await h.act(id, "check", { timeout: 1 })).toHaveProperty("message");
         state = await h.state();
         expect(state.checks[id]).toBe(false);
         expect(events(state, labelTarget, "click")).toEqual([]);
@@ -375,11 +383,47 @@ for (const mode of ["desktop", "mobile"]) {
   });
 }
 
+for (const mode of ["desktop", "mobile"]) test(`${mode} transparent checkbox check uses its label surface exactly once`, async () => {
+  const h = await createHarness(mode);
+  const events = (state, id, type) => state.events.filter(event => event.id === id && event.type === type);
+  try {
+    const hit = await h.page.locator("#overlay-label").evaluate(label => {
+      label.scrollIntoView({ block: "center" });
+      const rect = label.getBoundingClientRect(), controlRect = label.control.getBoundingClientRect();
+      return { hit: document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.id,
+        opacity: getComputedStyle(label.control).opacity,
+        sameBox: rect.x === controlRect.x && rect.y === controlRect.y && rect.width === controlRect.width && rect.height === controlRect.height };
+    });
+    expect(hit).toEqual({ hit: "overlay-check", opacity: "0", sameBox: true });
+    for (const [action, checked, count] of [["check", true, 1], ["check", true, 1], ["uncheck", false, 2], ["uncheck", false, 2]]) {
+      const result = await h.act("overlay-check", action);
+      expect(result).toEqual({});
+      const state = await h.state();
+      expect(state.checks["overlay-check"]).toBe(checked);
+      for (const type of ["click", "input", "change"]) {
+        expect(events(state, "overlay-check", type)).toHaveLength(count);
+        expect(events(state, "overlay-check", type).every(event => event.trusted)).toBe(true);
+      }
+      expect(events(state, "overlay-label", "click")).toHaveLength(0);
+    }
+    const safeUrl = (await h.state()).url;
+    for (const [id, surface] of [["hidden-disabled", "disabled-label"], ["link-check", "label-link"], ["button-check", "label-button"]]) {
+      expect(await h.act(id, "check", { timeout: 1 })).toHaveProperty("message");
+      const state = await h.state();
+      expect(state.checks[id]).toBe(false);
+      expect(events(state, surface, "click")).toEqual([]);
+      expect(state.url).toBe(safeUrl);
+    }
+  } finally { await h.close(); }
+});
+
 for (const scenario of [
   { name: "observer setup / copied value", trigger: "observer", copy: true, focus: true },
   { name: "observer setup / empty value / no focus", trigger: "observer", copy: false, focus: false },
   { name: "focus / empty value", trigger: "focus", copy: false, focus: true },
   { name: "input / copied value", trigger: "input", copy: true, focus: true },
+  { name: "same-id input / copied value", trigger: "input", copy: true, focus: true, retainId: true },
+  { name: "same-id observer / copied value", trigger: "observer", copy: true, focus: true, retainId: true },
   { name: "UID / delayed mount", trigger: "observer", copy: true, focus: true, uid: true, delay: 100 },
   { name: "missing successor", trigger: "observer", missing: true },
   { name: "pre-existing same-name field is not a successor", trigger: "observer", missing: true, existing: true },
@@ -407,6 +451,7 @@ for (const scenario of [
           if (scenario.missing) { document.querySelector('#sink').focus(); return; }
           const next = document.createElement('input');
           next.name = 'search'; next.type = 'search'; next.setAttribute('aria-label', 'Search');
+          if (scenario.retainId) next.id = original.id;
           if (scenario.copy) next.value = original.value;
           marker.replaceWith(next);
           if (scenario.ambiguous) next.after(next.cloneNode());
@@ -425,11 +470,16 @@ for (const scenario of [
     // after the first value/focus readback but before Enter. No input dispatch is mocked.
     await h.worker.evaluate(() => {
       const execute = chrome.scripting.executeScript.bind(chrome.scripting);
-      chrome.scripting.executeScript = async options => {
-        if (options.injectImmediately && String(options.func).includes("=> null")) {
-          await execute({ target: options.target, world: "MAIN", func: () => { window.finishMount?.(); } });
+      const getFrame = chrome.webNavigation.getFrame.bind(chrome.webNavigation);
+      chrome.webNavigation.getFrame = async target => {
+        if (target.frameId === 0) {
+          await execute({ target: { tabId: target.tabId, frameIds: [0] }, world: "MAIN", func: () => {
+            // UID observation also reads document identity before editing. Only the
+            // post-fill observer is the intended trigger for this replacement.
+            if (window.original?.value === '灵隐寺') window.finishMount?.();
+          } });
         }
-        return execute(options);
+        return getFrame(target);
       };
     });
     let target = "css:#searchInput";
@@ -484,21 +534,22 @@ test("httpbin pizza radios check through the wrapped label", async () => {
     );
     const large = await call('css:input[name="size"][value="large"]', "check");
     const checks = await h.page.evaluate(() => Object.fromEntries([...document.querySelectorAll("input")].map(el => [el.value || el.name, el.checked])));
-    expect(large, JSON.stringify({ large, checks })).toMatchObject({ checked: true, changed: true, method: "cdp" });
+    expect(large).toEqual({});
     expect(checks).toMatchObject({ small: false, medium: false, large: true });
     const label = await call("css:fieldset:nth-of-type(1) > p:nth-of-type(2) > label", "click");
     const afterLabel = await h.page.evaluate(() => Object.fromEntries([...document.querySelectorAll('input[type=radio]')].map(el => [el.value, el.checked])));
-    expect(label, JSON.stringify({ label, afterLabel })).not.toHaveProperty("error");
+    expect(label, JSON.stringify({ label, afterLabel })).not.toHaveProperty("message");
     expect(afterLabel).toMatchObject({ small: false, medium: true, large: false });
     const bacon = await call('css:input[name="topping"][value="bacon"]', "check");
-    expect(bacon, JSON.stringify(bacon)).toMatchObject({ checked: true, changed: true, inputDelivered: true });
+    expect(bacon).toEqual({});
+    await expect(h.page.locator('input[value="bacon"]')).toBeChecked();
     const opened = await h.worker.evaluate((url) => elementHarness.call("open_tab", { url }), h.page.url());
-    expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
-    const shot = await h.worker.evaluate((tabId) => elementHarness.call("screenshot", { tabId, actionable: true }, "run_script"), opened.id);
-    expect(shot, JSON.stringify({ ...shot, _image: undefined })).not.toHaveProperty("error");
+    expect(opened, JSON.stringify(opened)).not.toHaveProperty("message");
+    const shot = await h.worker.evaluate((tabId) => elementHarness.call("screenshot", { tabId, actionable: true }, "run_script"), opened.tabRef);
+    expect(shot, JSON.stringify({ ...shot, _image: undefined })).not.toHaveProperty("message");
     const acted = await h.worker.evaluate((tabId) => elementHarness.call("act_on_screen", {
       tabId, action: "click", x: 20, y: 20, returnScreenshot: false,
-    }, "run_script"), opened.id);
+    }, "run_script"), opened.tabRef);
     expect(acted, JSON.stringify(acted)).not.toHaveProperty("code", "SCREENSHOT_CONTEXT_STALE");
   } finally { await h.close(); }
 });
@@ -515,8 +566,7 @@ test("a click cancelled at pointerdown still counts as delivered", async () => {
         button.addEventListener("click", () => { window.clicks += 1; });
       </script>`);
     const result = await h.act("once", "click");
-    expect(result, JSON.stringify(result)).toMatchObject({ clickDispatched: true, inputDelivered: true });
-    expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+    expect(result).toEqual({});
     expect(await h.page.evaluate(() => window.clicks)).toBe(1);
   } finally { await h.close(); }
 });
@@ -549,9 +599,7 @@ test("a click that navigates is not reported as undelivered input", async () => 
     ]) {
       await h.page.setContent(html);
       const result = await h.act(id, "click");
-      expect(result, JSON.stringify(result)).toMatchObject({
-        clickDispatched: true, inputDelivered: true, navigated: true,
-      });
+      expect(result).toMatchObject({ navigated: true, url: expect.stringContaining(url) });
       expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
       await expect.poll(() => h.page.url()).toContain(url);
     }
@@ -559,15 +607,57 @@ test("a click that navigates is not reported as undelivered input", async () => 
   } finally { await h.close(); }
 });
 
+test("image clicks preserve resource URLs and wait for the actual click target", async () => {
+  const h = await createHarness("desktop");
+  try {
+    const beforeUrl = h.page.url();
+    const imageUrl = new URL("/transit-icon.svg", beforeUrl).href;
+    await h.page.setContent(`<!doctype html><title>Transit mode</title>
+      <div id="mode" hidden><img id="icon" src="${imageUrl}" alt="Transit" width="32" height="32"></div>
+      <a id="hidden-link" href="/navigation-blocked" hidden>Hidden destination</a>
+      <script>
+        window.clicks = [];
+        document.querySelector('#mode').addEventListener('click', event => clicks.push({target:event.target.id,trusted:event.isTrusted}));
+      </script>`);
+    const contentClick = selector => h.worker.evaluate(async ({ selector, url }) => {
+      const tab = (await chrome.tabs.query({})).find(tab => tab.url === url);
+      return chrome.tabs.sendMessage(tab.id, { action: "actOnElement", elementAction: "click", selector });
+    }, { selector, url: beforeUrl });
+    for (const id of ["icon", "hidden-link"]) {
+      expect(await h.act(id, "click")).toMatchObject({ code: "ELEMENT_NOT_READY" });
+      expect(h.page.url()).toBe(beforeUrl);
+      expect(await contentClick(`#${id}`)).toMatchObject({ code: "NO_CLICKABLE_TARGET" });
+      expect(h.page.url()).toBe(beforeUrl);
+    }
+    expect(h.navigationRequests).toEqual([]);
+    expect(await h.page.evaluate(() => clicks)).toEqual([]);
+    const images = await h.worker.evaluate(() => elementHarness.call("list_images", {
+      target: "css:#icon", visibleOnly: false, minWidth: 0, minHeight: 0,
+    }));
+    expect(images.images).toEqual([expect.objectContaining({ src: imageUrl })]);
+    const inspected = await h.worker.evaluate(() => elementHarness.call("inspect_element", { target: "css:#icon" }));
+    expect(inspected.href).toBe("");
+    await h.page.evaluate(() => { setTimeout(() => { document.querySelector('#mode').hidden = false; }, 500); });
+    expect(await h.act("icon", "click", { timeout: 5 })).toEqual({});
+    expect(await h.page.evaluate(() => clicks)).toEqual([{ target: "icon", trusted: true }]);
+    expect(h.page.url()).toBe(beforeUrl);
+    expect(await contentClick("#icon")).toMatchObject({ clicked: true });
+    expect(await h.page.evaluate(() => clicks)).toEqual([
+      { target: "icon", trusted: true }, { target: "icon", trusted: false },
+    ]);
+    expect(h.page.url()).toBe(beforeUrl);
+  } finally { await h.close(); }
+});
+
 for (const outcome of ["download", "no-content", "blocked"]) {
-  test(`a hidden link whose navigation ends as ${outcome} does not wait for a document commit`, async () => {
+  test(`a clicked link whose navigation ends as ${outcome} does not wait for a document commit`, async () => {
     test.setTimeout(120_000);
     const h = await createHarness("desktop");
     try {
       const beforeUrl = h.page.url();
       await h.page.setContent(`<!doctype html><title>Original document</title>
         <button id="activate">Enable unload confirmation</button>
-        <a id="request" href="/navigation-${outcome}" hidden>Request</a>
+        <a id="request" href="/navigation-${outcome}" style="display:block;width:160px;height:40px">Request</a>
         <script>window.originalDocument = crypto.randomUUID();</script>`);
       const documentMarker = await h.page.evaluate(() => window.originalDocument);
       const downloads = [];
@@ -584,10 +674,8 @@ for (const outcome of ["download", "no-content", "blocked"]) {
       const started = performance.now();
       const result = await h.act("request", "click");
       expect(performance.now() - started, JSON.stringify(result)).toBeLessThan(8000);
-      expect(result, JSON.stringify(result)).toMatchObject({
-        method: "href_navigation", navigationPending: false, navigated: false, urlChanged: false,
-        pageBefore: { url: beforeUrl }, pageAfter: { url: beforeUrl },
-      });
+      expect(result).toEqual({});
+      expect(h.page.url()).toBe(beforeUrl);
       expect(await h.page.evaluate(() => window.originalDocument)).toBe(documentMarker);
       expect(h.navigationRequests).toEqual(outcome === "blocked" ? [] : [`/navigation-${outcome}`]);
       expect(dialogs).toBe(outcome === "blocked" ? 1 : 0);
@@ -610,13 +698,8 @@ test("form submission navigation waits for delayed responses without submitting 
       await h.page.goto(beforeUrl);
       const beforeSubmissions = h.submissions.length;
       const result = await h.act("send", "click");
-      expect(result, JSON.stringify(result)).toMatchObject({
-        clickDispatched: true, inputDelivered: true, navigated: true,
-        urlChanged: afterUrl !== beforeUrl,
-        pageBefore: { url: beforeUrl },
-        pageAfter: { url: afterUrl, title: "Submission completed" },
-        _pageUrl: afterUrl, _pageTitle: "Submission completed",
-      });
+      expect(result).toEqual({ navigated: true, url: afterUrl });
+      await expect(h.page).toHaveTitle("Submission completed");
       expect(h.submissions.length - beforeSubmissions).toBe(1);
       expect(await h.page.evaluate(() => Number(sessionStorage.navigationClicks))).toBe(1);
       expect(h.page.url()).toBe(afterUrl);
@@ -630,10 +713,8 @@ test("form submission navigation waits for delayed responses without submitting 
         document.querySelector('form').onsubmit=event=>{event.preventDefault();submits++};
       </script>`);
     const prevented = await h.act("prevented", "click");
-    expect(prevented, JSON.stringify(prevented)).toMatchObject({
-      clickDispatched: true, inputDelivered: true, navigated: false, urlChanged: false,
-      pageAfter: { url }, _pageUrl: url,
-    });
+    expect(prevented).toEqual({});
+    expect(h.page.url()).toBe(url);
     expect(h.submissions).toHaveLength(beforeSubmissions);
     expect(await h.page.evaluate(() => ({ clicks, submits }))).toEqual({ clicks: 1, submits: 1 });
   } finally { await h.close(); }
@@ -657,28 +738,15 @@ for (const scenario of ["cross", "none", "hash", "push", "same", "slow", "shift"
         return { result, elapsedMs: performance.now() - start };
       }, args);
       await testInfo.attach("press-navigation-result", { body: JSON.stringify({ scenario, result, elapsedMs }, null, 2), contentType: "application/json" });
-      expect(result, JSON.stringify(result)).toMatchObject({ pressed: true, key: args.key || args.value, method: "cdp", inputDelivered: true });
-      expect(result).not.toHaveProperty("submitDispatched");
-      expect(result).not.toHaveProperty("error");
       if (otherKey) {
-        for (const field of ["pageBefore", "pageAfter", "urlChanged", "titleChanged", "navigationPending", "navigated", "observedNavigation"]) {
-          expect(result).not.toHaveProperty(field);
-        }
+        expect(result).toEqual({});
         // These handlers start a real slow navigation, but modified Enter/Escape must not wait for it.
-        expect(elapsedMs).toBeLessThan(1000);
+        expect(h.page.url()).toBe(beforeUrl);
       } else {
         const afterUrl = ["cross"].includes(scenario) ? `${origin}/navigation-done?scenario=${scenario}&delay=${delay}`
           : scenario === "hash" ? `${beforeUrl}#sent` : scenario === "push" ? `${origin}/navigation-press?sent=1` : beforeUrl;
-        const navigated = ["cross", "push", "same"].includes(scenario);
-        const changedUrl = ["cross", "push"].includes(scenario);
-        const title = ["cross", "same"].includes(scenario) ? "Submission completed" : "Before press";
-        expect(result).toMatchObject({
-          pageBefore: { url: beforeUrl, title: "Before press" }, pageAfter: { url: afterUrl, title },
-          urlChanged: changedUrl, titleChanged: title !== "Before press", navigationPending: scenario === "slow",
-          navigated: scenario === "slow" ? null : navigated, _pageUrl: afterUrl, _pageTitle: title,
-        });
-        if (changedUrl) expect(result.observedNavigation).toMatchObject({ url: afterUrl, rateLimitRecorded: false });
-        else expect(result).not.toHaveProperty("observedNavigation");
+        const navigated = ["cross", "hash", "push", "same"].includes(scenario);
+        expect(result).toEqual(scenario === "slow" ? { navigationPending: true } : navigated ? { navigated: true, url: afterUrl } : {});
         expect(h.page.url()).toBe(afterUrl);
       }
       const submitsToServer = ["cross", "same", "slow", "shift", "escape"].includes(scenario);
@@ -698,7 +766,8 @@ const clickFrameDocument = `<!doctype html><style>html,body{margin:0;height:100%
   <script>window.clicks=0;document.querySelector("#inner").addEventListener("click",()=>{window.clicks+=1});</script>`;
 const keyFrameDocument = `<!doctype html><style>html,body{margin:0}input{width:100%;height:48px;margin:0;box-sizing:border-box}</style>
   <input id="keys">
-  <script>window.keys=[];document.querySelector("#keys").addEventListener("keydown",event=>{window.keys.push(event.key)});</script>`;
+  <script>window.keys=[];document.querySelector("#keys").setAttribute("aria-label", window.name + " keys");
+  document.querySelector("#keys").addEventListener("keydown",event=>{window.keys.push(event.key)});</script>`;
 
 async function installFrames(page, frames) {
   await page.setContent("<!doctype html><title>frames</title><body></body>");
@@ -745,15 +814,17 @@ test("an iframe click lands once and its key still arrives", async () => {
     for (const [id, name] of [["frame", "same-click"], ["xoframe", "cross-click"]]) {
       const result = await h.act(id, "click");
       const clicks = await h.page.frame({ name }).evaluate(() => window.clicks);
-      expect(result, JSON.stringify({ result, clicks })).toMatchObject({ clickDispatched: true, inputDelivered: true });
-      expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+      expect(result).toEqual({});
       expect(clicks).toBe(1);
     }
-    for (const [id, name] of [["keyframe", "same-key"], ["xokey", "cross-key"]]) {
-      const result = await h.act(id, "press", { key: "a" });
+    const tree = await h.worker.evaluate(() => elementHarness.call("get_ax_tree", { scope: "full" }));
+    for (const name of ["same-key", "cross-key"]) {
+      // Press focuses its explicit target; the iframe's center is not an implicit click target.
+      const target = tree.snapshot?.split("\n").find(line => line.includes(`"${name} keys"`))?.match(/target=(uid:\S+)/)?.[1];
+      expect(target, JSON.stringify(tree)).toMatch(/^uid:/);
+      const result = await h.worker.evaluate(target => elementHarness.call("act_on_element", { target, action: "press", key: "a" }), target);
       const keys = await h.page.frame({ name }).evaluate(() => window.keys);
-      expect(result, JSON.stringify({ result, keys })).toMatchObject({ pressed: true, inputDelivered: true });
-      expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+      expect(result).toEqual({});
       expect(keys).toContain("a");
     }
   } finally {
@@ -763,7 +834,7 @@ test("an iframe click lands once and its key still arrives", async () => {
   }
 });
 
-test("a confirmed miss is one click and an unknown receipt still presses", async () => {
+test("a confirmed click miss is not replayed and press is independent of click receipts", async () => {
   test.setTimeout(120_000);
   const h = await createHarness("desktop");
   try {
@@ -789,20 +860,19 @@ test("a confirmed miss is one click and an unknown receipt still presses", async
     });
     const missed = await h.act("once", "click");
     expect(missed, JSON.stringify(missed)).toMatchObject({
-      code: "INPUT_NOT_DELIVERED", clickDispatched: true, inputDelivered: false,
+      code: "INPUT_NOT_DELIVERED", details: { clickDispatched: true, inputDelivered: false },
     });
     expect(await h.page.evaluate(() => window.clicks)).toBe(1);
-    const skipped = await h.act("keys", "press", { key: "a" });
-    expect(skipped, JSON.stringify(skipped)).toMatchObject({ code: "INPUT_NOT_DELIVERED", clickDispatched: true });
-    expect(await h.page.evaluate(() => window.keys)).toEqual([]);
+    const firstPress = await h.act("keys", "press", { key: "a" });
+    expect(firstPress, JSON.stringify(firstPress)).toEqual({});
+    expect(await h.page.evaluate(() => window.keys)).toEqual(["a"]);
 
     await h.worker.evaluate(() => { receiptMode = "unknown"; });
     const clicked = await h.act("once", "click");
-    expect(clicked, JSON.stringify(clicked)).toMatchObject({ clickDispatched: true, inputDelivered: true });
-    expect(clicked).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+    expect(clicked).toEqual({});
     expect(await h.page.evaluate(() => window.clicks)).toBe(2);
     const pressed = await h.act("keys", "press", { key: "a" });
-    expect(pressed, JSON.stringify(pressed)).toMatchObject({ pressed: true, inputDelivered: true });
-    expect(await h.page.evaluate(() => window.keys)).toContain("a");
+    expect(pressed).toEqual({});
+    expect(await h.page.evaluate(() => window.keys)).toEqual(["a", "a"]);
   } finally { await h.close(); }
 });

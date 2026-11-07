@@ -1,5 +1,6 @@
 import type { ToolContext } from "../background.js";
 import type { ElementReference } from "../../background/tools/element-runtime.js";
+import type { ElementLocator } from "../../shared/contracts/element-locator.js";
 export type { ElementReference } from "../../background/tools/element-runtime.js";
 export interface CdpCommand {
   (method: string, params?: Record<string, unknown>): Promise<unknown>;
@@ -9,6 +10,8 @@ export interface CdpCommand {
   tabId?: number;
   /** Changes when the page debugger reconnects. */
   connectionId?: number;
+  /** Release a held pointer on this captured connection only, including after call cancellation. */
+  cancelPointer?(): Promise<void>;
 }
 type CdpOperation<T> = (target: chrome.debugger.Debuggee, send: CdpCommand) => T | Promise<T>;
 /** Run identity is checked by the host before accessing a debugger lease. */
@@ -27,6 +30,8 @@ export interface ElementAccess {
   makeSnapshotId(tabId: number, context?: ToolContext): string;
   makeElementUid(snapshotId: string, seq: number, mark?: string): string;
   registerElementRef(ref: ElementReference): void;
+  registerElementBinding(ref: ElementReference): ElementReference & { target: string };
+  bindElementReferences(tabId: number, candidates: readonly ElementReference[], context?: ToolContext, scope?: ElementReference, mode?: "bestEffort" | "required"): Promise<(ElementReference & { target: string })[]>;
   elementTargetForUid(uid: unknown): string;
   elementTargetForSelector(selector: unknown): string;
   elementTargetForRef(ref?: ElementReference): string;
@@ -35,7 +40,10 @@ export interface ElementAccess {
   isUidElementTarget(value: unknown): boolean;
   resolveSelectorTarget(tabId?: number, selector?: string, index?: number, context?: ToolContext): Promise<ElementTarget>;
   resolveElementReference(tabId: number | undefined, options?: { target?: string; index?: number; readOnly?: boolean }, context?: ToolContext): Promise<ElementTarget & { index: number }>;
-  addElementTargetsToFindResult(value: unknown, tabId?: number, context?: ToolContext, scope?: Pick<ElementReference, "frameId" | "loaderId">): Promise<unknown>;
+  resolveLocatorTarget(tabId: number | undefined, locator: ElementLocator, context?: ToolContext): Promise<ElementTarget | null>;
+  countLocatorMatches(tabId: number | undefined, locator: ElementLocator, context?: ToolContext): Promise<number>;
+  findLocatorElements(tabId: number | undefined, locator: ElementLocator, context?: ToolContext, limit?: number): Promise<{ results: unknown[]; count: number }>;
+  addElementTargetsToFindResult(value: unknown, tabId?: number, context?: ToolContext, scope?: ElementReference): Promise<unknown>;
   backendNodeIdForSelector(tabId: number, selector: string, context?: ToolContext): Promise<number>;
   /** Bind unique selectors in one document; a frame scope also rejects a changed loader. */
   bindBackendNodes(tabId: number, selectors: string[], context?: ToolContext, scope?: Pick<ElementReference, "frameId" | "loaderId">): Promise<{ loaderId: string; ids: number[] }>;
@@ -45,14 +53,15 @@ export interface ElementAccess {
   ) => Promise<T>): Promise<T>;
   readMainDocumentId(tabId: number): Promise<string>;
 }
-export { waitForParsedDocument } from "../../background/tools/document-readiness.js";
+export { assertHtmlPage } from "../../background/tools/page-access.js";
+export { waitForParsedDocument, waitForPageCommit } from "../../background/tools/document-readiness.js";
 export { ensureOffscreenDocument } from "../../background/services/offscreen-document.js";
 export { createCdpKeyboard, primaryModifierForContext } from "../../background/tools/cdp-keyboard.js";
 export { createCdpTouch } from "../../background/tools/cdp-touch.js";
 export type { MappedKey } from "../../background/tools/cdp-keyboard.js";
 export { isCdpFallbackForbiddenError } from "../../background/tools/cdp-runtime.js";
 export type { PageNavigationHost, PageState, PreparedNavigation } from "../../background/tools/page-navigation.js";
-export { beginPageNavigationObservation } from "../../background/tools/page-navigation.js";
+export { beginPageNavigationObservation, observeNextPageNavigation } from "../../background/tools/page-navigation.js";
 export type { PageObservationHost, Screenshot, ScreenshotOptions } from "../../background/tools/page-observation.js";
 export { elementPageFunction } from "../../background/tools/page-scripts.js";
 export { armPageInputReceipt, ensurePageSurface, readPageInputReceipt } from "../../background/tools/page-surface.js";

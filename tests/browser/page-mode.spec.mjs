@@ -154,6 +154,8 @@ test("mobile tabs use mobile headers from the first request, persist across runs
     await worker.evaluate(() => { modeHarness.failTouchEnd = true; });
     expect(await call("act_on_element", {tabRef:tabId,target:"css:#target", action:"click"})).toEqual({
       code: "TOOL_EXECUTION_FAILED", message: "Injected lost touchEnd response",
+      details: { tool: "act_on_element", action: "click", tabRef: tabId, target: "css:#target",
+        status: "unconfirmed", mayHaveTakenEffect: true, automaticReplay: false },
     });
     expect((await inputEvents()).map(event=>event.type)).toEqual(["touchstart","touchend","touchstart","touchend","touchstart","touchend"]);
     // A terminal run revokes normal command access before cleanup. Its retained

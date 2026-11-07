@@ -26,7 +26,7 @@ function fixture(t, { fault = '', navigation = true, sameUrl = false, interrupt 
   const trace = [], submissions = [], keys = [], keyFrames = [], hostErrors = [];
   const original = errorKind === 'missing-string' ? MISSING : errorKind === 'reject-value' ? { reason: 'unloading' }
     : new Error(errorKind === 'world-error' ? 'ISOLATED world disappeared' : 'unrelated failure');
-  let value = '', committed = false, scheduled = false, removed = false, current = true, execute, method = '', finishProbe;
+  let value = '', committed = false, scheduled = false, removed = false, current = true, execute, method = '', finishProbe, focusRef;
   const timers = new Set();
   const later = (fn, ms) => { const timer = setTimeout(fn, ms); timers.add(timer); };
   t.after(() => { for (const timer of timers) clearTimeout(timer); });
@@ -42,7 +42,11 @@ function fixture(t, { fault = '', navigation = true, sameUrl = false, interrupt 
       if (removed) throw new Error('No tab with id: 7');
       return { id: 7, url: committed && !sameUrl ? AFTER : BEFORE, title: committed ? 'After' : 'Before', status: 'complete' };
     } },
-    webNavigation: { onCommitted: event(), async getAllFrames() {
+    webNavigation: { onBeforeNavigate: event(), onCommitted: event(), onHistoryStateUpdated: event(),
+      onReferenceFragmentUpdated: event(), onErrorOccurred: event(),
+      async getFrame() { return { frameId: 0, parentFrameId: -1, url: (await api.tabs.get()).url,
+        documentId: committed ? 'after' : 'before', errorOccurred: false }; },
+      async getAllFrames() {
       return [{ frameId: 0, parentFrameId: -1, url: (await api.tabs.get()).url },
         ...(frameId ? [{ frameId, parentFrameId: 0, url: BEFORE }] : [])];
     } },
@@ -103,8 +107,17 @@ function fixture(t, { fault = '', navigation = true, sameUrl = false, interrupt 
   const context = { sessionId: 'owner', runId: 'run', signal: controller.signal, runProfile: { platform: { os: 'mac' } } };
   const inspect = () => ({ tag: 'input', type: 'text', editable: true, focused: true, visible: true, value,
     clickablePoint: { x: 10, y: 10 }, inViewport: true });
-  const content = async (_tabId, action) => {
-    return { ...inspect(), ...(action === 'prepareElementFill' ? { fillMode: 'text' } : {}) };
+  const content = async (_tabId, action, params) => {
+    if (action === 'prepareElementFill' || action === 'prepareElementPress') {
+      focusRef = action === 'prepareElementFill' ? 'filled-element' : 'focused-element';
+      return { ...inspect(), _elementRef: focusRef,
+        ...(action === 'prepareElementFill' ? { fillMode: 'text', expectedValue: params.value } : {}) };
+    }
+    if (action === 'verifyElementFocus') {
+      assert.deepEqual(params.elementRefs, [focusRef]);
+      if (!params.retainRef) focusRef = undefined;
+    }
+    return { ...inspect(), ...(action === 'readElementActionState' ? { valueMatches: value === params.value } : {}) };
   };
   api.tabs.sendMessage = async () => ({});
   registerPageElementTools({
@@ -155,10 +168,7 @@ for (const action of ['fill', 'press']) {
     for (const fault of faults) {
       const f = fixture(t, { fault, errorKind: 'result-object', commitDelay: row.commitDelay, sameUrl: row.sameUrl });
       const result = await f.call(action);
-      assert.equal(result.error, undefined, fault);
-      assert.equal(result.navigated, true, fault);
-      assert.equal(result.pageAfter.url, row.url, fault);
-      assert.equal(action === 'fill' ? result.submitDispatched : result.pressed, true, fault);
+      assert.deepEqual(result, { navigated: true, url: row.url }, fault);
       oneSubmission(f, fault);
     }
   });
@@ -250,7 +260,7 @@ for (const action of ['fill', 'press']) {
   });
   test(`Firefox ${action}: no navigation, no error sends exactly one keyDown/keyUp`, async t => {
     const f = fixture(t, { navigation: false });
-    assert.equal((await f.call(action)).navigated, false);
+    assert.deepEqual(await f.call(action), {});
     oneSubmission(f, '', false);
   });
 }
@@ -259,8 +269,7 @@ test('Firefox fill: 12 unique submits, two keyUp injections fail while the old d
   for (let i = 1; i <= 12; i++) await t.test(`submit ${i}`, async t => {
     const f = fixture(t, { fault: [4, 7].includes(i) ? 'keyup-input' : '', commitDelay: [4, 7].includes(i) ? 40 : 0 });
     const result = await f.call('fill', `unique-${i}`);
-    assert.equal(result.submitDispatched, true);
-    assert.equal(result.navigated, true);
+    assert.deepEqual(result, { navigated: true, url: AFTER });
     assert.deepEqual(f.submissions, [`unique-${i}`]);
     assert.ok(f.keys.filter(type => type === 'keyUp').length <= 1);
   });

@@ -26,7 +26,7 @@ const tools = [toolsRuntime, elementRuntime, pageElementTools, mediaTools, acces
 const waitTools = read("src/capabilities/wait/tools.ts");
 const prompt = SYSTEM_PROMPT;
 globalThis.chrome ||= {};
-const { resolveToolDefinition } = await import("../../src/background/tools/runtime.js");
+const { resolveToolDefinition, getToolSchemas } = await import("../../src/background/tools/runtime.js");
 const browserOperationsRenderer = ["page", "bookmarks", "sessions", "diagnostics", "tabs", "wait"]
   .map(name => read(`src/capabilities/${name}/browser-operations.ts`)).join("\n");
 const localization = read("src/shared/tools/tool-error-localization.ts") + read("src/shared/i18n/backend-messages.ts");
@@ -52,34 +52,51 @@ function assertTargetInfrastructure() {
   assert.match(tools, /const ELEMENT_TARGET_GRAMMAR = 'target = "uid:" <element_uid> \| "css:" <css_selector>'/, "target grammar should be centralized");
   assert.match(tools, /function parseElementTarget\(target = ""\)/, "target parser should exist");
   assert.match(tools, /function resolveSelectorTarget\(tabId, selector = "", index = 0, context = \{\}\)/, "selector target compatibility helper should exist");
-  assert.match(tools, /if \(!isElementTarget\(raw\)\) return \{ tabId, selector: raw \};/, "raw CSS selectors should remain valid selector arguments");
+  assert.match(tools, /if \(!isElementTarget\(raw\)\) return \{ tabId, selector: raw, target: elementTargetForSelector\(raw\) \};/, "raw CSS selectors should remain valid selector arguments");
   assert.match(tools, /const ref = await resolveElementReference\(tabId, \{ target: raw, index \}, context\);/, "uid: selector arguments should resolve through the target resolver");
   assert.doesNotMatch(tools, /async function resolveElementReference\(tabId, \{[^}]*uid[^}]*selector/, "element resolver should not keep the old uid/selector argument pair");
 }
 
 function assertElementToolSchemasUseTarget() {
-  assertToolUsesTargetOnly("inspect_element", { required: /\brequired: \["target"\]/ });
-  assertToolUsesTargetOnly("act_on_element", { required: /\brequired: \["target", "action"\]/ });
+  assertToolUsesTargetOnly("inspect_element", { required: ["tabRef"], locator: true });
+  assertToolUsesTargetOnly("act_on_element", { required: ["action", "tabRef"], locator: true });
   assertToolUsesTargetOnly("scroll_page");
   assertToolUsesTargetOnly("screenshot");
   assertToolUsesTargetOnly("read_image");
-  const readImage = toolBlock("read_image");
   assert.match(resolveToolDefinition("read_image").description, /url 或 target 二选一/, "read_image should state its simple alternative-input contract");
-  assert.doesNotMatch(readImage, /\banyOf\b/, "read_image should expose a provider-safe object schema");
+  assert.deepEqual(resolveToolDefinition("read_image").parameters.anyOf, [{ required: ["url"] }, { required: ["tabRef", "target"] }], "image URLs are page-free, while element reads require an explicit page and target");
 }
 
-function assertToolUsesTargetOnly(name, { required = null } = {}) {
+function assertToolUsesTargetOnly(name, { required = null, locator = false } = {}) {
   const block = toolBlock(name);
   assert.match(block, /\btarget: \{ type: "string"/, `${name} should expose target`);
   assert.doesNotMatch(block, /\buid: \{ type: "string"/, `${name} should not expose uid as a tool argument`);
   assert.doesNotMatch(block, /\bselector: \{ type: "string"/, `${name} should not expose selector as an element argument`);
-  if (required) assert.match(block, required, `${name} should enforce target requirements`);
+  const definition = resolveToolDefinition(name);
+  if (required) assert.deepEqual(definition.parameters.required, required, `${name} should enforce operation and page requirements`);
+  if (locator) {
+    assert.equal(definition.parameters.properties.locator.type, "object");
+    assert.deepEqual(definition.parameters.oneOf, [
+      { required: ["target"], not: { required: ["locator"] } },
+      { required: ["locator"], not: { required: ["target"] } },
+    ], `${name} schema requires exactly one public element input`);
+    const base = { tabRef: "page", ...(name === "act_on_element" ? { action: "click" } : {}) };
+    for (const args of [{ target: "uid:t7.000001.1" }, { target: "css:button" }, { locator: { role: "button", name: "Save" } }]) {
+      assert.doesNotThrow(() => definition.validateArgs({ ...base, ...args }));
+    }
+    for (const args of [{}, { target: "css:button", locator: { role: "button" } }, { target: "", locator: { role: "button" } }]) {
+      assert.throws(() => definition.validateArgs({ ...base, ...args }), { code: "INVALID_ELEMENT_TARGET" });
+    }
+  }
 }
 
 function assertSelectorFieldsAcceptTargetSyntax() {
-  for (const name of ["read_article", "read_dom", "find_elements", "list_images"]) {
-    const block = toolBlock(name);
-    assert.match(resolveToolDefinition(name).parameters.properties.selector.description, /target 格式 css:\.\.\. \/ uid:\.\.\./, `${name} selector should document target syntax compatibility`);
+  for (const name of ["read_article", "read_dom", "find_elements", "list_images", "wait_for_element"]) {
+    const definition = resolveToolDefinition(name);
+    assert.equal(definition.parameters.properties.selector, undefined);
+    assert.match(definition.parameters.properties.target.description, /uid:.*css:/, `${name} target documents explicit references`);
+    assert.doesNotMatch(definition.parameters.properties.target.description, /bare CSS|raw CSS|裸 CSS/, `${name} must not document unprefixed CSS`);
+    assert.equal(definition.argumentAliases.selector, 'target');
   }
 }
 
@@ -88,25 +105,16 @@ async function assertPromptAndUiUseTarget() {
   assert.match(prompt, /target 不是自然语言/, "system prompt should warn against natural-language targets");
   assert.match(prompt, /\[css: <css_selector>\] 是用户通过鼠标点选页面元素生成的显式页面区域引用/, "system prompt should recognize user-picked page regions");
   assert.match(prompt, /把它作为当前关注范围：[\s\S]*inspect_element[\s\S]*get_ax_tree[\s\S]*read_article\/read_dom/, "system prompt should inspect the picked region before answering or acting");
-  assert.match(prompt, /不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域/, "system prompt should keep attention on the picked region");
-  assert.match(prompt, /selector 时表示 CSS 范围(?:\/|或)过滤条件，可传原始 CSS，也可传 target 格式/, "system prompt should define selector compatibility");
-  assert.match(prompt, /点击或按 Enter 后用 pageAfter\/urlChanged\/titleChanged，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click or Enter results");
-  assert.match(prompt, /already_complete 只说明调用时页面已加载/, "system prompt should clarify wait_for_navigation already_complete");
+  assert.match(prompt, /不要只凭 target 字符串猜测，也不要无故把注意力转向全页其他区域/, "system prompt should keep attention on the picked region");
+  assert.doesNotMatch(prompt, /wait_for_element 的 target 参数也接受原始 CSS/, "system prompt must not teach unprefixed CSS compatibility");
+  assert.match(prompt, /点击或按 Enter 后查看返回的 navigated\/url，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click or Enter results");
+  assert.match(prompt, /wait_for_load[\s\S]*wait_for_navigation|wait_for_navigation[\s\S]*wait_for_load/, "system prompt distinguishes current loading from future navigation");
   assert.doesNotMatch(read("src/background/agent/prompts/zh-CN.js"), /`(?:uid:|css:)/, "target examples in ESM template strings should avoid raw Markdown backticks");
   const registry = createToolRegistry();
   registerAccessibilityTools({ registerTool: registry.defineTool, elementTargetGrammar: "target" });
-  const result = {
-    snapshotId: "snapshot-1", nodes: [{ uid: "private-node" }],
-    _display: { title: "UI-only tree" }, _debug: "internal", _rawCdp: { nodes: [] },
-    actions: [{ target: "uid:button-1", uid: "button-1", role: "button", name: "Continue", text: "Continue" }],
-  };
+  const result = { snapshot: 'target=uid:t5.000001.1 button "Continue"', canvases: [] };
   const original = structuredClone(result);
-  const projected = registry.get("get_ax_tree").model.projectResult(result);
-  assert.equal(projected.actions[0].target, "uid:button-1", "registered AX projection preserves actionable target");
-  assert.equal(Object.hasOwn(projected.actions[0], "uid"), false, "model actions do not expose bare uid");
-  assert.equal(Object.hasOwn(projected, "nodes"), false, "the full AX tree stays outside model results");
-  assert.equal(projected.snapshotId, "snapshot-1");
-  assert.deepEqual(result, original, "model projection must preserve the UI's complete result");
+  assert.equal(registry.get("get_ax_tree").model?.projectResult, undefined, 'AX constructs public results at the source');
   const requests = [];
   const agent = new Agent("ax-model-projection", createTestAgentOptions({
     tools: { getSchemas: () => [], getIdentity: () => ({}),
@@ -115,7 +123,7 @@ async function assertPromptAndUiUseTarget() {
       async *chatStream(messages) {
         requests.push(structuredClone(messages));
         yield { type: "done", message: requests.length === 1
-          ? { role: "assistant", content: null, tool_calls: [{ id: "ax-call", type: "function", function: { name: "get_ax_tree", arguments: "{}" } }] }
+          ? { role: "assistant", content: null, tool_calls: [{ id: "ax-call", type: "function", function: { name: "get_ax_tree", arguments: '{"tabRef":5}' } }] }
           : { role: "assistant", content: "done" } };
       },
       async chat() { throw new Error("Unexpected fallback"); },
@@ -123,8 +131,7 @@ async function assertPromptAndUiUseTarget() {
   }));
   await agent.prompt("Inspect available actions", {});
   const modelResult = JSON.parse(requests[1].find(message => message.role === "tool").content);
-  assert.deepEqual(modelResult, { snapshotId: "snapshot-1", actions: [{ target: "uid:button-1", role: "button", name: "Continue", text: "Continue" }] },
-    "Agent applies the registered projection and strips chat-only display and diagnostic fields");
+  assert.deepEqual(modelResult, result, "Agent forwards the native public AX result");
   assert.deepEqual(result, original, "Agent sanitization must not modify the UI result");
   assert.match(browserOperationsRenderer, /data\.target \|\| args\.target/, "tool renderer should display target first");
   assert.match(localization, /缺少元素引用：请提供 target/, "localized errors should tell users to provide target");
@@ -134,10 +141,9 @@ function assertElementActionClickContract() {
   assert.match(tools, /scrollElementIntoView/, "act_on_element should scroll before clicking offscreen targets");
   assert.match(tools, /function clickPointReady\(inspection = \{\}\)/, "act_on_element should validate click readiness");
   assert.match(tools, /clickablePointInViewport/, "click readiness should check viewport-safe points");
-  assert.match(tools, /clickDispatched: true/, "click result should expose clickDispatched");
-  assert.match(tools, /pageBefore/, "click result should expose before page state");
-  assert.match(tools, /pageAfter/, "click result should expose after page state");
-  assert.match(tools, /urlChanged/, "click result should expose urlChanged");
+  assert.match(resolveToolDefinition("act_on_element").description, /成功返回 \{\}/, "ordinary element actions should have empty receipts");
+  assert.match(resolveToolDefinition("act_on_element").description, /navigated\/url/, "navigation receipts should retain the destination");
+  assert.match(resolveToolDefinition("act_on_element").description, /confirmationRequired/, "uncertain rich-text state should require confirmation");
   assert.match(tools, /CLICK_POINT_OUT_OF_VIEWPORT/, "click should fail clearly when the target remains offscreen");
 }
 
@@ -145,7 +151,9 @@ function assertElementActionRoutingContract() {
   assert.match(tools, /sendToContent\(tabId, "actOnElement", \{ selector, index, elementAction: normalizedAction/, "act_on_element should not let element actions overwrite the content message route");
   assert.match(tools, /sendToContent\(tabId, "prepareElementFill"/, "fill should prepare the resolved editing surface before trusted input");
   assert.match(tools, /sendToContent\(tabId, "readElementActionState"/, "element mutations should read back the page's actual state");
-  assert.match(tools, /sendToContent\(tabId, "actOnElement", \{ selector, index, elementAction: "press"/, "press fallback should use the elementAction payload field");
+  assert.match(tools, /sendToContent\(tabId, "prepareElementPress"/, "press should focus its resolved target without clicking it");
+  assert.match(tools, /sendToContent\(tabId, "verifyElementFocus"/, "press should verify the same focused node before sending a key");
+  assert.doesNotMatch(tools, /elementAction: "press"/, "press must not replay through a synthetic fallback");
   assert.match(contentScript, /actOnElement\(\{ selector, index = 0, action, elementAction = ""/, "content actOnElement should read an explicit elementAction payload");
   assert.match(contentScript, /const op = String\(elementAction \|\| action \|\| ""\)\.trim\(\)/, "content actOnElement should keep direct handler compatibility");
   assert.match(contentScript, /if \(op === "select"\)/, "content actOnElement should support native select");
@@ -158,14 +166,14 @@ function assertAxTreeCompactContract() {
   assert.match(resolveToolDefinition("get_ax_tree").description, /其下还有 N 行未展开/, "get_ax_tree should explain that N is unexpanded lines");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /t5493|保底|不计入 limit/, "get_ax_tree should not spell out uid format or budget exceptions");
   assert.match(resolveToolDefinition("get_ax_tree").description, /canvases\(name\/rect\/inViewport\/bitmapSize\)/, "get_ax_tree should advertise large Canvas discovery");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /视觉操作坐标必须以 screenshot\(\{actionable:true\}\) 返回的原始图片为准/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /视觉操作坐标必须以 screenshot\(\{tabRef,actionable:true\}\) 返回的原始图片为准/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /actions\(target\/selector/, "get_ax_tree should not advertise selectors in actions");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /同时返回 actions/, "get_ax_tree should not advertise a separate actions list");
-  assert.match(block, /root: \{ type: "string"/, "get_ax_tree should expose a root parameter for subtree expansion");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /root="root" 查看整页/, "get_ax_tree should document root=root");
+  assert.match(block, /target: \{ type: "string"/, "get_ax_tree should expose a root parameter for subtree expansion");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /省略 target 查看整页/, "get_ax_tree should document omission for whole-page reads");
   assert.match(resolveToolDefinition("get_ax_tree").description, /limit 使用 BFS 分配节点预算/, "get_ax_tree should document BFS budget semantics");
   assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated, N more\)/, "get_ax_tree should document truncated branch markers");
-  assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot \}/, "get_ax_tree should resolve uid/css roots through the target resolver");
+  assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot, readOnly: true \}/, "get_ax_tree should resolve uid/css roots through the read-only target resolver");
   assert.match(block, /backendNodeIdForSelector\(targetTabId, overviewSelector, context\)/, "get_ax_tree should resolve css roots to backend nodes within the current run context");
   assert.match(block, /rootBackendNodeId/, "get_ax_tree should pass the resolved AX root into snapshot construction");
   assert.match(block, /const fetchDepth = snapshotScope === "viewport" \? (?:undefined|void 0) : rootBackendNodeId \? 40 : axDepth/, "get_ax_tree should search deep enough to find requested roots");
@@ -196,11 +204,11 @@ function assertAxTreeCompactContract() {
   assert.match(contentScript, /const actionElements = \[/, "pageOverview should collect root-scoped actions");
   assert.match(contentScript, /const canvasElements = \[/, "pageOverview should collect root-scoped canvases");
   assert.match(contentScript, /Math\.min\(rect\.width, rect\.height\) < 120 \|\| renderedArea < (?:40000|4e4)/, "pageOverview should ignore canvases that are small at rendered CSS size");
-  assert.match(contentScript, /\.slice\(0, 8\)[\s\S]*\.map\(\(\{ renderedArea: _renderedArea, \.\.\.canvas \}\) => canvas\)/, "pageOverview should bound canvas summaries and remove internal ranking data");
+  assert.match(contentScript, /\.slice\(0, 8\)[\s\S]*\.map\(\(\{ renderedArea: _renderedArea, element, \.\.\.canvas \}\)/, "pageOverview should bound canvas summaries and remove raw nodes/ranking data");
   assertOrderedSubstrings(VISUAL_SCREEN_ACTION_RULE, [
-    'get_ax_tree({root:"root"})',
+    'get_ax_tree({tabRef})',
     "act_on_element",
-    "screenshot({actionable:true})",
+    "screenshot({tabRef,actionable:true})",
     "act_on_screen",
   ], "system prompt should expose one ordered visual-action route");
   assert.doesNotMatch(tools, /context_store/, "get_ax_tree should not depend on context_store");
@@ -225,8 +233,6 @@ function assertFileInputHandoffContract() {
 
   assert.match(contentScript, /type: item\.type/, "pageOverview actions should retain the input type");
   assert.match(contentScript, /selectedFileCount: item\.selectedFileCount/, "pageOverview actions should retain selected file count");
-  const implicitRoles = read("src/content/implicit-aria-role.ts");
-  assert.match(`${contentScript}\n${implicitRoles}`, /if \(type === "file"\) return "button"/, "file inputs should not be presented as textboxes");
   assert.match(contentScript, /String\(el\.type \|\| ""\)\.toLowerCase\(\) !== "file"/, "file inputs should not be presented as editable text fields");
   assert.match(tools, /inputType && inputType !== String\(compact\.role \|\| ""\)/, "AX snapshot should keep a useful input type");
   assert.match(tools, /Number\.isFinite\(Number\(action\?\.selectedFileCount\)\)/, "AX snapshot should keep file selection state");
@@ -234,13 +240,13 @@ function assertFileInputHandoffContract() {
 
 function assertFindElementsFilterContract() {
   const block = toolBlock("find_elements");
-  assert.doesNotMatch(block, /required: \["pattern"\]/, "find_elements should not require pattern when selector/tags/roles can list candidates");
+  assert.doesNotMatch(block, /required: \["pattern"\]/, "find_elements should not require pattern when target/tags/roles can list candidates");
   assert.doesNotMatch(resolveToolDefinition("find_elements").description, /可操作候选元素/, "find_elements should not describe the candidate set as action-only");
-  assert.match(resolveToolDefinition("find_elements").description, /pattern 是可选过滤条件：不传 pattern 时会列出 selector\/tags\/roles\/types 命中的候选/, "find_elements should explain selector-first candidate discovery");
+  assert.match(resolveToolDefinition("find_elements").description, /pattern 是可选过滤条件：不传 pattern 时会列出 target\/role\/roles\/tag\/tags\/type\/types 命中的候选/, "find_elements should explain target-scoped candidate discovery");
   assert.match(resolveToolDefinition("find_elements").description, /actionable\/inViewport/, "find_elements should document rank signals returned in summaries");
   assert.match(block, /pattern = ""/, "find_elements runtime should default pattern to an empty filter");
   assert.doesNotMatch(contentScript, /MISSING_PATTERN/, "content findElements should not reject empty pattern");
-  assert.match(contentScript, /const patternText = String\(pattern \|\| ""\)\.trim\(\)/, "content findElements should normalize optional pattern");
+  assert.match(contentScript, /const patternText = String\(pattern \|\| ""\);/, "content findElements should preserve literal whitespace in a pattern");
   assert.match(contentScript, /const maxResults = clampNumber\(limit, 1, 100, 20\)/, "content findElements should clamp result limit");
   assert.match(contentScript, /eachElementWithinOpenShadow\(scope,\s*\(element\)\s*=>\s*\{\s*candidates\.push\(element\);\s*\}\)/, "content findElements should keep a broad DOM candidate set");
   assert.match(contentScript, /matchElementSearch\(regex, getElementSearchParts\(el, summary\)\)/, "content findElements should classify field-level matches");
@@ -254,19 +260,19 @@ function assertFindElementsFilterContract() {
 }
 
 function assertNavigationWaitContract() {
-  assert.match(resolveToolDefinition("wait_for_navigation").description, /already_complete 只表示调用时页面已完成加载，不证明上一动作成功或失败/, "wait_for_navigation should not overstate already_complete");
-  assert.match(waitTools, /fromUrl: \{ type: "string"/, "wait_for_navigation should accept fromUrl");
-  assert.match(waitTools, /fromTitle: \{ type: "string"/, "wait_for_navigation should accept fromTitle");
-  assert.match(waitTools, /waited: false/, "wait_for_navigation should expose waited=false when it did not wait");
-  assert.match(waitTools, /urlChanged/, "wait_for_navigation should expose urlChanged from input state");
-  assert.match(waitTools, /titleChanged/, "wait_for_navigation should expose titleChanged from input state");
+  const navigation = resolveToolDefinition("wait_for_navigation");
+  assert.match(navigation.description, /之后发生的新导航[\s\S]*已完成的旧页面不会命中/, "navigation waits observe a future event");
+  assert.deepEqual(navigation.parameters.properties.trigger.required, ["name"], "an optional triggering tool is an explicit action descriptor");
+  assert.match(resolveToolDefinition("wait_for_load").description, /当前文档加载完成[\s\S]*已加载完成则立即返回/, "load waits inspect current state");
+  assert.match(waitTools, /observeNextPageNavigation/, "navigation waits use the browser navigation observer");
+  assert.match(read("src/background/tools/page-navigation.ts"), /onHistoryStateUpdated/, "navigation waits include same-document changes");
 }
 
 function assertScreenshotDestinationContract() {
   const screenshotBlock = toolBlock("screenshot");
   const collectBlock = toolBlock("collect_images");
   assert.match(screenshotBlock, /destination: \{ type: "string"/, "screenshot should accept a flat destination parameter");
-  assert.match(resolveToolDefinition("screenshot").description, /始终以图片形式返回给 LLM/, "screenshot should keep returning images to model context");
+  assert.match(resolveToolDefinition("screenshot").description, /始终以图片形式返回/, "screenshot should keep returning images to model context");
   assert.match(screenshotBlock, /saveScreenshotToImageCollection/, "screenshot should save through the image collection path when destination is present");
   assert.match(tools, /async function saveScreenshotToImageCollection/, "screenshot destination should use a dedicated save helper");
   assert.match(tools, /_image: shot\.dataUrl/, "screenshot should always return the image to context");
@@ -293,7 +299,7 @@ function assertScreenActionContract() {
   assert.match(resolveToolDefinition("act_on_screen").description, /传 x\/y 时按截图坐标定位，type 先点击再输入/, "screen typing should make its optional focus coordinates explicit");
   assert.match(resolveToolDefinition("act_on_screen").description, /replace=true 且 text 为空表示清空/, "screen typing should expose clear as an intentional replace operation");
   assert.doesNotMatch(toolsRuntime, /type:\s*\["x",\s*"y"\]/, "the public preflight must not reintroduce coordinates for focused typing");
-  assert.match(actionBlock, /required: \["action", "returnScreenshot"\]/, "screen actions should require the screenshot-return decision");
+  assert.deepEqual(resolveToolDefinition("act_on_screen").parameters.required, ["action", "returnScreenshot", "tabRef"], "screen actions require their page, action, and screenshot-return decision");
   assert.doesNotMatch(screenActionRuntime, /POST_ACTION_CAPTURE_SETTLE_MS|settleAfterDispatchedInput|waitForInputAcknowledgements/, "screen actions must not hide fixed sleeps or an unbounded acknowledgement barrier");
   assert.match(resolveToolDefinition("act_on_screen").parameters.properties.returnScreenshot.description, /需要观察本次操作结果时传 true；已验证且无需逐步观察的连续操作传 false/, "screen action screenshot choice should be stated as an Agent decision");
   assert.match(resolveToolDefinition("act_on_screen").description, /viewportChange 客观记录浏览器视口变化/, "screen actions should expose observable viewport facts");
@@ -301,7 +307,7 @@ function assertScreenActionContract() {
   assert.doesNotMatch(actionBlock, /\banyOf\b/, "screen actions should keep a provider-safe flat schema");
   assert.doesNotMatch(actionBlock, /\btarget: \{ type: "string"/, "screen actions should not depend on DOM targets");
   assert.doesNotMatch(actionBlock, /screenshotId: \{ type: "string"/, "screen actions should not make the model copy fragile frame ids");
-  assert.match(resolveToolDefinition("act_on_screen").description, /最近一次 screenshot\(actionable=true\) 或 act_on_screen\(returnScreenshot:true\) 建立的坐标状态/, "screen actions should select the current scoped frame implicitly");
+  assert.match(resolveToolDefinition("act_on_screen").description, /坐标依据必须来自该页最近一次 screenshot\(\{tabRef,actionable:true\}\) 或 act_on_screen\(\{tabRef,action,returnScreenshot:true\}\)/, "screen actions should use the selected page's coordinate basis");
   assert.match(actionBlock, /screenActions\.act\(args, signal, context\)/, "the public tool should delegate to one screen-action runtime");
   assert.match(screenActionRuntime, /const coordinateIndependent = \["press", "type", "scroll"\]\.includes\(action\) && validated\.x == null/, "actions without screenshot coordinates should be independent of input screenshots");
   assert.match(screenActionRuntime, /const snapshot = coordinateIndependent \? null : resolve\(tabId, context\)/, "only coordinate-dependent screen actions should resolve the latest scoped frame");
@@ -325,11 +331,11 @@ function assertScreenActionContract() {
   assert.match(screenActionRuntime, /for \(let index = 0; index < prepared\.repeat; index \+= 1\)/, "scroll repeat should stay one bounded atomic screen action");
   assert.match(screenActionRuntime, /viewportChange: describeViewportChange\(current, actionStateAfter\)/, "screen actions should report observed viewport movement on every result path");
   assert.match(actionBlock, /"long_press"[^\n]*requireToolFields\("act_on_screen", args, \["x",\s*"y"\]/, "long press should require coordinates before reaching the runtime");
-  assert.match(prompt, /没有可靠 target.*screenshot\(\{actionable:true\}\)/, "the prompt should reserve screen actions for visual-only controls");
+  assert.match(prompt, /没有可靠 target.*screenshot\(\{tabRef,actionable:true\}\)/, "the prompt should reserve screen actions for visual-only controls");
   assert.match(prompt, /视觉动作序列遵循“验证后批量”/, "the prompt should teach one general verify-then-batch visual principle");
   assert.match(prompt, /效果符合预期、后续坐标可预测且浏览器视口稳定/, "the prompt should gate batching on evidence rather than action names");
   assert.match(prompt, /每步检查 coordinateBasisReady/, "the prompt should make visual batch recovery explicit");
-  assert.match(prompt, /run_script 返回按执行顺序最后产生的观察图/, "the prompt should explain ordered last-observation feedback");
+  assert.match(prompt, /显式返回选定的截图或动作结果，才能带回其中的图片/, "the prompt should explain explicitly selected image feedback");
 }
 
 function assertImageCandidateTargetContract() {
@@ -345,8 +351,8 @@ function assertImageCandidateTargetContract() {
   assert.match(mediaTools, /\bgetSecurityGuardrails,\n\s+assertTabAllowed:/, "media URL reads should declare their security-rule dependency");
   assert.match(resolveToolDefinition("list_images").description, /绑定当前 session、标签页、页面和图片地址的 target/, "list_images should return identity-bound image targets");
   assert.match(resolveToolDefinition("list_images").description, /index\/rank 仅用于阅读/, "list_images should keep ordinals display-only");
-  assert.match(listBlock, /registerElementRef\(\{[\s\S]*imageSrc: item\.currentSrc \|\| item\.src/, "list_images should bind targets to the listed image source");
-  assert.match(listBlock, /imageDiscoveryResultItem\(item, elementTargetForUid\(uid\)\)/, "list_images should expose registered uid targets through a bounded public projection");
+  assert.match(listBlock, /bindElementReferences\(target\.tabId[\s\S]*imageSrc: item\.currentSrc \|\| item\.src/, "list_images uses the shared binder and retains image source constraints");
+  assert.match(listBlock, /imageDiscoveryResultItem\(item, bindings\[index\]\.target\)/, "list_images projects bound UID or explicit CSS fallback targets");
   assert.match(mediaTools, /function imageDiscoveryResultItem[\s\S]*function imageSourceResultFields/, "list_images should project browser metadata through one bounded result path");
   assert.match(mediaTools, /function imageDiscoveryTextContext[\s\S]*const limits = \{[\s\S]*nearbyText: 400/, "image candidate context should use one bounded allowlisted projection");
   assert.match(contentScript, /context: getImageTextContext\(img\)/, "list_images should extract semantic context beside each image");
@@ -357,7 +363,9 @@ function assertImageCandidateTargetContract() {
   assert.match(collectBlock, /urls: \{ type: "array", items: \{ type: "string" \}/, "collect_images should accept explicit URLs");
   assert.doesNotMatch(collectBlock, /\bindexes: \{/, "collect_images should not expose ordinal collection");
   assert.doesNotMatch(collectBlock, /\bselector: \{ type: "string"/, "collect_images should not expose selector scanning");
-  assert.doesNotMatch(collectBlock, /\btabId: \{ type: "number"/, "collect_images should not expose a page-wide tab entry point");
+  const schema = getToolSchemas().find(item => item.function.name === 'collect_images').function.parameters;
+  assert.equal(schema.properties.tabId, undefined);
+  assert.ok(schema.properties.tabRef, 'the model gets tabRef rather than the numeric execution ABI');
   assert.doesNotMatch(collectBlock, /\b(?:minWidth|minHeight|visibleOnly|limit): \{/, "collect_images should not expose page scan controls");
   assert.match(collectBlock, /for \(const selectedTarget of targetList\)[\s\S]*resolveSelectedImageTarget\(selectedTarget, tabId, context\)[\s\S]*for \(const candidate of candidates\)/, "collect_images should resolve all targets before processing candidates for storage");
   assert.match(collectBlock, /resolveSelectedImageTarget\(selectedTarget, tabId, context\)/, "collect_images should resolve each explicit target");

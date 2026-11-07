@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { playwrightDomSources } from '../../scripts/vendor/playwright-dom.mjs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
@@ -7,15 +8,21 @@ import { chromium } from 'playwright';
 // No user browser, extension profile, MCP daemon or provider settings are touched.
 export async function createAxViewportHarness({ baseline = false } = {}) {
   const bundle = await build({ stdin: { contents: `export { registerAccessibilityTools } from './src/capabilities/accessibility/tools.ts'; export { withLanguage } from './src/shared/i18n/index.ts';`, resolveDir: process.cwd() },
-    bundle: true, write: false, format: 'esm', platform: 'node', plugins: [{ name: 'ax-sources', setup(b) {
+    bundle: true, write: false, format: 'esm', platform: 'node',
+    banner: { js: 'let chrome; export const bindBrowserApi = api => { chrome = api; };' }, plugins: [{ name: 'ax-sources', setup(b) {
       b.onResolve({ filter: /^#sdk\// }, args => ({ path: resolve('src/sdk', args.path.slice(5) + '.ts') }));
       if (baseline) b.onLoad({ filter: /capabilities\/accessibility\/(tools|tool-messages)\.ts$/ }, args => ({ contents: execFileSync('git', ['show', `cbac588:${args.path.slice(process.cwd().length + 1)}`], { encoding: 'utf8' }), loader: 'ts' }));
     } }] });
-  const { registerAccessibilityTools, withLanguage } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
-  const content = (await build({ entryPoints: ['src/content/content-script.ts'], bundle: true, write: false, format: 'iife' })).outputFiles[0].text;
+  const { registerAccessibilityTools, withLanguage, bindBrowserApi } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}#${crypto.randomUUID()}`);
+  const content = (await build({ entryPoints: ['src/content/content-script.ts'], bundle: true, write: false, format: 'iife', plugins: [playwrightDomSources()] })).outputFiles[0].text;
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
+  // Keep the production readiness probe on the current real document, scoped to this harness.
+  bindBrowserApi({
+    tabs: { get: async id => ({ id, url: page.url() }) },
+    scripting: { executeScript: async ({ func }) => [{ result: await page.evaluate(func) }] },
+  });
   const cdp = await context.newCDPSession(page);
   const send = cdp.send.bind(cdp);
   const refs = new Map();
@@ -41,7 +48,7 @@ export async function createAxViewportHarness({ baseline = false } = {}) {
     } finally { await send('Runtime.releaseObjectGroup', { objectGroup: 'ax-test' }); }
   }
   async function bind(selectors) {
-    // Match the production binder: one document handle, unique selectors, sequential reads.
+    // Fixture fallback binding for layout measurements; production token batching has separate contracts.
     const { root } = await send('DOM.getDocument', { depth: 0, pierce: true });
     const ids = [];
     for (const selector of selectors) {
@@ -59,7 +66,17 @@ export async function createAxViewportHarness({ baseline = false } = {}) {
     clampLimit: (value, min, max) => value >= 100000 ? value : Math.max(min, Math.min(max, Math.floor(value))),
     makeSnapshotId: () => `t1.s${String(++sequence).padStart(5, '0')}`,
     elementTargetForUid: uid => `uid:${uid}`,
-    registerElementRef: ref => refs.set(ref.uid, ref),
+    registerElementRef: ref => refs.set(ref.uid, ref), // Baseline source uses the older host hook.
+    registerElementBinding: ref => {
+      const uid = ref.backendNodeId ? `${ref.snapshotId}.${ref.backendNodeId}` : undefined;
+      const bound = { ...ref, uid, target: uid ? `uid:${uid}` : ref.selector ? `css:${ref.selector}` : '' };
+      if (uid) refs.set(uid, bound);
+      return bound;
+    },
+    bindElementReferences: async (_tab, candidates) => {
+      const bound = await bind(candidates.map(item => item.selector || ''));
+      return candidates.map((ref, index) => ({ ...ref, backendNodeId: bound.ids[index], target: ref.selector ? `css:${ref.selector}` : '' }));
+    },
     resolveElementReference: async (_tab, { target }) => {
       const ref = refs.get(target.replace(/^uid:/, ''));
       const selector = target.startsWith('css:') ? target.slice(4) : !ref?.backendNodeId ? ref?.selector || '' : '';

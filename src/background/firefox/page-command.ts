@@ -9,9 +9,12 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
   const doc = page.document;
   if (!doc) throw new Error("Firefox page command has no document");
 
-  const state = page.__qzFirefoxPage || (page.__qzFirefoxPage = {
+  const state: NonNullable<PageScope["__qzFirefoxPage"]> = page.__qzFirefoxPage?.version === 2 ? page.__qzFirefoxPage : (page.__qzFirefoxPage = {
+    version: 2,
     next: 1,
+    nextObject: 0,
     nodes: new Map(),
+    nodeIds: new WeakMap(),
     objects: new Map(),
     mouseTarget: null,
     touchTarget: null,
@@ -19,13 +22,21 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
 
   const idFor = (node: DomNode | null | undefined): number => {
     if (!node) return 0;
-    for (const [id, value] of state.nodes) if (value === node) return id;
-    const id = state.next;
-    state.next += 1;
-    state.nodes.set(id, node);
+    const existing = state.nodeIds.get(node);
+    if (existing) return existing;
+    const id = state.next++;
+    state.nodeIds.set(node, id);
+    state.nodes.set(id, new WeakRef(node));
+    if (id % 256 === 0) for (const [key, reference] of state.nodes) if (!reference.deref()) state.nodes.delete(key);
     return id;
   };
-  const nodeFor = (id: number): DomNode | null => state.nodes.get(Number(id)) || null;
+  const retainObject = (value: DomNode | (DomNode | null)[], group = "") => {
+    state.nextObject = (state.nextObject || 0) + 1;
+    const objectId = `ff-object-${state.nextObject}`;
+    state.objects.set(objectId, Array.isArray(value) ? { node: null, nodes: value, group } : { node: value, group });
+    return objectId;
+  };
+  const nodeFor = (id: number): DomNode | null => state.nodes.get(Number(id))?.deref() || null;
   const asList = (nodes: ArrayLike<DomNode> | null | undefined): DomNode[] => {
     const out: DomNode[] = [];
     const length = Number(nodes?.length || 0);
@@ -47,7 +58,7 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     catch { return { type: "object", description: String(value) }; }
   };
   const failed = (error: unknown) => {
-    const text = error instanceof Error ? error.message : String(error);
+    const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     return { exceptionDetails: { text, exception: { type: "object", subtype: "error", description: text } } };
   };
   const invoke = async (declaration: string, target: unknown, args: unknown[], awaitPromise: boolean) => {
@@ -104,7 +115,7 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     }
     const event = makeEvent(type, init);
     noted(event);
-    try { target.dispatchEvent(event); }
+    try { return target.dispatchEvent(event) !== false; }
     catch (error) {
       const text = error instanceof Error ? error.message : String(error);
       throw new Error(`Firefox could not dispatch ${type} at (${x}, ${y}): ${text}`);
@@ -113,52 +124,70 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
   const buttonIndex = (button: unknown) => button === "right" ? 2 : button === "middle" ? 1 : 0;
   const pointer = (target: DomNode | null | undefined, type: string, init: Record<string, unknown>) => {
     const Ctor = page.PointerEvent;
-    if (!target || typeof target.dispatchEvent !== "function" || typeof Ctor !== "function") return;
+    if (!target || typeof target.dispatchEvent !== "function" || typeof Ctor !== "function") return true;
     const event = new Ctor(type, { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true });
     noted(event);
-    try { target.dispatchEvent(event); }
-    catch { /* The page has no pointer events. Mouse events still fire. */ }
+    try { return target.dispatchEvent(event) !== false; }
+    catch { return true; /* The page has no pointer events. Mouse events still fire. */ }
+  };
+  const elementAtPoint = (x: number, y: number): DomNode | null => {
+    let target = doc.elementFromPoint?.(x, y) || doc.documentElement || null;
+    const visited = new Set<DomNode>();
+    while (target && !visited.has(target)) {
+      visited.add(target);
+      const inner = target.shadowRoot?.elementFromPoint?.(x, y);
+      if (!inner || inner === target) break;
+      target = inner;
+    }
+    return target;
+  };
+  const activeElement = (): DomNode | null => {
+    let target = doc.activeElement || null;
+    while (target?.shadowRoot?.activeElement) target = target.shadowRoot.activeElement;
+    return target;
   };
   const mouse = (input: MouseInput) => {
     const x = Number(input.x);
     const y = Number(input.y);
     const type = String(input.type || "");
     if (type === "mouseReleased" && (x < 0 || y < 0)) {
-      if (state.mouseTarget) {
-        pointer(state.mouseTarget, "pointerup", { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0 });
-        dispatch(state.mouseTarget, "mouseup", { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0 });
-      }
+      const pressed = state.mouseTarget;
       state.mouseTarget = null;
+      const suppressed = state.mouseEventsSuppressed;
+      state.mouseEventsSuppressed = false;
+      if (pressed) {
+        const init = { bubbles: true, cancelable: true, composed: true, clientX: 0, clientY: 0, button: buttonIndex(input.button), buttons: 0 };
+        pointer(pressed, "pointerup", init);
+        if (!suppressed) dispatch(pressed, "mouseup", init);
+      }
       return {};
     }
-    const target = doc.elementFromPoint?.(x, y) || doc.documentElement || null;
+    const target = elementAtPoint(x, y);
     const button = buttonIndex(input.button);
-    const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, button, buttons: type === "mouseReleased" ? 0 : 1 };
+    const clickCount = Number(input.clickCount) || 1;
+    const buttons = input.buttons ?? (type === "mousePressed" ? (button === 1 ? 4 : button === 2 ? 2 : 1) : 0);
+    const init = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button, buttons,
+      detail: type === "mousePressed" || type === "mouseReleased" ? clickCount : 0 };
     if (type === "mousePressed") {
       state.mouseTarget = target;
-      try { target?.focus?.(); } catch { /* The element is not focusable. */ }
-      pointer(target, "pointerdown", init);
-      dispatch(target, "mousedown", init);
-    } else if (type === "mouseReleased") {
-      pointer(target, "pointerup", init);
-      dispatch(target, "mouseup", init);
-      if (state.mouseTarget === target) {
-        const name = Number(input.clickCount) > 1 ? "dblclick" : "click";
-        const event = makeEvent(name, init);
-        noted(event);
-        if (!target || typeof target.dispatchEvent !== "function") {
-          throw new Error(`Firefox could not dispatch ${name}: the page has no element at (${x}, ${y}).`);
-        }
-        try { target.dispatchEvent(event); }
-        catch (error) {
-          const text = error instanceof Error ? error.message : String(error);
-          throw new Error(`Firefox could not dispatch ${name} at (${x}, ${y}): ${text}`);
-        }
+      state.mouseEventsSuppressed = !pointer(target, "pointerdown", init);
+      if (!state.mouseEventsSuppressed && dispatch(target, "mousedown", init)) {
+        try { target?.focus?.(); } catch { /* The element is not focusable. */ }
       }
+    } else if (type === "mouseReleased") {
+      const pressed = state.mouseTarget;
       state.mouseTarget = null;
+      const suppressed = state.mouseEventsSuppressed;
+      state.mouseEventsSuppressed = false;
+      pointer(target, "pointerup", init);
+      if (!suppressed) dispatch(target, "mouseup", init);
+      if (pressed === target) {
+        dispatch(target, "click", init);
+        if (clickCount === 2) dispatch(target, "dblclick", init);
+      }
     } else if (type === "mouseMoved") {
       pointer(target, "pointermove", init);
-      dispatch(target, "mousemove", init);
+      if (!state.mouseEventsSuppressed) dispatch(target, "mousemove", init);
     } else if (type === "mouseWheel") {
       dispatch(target, "wheel", { ...init, deltaX: Number(input.deltaX || 0), deltaY: Number(input.deltaY || 0) });
       const scroller = doc.scrollingElement;
@@ -187,7 +216,7 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
       target.selectionEnd = caret;
       const InputEvent = page.InputEvent;
       if (typeof InputEvent === "function") {
-        const event = new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" });
+        const event = new InputEvent("input", { bubbles: true, composed: true, data: text, inputType: "insertText" });
         noted(event);
         try { target.dispatchEvent?.(event); }
         catch { /* The value is updated even when the page refuses the input event. */ }
@@ -219,8 +248,8 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     const form = target.form;
     if (!form || !blocksImplicitSubmission(target) || target.disabled || target.matches?.(":disabled")) return;
     // Tree order includes controls associated through form= outside the form.
-    // form.elements omits input[type=image], so inspect the owning document.
-    const controls = asList((target.ownerDocument || doc).querySelectorAll?.("input,button"))
+    // form.elements omits input[type=image]; a form can also live in a shadow tree.
+    const controls = asList((target.getRootNode?.() || target.ownerDocument || doc).querySelectorAll?.("input,button"))
       .filter(node => node.form === form);
     const submitter = controls.find(node => {
       const tag = String(node.nodeName).toUpperCase();
@@ -233,17 +262,29 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
       form.requestSubmit?.();
     }
   };
+  const keyboardActivates = (target: DomNode, space: boolean) => {
+    if (target.disabled || target.matches?.(":disabled")) return false;
+    const tag = String(target.nodeName).toUpperCase();
+    const type = String(target.type || "").toLowerCase();
+    return tag === "BUTTON" || (tag === "INPUT" && (["button", "submit", "reset", "image"].includes(type) || (space && ["checkbox", "radio"].includes(type))))
+      || (!space && (tag === "A" || tag === "AREA") && target.hasAttribute?.("href"));
+  };
+  const activate = (target: DomNode) => dispatch(target, "click", { bubbles: true, cancelable: true, composed: true, detail: 0, button: 0, buttons: 0 });
   const key = (input: KeyInput) => {
     const releasing = input.type === "keyUp";
-    const target = doc.activeElement || doc.body || doc.documentElement;
+    const target = activeElement() || doc.body || doc.documentElement;
     const label = String(input.key || input.code || "key");
     if (!target || typeof target.dispatchEvent !== "function") {
       throw new Error(`Firefox could not press ${label}: the page has no focused element.`);
     }
     const modifiers = Number(input.modifiers || 0);
+    const space = input.key === " " || input.code === "Space";
+    const spaceTarget = state.spaceTarget;
+    if (space) state.spaceTarget = null;
     const init = {
       bubbles: true,
       cancelable: true,
+      composed: true,
       key: String(input.key || ""),
       code: String(input.code || ""),
       keyCode: Number(input.keyCode || 0),
@@ -261,15 +302,46 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
       const text = error instanceof Error ? error.message : String(error);
       throw new Error(`Firefox could not press ${label}: ${text}`);
     }
-    if (releasing || !allowed) return {};
+    if (releasing) {
+      if (allowed && space && spaceTarget === target && keyboardActivates(target, true)) activate(target);
+      return {};
+    }
+    if (!allowed) return {};
+    if (space && modifiers === 0) {
+      if (keyboardActivates(target, true)) state.spaceTarget = target;
+      const press = typeof ctor === "function" ? new ctor("keypress", init) : { type: "keypress", ...init };
+      noted(press);
+      const accepted = target.dispatchEvent(press) !== false;
+      if (state.spaceTarget || !accepted) return {};
+    }
     if (input.key === "Enter" && modifiers === 0) {
       const press = typeof ctor === "function" ? new ctor("keypress", init) : { type: "keypress", ...init };
       noted(press);
       if (target.dispatchEvent(press) === false) return {};
-      if (String(target.nodeName).toUpperCase() === "TEXTAREA" || target.isContentEditable) {
+      if (keyboardActivates(target, false)) activate(target);
+      else if (String(target.nodeName).toUpperCase() === "TEXTAREA" || target.isContentEditable) {
         insertText(target, "\n", false);
       } else implicitSubmit(target);
       return {};
+    }
+    if (modifiers === 0 && (input.key === "Backspace" || input.key === "Delete")) {
+      if (target.disabled || target.readOnly || target.matches?.(":disabled")) return {};
+      const editable = target.isContentEditable || String(target.nodeName).toUpperCase() === "TEXTAREA"
+        || (String(target.nodeName).toUpperCase() === "INPUT" && ["text", "search", "url", "tel", "email", "password", "number"].includes(String(target.type || "text")));
+      if (!editable) return {};
+      const backward = input.key === "Backspace";
+      if (typeof page.InputEvent === "function") {
+        const before = new page.InputEvent("beforeinput", { bubbles: true, cancelable: true, composed: true,
+          inputType: backward ? "deleteContentBackward" : "deleteContentForward", data: null });
+        noted(before);
+        if (target.dispatchEvent(before) === false) return {};
+      }
+      // Let the editing engine handle selections, graphemes and contenteditable ranges.
+      doc.execCommand?.(backward ? "delete" : "forwardDelete");
+      return {};
+    }
+    if (input.key === "Tab" && (modifiers & ~8) === 0) {
+      throw new Error("Firefox cannot perform native Tab focus navigation. Focus the next element explicitly.");
     }
     if (input.text) insertText(target, String(input.text), false);
     for (const command of input.commands || []) {
@@ -282,15 +354,15 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     const y = Number(input.y || 0);
     const type = String(input.type || "");
     const target = type === "touchStart" || type === "touchMove"
-      ? doc.elementFromPoint?.(x, y) || doc.documentElement
-      : state.touchTarget || doc.elementFromPoint?.(x, y) || doc.documentElement;
+      ? elementAtPoint(x, y)
+      : state.touchTarget || elementAtPoint(x, y);
     try {
       if (typeof page.Touch === "function" && typeof page.TouchEvent === "function" && target) {
         const point = new page.Touch({ identifier: 0, target, clientX: x, clientY: y, pageX: x, pageY: y, radiusX: 1, radiusY: 1, force: 1, rotationAngle: 0 });
         const name = type === "touchStart" ? "touchstart" : type === "touchMove" ? "touchmove" : type === "touchEnd" ? "touchend" : "touchcancel";
         const empty = type === "touchEnd" || type === "touchCancel";
         const event = new page.TouchEvent(name, {
-          bubbles: true, cancelable: true,
+          bubbles: true, cancelable: true, composed: true,
           touches: empty ? [] : [point],
           targetTouches: empty ? [] : [point],
           changedTouches: [point],
@@ -326,136 +398,105 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
       },
     };
   };
-  const roleFor = (node: DomNode): string => {
-    const explicit = attr(node, "role");
-    if (explicit) return explicit;
-    const name = String(node.nodeName || "").toUpperCase();
-    if (name === "A") return node.hasAttribute?.("href") ? "link" : "generic";
-    if (name === "BUTTON") return "button";
-    if (name === "IMG") return "image";
-    if (name === "NAV") return "navigation";
-    if (name === "MAIN") return "main";
-    if (name === "HEADER") return "banner";
-    if (name === "FOOTER") return "contentinfo";
-    if (name === "FORM") return "form";
-    if (name === "UL" || name === "OL") return "list";
-    if (name === "LI") return "listitem";
-    if (name === "TABLE") return "table";
-    if (name === "IFRAME" || name === "FRAME") return "Iframe";
-    if (name === "TEXTAREA") return "textbox";
-    if (name === "SELECT") return "combobox";
-    if (/^H[1-6]$/.test(name)) return "heading";
-    if (name === "P") return "paragraph";
-    if (name === "INPUT") {
-      const type = attr(node, "type").toLowerCase();
-      if (type === "checkbox") return "checkbox";
-      if (type === "radio") return "radio";
-      if (type === "button" || type === "submit" || type === "reset") return "button";
-      return "textbox";
-    }
-    return "generic";
-  };
-  const ownText = (node: DomNode): string => {
-    let out = "";
-    for (const child of asList(node.childNodes)) {
-      if (Number(child.nodeType) === 3) out += String(child.nodeValue || "");
-    }
-    return out.replace(/\s+/g, " ").trim().slice(0, 200);
-  };
-  const nameFor = (node: DomNode, role: string): string => {
-    const labelled = attr(node, "aria-label");
-    if (labelled) return labelled.slice(0, 200);
-    const labelledBy = attr(node, "aria-labelledby");
-    if (labelledBy && doc.getElementById) {
-      const text = labelledBy.split(/\s+/).map(id => doc.getElementById?.(id)?.textContent || "").filter(Boolean).join(" ");
-      if (text) return text.replace(/\s+/g, " ").trim().slice(0, 200);
-    }
-    if (String(node.nodeName) === "IMG") return attr(node, "alt").slice(0, 200);
-    if ("value" in node && (role === "textbox" || role === "combobox" || role === "checkbox" || role === "radio")) {
-      return String(node.value || attr(node, "placeholder") || "").slice(0, 200);
-    }
-    if (role === "generic" || role === "none") return "";
-    return ownText(node) || String(node.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200);
-  };
-  const hidden = (node: DomNode): boolean => {
-    try {
-      if (attr(node, "aria-hidden") === "true") return true;
-      const style = doc.defaultView?.getComputedStyle?.(node);
-      return style?.display === "none" || style?.visibility === "hidden";
-    } catch { return false; }
-  };
   const ax = (depthLimit: number | undefined) => {
-    const nodes: Ax[] = [];
-    const rootId = "ax-root";
-    const root: Ax = {
-      nodeId: rootId,
-      role: { value: "RootWebArea" },
-      name: { value: String(doc.title || "").slice(0, 200) },
-      childIds: [],
-      backendDOMNodeId: idFor(doc),
-    };
-    nodes.push(root);
-    const visit = (node: DomNode, depth: number, parentId: string) => {
-      if (nodes.length >= 4000 || hidden(node)) return;
-      if (depthLimit != null && depth > depthLimit) return;
-      const role = roleFor(node);
-      const name = nameFor(node, role);
-      const shadowBoundary = shadowNote(node);
-      const frameBoundary = frameNote(node);
-      const keep = (role !== "generic" && role !== "none" && role !== "") || shadowBoundary !== "" || frameBoundary !== "";
-      const id = keep || name ? `ax-${nodes.length}` : parentId;
-      let marked: Ax | undefined;
-      if (keep || name) {
-        const properties: { name: string; value: { value: unknown } }[] = [];
-        const flag = (key: string, value: unknown) => {
-          if (value === true || value === false || (typeof value === "string" && value)) properties.push({ name: key, value: { value } });
-        };
-        flag("focused", doc.activeElement === node);
-        flag("disabled", node.disabled === true || attr(node, "aria-disabled") === "true");
-        const expanded = attr(node, "aria-expanded");
-        if (expanded === "true" || expanded === "false") flag("expanded", expanded === "true");
-        if ("checked" in node) flag("checked", node.checked === true);
-        const selected = attr(node, "aria-selected");
-        if (selected === "true" || selected === "false") flag("selected", selected === "true");
-        flag("editable", node.isContentEditable === true || role === "textbox");
-        flag("readonly", node.readOnly === true);
-        flag("required", node.required === true);
-        if (role === "link") flag("url", attr(node, "href"));
-        if (shadowBoundary) properties.push({ name: "shadowBoundary", value: { value: shadowBoundary } });
-        if (frameBoundary) properties.push({ name: "frameBoundary", value: { value: frameBoundary } });
-        const axNode: Ax = {
-          nodeId: id,
-          parentId,
-          role: { value: role === "generic" ? "generic" : role },
-          name: name ? { value: name } : undefined,
-          childIds: [],
-          backendDOMNodeId: idFor(node),
-          properties,
-        };
-        nodes.push(axNode);
-        marked = axNode;
-        const parent = nodes.find(item => item.nodeId === parentId);
-        parent?.childIds?.push(id);
-      }
-      const nested = frameDocument(node);
-      const shadows = shadowChildren(node);
-      const children = asList(node.children || node.childNodes).filter(child => Number(child.nodeType) === 1);
-      if (depthLimit != null && depth >= depthLimit) {
-        if (marked && (children.length || shadows.length || nested)) marked.properties?.push({ name: "depthBoundary", value: { value: "children below this depth were omitted" } });
-        return;
-      }
-      const nextDepth = keep || name ? depth + 1 : depth;
-      for (const child of children) visit(child, nextDepth, id);
-      // Child documents have independent isolated-world registries. The host
-      // grafts their AX trees through frame sessions, never parent-world nodes.
-      for (const child of shadows) visit(child, nextDepth, id);
-    };
-    if (doc.documentElement) visit(doc.documentElement, 1, rootId);
-    return { nodes };
+    const semantics = page.__qzDomSemantics;
+    if (semantics?.version !== 1) throw new Error("Content DOM semantics are not ready");
+    return semantics.read(() => {
+      const nodes: Ax[] = [];
+      const rootId = "ax-root";
+      const root: Ax = {
+        nodeId: rootId,
+        role: { value: "RootWebArea" },
+        name: { value: String(doc.title || "").slice(0, 200) },
+        childIds: [],
+        backendDOMNodeId: idFor(doc),
+      };
+      nodes.push(root);
+      let visited = 0;
+      const visit = (node: DomNode, depth: number, parentId: string, textAllowed = false, domDepth = 0) => {
+        // Hidden and generic nodes still consume traversal budget even when omitted from AX.
+        if (++visited > 40000 || domDepth > 256 || nodes.length >= 4000) return;
+        if (depthLimit != null && depth > depthLimit) return;
+        if (Number(node.nodeType) === 3) {
+          const text = String(node.nodeValue || "").replace(/\s+/g, " ").trim();
+          if (!textAllowed || !text || !semantics.textVisible(node)) return;
+          const id = `ax-${nodes.length}`;
+          nodes.push({ nodeId: id, parentId, role: { value: "StaticText" }, name: { value: text },
+            backendDOMNodeId: idFor(node), childIds: [] });
+          nodes.find(item => item.nodeId === parentId)?.childIds?.push(id);
+          return;
+        }
+        const hidden = semantics.hidden(node);
+        const semanticRole = semantics.role(node);
+        const documentRoot = node === doc.documentElement && semanticRole === "document";
+        // CDP names images differently and retains frame owners for child-session grafting.
+        const role = semanticRole === "img" ? "image" : semanticRole
+          || (["IFRAME", "FRAME"].includes(String(node.nodeName).toUpperCase()) ? "Iframe" : "generic");
+        const name = hidden || documentRoot ? "" : semantics.name(node);
+        const shadowBoundary = shadowNote(node);
+        const frameBoundary = frameNote(node);
+        const keep = !hidden && !documentRoot
+          && ((role !== "generic" && role !== "none" && role !== "") || shadowBoundary !== "" || frameBoundary !== "");
+        const id = keep || name ? `ax-${nodes.length}` : parentId;
+        let marked: Ax | undefined;
+        if (keep || name) {
+          const properties: { name: string; value: { value: unknown } }[] = [];
+          const flag = (key: string, value: unknown) => {
+            if (value === true || value === false || (typeof value === "string" && value)) properties.push({ name: key, value: { value } });
+          };
+          flag("focused", doc.activeElement === node);
+          flag("disabled", node.disabled === true || attr(node, "aria-disabled") === "true");
+          const expanded = attr(node, "aria-expanded");
+          if (expanded === "true" || expanded === "false") flag("expanded", expanded === "true");
+          if ("checked" in node) flag("checked", node.checked === true);
+          const selected = attr(node, "aria-selected");
+          if (selected === "true" || selected === "false") flag("selected", selected === "true");
+          flag("editable", node.isContentEditable === true || role === "textbox");
+          flag("readonly", node.readOnly === true);
+          flag("required", node.required === true);
+          if (role === "link") flag("url", attr(node, "href"));
+          if (shadowBoundary) properties.push({ name: "shadowBoundary", value: { value: shadowBoundary } });
+          if (frameBoundary) properties.push({ name: "frameBoundary", value: { value: frameBoundary } });
+          const axNode: Ax = {
+            nodeId: id,
+            parentId,
+            role: { value: role === "generic" ? "generic" : role },
+            name: name ? { value: name } : undefined,
+            childIds: [],
+            backendDOMNodeId: idFor(node),
+            properties,
+          };
+          nodes.push(axNode);
+          marked = axNode;
+          const parent = nodes.find(item => item.nodeId === parentId);
+          parent?.childIds?.push(id);
+        }
+        const nested = frameDocument(node);
+        const shadows = shadowChildren(node);
+        const children = asList(node.childNodes || node.children).filter(child => [1, 3].includes(Number(child.nodeType)));
+        if (depthLimit != null && depth >= depthLimit) {
+          if (marked && (children.length || shadows.length || nested)) marked.properties?.push({ name: "depthBoundary", value: { value: "children below this depth were omitted" } });
+          return;
+        }
+        const nextDepth = keep || name ? depth + 1 : depth;
+        for (const child of children) {
+          if (visited >= 40000 || nodes.length >= 4000) break;
+          visit(child, nextDepth, id, !hidden, domDepth + 1);
+        }
+        // Child documents have independent isolated-world registries. The host
+        // grafts their AX trees through frame sessions, never parent-world nodes.
+        for (const child of shadows) {
+          if (visited >= 40000 || nodes.length >= 4000) break;
+          visit(child, nextDepth, id, !hidden, domDepth + 1);
+        }
+      };
+      if (doc.documentElement) visit(doc.documentElement, 1, rootId);
+      return { nodes };
+    });
   };
   const elementChildren = (node: DomNode | null | undefined): DomNode[] => asList(node?.children || node?.childNodes).filter(child => Number(child.nodeType) === 1);
   const shadowChildren = (node: DomNode): DomNode[] => {
-    try { return node.shadowRoot ? elementChildren(node.shadowRoot) : []; }
+    try { return asList(node.shadowRoot?.childNodes || node.shadowRoot?.children).filter(child => [1, 3].includes(Number(child.nodeType))); }
     catch { return []; }
   };
   const frameDocument = (node: DomNode): DomNode | null => {
@@ -522,14 +563,13 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
       case "resolve": {
         const node = nodeFor(command.backendNodeId);
         if (!node) throw new Error("No node with given id found");
-        const objectId = `ff-node-${command.backendNodeId}`;
-        state.objects.set(objectId, { node, group: String(command.objectGroup || "") });
+        const objectId = retainObject(node, String(command.objectGroup || ""));
         return { object: { type: "object", subtype: "node", objectId, description: String(node.nodeName || "") } };
       }
       case "probe": {
         let extensionId = "";
         try { extensionId = String(page.chrome?.runtime?.id || ""); } catch { extensionId = ""; }
-        return { result: remote({ extensionId, bridge: typeof page.__qzInvoke === "function" }) };
+        return { result: remote({ extensionId, bridge: typeof page.__qzInvoke === "function", elementRefs: page.__qzElementRefVersion === 1 }) };
       }
       case "invoke": {
         const bound = state.objects.get(String(command.objectId || ""));
@@ -540,11 +580,22 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
         if (command.awaitPromise !== false && value && typeof (value as Promise<unknown>).then === "function") value = await value;
         if (command.returnByValue === false && value && typeof value === "object" && "nodeType" in value && value.nodeType === 1) {
           const node = value as DomNode;
-          const objectId = `ff-node-${idFor(node)}`;
-          state.objects.set(objectId, { node, group: String(command.objectGroup || "") });
+          const objectId = retainObject(node, String(command.objectGroup || ""));
           return { result: { type: "object", subtype: "node", objectId } };
         }
+        if (command.returnByValue === false && Array.isArray(value)) {
+          const objectId = retainObject(value as (DomNode | null)[], String(command.objectGroup || ""));
+          return { result: { type: "object", subtype: "array", objectId } };
+        }
         return { result: remote(value) };
+      }
+      case "properties": {
+        const bound = state.objects.get(command.objectId);
+        return { result: (bound?.nodes || []).map((node: DomNode | null, index: number) => {
+          if (!node || typeof node.nodeType !== "number") return { name: String(index), value: remote(node) };
+          const objectId = retainObject(node, bound?.group || "");
+          return { name: String(index), value: { type: "object", subtype: "node", objectId } };
+        }) };
       }
       case "call": {
         const bound = state.objects.get(String(command.objectId || ""));
@@ -562,6 +613,8 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
         for (const [objectId, bound] of state.objects) if (!group || bound.group === group) state.objects.delete(objectId);
         return {};
       }
+      case "semantics":
+        return page.__qzDomSemantics?.version || 0;
       case "ax":
         return ax(typeof command.depth === "number" ? command.depth : undefined);
       case "layout":
@@ -591,7 +644,7 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
         };
       }
       case "inputFrame": {
-        const target = command.active ? doc.activeElement : doc.elementFromPoint?.(command.x, command.y);
+        const target = command.active ? activeElement() : elementAtPoint(command.x, command.y);
         if (!target || !["IFRAME", "FRAME"].includes(String(target.nodeName).toUpperCase())) return {};
         const rect = quad(target);
         return { backendNodeId: idFor(target), x: command.x - rect.x - Number(target.clientLeft || 0),
@@ -603,7 +656,7 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
           case "mouse": return mouse(input);
           case "key": return key(input);
           case "text":
-            insertText(doc.activeElement || null, String(input.text || ""), true);
+            insertText(activeElement(), String(input.text || ""), true);
             return {};
           case "touch": return touch(input);
           default: {
@@ -645,7 +698,7 @@ export function firefoxConsoleMain(): void {
   let seq = 0;
   const push = (record: ConsoleRecord) => {
     seq += 1;
-    queue.push({ seq, record });
+    queue.push({ seq, record: { ...record, timestamp: Date.now() } });
     if (queue.length > 200) queue.shift();
     root.setAttribute?.("data-qz-console-queue", JSON.stringify(queue));
   };
@@ -671,10 +724,11 @@ export function firefoxConsoleMain(): void {
   });
 }
 
-export function firefoxConsoleBridge(): void {
+export function firefoxConsoleBridge(replay = false): void {
   const page = globalThis as unknown as PageScope;
   const root = page.document?.documentElement;
-  if (!root?.getAttribute || root.__qzConsoleBridge) return;
+  if (!root?.getAttribute || (root.__qzConsoleBridge && !replay)) return;
+  const installed = root.__qzConsoleBridge;
   root.__qzConsoleBridge = true;
   root.__qzConsoleSeen = 0;
   const flush = () => {
@@ -690,7 +744,7 @@ export function firefoxConsoleBridge(): void {
     root.__qzConsoleSeen = last;
   };
   const Observer = page.MutationObserver;
-  if (typeof Observer === "function") new Observer(flush).observe(root, { attributes: true, attributeFilter: ["data-qz-console-queue"] });
+  if (!installed && typeof Observer === "function") new Observer(flush).observe(root, { attributes: true, attributeFilter: ["data-qz-console-queue"] });
   flush();
 }
 
@@ -705,8 +759,10 @@ export type PageCommand =
   | { op: "call"; objectId: string; functionDeclaration: string; arguments?: { value?: unknown }[]; awaitPromise?: boolean }
   | { op: "probe" }
   | { op: "invoke"; objectId: string; payload?: unknown; awaitPromise?: boolean; returnByValue?: boolean; objectGroup?: string }
+  | { op: "properties"; objectId: string }
   | { op: "evaluate"; expression: string; awaitPromise?: boolean }
   | { op: "release"; objectGroup?: string }
+  | { op: "semantics" }
   | { op: "ax"; depth?: number }
   | { op: "layout" }
   | { op: "owners" }
@@ -715,7 +771,7 @@ export type PageCommand =
   | { op: "input"; input: InputCommand };
 
 type InputCommand = MouseInput | KeyInput | { kind: "text"; text?: string } | TouchInput;
-interface MouseInput { kind: "mouse"; type?: string; x?: number; y?: number; button?: string; clickCount?: number; deltaX?: number; deltaY?: number }
+interface MouseInput { kind: "mouse"; type?: string; x?: number; y?: number; button?: string; buttons?: number; clickCount?: number; deltaX?: number; deltaY?: number }
 interface KeyInput { kind: "key"; type?: string; key?: string; code?: string; keyCode?: number; modifiers?: number; text?: string; commands?: string[] }
 interface TouchInput { kind: "touch"; type?: string; x?: number; y?: number }
 
@@ -726,15 +782,16 @@ interface Ax {
   role?: { value: string }; name?: { value: string };
   properties?: { name: string; value: { value: unknown } }[];
 }
-interface ConsoleRecord { kind: "console" | "exception"; type?: string; text?: string; args?: string[]; stack?: string; url?: string; line?: number; column?: number }
+interface ConsoleRecord { kind: "console" | "exception"; timestamp?: number; type?: string; text?: string; args?: string[]; stack?: string; url?: string; line?: number; column?: number }
 interface DomNode {
   nodeType?: number; nodeName?: string; nodeValue?: string; textContent?: string; title?: string;
   childNodes?: ArrayLike<DomNode>; children?: ArrayLike<DomNode>;
   getAttribute?(name: string): string | null; setAttribute?(name: string, value: string): void;
   hasAttribute?(name: string): boolean; getBoundingClientRect?(): { x?: number; y?: number; left?: number; top?: number; width?: number; height?: number };
   querySelectorAll?(selector: string): ArrayLike<DomNode>; dispatchEvent?(event: unknown): boolean;
+  elementFromPoint?(x: number, y: number): DomNode | null;
   contentDocument?: (DomNode & { documentElement?: DomNode | null }) | null; contentWindow?: { location?: { href?: string } } | null;
-  shadowRoot?: DomNode | null; focus?(): void;
+  shadowRoot?: DomNode | null; activeElement?: DomNode | null; focus?(): void; getRootNode?(): DomNode;
   ownerDocument?: DomNode; type?: string; matches?(selector: string): boolean; click?(): void;
   clientLeft?: number; clientTop?: number;
   form?: { requestSubmit?(submitter?: DomNode): void } | null;
@@ -768,10 +825,16 @@ interface PageScope {
   addEventListener?(type: string, listener: (event: unknown) => void): void;
   MutationObserver?: new (callback: () => void) => { observe(target: DomNode, options: { attributes: boolean; attributeFilter: string[] }): void };
   chrome?: { runtime?: { id?: string; sendMessage?(message: unknown): void } };
-  __qzInvoke?: (this: unknown, node: DomNode, payload: unknown) => unknown;
+  __qzInvoke?: (this: unknown, node: DomNode | null, payload: unknown) => unknown;
+  __qzElementRefVersion?: number;
+  __qzDomSemantics?: {
+    version: number; role(node: DomNode): string; name(node: DomNode): string; hidden(node: DomNode): boolean;
+    textVisible(node: DomNode): boolean;
+    read<T>(observe: () => T): T;
+  };
   __qzExtensionInputEvents?: { add(value: object): void };
   __qzFirefoxPage?: {
-    next: number; nodes: Map<number, DomNode>; objects: Map<string, { node: DomNode; group: string }>;
-    mouseTarget: DomNode | null; touchTarget: DomNode | null;
+    version: number; next: number; nextObject?: number; nodes: Map<number, WeakRef<DomNode>>; nodeIds: WeakMap<DomNode, number>; objects: Map<string, { node: DomNode | null; nodes?: (DomNode | null)[]; group: string }>;
+    mouseTarget: DomNode | null; mouseEventsSuppressed?: boolean; spaceTarget?: DomNode | null; touchTarget: DomNode | null;
   };
 }

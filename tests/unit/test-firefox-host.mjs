@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInThisContext } from "node:vm";
 import { installFirefoxDebugger } from "../../src/background/firefox/debugger-host.js";
 import { readViewportBands } from "../../src/capabilities/accessibility/viewport.js";
 import { ISOLATED_CONTENT_INVOKE, ISOLATED_CONTENT_PROBE } from "../../src/background/tools/isolated-page-calls.js";
@@ -688,7 +689,8 @@ test("the debugger shim reports frames, isolated contexts, clicks, and network b
     dispatchEvent(event) { this.events.push(event.type); return true; },
   };
   const document = {
-    nodeType: 9, nodeName: "#document", title: "Example", documentElement: element, body: element, activeElement: element,
+    nodeType: 9, nodeName: "#document", title: "Example", body: element, activeElement: element,
+    documentElement: { nodeName: 'HTML', nodeType: 1, children: [element], childNodes: [element], getAttribute() { return null; } },
     scrollingElement: { scrollLeft: 0, scrollTop: 0, scrollWidth: 100, scrollHeight: 100, clientWidth: 50, clientHeight: 40 },
     querySelectorAll: selector => selector === "button" ? [element] : [],
     elementFromPoint: () => element,
@@ -717,6 +719,7 @@ test("the debugger shim reports frames, isolated contexts, clicks, and network b
     },
   };
   await withPage(document, async () => {
+    installFixtureSemantics(new Map([[element, { role: 'button', name: 'Go' }]]));
     installFirefoxDebugger(browser);
     browser.debugger.onEvent.addListener((source, method, params) => events.push({ source, method, params }));
     browser.debugger.onDetach.addListener((_source, reason) => events.push({ reason }));
@@ -939,6 +942,47 @@ test("auto-attach announces every frame once and detaches it when it leaves", as
   assert.equal(events.filter(method => method === "Target.detachedFromTarget").length, 2);
 });
 
+test("idle iframe navigation changes its document identity without resuming debugger work", async () => {
+  const browser = debuggerBrowser();
+  const events = [];
+  let committed, removed, injections = 0;
+  browser.webNavigation = {
+    async getAllFrames() { return [
+      { frameId: 0, parentFrameId: -1, url: "https://example.test/" },
+      { frameId: 7, parentFrameId: 0, url: "https://other.test/frame" },
+    ]; },
+    onCommitted: { addListener(listener) { committed = listener; } },
+  };
+  browser.tabs.onRemoved = { addListener(listener) { removed = listener; } };
+  browser.scripting.executeScript = async () => { injections++; return [{ result: undefined }]; };
+  installFirefoxDebugger(browser);
+  browser.debugger.onEvent.addListener((_source, method) => events.push(method));
+  const target = { tabId: 3 }, child = { ...target, sessionId: "ff-3-7" };
+  const loader = async source => (await browser.debugger.sendCommand(source, "Page.getFrameTree")).frameTree.frame.loaderId;
+  await browser.debugger.attach(target, "1.3");
+  await browser.debugger.sendCommand(target, "Runtime.enable");
+  const mainBefore = await loader(target), childBefore = await loader(child);
+  await browser.debugger.detach(target);
+  const beforeEvents = events.length, beforeInjections = injections;
+  committed({ tabId: 3, frameId: 7, url: "https://other.test/frame" });
+  await Promise.resolve();
+  assert.equal(events.length, beforeEvents);
+  assert.equal(injections, beforeInjections);
+  await assert.rejects(browser.debugger.sendCommand(child, "Page.getFrameTree"), /not attached/);
+  await browser.debugger.attach(target, "1.3");
+  assert.equal(await loader(target), mainBefore, "only the iframe document changed");
+  const childAfter = await loader(child);
+  assert.notEqual(childAfter, childBefore, "old iframe UIDs must fail their loader check even at the same URL");
+  await browser.debugger.detach(target);
+  await browser.debugger.attach(target, "1.3");
+  assert.equal(await loader(child), childAfter, "reconnecting alone must preserve element identity");
+  await browser.debugger.detach(target);
+  removed(3);
+  await browser.debugger.attach(target, "1.3");
+  assert.equal(await loader(child), childBefore, "closing a detached tab clears its tracked generations");
+  await browser.debugger.detach(target);
+});
+
 test("network listeners fall back when Firefox rejects extraInfoSpec", async () => {
   const events = [];
   let beforeAdds = 0;
@@ -1041,6 +1085,41 @@ test("click, press, and paste failures name the missing target", async () => {
   });
 });
 
+test("the accessibility adapter installs shared semantics once per document and replaces stale versions", async () => {
+  const browser = debuggerBrowser();
+  const versions = new Map([[0, 0], [7, 99]]), calls = [];
+  browser.webNavigation.getAllFrames = async () => [
+    { frameId: 0, parentFrameId: -1, url: 'https://example.test/' },
+    { frameId: 7, parentFrameId: 0, url: 'https://child.test/' },
+  ];
+  browser.scripting.executeScript = async ({ target, world, files, args }) => {
+    const frameId = target.frameIds[0];
+    if (files) {
+      assert.deepEqual(files, ['content/article-extractor.js', 'content/content-script.js']);
+      assert.equal(world || 'ISOLATED', 'ISOLATED');
+      assert.equal(target.tabId, 6);
+      calls.push(['install', frameId]);
+      versions.set(frameId, 1);
+    } else if (args?.[0]?.op === 'semantics') {
+      return [{ result: versions.get(frameId) }];
+    } else if (args?.[0]?.op === 'ax') {
+      calls.push(['ax', frameId]);
+      return [{ result: { nodes: [] } }];
+    }
+    return [{ result: undefined }];
+  };
+  installFirefoxDebugger(browser);
+  await browser.debugger.attach({ tabId: 6 }, '1.3');
+  await browser.debugger.sendCommand({ tabId: 6 }, 'Target.setAutoAttach', { autoAttach: true });
+  const read = frameId => browser.debugger.sendCommand({ tabId: 6,
+    ...(frameId ? { sessionId: `ff-6-${frameId}` } : {}) }, 'Accessibility.getFullAXTree', {});
+  for (const frameId of [0, 7]) { await read(frameId); await read(frameId); }
+  assert.deepEqual(calls, [['install', 0], ['ax', 0], ['ax', 0], ['install', 7], ['ax', 7], ['ax', 7]]);
+  versions.set(7, 0); // A replacement document starts without the provider.
+  await read(7);
+  assert.deepEqual(calls.slice(-2), [['install', 7], ['ax', 7]]);
+});
+
 test("the accessibility walk names shadow and nested-frame boundaries", async () => {
   const inner = {
     nodeName: "BUTTON", nodeType: 1, textContent: "Inner",
@@ -1083,6 +1162,8 @@ test("the accessibility walk names shadow and nested-frame boundaries", async ()
   const document = { nodeType: 9, title: "Example", documentElement: root, defaultView: { getComputedStyle: () => ({}) } };
   const browser = debuggerBrowser();
   await withPage(document, async () => {
+    const semantics = new Map([[inner, { role: 'button', name: 'Inner' }], [linked, { role: 'link', name: 'In' }]]);
+    installFixtureSemantics(semantics);
     installFirefoxDebugger(browser);
     await browser.debugger.attach({ tabId: 6 }, "1.3");
     const tree = await browser.debugger.sendCommand({ tabId: 6 }, "Accessibility.getFullAXTree", {});
@@ -1101,6 +1182,8 @@ test("the accessibility walk names shadow and nested-frame boundaries", async ()
       childNodes: [],
       getAttribute() { return null; },
     };
+    button.childNodes = button.children;
+    semantics.set(button, { role: 'button', name: 'Go' });
     document.documentElement = button;
     const limited = await browser.debugger.sendCommand({ tabId: 6 }, "Accessibility.getFullAXTree", { depth: 1 });
     const bounded = limited.nodes.find(node => values(node).includes("children below this depth were omitted"));
@@ -1122,6 +1205,74 @@ test("Runtime.disable leaves the session hook enabled", async () => {
   assert.match(agent.result.value, /Chrome\/131\.0\.0\.0/);
   onMessage({ type: "qz-firefox-console", record: { kind: "console", type: "log", args: ["still"] } }, { tab: { id: 3 } });
   assert.equal(events.filter(event => event.method === "Runtime.consoleAPICalled").length, 1);
+});
+
+test("console reattachment replays idle logs with capture timestamps and one bridge observer", async t => {
+  const attributes = new Map(), observers = [], events = [], pageListeners = [];
+  const root = {
+    getAttribute: name => attributes.get(name) ?? null,
+    setAttribute(name, value) {
+      attributes.set(name, value);
+      if (name === "data-qz-console-queue") for (const callback of observers) callback();
+    },
+  };
+  const browser = debuggerBrowser();
+  const pageConsole = { log() {} };
+  let onMessage, now = 1000;
+  t.mock.method(Date, "now", () => now);
+  browser.runtime.onMessage = { addListener(listener) { onMessage = listener; } };
+  browser.scripting.executeScript = async ({ func, args }) => {
+    if (func.name === "firefoxConsoleMain") {
+      const oldConsole = globalThis.console, oldAddListener = globalThis.addEventListener;
+      globalThis.console = pageConsole;
+      globalThis.addEventListener = (...listener) => pageListeners.push(listener);
+      try { func(...args); }
+      finally {
+        globalThis.console = oldConsole;
+        if (oldAddListener === undefined) delete globalThis.addEventListener;
+        else globalThis.addEventListener = oldAddListener;
+      }
+    } else if (func.name === "firefoxConsoleBridge") func(...args);
+    return [{ result: undefined }];
+  };
+  await withPage({ documentElement: root }, async () => {
+    const oldChrome = globalThis.chrome, oldObserver = globalThis.MutationObserver;
+    globalThis.chrome = { runtime: { sendMessage: message => onMessage(message, { tab: { id: 3 } }) } };
+    globalThis.MutationObserver = class { constructor(callback) { observers.push(callback); } observe() {} };
+    try {
+      installFirefoxDebugger(browser);
+      browser.debugger.onEvent.addListener((_source, method, params) => {
+        if (method === "Runtime.consoleAPICalled") events.push({ text: params.args[0].value, timestamp: params.timestamp });
+      });
+      await browser.debugger.attach({ tabId: 3 }, "1.3");
+      await browser.debugger.sendCommand({ tabId: 3 }, "Runtime.enable");
+      pageConsole.log("before");
+      await browser.debugger.detach({ tabId: 3 });
+      now = 2000;
+      pageConsole.log("during idle");
+      assert.deepEqual(events, [{ text: "before", timestamp: 1000 }]);
+      now = 3000;
+      await browser.debugger.attach({ tabId: 3 }, "1.3");
+      await browser.debugger.sendCommand({ tabId: 3 }, "Runtime.enable");
+      assert.deepEqual(events, [
+        { text: "before", timestamp: 1000 },
+        { text: "before", timestamp: 1000 },
+        { text: "during idle", timestamp: 2000 },
+      ], "replay preserves event identities so diagnostics can discard previously observed entries");
+      assert.equal(observers.length, 1);
+      assert.equal(pageListeners.length, 2, "console installation must not duplicate error listeners");
+      now = 4000;
+      pageConsole.log("after");
+      assert.deepEqual(events.at(-1), { text: "after", timestamp: 4000 });
+      assert.equal(events.length, 4, "live logs pass through only one observer");
+      await browser.debugger.sendCommand({ tabId: 3 }, "Runtime.enable");
+      assert.equal(events.length, 4, "enabling an already enabled Runtime does not replay again");
+      await browser.debugger.detach({ tabId: 3 });
+    } finally {
+      if (oldChrome === undefined) delete globalThis.chrome; else globalThis.chrome = oldChrome;
+      if (oldObserver === undefined) delete globalThis.MutationObserver; else globalThis.MutationObserver = oldObserver;
+    }
+  });
 });
 
 test("a screenshot that exceeds the tile budget says what was omitted", async () => {
@@ -1229,6 +1380,68 @@ test("a full-document capture becomes one pdf page", async () => {
   });
 });
 
+test("mouse input preserves double-click order, hover buttons, and drag destination", async () => {
+  const events = [];
+  const element = id => ({
+    nodeName: "DIV", nodeType: 1, focus() {},
+    dispatchEvent(event) {
+      events.push({ target: id, type: event.type, buttons: event.buttons, detail: event.detail, bubbles: event.bubbles });
+      return true;
+    },
+  });
+  const source = element("source"), destination = element("destination");
+  const document = { nodeType: 9, documentElement: source, body: source,
+    elementFromPoint: x => x < 50 ? source : destination,
+    defaultView: { scrollX: 0, scrollY: 0, innerWidth: 800, innerHeight: 600 },
+  };
+  await withPage(document, async () => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "PointerEvent");
+    Object.defineProperty(globalThis, "PointerEvent", { configurable: true, value: class {
+      constructor(type, init) { Object.assign(this, { type }, init); }
+    } });
+    try {
+      const browser = debuggerBrowser();
+      installFirefoxDebugger(browser);
+      await browser.debugger.attach({ tabId: 6 }, "1.3");
+      const mouse = (type, x, extra = {}) => browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", {
+        type, x, y: 10, button: "left", ...extra,
+      });
+      await mouse("mouseMoved", 10);
+      assert.deepEqual(events.map(event => [event.type, event.buttons]), [["pointermove", 0], ["mousemove", 0]]);
+
+      events.length = 0;
+      for (const clickCount of [1, 2]) {
+        await mouse("mousePressed", 10, { clickCount });
+        await mouse("mouseReleased", 10, { clickCount });
+      }
+      assert.deepEqual(events.filter(event => ["click", "dblclick"].includes(event.type))
+        .map(event => [event.type, event.detail]), [["click", 1], ["click", 2], ["dblclick", 2]]);
+
+      events.length = 0;
+      await mouse("mousePressed", 10);
+      await mouse("mouseMoved", 100, { buttons: 1 });
+      await mouse("mouseReleased", 100, { buttons: 0 });
+      assert.deepEqual(events.map(event => [event.target, event.type, event.buttons]), [
+        ["source", "pointerdown", 1], ["source", "mousedown", 1],
+        ["destination", "pointermove", 1], ["destination", "mousemove", 1],
+        ["destination", "pointerup", 0], ["destination", "mouseup", 0],
+      ]);
+      assert.ok(events.every(event => event.bubbles), "destination releases must reach document listeners");
+      assert.equal(globalThis.__qzFirefoxPage.mouseTarget, null);
+
+      events.length = 0;
+      await mouse("mousePressed", 10);
+      await mouse("mouseReleased", -1);
+      assert.deepEqual(events.map(event => event.type), ["pointerdown", "mousedown", "pointerup", "mouseup"]);
+      assert.ok(events.slice(-2).every(event => event.buttons === 0));
+      assert.equal(globalThis.__qzFirefoxPage.mouseTarget, null);
+    } finally {
+      if (previous) Object.defineProperty(globalThis, "PointerEvent", previous);
+      else delete globalThis.PointerEvent;
+    }
+  });
+});
+
 test("clicks dispatch events without explicit navigation or submission", async () => {
   const events = [];
   const assigned = [];
@@ -1274,7 +1487,8 @@ test("clicks dispatch events without explicit navigation or submission", async (
         events.length = 0;
         await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mousePressed", x: 1, y: 1, button: "left", clickCount });
         await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mouseReleased", x: 1, y: 1, button: "left", clickCount });
-        assert.deepEqual(events, ["pointerdown", "mousedown", "pointerup", "mouseup", clickCount > 1 ? "dblclick" : "click"]);
+        assert.deepEqual(events, target === link && !link.allow ? ["pointerdown", "pointerup", "click"]
+          : ["pointerdown", "mousedown", "pointerup", "mouseup", "click", ...(clickCount === 2 ? ["dblclick"] : [])]);
         assert.deepEqual(assigned, []);
         assert.deepEqual(opened, []);
         assert.deepEqual(submitted, []);
@@ -1312,6 +1526,23 @@ test("product text stays on the Chrome sentence outside a Firefox extension page
     if (previous === undefined) delete globalThis.chrome;
     else globalThis.chrome = previous;
   }
+});
+
+test("Firefox evaluation retains the native SyntaxError without losing its page context", async () => {
+  const document = { nodeType: 9, nodeName: "#document", title: "Syntax", documentElement: {}, defaultView: {} };
+  await withPage(document, async () => {
+    const browser = debuggerBrowser();
+    installFirefoxDebugger(browser);
+    await browser.debugger.attach({ tabId: 8 }, "1.3");
+    const failed = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.evaluate", {
+      expression: "(async () => { const value = ; })()", awaitPromise: true, returnByValue: true,
+    });
+    assert.match(failed.exceptionDetails.exception.description, /^SyntaxError:/);
+    assert.match(failed.exceptionDetails.text, /SyntaxError:/);
+    assert.equal(failed.result, undefined);
+    const valid = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.evaluate", { expression: "1+2", returnByValue: true });
+    assert.equal(valid.result.value, 3, "invalid syntax leaves the page context usable");
+  });
 });
 
 test("isolated content calls run without compiling a function", async () => {
@@ -1401,7 +1632,7 @@ test("isolated content calls run without compiling a function", async () => {
         returnByValue: true,
       });
       assert.equal(main.result.value, 3);
-      assert.equal(compiled, 1, "a main-world expression still compiles");
+      assert.equal(compiled, 0, "main-world compilation uses the native userScripts API");
     });
   } finally {
     globalThis.Function = nativeFunction;
@@ -1468,10 +1699,9 @@ test("Firefox viewport geometry batches 4000 nodes in one page injection", async
     await browser.debugger.attach({ tabId: 9 }, "1.3");
     const send = (method, params) => browser.debugger.sendCommand({ tabId: 9 }, method, params);
     await send("DOM.getDocument");
-    const nodes = Array.from({ length: 4000 }, (_, index) => ({ nodeId: String(index + 1), backendDOMNodeId: index + 1 }));
-    for (const [index, node] of nodes.entries()) globalThis.__qzFirefoxPage.nodes.set(node.backendDOMNodeId, {
-      getBoundingClientRect: () => ({ x: 0, y: index * 12, width: 100, height: 10 }),
-    });
+    const nodes = Array.from({ length: 4000 }, (_, index) => ({ nodeId: String(index + 1), backendDOMNodeId: index + 1,
+      element: { getBoundingClientRect: () => ({ x: 0, y: index * 12, width: 100, height: 10 }) } }));
+    for (const node of nodes) globalThis.__qzFirefoxPage.nodes.set(node.backendDOMNodeId, new WeakRef(node.element));
     injections = 0;
     let next = 0;
     const start = performance.now();
@@ -1489,8 +1719,8 @@ test("Firefox viewport geometry batches 4000 nodes in one page injection", async
     assert.equal([...bands.values()].filter(band => band === "inside").length, 50);
     assert.equal(bands.get("4000"), "below");
     console.log(JSON.stringify({ measurement: "Firefox host/page-command in Node", nodes: 4000, beforeInjections: 4000, afterInjections: 1, beforeMs, afterMs }));
-    globalThis.__qzFirefoxPage.nodes.set(4001, { getBoundingClientRect() { throw new Error("detached"); } });
-    globalThis.__qzFirefoxPage.nodes.set(4002, { getBoundingClientRect: () => ({ x: 0, y: 0, width: 0, height: 0 }) });
+    globalThis.__qzFirefoxPage.nodes.set(4001, new WeakRef({ getBoundingClientRect() { throw new Error("detached"); } }));
+    globalThis.__qzFirefoxPage.nodes.set(4002, new WeakRef({ getBoundingClientRect: () => ({ x: 0, y: 0, width: 0, height: 0 }) }));
     const partial = await send("DOM.getNodeRects", { backendNodeIds: [4001, 4002, 4002, 9999] });
     assert.deepEqual(partial.rects, [{ backendNodeId: 4002, x: 0, y: 0, width: 0, height: 0 }]);
   });
@@ -1504,12 +1734,26 @@ function debuggerBrowser(capture) {
       async get() { return { windowId: 1, url: "https://example.test/" }; },
       async captureTab(_id, options) { return capture ? capture(options) : "data:image/png;base64,aaaa"; },
     },
-    webNavigation: { async getAllFrames() { return []; }, onCommitted: { addListener() {} } },
+    webNavigation: {
+      async getAllFrames() { return []; },
+      async getFrame({ frameId }) { return { documentId: `document-${frameId}` }; },
+      onCommitted: { addListener() {} },
+    },
     scripting: { async executeScript({ func, args }) {
       if (func.name !== "firefoxPageCommand") return [{ result: undefined }];
       return [{ result: await func(...(args || [])) }];
     } },
+    userScripts: { async execute({ target, js }) {
+      const frameId = Number(target.documentIds[0].slice("document-".length));
+      try { return [{ frameId, result: await runInThisContext(js[0].code) }]; }
+      catch (error) { return [{ frameId, error }]; }
+    } },
   };
+}
+
+function installFixtureSemantics(entries) {
+  globalThis.__qzDomSemantics = { version: 1, read: fn => fn(), hidden: () => false, textVisible: () => true,
+    role: node => entries.get(node)?.role || '', name: node => entries.get(node)?.name || '' };
 }
 
 let pageLock = Promise.resolve();
@@ -1528,6 +1772,7 @@ async function withPage(document, fn) {
     delete globalThis.__qzFirefoxPage;
     delete globalThis.__qzInvoke;
     delete globalThis.__qzExtensionInputEvents;
+    delete globalThis.__qzDomSemantics;
     release();
   }
 }

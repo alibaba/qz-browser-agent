@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { build } from "esbuild";
+import { playwrightDomSources } from "../../scripts/vendor/playwright-dom.mjs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -36,6 +37,7 @@ test.before(async () => {
     platform: "browser",
     target: "chrome114",
     logLevel: "silent",
+    plugins: [playwrightDomSources()],
   });
   browser = await chromium.launch({ headless: true });
   page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -161,4 +163,94 @@ test("find_elements matches text inside nested open shadows and ignores closed s
 
   const invalid = await findElements({ selector: "###", pattern: "117" });
   assert.equal(invalid.code, "INVALID_SELECTOR");
+});
+
+test("readiness reads state without rich descriptions or missing-target page scans", async () => {
+  const result = await page.evaluate(async () => {
+    const root = document.createElement("div");
+    root.style.cssText = "position:fixed;left:20px;top:20px;z-index:2147483647;background:white";
+    root.innerHTML = '<button id="readiness-probe">A descriptive label</button><div contenteditable="true"><span>Editable child</span></div>';
+    document.body.append(root);
+    const button = root.querySelector("button"), editor = root.querySelector("[contenteditable]"), child = root.querySelector("span");
+    Object.defineProperty(button, "textContent", { configurable: true, get() { throw new Error("Readiness requested rich text"); } });
+    const getAttribute = button.getAttribute;
+    button.getAttribute = function (name) {
+      if (name === "aria-label") throw new Error("Readiness requested an accessible name");
+      return getAttribute.call(this, name);
+    };
+    try {
+      const css = await __callQingzhouContent("readElementReadiness", { selector: "#readiness-probe" });
+      const bound = await __qzInvoke(button, { action: "readElementReadiness" });
+      button.disabled = true;
+      const disabled = await __qzInvoke(button, { action: "readElementReadiness" });
+      const missing = await __callQingzhouContent("readElementReadiness", { selector: "#readiness-absent" });
+      const invalid = await __callQingzhouContent("readElementReadiness", { selector: "###" });
+      const editing = await __qzInvoke(child, { action: "readElementReadiness", editingHost: true });
+      editor.setAttribute("aria-readonly", "true");
+      const readonly = await __qzInvoke(child, { action: "readElementReadiness", editingHost: true });
+      const documentRoot = await __qzInvoke(document, { action: "readElementReadiness" });
+      delete button.textContent;
+      button.getAttribute = getAttribute;
+      const full = await __callQingzhouContent("inspectElement", { selector: "#readiness-probe" });
+      button.remove();
+      const stale = await __qzInvoke(button, { action: "readElementReadiness" });
+      return { css, bound, disabled, missing, invalid, editing, readonly, rootTag: documentRoot.tag, full, stale };
+    } finally { root.remove(); }
+  });
+  assert.equal(result.css.tag, "button");
+  assert.equal(result.css.visible, true);
+  assert.equal(result.css.disabled, false);
+  assert.deepEqual(result.bound, JSON.parse(JSON.stringify(result.css)));
+  assert.deepEqual(Object.keys(result.bound).sort(), ["tag", "type", "visible", "disabled", "readOnly", "editable", "rect", "clickablePoint", "state"].sort());
+  assert.equal(result.disabled.disabled, true);
+  assert.equal(result.missing.code, "ELEMENT_NOT_FOUND");
+  assert.equal(result.invalid.code, "INVALID_SELECTOR");
+  assert.equal(result.missing.interactable, undefined);
+  assert.equal(result.invalid.interactable, undefined);
+  assert.equal(result.editing.tag, "div");
+  assert.equal(result.editing.editable, true);
+  assert.equal(result.readonly.readOnly, true);
+  assert.equal(result.rootTag, "body");
+  assert.equal(result.full.text, "A descriptive label");
+  assert.ok(result.full.attrs);
+  assert.ok(result.full.parent);
+  assert.equal(result.stale.code, "STALE_ELEMENT_UID");
+});
+
+test("check readiness reuses safe label resolution without scrolling during observation", async () => {
+  const result = await page.evaluate(async () => {
+    const root = document.createElement("div");
+    root.style.cssText = "position:fixed;left:20px;top:20px;z-index:2147483647;background:white";
+    root.innerHTML = '<input id="readiness-check" type="checkbox" style="display:none"><label for="readiness-check" style="display:block;width:120px;height:30px">Agree</label>';
+    document.body.append(root);
+    const control = root.querySelector("input"), label = root.querySelector("label");
+    let scrolls = 0;
+    control.scrollIntoView = label.scrollIntoView = () => { scrolls++; };
+    try {
+      const read = () => __qzInvoke(control, { action: "readElementReadiness", elementAction: "check" });
+      const check = await read();
+      const clickedLabel = await __qzInvoke(control, { action: "readElementReadiness", clickTarget: true });
+      const initialScrolls = scrolls;
+      const prepared = await __qzInvoke(control, { action: "resolveCheckTarget" });
+      const preparedScrolls = scrolls;
+      control.checked = true;
+      const checked = await read();
+      label.innerHTML = '<a href="#unrelated" style="display:block;width:100%;height:100%">Separate link</a>';
+      const blocked = await read();
+      return { check, clickedLabel, initialScrolls, prepared, preparedScrolls, checked, blocked, finalScrolls: scrolls };
+    } finally { root.remove(); }
+  });
+  assert.equal(result.check.tag, "input");
+  assert.equal(result.check.type, "checkbox");
+  assert.equal(result.check.checked, false);
+  assert.equal(result.check.visible, false);
+  assert.equal(result.check.element.tag, "label");
+  assert.equal(result.check.element.visible, true);
+  assert.equal(result.clickedLabel.tag, "label");
+  assert.equal(result.initialScrolls, 0);
+  assert.deepEqual(result.prepared, result.check);
+  assert.equal(result.preparedScrolls, 2);
+  assert.equal(result.checked.checked, true);
+  assert.equal(result.blocked.element, undefined, "a nested link must not substitute for the checkbox");
+  assert.equal(result.finalScrolls, result.preparedScrolls);
 });

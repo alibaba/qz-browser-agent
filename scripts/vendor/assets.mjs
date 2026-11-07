@@ -1,6 +1,7 @@
 import { modelsDevAssetPath, modelsDevAsset } from "../models-dev-assets.mjs";
 import { hardenPdfSource, pdfSourceHashes } from "./pdfjs.mjs";
 import { hardenZodSource, zodSourceHashes } from "./zod.mjs";
+import { resolvePlaywrightDomSource } from "./playwright-dom.mjs";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -96,7 +97,8 @@ export function stablePackagePaths() {
   return { name: "stable-npm-source-paths", setup(context) {
     context.onResolve({ filter: /.*/ }, async args => {
       if (args.pluginData?.stableNpmResolve || args.kind === "entry-point") return null;
-      const result = await context.resolve(args.path, { kind: args.kind, resolveDir: args.resolveDir,
+      const playwrightSource = resolvePlaywrightDomSource(args);
+      const result = playwrightSource ? { path: playwrightSource, errors: [] } : await context.resolve(args.path, { kind: args.kind, resolveDir: args.resolveDir,
         importer: args.namespace === "npm" ? resolve(NODE_MODULES, args.importer) : args.importer,
         pluginData: { stableNpmResolve: true } });
       if (result.errors.length) return { errors: result.errors };

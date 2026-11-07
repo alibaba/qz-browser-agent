@@ -1,4 +1,3 @@
-import { elementAriaRole } from "./implicit-aria-role.js";
 import { refreshContentLanguage, t } from "./i18n.js";
 import { documentReadiness } from "../shared/document-readiness.js";
 import { normalizeImage } from "../shared/images/normalize.js";
@@ -7,9 +6,12 @@ import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import { finder, attr as finderAttribute } from "@medv/finder";
+import { elementAriaRole, elementAccessibleName, elementIsVisible, elementIsHiddenForAria, textNodeIsVisible, withDomSemantics } from "./dom-semantics.js";
 import type { ArticleExtractor, ExtractedArticle } from './article-types.js';
 import { eachElementWithinOpenShadow, firstElementMatchingOpenShadow, graftOpenShadows, openShadowRoot } from './open-shadow.js';
 import type { PageOverview, PageAction, PagePoint } from '../shared/contracts/page-content.js';
+import type { ElementLocator } from '../shared/contracts/element-locator.js';
+import { invalidCssTargetError, resolveElementLocator } from './element-locator.js';
 
 interface Article { mode: string; title: string; byline: string; siteName: string; publishedTime: string; excerpt: string; content: string; text: string; sourceSelector: string }
 interface ElementSummary extends PageAction {
@@ -18,9 +20,11 @@ interface ElementSummary extends PageAction {
   rect: { x: number; y: number; w: number; h: number }; clickablePoint: PagePoint | null;
 }
 interface ContentRequest {
-  action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRef?: string; source?: string; offset?: number; limit?: number;
+  scroll?: boolean;
+  action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRefs?: string[]; retainRef?: boolean; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
-  index?: number; block?: ScrollLogicalPosition; elementAction?: string; value?: string; key?: string; submit?: boolean;
+  locator?: ElementLocator; matchSelf?: boolean; countOnly?: boolean; all?: boolean;
+  index?: number; block?: ScrollLogicalPosition; clickTarget?: boolean; includeShadow?: boolean; queryOnly?: boolean; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
   maxWidth?: number; maxHeight?: number; format?: string; quality?: number;
 }
@@ -33,20 +37,28 @@ interface PickerState {
 }
 type ContentMessageListener = Parameters<typeof chrome.runtime.onMessage.addListener>[0];
 interface ContentGlobals {
-  __QZ_CONTENT_VERSION?: string; __QZ_CONTENT_READY?: boolean; QingzhouArticleExtractor?: ArticleExtractor;
+  __QZ_CONTENT_VERSION?: string; __QZ_CONTENT_READY?: boolean; __qzElementRefVersion?: number; QingzhouArticleExtractor?: ArticleExtractor;
   __QZ_CONTENT_MESSAGE_LISTENER?: ContentMessageListener;
   __qzInvoke?: (node: Node | null, payload: ContentRequest) => Promise<unknown>;
+  __qzDomSemantics?: {
+    version: 1; role: typeof elementAriaRole; name: typeof elementAccessibleName;
+    hidden: typeof elementIsHiddenForAria; textVisible: typeof textNodeIsVisible; read: typeof withDomSemantics;
+  };
 }
 const host = globalThis as typeof globalThis & ContentGlobals;
+host.__qzDomSemantics = Object.freeze({
+  version: 1, role: elementAriaRole, name: elementAccessibleName, hidden: elementIsHiddenForAria,
+  textVisible: textNodeIsVisible, read: withDomSemantics,
+});
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 // DOM reads and interactions run in Chrome's isolated world; page scripts cannot access this state.
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-10-31-fill-target";
-  const findElementRefs = new Map<string, WeakRef<Element>>();
-  const findElementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  let findElementRefSequence = 0;
+  const QZ_CONTENT_VERSION = "2026-11-06-element-outcomes";
+  const elementRefs = new Map<string, WeakRef<Element>>();
+  const elementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  let elementRefSequence = 0;
   const imageSourceIdentities = new WeakMap<HTMLImageElement, { source: string; identity: string }>();
   const imageSourceScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let imageSourceSequence = 0;
@@ -62,6 +74,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   if (host.__QZ_CONTENT_VERSION === QZ_CONTENT_VERSION && typeof host.__qzInvoke === "function") return;
   host.__QZ_CONTENT_READY = true;
   host.__QZ_CONTENT_VERSION = QZ_CONTENT_VERSION;
+  host.__qzElementRefVersion = 1;
 
   // Content actions share one reply channel; asynchronous handlers must keep it open.
 
@@ -70,7 +83,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const handler = handlers[msg.action];
     if (!handler) {
       if (msg.action === "ping") {
-        sendResponse({ ok: true, contentVersion: QZ_CONTENT_VERSION, documentReady: documentReadiness() });
+        sendResponse({ ok: true, contentVersion: QZ_CONTENT_VERSION, documentReady: documentReadiness(),
+          contentType: document.contentType, url: document.URL, elementRefs: 1 });
         return;
       }
       sendResponse(toolError("UNKNOWN_ACTION", `Unknown content action: ${msg.action}`, { action: msg.action }));
@@ -92,15 +106,6 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   chrome.runtime.onMessage.addListener(onMessage);
   host.__QZ_CONTENT_MESSAGE_LISTENER = onMessage;
 
-  // One event-only wait per document, even when a caller stops waiting.
-  let documentReady: Promise<{ ok: true }> | undefined;
-  function awaitDocument() {
-    if (documentReady) return documentReady;
-    const ready = documentReadiness("wait");
-    if (ready === true) return { ok: true };
-    return documentReady = ready.then(() => ({ ok: true }));
-  }
-
   // Handlers
 
   function normalizeResponse(result: unknown, action: string) {
@@ -112,6 +117,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function toolError(code: string, error: string, details: object = {}) {
     return { error, code, details };
+  }
+
+  function staleElementError(node: Node | null) {
+    return toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.",
+      node?.ownerDocument === document && !node.isConnected ? { reason: "node_unavailable" } : {});
   }
 
   /** Return cleaned DOM HTML lines with script, style, and SVG elements removed. */
@@ -789,11 +799,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     if (selector instanceof Element) {
       return selector.isConnected
         ? { elements: [selector] }
-        : { error: toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {}), elements: [] as Element[] };
+        : { error: staleElementError(selector), elements: [] as Element[] };
     }
     if (typeof selector !== "string" || !selector.trim()) {
       return {
-        error: toolError("MISSING_SELECTOR", "selector is required", { selector }),
+        error: toolError("MISSING_SELECTOR", "target is required", { target: selector }),
         elements: [],
       };
     }
@@ -804,32 +814,43 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     try {
       return { elements: [...document.querySelectorAll(selector)] };
     } catch (err) {
+      const failure = invalidCssTargetError(selector, err);
       return {
-        error: toolError("INVALID_SELECTOR", `Invalid CSS selector or locator: ${selector}`, {
-          selector,
-          message: errorMessage(err),
-          supportedLocators: ["CSS selector", "text='可见文字'"],
-        }),
+        error: toolError(failure.code, failure.message, failure.details),
         elements: [],
       };
     }
   }
 
-  function queryElement(selector: unknown, index: number) {
+  function queryElement(selector: unknown, index: number, clickTarget = false, readinessOnly = false) {
     const query = queryAll(selector);
-    if (query.error) return { ...query.error, interactable: getInteractableElements() };
-    const element = selector instanceof Element ? query.elements[0] : query.elements[index];
+    if (query.error) return readinessOnly ? query.error : { ...query.error, interactable: getInteractableElements() };
+    let element = selector instanceof Element ? query.elements[0] : query.elements[index];
     if (!element) {
       return {
-        ...toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
-          selector,
+        ...toolError("ELEMENT_NOT_FOUND", `Element not found at target/index: ${selector}[${index}]`, {
+          target: selector,
           index,
           matched: query.elements.length,
         }),
-        interactable: getInteractableElements(),
+        ...(readinessOnly ? {} : { interactable: getInteractableElements() }),
       };
     }
+    if (clickTarget) {
+      const resolved = resolveClickTarget(element, readinessOnly);
+      if ("error" in resolved) return resolved;
+      element = resolved.element;
+    }
     return { element, matched: query.elements.length };
+  }
+
+  function queryActionElement(selector: unknown, index: number, references: string[] = []) {
+    if (!references.length) return queryElement(selector, index);
+    const element = elementRefs.get(references[0])?.deref();
+    if (!element?.isConnected || element.ownerDocument !== document) {
+      return toolError("ELEMENT_NOT_FOUND", "The original element is no longer attached");
+    }
+    return { element, matched: 1 };
   }
 
   function parseElementLocator(selector: unknown) {
@@ -915,7 +936,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const element = result.elements[0] || null;
     if (!element) {
       return {
-        error: toolError("ELEMENT_NOT_FOUND", `Element not found: ${selector}`, { selector }),
+        error: toolError("ELEMENT_NOT_FOUND", `Element not found: ${selector}`, { target: selector }),
         element: null,
       };
     }
@@ -948,16 +969,16 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const requested: unknown = selector;
     const matched = requested instanceof Element ? query.elements[0] : query.elements[Math.max(0, Math.floor(Number(index) || 0))];
     if (!matched) {
-      return toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
-        selector,
+      return toolError("ELEMENT_NOT_FOUND", `Element not found at target/index: ${selector}[${index}]`, {
+        target: selector,
         index,
         matched: query.elements.length,
       });
     }
     const img = pickImageElement(matched);
     if (!img) {
-      return toolError("NO_IMAGE_ELEMENT", "Selector did not resolve to an img element or an element containing img", {
-        selector,
+      return toolError("NO_IMAGE_ELEMENT", "Target did not resolve to an img element or an element containing img", {
+        target: selector,
         index,
         tag: matched.tagName?.toLowerCase() || "",
       });
@@ -1040,6 +1061,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
           ...meta,
           context: getImageTextContext(img),
           currentSrc: meta.src,
+          _elementRef: rememberElement(img),
           hasSrcset: Boolean(img.getAttribute("srcset")),
         });
         if (images.length >= max) break;
@@ -1616,7 +1638,6 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   const handlers: Record<string, (message: ContentRequest) => unknown> = {
-    awaitDocument,
     startElementPicker,
     confirmElementPicker,
     cancelElementPicker,
@@ -1663,16 +1684,15 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const text = fullText.slice(start, end);
       const linkCount = countArticleLinks(article.content);
       // Display-only projection for the side panel's formatted preview.
-      // _display is stripped before the result reaches the model, and the
-      // live-layout measurement is skipped when this slice carries no image
-      // Markdown at all.
+      // Background binds these hints to the article's presentation metadata.
+      // Skip live-layout measurement when this slice carries no image Markdown.
       const imageDisplayHints = text.includes("![") ? articleCompactImageHints(article) : [];
 
       return {
         title: article.title || document.title,
         url: location.href,
-        mode: article.mode || "article",
-        sourceSelector: article.sourceSelector || "",
+        mode: article.mode === 'selector' ? 'target' : article.mode || "article",
+        target: article.sourceSelector ? `css:${article.sourceSelector}` : undefined,
         byline: article.byline || "",
         siteName: article.siteName || "",
         publishedTime: article.publishedTime || "",
@@ -1720,16 +1740,34 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
     // -- Element selection --
 
+    resolveLocator({ locator, selector, matchSelf = false, countOnly = false, all = false, limit = 20 }) {
+      const scope: unknown = selector;
+      const root = scope instanceof Element ? scope : document;
+      try {
+        const result = resolveElementLocator(root, locator!, { role: getElementRole, name: getAccessibleName }, { matchSelf, all, limit });
+        const observe = (element: Element) => ({ ...getElementSummary(element, { selector: false }), _elementRef: rememberElement(element) });
+        if (countOnly) return { matched: result.matched };
+        if (all) return { matched: result.matched, results: (result.elements || []).map(observe) };
+        return { matched: result.matched, ...(result.element ? {
+          element: observe(result.element),
+        } : {}) };
+      } catch (error) {
+        const failure = error as Error & { code?: string; matched?: number; details?: { target?: string } };
+        return toolError(failure.code || "INVALID_ELEMENT_LOCATOR", errorMessage(error),
+          { ...failure.details, ...(failure.matched === undefined ? {} : { matched: failure.matched }) });
+      }
+    },
+
     findElements({ pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], limit = 20, includeHidden = false }) {
       const rootResult = queryOpenShadowScope(selector);
       if (rootResult.error || !rootResult.element) return rootResult.error;
       const maxResults = clampNumber(limit, 1, 100, 20);
 
-      const patternText = String(pattern || "").trim();
+      const patternText = String(pattern || "");
       let regex = null;
       if (patternText) {
         try {
-          regex = new RegExp(patternText, flags || "i");
+          regex = new RegExp(patternText, flags);
         } catch (err) {
           return toolError("INVALID_REGEX", `Invalid regular expression: ${errorMessage(err)}`, { pattern: patternText, flags });
         }
@@ -1746,11 +1784,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
       for (let order = 0; order < candidates.length; order += 1) {
         const el = candidates[order];
+        if (roleSet.size && !roleSet.has(getElementRole(el))) continue;
+        if (tagSet.size && !tagSet.has(el.tagName.toLowerCase())) continue;
+        if (typeSet.size && !typeSet.has((el.getAttribute("type") || "").toLowerCase())) continue;
         const summary = getElementSummary(el);
         if (!includeHidden && !summary.visible) continue;
-        if (roleSet.size && !roleSet.has(summary.role)) continue;
-        if (tagSet.size && !tagSet.has(summary.tag)) continue;
-        if (typeSet.size && !typeSet.has(String(summary.type || "").toLowerCase())) continue;
 
         const matchInfo = matchElementSearch(regex, getElementSearchParts(el, summary));
         if (regex && !matchInfo.matched) continue;
@@ -1768,7 +1806,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         .slice(0, maxResults)
         .map(({ el, summary, match = "", matchKind = "none", score = 0 }) => ({
           ...summary,
-          ...(el.getRootNode() instanceof ShadowRoot ? { _elementRef: rememberFindElement(el) } : {}),
+          _elementRef: rememberElement(el),
           ...getElementDomLocation(el, selector),
           match,
           matchKind,
@@ -1787,26 +1825,30 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       };
     },
 
-    inspectElement({ selector, index = 0 }) {
-      const targetResult = queryElement(selector, index);
+    inspectElement({ selector, index = 0, clickTarget = false }) {
+      const targetResult = queryElement(selector, index, clickTarget);
       if ("error" in targetResult) return targetResult;
       const { element: el, matched } = targetResult;
-      return getElementInspection(el, {
-        selector,
-        index,
-        matched,
-        ...getElementDomLocation(el),
-      });
+      const inspection = getElementInspection(el, { ...(clickTarget ? {} : { selector, index }), matched, ...getElementDomLocation(el) });
+      return { ...inspection, _elementRef: rememberElement(el),
+        parent: el.parentElement ? { ...inspection.parent, _elementRef: rememberElement(el.parentElement) } : null };
     },
 
-    scrollElementIntoView({ selector, index = 0, block = "center" }) {
-      const targetResult = queryElement(selector, index);
+    readElementReadiness({ selector, index = 0, clickTarget = false, elementAction = "" }) {
+      const targetResult = queryElement(selector, index, clickTarget, true);
+      if ("error" in targetResult) return targetResult;
+      return elementAction === "check" || elementAction === "uncheck"
+        ? checkTargetReadiness(targetResult.element, false)
+        : getElementReadiness(targetResult.element);
+    },
+
+    scrollElementIntoView({ selector, index = 0, block = "center", clickTarget = false }) {
+      const targetResult = queryElement(selector, index, clickTarget);
       if ("error" in targetResult) return targetResult;
       const { element: el, matched } = targetResult;
-      el.scrollIntoView({ behavior: "instant", block, inline: "center" });
+      scrollElementBoxIntoView(el, block);
       return getElementInspection(el, {
-        selector,
-        index,
+        ...(clickTarget ? {} : { selector, index }),
         matched,
         scrolledIntoView: true,
         ...getElementDomLocation(el),
@@ -1819,8 +1861,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const normalizedIndex = Math.max(0, Math.floor(Number(index) || 0));
       const el = query.elements[normalizedIndex];
       if (!el) {
-        return toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${normalizedIndex}]`, {
-          selector,
+        return toolError("ELEMENT_NOT_FOUND", `Element not found at target/index: ${selector}[${normalizedIndex}]`, {
+          target: selector,
           index: normalizedIndex,
           matched: query.elements.length,
         });
@@ -1828,7 +1870,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) {
         return toolError("ELEMENT_HAS_NO_RENDERED_BOX", "Element has no rendered box to screenshot", {
-          selector,
+          target: selector,
           index: normalizedIndex,
           matched: query.elements.length,
           rect: {
@@ -1913,9 +1955,10 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
           return (a.rect.y - b.rect.y) || (a.rect.x - b.rect.x);
         })
         .slice(0, max)
-        .map(({ el }) => getElementSummary(el))
+        .map(({ el }) => ({ ...getElementSummary(el), _elementRef: rememberElement(el) }))
         .map((item, i) => ({
           i,
+          _elementRef: item._elementRef,
           selector: item.selector,
           role: item.role || item.tag,
           type: item.type,
@@ -1971,6 +2014,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
           };
           return {
             name,
+            element: canvas,
             rect: summaryRect,
             inViewport: isRectInViewport(summaryRect),
             bitmapSize: {
@@ -1990,7 +2034,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
             || (a.rect.x - b.rect.x);
         })
         .slice(0, 8)
-        .map(({ renderedArea: _renderedArea, ...canvas }) => canvas);
+        .map(({ renderedArea: _renderedArea, element, ...canvas }) => ({
+          ...canvas, selector: getAbsoluteSelector(element), _elementRef: rememberElement(element),
+        }));
 
       return {
         title: document.title,
@@ -2015,6 +2061,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         return toolError("NOT_EDITABLE_ELEMENT", "Element is not editable", getElementSummary(el));
       }
       const target = el.isContentEditable ? getContentEditableRoot(el) : el;
+      const validated = validateFillValue(target, value);
+      if ("error" in validated) return validated;
       if (isDisabled(el) || isDisabled(target)) {
         return toolError("ELEMENT_DISABLED", "Element is disabled", getElementSummary(target));
       }
@@ -2039,47 +2087,55 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
           return toolError("ELEMENT_FOCUS_FAILED", "Element lost focus while selecting its contents", getElementSummary(target));
         }
       }
-      return { ...getElementSummary(target), fillMode, contentEditable: target.isContentEditable };
+      return { ...getElementSummary(target), fillMode, contentEditable: target.isContentEditable,
+        expectedValue: validated.value, _elementRef: rememberElement(target) };
     },
 
-    async readElementActionState({ selector, index = 0 }) {
+    async prepareElementPress({ selector, index = 0 }) {
+      const targetResult = queryElement(selector, index);
+      if ("error" in targetResult) return targetResult;
+      const element = targetResult.element instanceof HTMLElement && targetResult.element.isContentEditable
+        ? getContentEditableRoot(targetResult.element) : targetResult.element;
+      element.scrollIntoView({ behavior: "instant", block: "center" });
+      if (element instanceof HTMLElement || element instanceof SVGElement) element.focus({ preventScroll: true });
       await settleElementAction();
-      const targetResult = queryElement(selector, index);
-      if ("error" in targetResult) return targetResult;
-      const { element: el } = targetResult;
-      return elementActionState(el);
+      if (!element.isConnected || !elementHasFocus(element)) {
+        return toolError("ELEMENT_FOCUS_FAILED", "Element could not retain focus", getElementSummary(element));
+      }
+      return { _elementRef: rememberElement(element) };
     },
 
-    resolveCheckTarget({ selector, index = 0 }) {
-      const targetResult = queryElement(selector, index);
-      if ("error" in targetResult) return targetResult;
-      const { element: el } = targetResult;
-      if (!(el instanceof HTMLInputElement) || !["checkbox", "radio"].includes(el.type)) {
-        return toolError("NOT_CHECKABLE_ELEMENT", "Element is not a checkbox or radio", getElementSummary(el));
+    verifyElementFocus({ elementRefs: references = [], retainRef = false }) {
+      const token = references[0] || "";
+      const target = queryActionElement(null, 0, [token]);
+      if (!retainRef || "error" in target) elementRefs.delete(token);
+      if ("error" in target) return target;
+      const { element } = target;
+      if (!elementHasFocus(element)) {
+        elementRefs.delete(token);
+        return toolError("ELEMENT_FOCUS_FAILED", "Element lost focus before the key was sent", getElementSummary(element));
       }
-      if (isDisabled(el)) return toolError("ELEMENT_DISABLED", "Element is disabled", getElementSummary(el));
-      const labels = [...(el.labels || [])].filter(label => label.control === el);
-      for (const candidate of [el, ...labels]) {
-        candidate.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
-        const inspection = getElementInspection(candidate);
-        const point = inspection.clickablePoint;
-        if (!inspection.visible || inspection.disabled || !pointInViewport(point) || inspection.state.obscuredAtCenter) continue;
-        let hit = point && elementAtPoint(candidate, point.x, point.y);
-        if (!hit || (hit !== candidate && !candidate.contains(hit))) continue;
-        // Label activation excludes nested links and other independent controls.
-        while (hit && hit !== candidate && hit !== el) {
-          if (hit.matches("a[href], button, input, select, textarea, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link']")) break;
-          hit = hit.parentElement;
-        }
-        if (hit !== candidate && hit !== el) continue;
-        return { ...getElementInspection(el), element: inspection };
-      }
-      return getElementInspection(el);
+      return { focused: true };
     },
 
-    actOnElement({ selector, index = 0, action, elementAction = "", value = "", key = "", submit = false }) {
+    async readElementActionState({ selector, index = 0, value, elementRefs: references = [], retainRef = false }) {
+      await settleElementAction();
+      const targetResult = queryActionElement(selector, index, references);
+      if (!retainRef || "error" in targetResult) for (const token of references) elementRefs.delete(token);
+      if ("error" in targetResult) return targetResult;
+      const { element: el } = targetResult;
+      return { ...elementActionState(el), ...(value !== undefined ? { valueMatches: fillValueMatches(el, value) } : {}) };
+    },
+
+    resolveCheckTarget({ selector, index = 0, scroll = true }) {
+      const targetResult = queryElement(selector, index, false, true);
+      if ("error" in targetResult) return targetResult;
+      return checkTargetReadiness(targetResult.element, scroll);
+    },
+
+    async actOnElement({ selector, index = 0, action, elementAction = "", value = "", key = "", submit = false, elementRefs: references = [] }) {
       const op = String(elementAction || action || "").trim();
-      const targetResult = queryElement(selector, index);
+      const targetResult = queryActionElement(selector, index, references);
       if ("error" in targetResult) return targetResult;
       const { element: el, matched } = targetResult;
 
@@ -2093,18 +2149,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       if (op === "click") {
         const target = resolveClickTarget(el);
         if ("error" in target) return target;
-        if (target.navigateUrl) {
-          location.href = target.navigateUrl;
-          return { action: op, selector, index, navigated: true, href: target.navigateUrl, element: getElementSummary(el) };
-        }
         simulateClick(target.element);
         return { action: op, selector, index, clicked: true, element: getElementSummary(target.element), originalElement: getElementSummary(el) };
       }
 
       if (op === "fill") {
-        const filled = setElementValue(el, value, submit);
+        const filled = await setElementValue(el, value, submit);
         if ("error" in filled) return filled;
-        return { action: op, selector, index, filled: true, submitted: submit, fill: filled, element: getElementSummary(el) };
+        return { action: op, selector, index, filled: true, submitted: filled.submitted, fill: filled, element: getElementSummary(el) };
       }
 
       if (op === "select") {
@@ -2192,10 +2244,20 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         resolvedSelector: summary.selector,
         clickablePoint: target.point,
         href: target.href,
-        navigateUrl: target.navigateUrl,
         element: summary,
         originalElement: getElementSummary(el),
       };
+    },
+
+    elementPresence({ selector, index = 0, visibleOnly = false, includeShadow = false, queryOnly = false }) {
+      const query = queryAll(selector);
+      if (query.error) return query.error;
+      let element = query.elements[index] || null;
+      if (!element && includeShadow && index === 0) {
+        const scope = queryOpenShadowScope(selector);
+        if (!scope.error) element = scope.element;
+      }
+      return queryOnly ? { found: Boolean(element?.isConnected) } : elementPresence(element || null, Boolean(visibleOnly));
     },
 
     querySelector({ selector, limit = 10 }) {
@@ -2307,7 +2369,37 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     el.dispatchEvent(new MouseEvent("click", { ...commonProps, buttons: 0 }));
   }
 
-  function setElementValue(el: Element, value: unknown, submit = false) {
+  function validateFillValue(el: Element, value: unknown) {
+    const text = normalizeLineBreaks(value);
+    if (el instanceof HTMLElement && el.isContentEditable || el instanceof HTMLTextAreaElement) return { value: text };
+    if (!(el instanceof HTMLInputElement)
+      || ["checkbox", "radio", "file", "button", "submit", "reset", "image", "hidden"].includes(el.type)) {
+      return toolError("NOT_EDITABLE_ELEMENT", "Element does not accept text values", getElementSummary(el));
+    }
+    // Let the browser validate the type and constraints without changing the live field.
+    const probe = el.cloneNode(false) as HTMLInputElement;
+    probe.value = text;
+    let accepted = probe.value === text;
+    if (["date", "datetime-local", "time", "month", "week", "number"].includes(el.type)) {
+      // These native parsers clear invalid values but may canonicalize valid ones.
+      accepted = text === "" || probe.value !== "";
+    } else if (el.type === "range") {
+      const number = document.createElement("input");
+      number.type = "number";
+      number.value = text;
+      accepted = Number.isFinite(number.valueAsNumber) && number.valueAsNumber === probe.valueAsNumber;
+    } else if (el.type === "email" || el.type === "url") {
+      accepted = probe.value === text.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
+    } else if (el.type === "color") {
+      accepted = probe.value === text.toLowerCase();
+    }
+    if (!accepted) {
+      return toolError("ELEMENT_VALUE_MISMATCH", "The input cannot represent the requested value", getElementSummary(el));
+    }
+    return { value: probe.value };
+  }
+
+  async function setElementValue(el: Element, value: unknown, submit = false) {
     if (isDisabled(el)) {
       return toolError("ELEMENT_DISABLED", "Element is disabled", getElementSummary(el));
     }
@@ -2319,7 +2411,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return toolError("ELEMENT_READONLY", "Element is readonly", getElementSummary(editableRoot));
     }
 
-    const text = String(value ?? "");
+    const validated = validateFillValue(editableRoot, value);
+    if ("error" in validated) return validated;
+    const text = validated.value;
     let target = el;
     let richText = null;
     target.focus();
@@ -2327,7 +2421,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       target = getContentEditableRoot(el);
       target.focus();
       if (hasLineBreaks(text)) {
-        richText = setContentEditableMultilineValue(target, text);
+        richText = await setContentEditableMultilineValue(target, text);
       } else {
         target.textContent = text;
       }
@@ -2341,7 +2435,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     target.dispatchEvent(new Event("input", { bubbles: true }));
     target.dispatchEvent(new Event("change", { bubbles: true }));
 
-    if (submit) {
+    await settleElementAction();
+    if (!target.isConnected) return staleElementError(target);
+    const matches = fillValueMatches(target, text);
+    if (matches === false) return toolError("ELEMENT_VALUE_MISMATCH", "Element did not retain the requested value", getElementSummary(target));
+    if (matches === null && richText) richText.warning = "The editor's value could not be verified.";
+
+    const submitted = submit && matches === true && !richText?.warning;
+    if (submitted) {
       const form = target.closest("form");
       if (form) {
         form.requestSubmit ? form.requestSubmit() : form.submit();
@@ -2351,6 +2452,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     }
     return {
       ok: true,
+      submitted,
       multiline: hasLineBreaks(text),
       method: richText?.method || (el.isContentEditable ? "textContent" : "value"),
       richText,
@@ -2371,20 +2473,26 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return el;
   }
 
-  function setContentEditableMultilineValue(el: HTMLElement, value: unknown) {
+  async function setContentEditableMultilineValue(el: HTMLElement, value: unknown) {
     const text = normalizeLineBreaks(value);
     const html = multilineTextToParagraphHtml(text);
     const expected = getExpectedRichTextShape(text);
-    const attempts = [];
+    const attempts: { method: string; ok: boolean; error?: string; defaultPrevented?: boolean }[] = [];
 
+    if (fillValueMatches(el, text) === true) return { method: "unchanged", expected, structure: getEditableRichTextStructure(el), attempts, warning: "" };
+    const before = el.innerHTML;
     selectEditableContents(el);
-    attempts.push(dispatchSyntheticRichPaste(el, text, html));
+    const paste = dispatchSyntheticRichPaste(el, text, html);
+    attempts.push(paste);
+    await settleElementAction();
     let structure = getEditableRichTextStructure(el);
-    if (isAcceptableRichTextStructure(structure, expected)) {
-      return { method: "paste", expected, structure, attempts };
+    if (fillValueMatches(el, text) === true || paste.defaultPrevented || el.innerHTML !== before
+      || !el.isConnected || !elementHasFocus(el)) {
+      return { method: "paste", expected, structure, attempts, warning: "" };
     }
 
     selectEditableContents(el);
+    if (!el.isConnected || !elementHasFocus(el)) return { method: "paste", expected, structure, attempts, warning: "" };
     const execCommandAttempt: { method: string; ok: boolean; error?: string } = { method: "execCommand.insertHTML", ok: false };
     try {
       execCommandAttempt.ok = document.execCommand("insertHTML", false, html);
@@ -2392,9 +2500,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       execCommandAttempt.error = errorMessage(err);
     }
     attempts.push(execCommandAttempt);
+    await settleElementAction();
     structure = getEditableRichTextStructure(el);
-    if (isAcceptableRichTextStructure(structure, expected)) {
-      return { method: "insertHTML", expected, structure, attempts };
+    if (fillValueMatches(el, text) === true || execCommandAttempt.ok || el.innerHTML !== before
+      || !el.isConnected || !elementHasFocus(el)) {
+      return { method: "insertHTML", expected, structure, attempts, warning: "" };
     }
 
     el.innerHTML = html;
@@ -2483,9 +2593,42 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     };
   }
 
-  function isAcceptableRichTextStructure(structure: ReturnType<typeof getEditableRichTextStructure>, expected: ReturnType<typeof getExpectedRichTextShape>) {
-    if (!expected.requiresBlocks) return true;
-    return structure.paragraphCount > 1 || structure.brCount > 0 || structure.blockCount > 1;
+  function fillValueMatches(el: Element, expected: string): boolean | null {
+    if (!(el instanceof HTMLElement && el.isContentEditable)) return getElementValue(el, true) === expected;
+    const text = editableText(el);
+    return text === null ? null : text === normalizeLineBreaks(expected).replace(/\u00a0/g, " ");
+  }
+
+  /** Logical editing lines, not innerText's extra paragraph spacing. Keep empty blocks. */
+  function editableText(root: HTMLElement, block = true): string | null {
+    const blocks: string[] = [];
+    let inline: string | null = null;
+    const children = Array.from(root.childNodes).filter(child => child.nodeType !== Node.COMMENT_NODE);
+    for (const [index, child] of children.entries()) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        inline = (inline ?? "") + normalizeLineBreaks(child.textContent).replace(/\u00a0/g, " ");
+        continue;
+      }
+      if (!(child instanceof HTMLElement) || child.contentEditable === "false"
+        || ["IMG", "INPUT", "TEXTAREA", "SELECT", "TABLE"].includes(child.tagName)) return null;
+      if (child.tagName === "BR") {
+        // A final BR is the browser's empty-line placeholder; preceding BRs are line breaks.
+        inline = (inline ?? "") + (block && index === children.length - 1 ? "" : "\n");
+        continue;
+      }
+      const display = getComputedStyle(child).display;
+      if (!["block", "flow-root", "list-item", "inline", "contents"].includes(display)) return null;
+      const childBlock = ["block", "flow-root", "list-item"].includes(display);
+      const text = editableText(child, childBlock);
+      if (text === null) return null;
+      if (childBlock) {
+        if (inline !== null) blocks.push(inline);
+        blocks.push(text);
+        inline = null;
+      } else inline = (inline ?? "") + text;
+    }
+    if (inline !== null) blocks.push(inline);
+    return blocks.join("\n");
   }
 
   function dispatchKey(el: Element, key: string) {
@@ -2496,10 +2639,27 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     el.dispatchEvent(new KeyboardEvent("keyup", common));
   }
 
-  function resolveClickTarget(el: Element) {
+  function resolveClickTarget(el: Element, readinessOnly = false) {
     const visibleSelf = clickablePointFor(el);
     if (visibleSelf) {
       return { element: el, point: visibleSelf, href: getHref(el) || undefined };
+    }
+
+    // Native labels activate their control even when the control itself is transparent
+    // or has no box. Keep the actual label distinct from the requested control.
+    const labels = "labels" in el ? el.labels as NodeListOf<HTMLLabelElement> | null : null;
+    if (!isDisabled(el)) for (const label of labels || []) {
+      if (label.control !== el) continue;
+      if (!readinessOnly) label.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
+      const point = clickablePointFor(label);
+      if (!point) continue;
+      let hit = elementAtPoint(label, point.x, point.y);
+      if (!hit || (hit !== el && hit !== label && !label.contains(hit))) continue;
+      while (hit && hit !== label && hit !== el) {
+        if (hit.matches("a[href], button, input, select, textarea, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link']")) break;
+        hit = hit.parentElement;
+      }
+      if (hit === label || hit === el) return { element: label, point, href: getHref(el) || undefined };
     }
 
     const descendants = [...el.querySelectorAll("a[href], button, [role='button'], input, textarea, select, [onclick], [tabindex]")]
@@ -2519,30 +2679,95 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       parent = parent.parentElement;
     }
 
-    const href = getHref(el);
-    if (href) return { element: el, point: null, href, navigateUrl: href };
-
     return {
-      ...toolError("NO_CLICKABLE_TARGET", "Element has no visible clickable box and no href to navigate", getElementSummary(el)),
-      interactable: getInteractableElements(),
+      ...toolError("NO_CLICKABLE_TARGET", "Element has no visible clickable target", readinessOnly ? getElementReadiness(el) : getElementSummary(el)),
+      ...(readinessOnly ? {} : { interactable: getInteractableElements() }),
     };
   }
 
   function clickablePointFor(el: Element) {
     if (!isVisible(el)) return null;
-    const rects = [...el.getClientRects()]
+    const rects = elementClientRects(el)
       .filter(rect => rect.width > 0 && rect.height > 0)
       .sort((a, b) => (b.width * b.height) - (a.width * a.height));
-    const rect = rects[0];
-    if (!rect) return null;
+    const points = rects.map(rect => {
+      const left = Math.max(0, rect.left), right = Math.min(window.innerWidth, rect.right);
+      const top = Math.max(0, rect.top), bottom = Math.min(window.innerHeight, rect.bottom);
+      return right > left && bottom > top
+        ? { x: (left + right) / 2, y: (top + bottom) / 2 }
+        : { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    if (points.length === 1) return points[0];
+    return points.find(point => {
+      const hit = elementAtPoint(el, point.x, point.y);
+      return hit === el || !!hit && el.contains(hit);
+    }) || points[0] || null;
+  }
+
+  // A display:contents element has no own box. Read its rendered content without
+  // changing the element identity used by the action and its completion checks.
+  function elementClientRects(el: Element) {
+    if (getComputedStyle(el).display !== "contents") return [...el.getClientRects()];
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return [...range.getClientRects()];
+  }
+
+  function elementBounds(el: Element) {
+    if (getComputedStyle(el).display !== "contents") return el.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return range.getBoundingClientRect();
+  }
+
+  function scrollElementBoxIntoView(el: Element, block: ScrollLogicalPosition = "center") {
+    const target = getComputedStyle(el).display === "contents"
+      ? [...el.querySelectorAll("*")].find(child => isVisible(child) && child.getClientRects().length) || el
+      : el;
+    target.scrollIntoView({ behavior: "instant", block, inline: "center" });
+  }
+
+  /** Repeated action preparation reads only state and geometry, never page descriptions. */
+  function getElementReadiness(el: Element) {
+    const rect = elementBounds(el);
+    const point = clickablePointFor(el);
     return {
-      x: Math.round(rect.left + rect.width / 2),
-      y: Math.round(rect.top + rect.height / 2),
+      tag: el.tagName.toLowerCase(), type: el.getAttribute("type") || "",
+      visible: isVisible(el), disabled: isDisabled(el), readOnly: isReadOnly(el), editable: isEditableElement(el),
+      checked: "checked" in el ? !!el.checked : undefined,
+      rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
+      clickablePoint: point,
+      state: { inViewport: isInViewport(el), clickablePointInViewport: pointInViewport(point), obscuredAtCenter: isObscuredAtCenter(el) },
     };
   }
 
+  function checkTargetReadiness(el: Element, scroll: boolean) {
+    const control = getElementReadiness(el);
+    if (!(el instanceof HTMLInputElement) || !["checkbox", "radio"].includes(el.type)) {
+      return toolError("NOT_CHECKABLE_ELEMENT", "Element is not a checkbox or radio", control);
+    }
+    if (control.disabled) return toolError("ELEMENT_DISABLED", "Element is disabled", control);
+    const labels = [...(el.labels || [])].filter(label => label.control === el);
+    for (const candidate of [el, ...labels]) {
+      if (scroll) candidate.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
+      const inspection = getElementReadiness(candidate);
+      const point = inspection.clickablePoint;
+      if (!inspection.visible || inspection.disabled || !pointInViewport(point) || inspection.state.obscuredAtCenter) continue;
+      let hit = point && elementAtPoint(candidate, point.x, point.y);
+      if (!hit || (hit !== el && hit !== candidate && !candidate.contains(hit))) continue;
+      // Label activation excludes nested links and other independent controls.
+      while (hit && hit !== candidate && hit !== el) {
+        if (hit.matches("a[href], button, input, select, textarea, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link']")) break;
+        hit = hit.parentElement;
+      }
+      if (hit !== candidate && hit !== el) continue;
+      return { ...getElementReadiness(el), element: inspection };
+    }
+    return getElementReadiness(el);
+  }
+
   function getElementSummary(el: Element, { selector = true, labels = true } = {}) {
-    const rect = el.getBoundingClientRect();
+    const rect = elementBounds(el);
     const tag = el.tagName.toLowerCase();
     const isFileInput = el instanceof HTMLInputElement
       && String(el.type || el.getAttribute("type") || "").toLowerCase() === "file";
@@ -2566,9 +2791,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         w: Math.round(rect.width),
         h: Math.round(rect.height),
       },
-      clickablePoint: rect.width > 0 && rect.height > 0
-        ? { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
-        : null,
+      clickablePoint: clickablePointFor(el),
     };
     if (isFileInput) {
       summary.accept = String(el.accept || "");
@@ -2587,6 +2810,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return {
       ...summary,
       ...extra,
+      readOnly: isReadOnly(el),
       attrs: getElementAttrs(el),
       state: {
         focused: elementHasFocus(el),
@@ -2704,11 +2928,16 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return depth;
   }
 
-  function rememberFindElement(el: Element) {
-    const token = `${findElementRefScope}:${++findElementRefSequence}`;
-    findElementRefs.set(token, new WeakRef(el));
-    while (findElementRefs.size > 5000) findElementRefs.delete(findElementRefs.keys().next().value!);
+  function rememberElement(el: Element) {
+    const token = `${elementRefScope}:${++elementRefSequence}`;
+    elementRefs.set(token, new WeakRef(el));
+    while (elementRefs.size > 5000) elementRefs.delete(elementRefs.keys().next().value!);
     return token;
+  }
+
+  function elementPresence(element: Element | null, visibleOnly = true) {
+    const found = Boolean(element?.isConnected && (!visibleOnly || isVisible(element)));
+    return { found, element: found && element ? { ...getElementSummary(element), _elementRef: rememberElement(element) } : null };
   }
 
   function getElementDomLocation(el: Element, rootSelector = "body") {
@@ -2763,20 +2992,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function getAccessibleName(el: Element) {
-    return el.getAttribute("aria-label")
-      || el.getAttribute("alt")
-      || el.getAttribute("title")
-      || labelTextFor(el)
-      || "";
-  }
-
-  function labelTextFor(el: Element) {
-    if (el.id) {
-      const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (label?.textContent) return label.textContent.trim();
-    }
-    const wrapped = el.closest("label");
-    return wrapped?.textContent?.trim() || "";
+    return elementAccessibleName(el);
   }
 
   function getElementValue(el: Element, full = false) {
@@ -2793,13 +3009,12 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function getHref(el: Element) {
-    const href = el.getAttribute?.("href") || el.getAttribute?.("src") || "";
+    const href = el.getAttribute?.("href") || "";
     if (href) {
       try { return new URL(href, document.baseURI || location.href).href; }
       catch(_e) { return String(href); }
     }
     if ("href" in el && typeof el.href === "string") return el.href;
-    if ("src" in el && typeof el.src === "string") return el.src;
     return "";
   }
 
@@ -2848,13 +3063,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function isVisible(el: Element) {
-    const rect = el.getBoundingClientRect();
-    const style = getComputedStyle(el);
-    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) !== 0;
+    return elementIsVisible(el);
   }
 
   function isInViewport(el: Element) {
-    const rect = el.getBoundingClientRect();
+    const rect = elementBounds(el);
     return rect.bottom >= 0 && rect.right >= 0 && rect.top <= window.innerHeight && rect.left <= window.innerWidth;
   }
 
@@ -2873,11 +3086,10 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function isObscuredAtCenter(el: Element) {
-    const rect = el.getBoundingClientRect();
-    if (!rect.width || !rect.height) return false;
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const top = elementAtPoint(el, x, y);
+    const point = clickablePointFor(el);
+    if (!point) return false;
+    const top = elementAtPoint(el, point.x, point.y);
+    if (el instanceof HTMLLabelElement && top === el.control) return false;
     return !!top && top !== el && !el.contains(top);
   }
 
@@ -3048,11 +3260,17 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   host.__qzInvoke = async (node, payload) => {
     // Background consumes this isolated-world reference once to bind a backend
     // node UID. It never rematches a selector or exposes a DOM node in a reply.
-    if (payload?.action === "resolveFindElement") {
-      const token = String(payload.elementRef || "");
-      const element = findElementRefs.get(token)?.deref();
-      findElementRefs.delete(token);
-      return element?.isConnected && element.ownerDocument === document ? element : null;
+    if (payload?.action === "resolveElementRefs") {
+      const tokens = Array.isArray(payload.elementRefs) ? payload.elementRefs.map(String) : [];
+      if (tokens.some(token => !token.startsWith(`${elementRefScope}:`))) throw new Error("Element reference document changed");
+      return tokens.map(token => {
+        const element = elementRefs.get(token)?.deref();
+        elementRefs.delete(token);
+        return element?.isConnected && element.ownerDocument === document ? element : null;
+      });
+    }
+    if (payload?.action === "elementPresence" && node instanceof Element && node.ownerDocument === document) {
+      return payload.queryOnly ? { found: node.isConnected } : elementPresence(node, payload.visibleOnly !== false);
     }
     const token = String(payload?.fillToken || "");
     if (payload?.action === "releaseFillRoot") {
@@ -3060,14 +3278,15 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return { ok: true };
     }
     let element = elementFromNode(node);
-    // RootWebArea resolves to the Document. Overview reads from the page element.
-    if (!element && payload?.action === "pageOverview" && node instanceof Document) {
+    // A RootWebArea UID scopes document readers to that document, including iframe documents.
+    if (!element && node instanceof Document && ["pageOverview", "readArticle", "readDom", "findElements", "resolveLocator",
+      "inspectElement", "readElementReadiness", "listImageElements", "getElementScreenshotBounds", "elementPresence"].includes(payload?.action)) {
       element = node.body || node.documentElement;
     }
     const saved = token ? fillRoots.get(token) : undefined;
     if ((!element || !element.isConnected) && saved?.isConnected) element = saved;
     // This script accepts elements in its own document, including a direct child frame it was injected into.
-    if (!element || element.ownerDocument !== document) return toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {});
+    if (!element || element.ownerDocument !== document) return staleElementError(node);
     if (payload?.editingHost && element instanceof HTMLElement && element.isContentEditable) {
       const root = getContentEditableRoot(element);
       if (root.isConnected) {
@@ -3077,7 +3296,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     }
     const handler = handlers[payload?.action];
     if (!handler) return toolError("UNKNOWN_ACTION", `Unknown content action: ${payload?.action}`, { action: payload?.action });
-    const result = await handler({ ...payload, selector: element } as unknown as ContentRequest);
+    const scope = payload.action === "resolveLocator" && node === document ? document : element;
+    const result = await handler({ ...payload, selector: scope } as unknown as ContentRequest);
     const encoded = JSON.stringify(result, (_key, value) => value instanceof Node ? "" : value);
     return encoded === undefined ? {} : JSON.parse(encoded);
   };

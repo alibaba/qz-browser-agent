@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { buildExtension } from '../../scripts/build-extension.mjs';
 import { auditReviewableCode } from '../../scripts/check-reviewable-code.mjs';
 
-let browser, directory, firefoxPageCommand, installFirefoxDebugger, outputDir;
+let browser, directory, firefoxPageCommand, installFirefoxDebugger, outputDir, contentSources;
 let registerAccessibilityTools, ToolExecutionError;
 const debuggerListeners = { event: [], detach: [] };
 let nextTabId = 50;
@@ -19,6 +19,7 @@ before(async () => {
   ({ outputDir } = await buildExtension({ browser: 'firefox', mode: 'production', outputDir: join(directory, 'extension') }));
   ({ firefoxPageCommand } = await import(pathToFileURL(join(outputDir, 'background/firefox/page-command.js'))));
   ({ installFirefoxDebugger } = await import(pathToFileURL(join(outputDir, 'background/firefox/debugger-host.js'))));
+  contentSources = await Promise.all(['content/article-extractor.js', 'content/content-script.js'].map(file => readFile(join(outputDir, file), 'utf8')));
   // The production AX grafting module subscribes to debugger events at import time.
   const previousChrome = globalThis.chrome;
   try {
@@ -36,12 +37,224 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await rm(directory, { recursive: true, force: true }); });
 
+async function installContent(frame) {
+  await frame.evaluate(sources => {
+    const invoke = globalThis.__qzInvoke;
+    globalThis.chrome ||= { runtime: {} };
+    globalThis.chrome.runtime.onMessage ||= { addListener() {}, removeListener() {} };
+    for (const source of sources) (0, eval)(source);
+    if (invoke) globalThis.__qzInvoke = invoke;
+  }, contentSources);
+}
+
 test('Firefox production package retains implicit submission and only reviewed execution sinks', async () => {
   const source = await readFile(join(outputDir, 'background/firefox/page-command.js'), 'utf8');
   assert.match(source, /implicitSubmit/);
   const findings = (await auditReviewableCode(outputDir)).flatMap(item => item.findings);
   assert.deepEqual(findings.filter(item => !item.reviewed), []);
   assert.equal(findings.filter(item => item.rule === 'dynamic-code' && item.file === 'background/firefox/page-command.js').length, 1);
+});
+
+for (const kind of ['mouse', 'touch']) test(`Firefox ${kind} reaches nested shadow elements and document event receipts`, async t => {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  await page.setContent('<div id=outer></div>');
+  await page.evaluate(() => {
+    const outer = document.querySelector('#outer').attachShadow({ mode: 'open' });
+    outer.innerHTML = '<div id=inner></div>';
+    const inner = outer.querySelector('#inner').attachShadow({ mode: 'open' });
+    inner.innerHTML = '<button id=button style="width:160px;height:80px">Click</button>';
+    window.receipts = [];
+    window.clicks = 0;
+    inner.querySelector('button').addEventListener('click', () => clicks++);
+    for (const type of ['pointermove', 'mousemove', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click',
+      'touchstart', 'touchmove', 'touchend']) document.addEventListener(type, event => {
+      receipts.push({ type, target: event.composedPath()[0].id, composed: event.composed,
+        marked: window.__qzExtensionInputEvents?.has(event) === true });
+    }, true);
+  });
+  const point = await elementCenter(page.locator('button'));
+  const types = kind === 'mouse' ? ['mouseMoved', 'mousePressed', 'mouseReleased'] : ['touchStart', 'touchMove', 'touchEnd'];
+  for (const type of types) await page.evaluate(firefoxPageCommand, {
+    op: 'input', input: { kind, type, ...point, button: 'left', clickCount: 1 },
+  });
+  const observed = await page.evaluate(() => ({ receipts, clicks }));
+  const expectedTypes = kind === 'mouse'
+    ? ['pointermove', 'mousemove', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']
+    : ['touchstart', 'touchmove', 'touchend'];
+  assert.deepEqual(observed.receipts, expectedTypes.map(type => ({ type, target: 'button', composed: true, marked: true })));
+  assert.equal(observed.clicks, kind === 'mouse' ? 1 : 0);
+});
+
+for (const cancel of ['pointerdown', 'mousedown', 'none']) test(`Firefox mouse focus respects ${cancel} cancellation`, async t => {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  await page.setContent('<input id=search><button id=option>Suggestion</button>');
+  await page.evaluate(cancel => {
+    window.events = [];
+    search.focus();
+    search.addEventListener('blur', () => { if (cancel !== 'none') option.hidden = true; });
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'focus', 'blur']) {
+      document.addEventListener(type, event => {
+        events.push([type, event.target.id]);
+        if (type === cancel) event.preventDefault();
+      }, true);
+    }
+  }, cancel);
+  const point = await elementCenter(page.locator('#option'));
+  for (const type of ['mousePressed', 'mouseReleased']) await page.evaluate(firefoxPageCommand, {
+    op: 'input', input: { kind: 'mouse', type, ...point, button: 'left', clickCount: 1 },
+  });
+  const expected = cancel === 'pointerdown' ? ['pointerdown', 'pointerup', 'click']
+    : cancel === 'mousedown' ? ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']
+    : ['pointerdown', 'mousedown', 'blur', 'focus', 'pointerup', 'mouseup', 'click'];
+  assert.deepEqual(await page.evaluate(() => events.map(([type]) => type)), expected);
+  assert.equal(await page.evaluate(() => document.activeElement.id), cancel === 'none' ? 'option' : 'search');
+});
+
+test('Firefox keys, text and focused frame discovery reach nested shadow focus', async t => {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  await page.setContent('<div id=host></div>');
+  await page.evaluate(() => {
+    const outer = host.attachShadow({ mode: 'open' });
+    outer.innerHTML = '<div id=nested></div>';
+    const root = outer.querySelector('div').attachShadow({ mode: 'open' });
+    root.innerHTML = '<form><input id=field value=query><button>Go</button></form><iframe srcdoc="<input>"></iframe>';
+    window.events = [];
+    root.querySelector('form').addEventListener('submit', event => { events.push(['submit']); event.preventDefault(); });
+    for (const type of ['keydown', 'keypress', 'keyup', 'input']) document.addEventListener(type, event => {
+      events.push([type, event.composedPath()[0].id, event.composed]);
+    });
+    root.querySelector('input').focus();
+  });
+  for (const type of ['keyDown', 'keyUp']) await page.evaluate(firefoxPageCommand, {
+    op: 'input', input: { kind: 'key', type, key: 'Enter', code: 'Enter', modifiers: 0 },
+  });
+  assert.deepEqual(await page.evaluate(() => events), [
+    ['keydown', 'field', true], ['keypress', 'field', true], ['submit'], ['keyup', 'field', true],
+  ]);
+  // Exercise the value setter fallback as well as native execCommand insertion.
+  await page.evaluate(() => { document.execCommand = () => false; });
+  await page.evaluate(firefoxPageCommand, { op: 'input', input: { kind: 'text', text: '!' } });
+  assert.equal(await page.locator('#field').inputValue(), '!query');
+  assert.deepEqual(await page.evaluate(() => events.at(-1)), ['input', 'field', true]);
+  await page.locator('iframe').evaluate(frame => frame.contentDocument.querySelector('input').focus());
+  const result = await page.evaluate(firefoxPageCommand, { op: 'inputFrame', active: true, x: 0, y: 0 });
+  assert.ok(result.backendNodeId > 0);
+});
+
+for (const scenario of [
+  { key: 'Backspace', value: 'original', start: 0, end: 8, expected: '' },
+  { key: 'Backspace', value: 'a🐱b', start: 3, end: 3, expected: 'ab' },
+  { key: 'Delete', value: 'a🐱b', start: 1, end: 1, expected: 'ab' },
+  { key: 'Backspace', value: 'original', start: 0, end: 8, cancel: 'keydown', expected: 'original' },
+  { key: 'Backspace', value: 'original', start: 0, end: 8, cancel: 'beforeinput', expected: 'original' },
+]) test(`Firefox editing uses the browser selection (${scenario.key}, ${scenario.cancel || scenario.value})`, async t => {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  await page.setContent('<input id=field>');
+  await page.evaluate(scenario => {
+    field.value = scenario.value;
+    field.focus();
+    field.setSelectionRange(scenario.start, scenario.end);
+    window.edits = [];
+    field.addEventListener('input', event => edits.push(event.inputType));
+    if (scenario.cancel) field.addEventListener(scenario.cancel, event => event.preventDefault());
+  }, scenario);
+  for (const type of ['keyDown', 'keyUp']) await page.evaluate(firefoxPageCommand, {
+    op: 'input', input: { kind: 'key', type, key: scenario.key, code: scenario.key, modifiers: 0 },
+  });
+  assert.equal(await page.locator('#field').inputValue(), scenario.expected);
+  assert.deepEqual(await page.evaluate(() => edits), scenario.cancel ? []
+    : [scenario.key === 'Backspace' ? 'deleteContentBackward' : 'deleteContentForward']);
+});
+
+test('Firefox Tab reports native focus traversal limits while retaining page key handlers', async t => {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  await page.setContent('<input id=first><input id=second>');
+  await page.locator('#first').focus();
+  const input = { op: 'input', input: { kind: 'key', type: 'keyDown', key: 'Tab', code: 'Tab', modifiers: 0 } };
+  await assert.rejects(page.evaluate(firefoxPageCommand, input), /native Tab focus navigation/);
+  await page.evaluate(() => first.addEventListener('keydown', event => { event.preventDefault(); second.focus(); }));
+  assert.deepEqual(await page.evaluate(firefoxPageCommand, input), {});
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'second');
+});
+
+for (const [kind, key, cancel = ''] of [
+  ['button', 'Enter'], ['button', 'Space'], ['button', 'Space', 'keyup'],
+  ['checkbox', 'Space'], ['checkbox', 'Space', 'keydown'], ['checkbox', 'Space', 'keypress'], ['checkbox', 'Space', 'keyup'],
+  ['radio', 'Space'], ['submit', 'Enter'], ['reset', 'Space'], ['link', 'Enter'], ['link', 'Enter', 'keypress'],
+]) test(`Firefox keyboard activation: ${kind}, ${key}, ${cancel || 'allowed'}`, async t => {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  await page.setContent(kind === 'button' ? '<button id=control type=button>Go</button>'
+    : kind === 'link' ? '<a id=control href="#next">Go</a>' : `<input id=control type=${kind}>`);
+  await page.evaluate(cancel => {
+    window.events = [];
+    control.focus();
+    for (const type of ['keydown', 'keypress', 'keyup', 'click', 'input', 'change']) {
+      control.addEventListener(type, event => {
+        events.push(type);
+        if (type === cancel) event.preventDefault();
+      });
+    }
+  }, cancel);
+  for (const type of ['keyDown', 'keyUp']) await page.evaluate(firefoxPageCommand, {
+    op: 'input', input: { kind: 'key', type, key: key === 'Space' ? ' ' : key, code: key,
+      text: type === 'keyDown' && key === 'Space' ? ' ' : '', modifiers: 0 },
+  });
+  const activated = key === 'Space' ? !['keydown', 'keyup'].includes(cancel) : !['keydown', 'keypress'].includes(cancel);
+  const events = ['keydown', ...(cancel === 'keydown' ? [] : ['keypress'])];
+  const activation = activated ? ['click', ...(['checkbox', 'radio'].includes(kind) ? ['input', 'change'] : [])] : [];
+  events.push(...(key === 'Space' ? ['keyup', ...activation] : [...activation, 'keyup']));
+  assert.deepEqual(await page.evaluate(() => window.events), events);
+  if (['checkbox', 'radio'].includes(kind)) assert.equal(await page.locator('#control').isChecked(), activated);
+});
+
+test('Firefox AX and element observations share standard roles and accessible names', async t => {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  await page.setContent(`<label for=track>Track</label><select id=track><option>Data</option><option>Design</option></select>
+    <select id=multi multiple aria-label="Tracks"><option>Data</option></select>
+    <label>Full name<input id=field name=internal_name value="Not the name"></label>
+    <span id=label hidden>Primary action</span><button id=labelled aria-labelledby=label aria-label="Lower priority">Other text</button>
+    <button id=presentation role=presentation>Continue</button>
+    <table><tr><th id=row scope=row>Account</th><td>One</td></tr></table>
+    <svg id=graphic><title>Lighthouse</title></svg><p>Visible paragraph text</p>
+    <div style="visibility:hidden"><button id=visible style="visibility:visible">Visible child</button></div>`);
+  assert.equal(await page.evaluate(firefoxPageCommand, { op: 'semantics' }), 0);
+  await installContent(page);
+  assert.equal(await page.evaluate(firefoxPageCommand, { op: 'semantics' }), 1);
+  const { root } = await page.evaluate(firefoxPageCommand, { op: 'document' });
+  const tree = await page.evaluate(firefoxPageCommand, { op: 'ax' });
+  await t.test('paragraph content remains text rather than an accessible name', () => {
+    assert.ok(tree.nodes.some(node => node.role.value === 'StaticText' && node.name?.value === 'Visible paragraph text'));
+    assert.equal(tree.nodes.some(node => node.role.value === 'paragraph' && node.name?.value === 'Visible paragraph text'), false);
+  });
+  for (const [id, role, name] of [
+    ['track', 'combobox', 'Track'], ['multi', 'listbox', 'Tracks'], ['field', 'textbox', 'Full name'],
+    ['labelled', 'button', 'Primary action'], ['presentation', 'button', 'Continue'],
+    ['row', 'rowheader', 'Account'], ['graphic', 'img', 'Lighthouse'], ['visible', 'button', 'Visible child'],
+  ]) {
+    const { nodeIds } = await page.evaluate(firefoxPageCommand, { op: 'query', nodeId: root.nodeId, selector: `#${id}` });
+    const ax = tree.nodes.find(node => node.backendDOMNodeId === nodeIds[0]);
+    assert.equal(ax?.role.value, role === 'img' ? 'image' : role, id);
+    assert.equal(ax?.name.value, name, id);
+    const element = await page.evaluate(id => __qzInvoke(document.getElementById(id), { action: 'inspectElement' }), id);
+    assert.equal(element.role, role, id);
+    assert.equal(element.name, name, id);
+  }
+  await page.locator('#track').selectOption({ label: 'Design' });
+  const updated = await page.evaluate(firefoxPageCommand, { op: 'ax' });
+  assert.equal(updated.nodes.find(node => node.role.value === 'combobox').name.value, 'Track');
+  await page.evaluate(() => { globalThis.__qzDomSemantics = { version: 99 }; });
+  await installContent(page);
+  assert.equal(await page.evaluate(firefoxPageCommand, { op: 'semantics' }), 1, 'reinject refreshes the provider despite the content version guard');
+  await page.locator('html').evaluate(node => { node.setAttribute('role', 'application'); node.setAttribute('aria-label', 'App'); });
+  const application = await page.evaluate(firefoxPageCommand, { op: 'ax' });
+  assert.ok(application.nodes.some(node => node.role.value === 'application' && node.name?.value === 'App'));
 });
 
 for (const crossOrigin of [false, true]) test(`Firefox frame sessions bind and click child nodes (crossOrigin=${crossOrigin})`, async t => {
@@ -53,7 +266,9 @@ for (const crossOrigin of [false, true]) test(`Firefox frame sessions bind and c
   const frames = new Map([[0, page.mainFrame()], [7, child]]);
   for (const frame of frames.values()) await frame.evaluate(() => {
     globalThis.chrome = { runtime: { id: 'frame-test' } };
+    globalThis.__qzElementRefVersion = 1;
     globalThis.__qzInvoke = (node, payload) => {
+      if (payload.action === 'resolveElementRefs') return [document.querySelector('button'), null];
       if (!node?.isConnected || node.ownerDocument !== document) return { code: 'STALE_ELEMENT_UID' };
       return { id: node.id, action: payload.action };
     };
@@ -72,7 +287,12 @@ for (const crossOrigin of [false, true]) test(`Firefox frame sessions bind and c
         { frameId: 7, parentFrameId: 0, url: crossOrigin ? 'http://localhost/inner' : 'http://127.0.0.1/inner' },
       ]; },
     },
-    scripting: { async executeScript({ target, func, args }) {
+    scripting: { async executeScript({ target, func, args, files }) {
+      if (files) {
+        assert.deepEqual(files, ['content/article-extractor.js', 'content/content-script.js']);
+        await installContent(frames.get(target.frameIds[0]));
+        return [{ result: undefined }];
+      }
       if (func.name !== 'firefoxPageCommand') return [{ result: undefined }];
       injections.push({ frameId: target.frameIds[0], op: args[0].op });
       const result = await frames.get(target.frameIds[0]).evaluate(async ({ source, args }) => {
@@ -105,6 +325,17 @@ for (const crossOrigin of [false, true]) test(`Firefox frame sessions bind and c
   const result = await send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: ISOLATED_CONTENT_INVOKE,
     arguments: [{ value: { action: 'inspectElement' } }], returnByValue: true }, session);
   assert.deepEqual(result.result.value, { id: 'inner', action: 'inspectElement' });
+  const batch = await send('Runtime.callFunctionOn', { executionContextId: context.id, functionDeclaration: ISOLATED_CONTENT_INVOKE,
+    arguments: [{ value: { action: 'resolveElementRefs', elementRefs: ['one', 'gone'] } }], returnByValue: false, objectGroup: 'bind-batch' }, session);
+  assert.equal(batch.result.subtype, 'array');
+  const properties = await send('Runtime.getProperties', { objectId: batch.result.objectId, ownProperties: true }, session);
+  assert.equal(properties.result[0].value.subtype, 'node');
+  assert.equal(properties.result[1].value.subtype, 'null');
+  assert.equal((await send('DOM.describeNode', { objectId: properties.result[0].value.objectId }, session)).node.backendNodeId, button.backendDOMNodeId);
+  await send('Runtime.releaseObjectGroup', { objectGroup: 'bind-batch' }, session);
+  const original = await send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: ISOLATED_CONTENT_INVOKE,
+    arguments: [{ value: { action: 'inspectElement' } }], returnByValue: true }, session);
+  assert.deepEqual(original.result.value, { id: 'inner', action: 'inspectElement' }, 'releasing a binding batch cannot invalidate another live object group');
   // Page tools dispatch in root coordinates even when the bound node is in a frame.
   const point = await page.evaluate(() => {
     const frame = document.querySelector('iframe'), outer = frame.getBoundingClientRect();
@@ -181,7 +412,12 @@ async function duplicateFrameFixture(t, kind, unrelatedFirst = false) {
         }));
       },
     },
-    scripting: { async executeScript({ target, func, args }) {
+    scripting: { async executeScript({ target, func, args, files }) {
+      if (files) {
+        assert.deepEqual(files, ['content/article-extractor.js', 'content/content-script.js']);
+        await installContent(frames.get(target.frameIds[0]));
+        return [{ result: undefined }];
+      }
       if (func.name !== 'firefoxPageCommand') return [{ result: undefined }];
       if (args[0].op === 'owners') inputReads.owners.push(target.frameIds[0]);
       const result = await frames.get(target.frameIds[0]).evaluate(async ({ source, args }) => {
@@ -240,11 +476,28 @@ for (const kind of ['srcdoc', 'blank', 'same-src']) test(`Firefox duplicate ifra
       registerTool: value => { definition = value; }, ToolExecutionError,
       clampLimit: (value, min, max) => Math.max(min, Math.min(value, max)),
       makeSnapshotId: () => 'snapshot', elementTargetForUid: uid => `uid:${uid}`,
-      registerElementRef: ref => refs.push(ref),
+      registerElementBinding: ref => {
+        const bound = { ...ref, uid: `snapshot.${refs.length}`, target: `uid:snapshot.${refs.length}` };
+        refs.push(bound); return bound;
+      },
+      bindElementReferences: async () => [],
       sendToContent: async () => ({ title: 'Outer', url: page.url(), actions: [] }),
       withDebugger: async (_id, run) => run({}, send), elementTargetGrammar: 'target grammar',
     });
-    const result = await definition.execute({ tabId, scope: 'full' }, undefined, { sessionId: 'owner' });
+    const previousChrome = globalThis.chrome;
+    globalThis.chrome = {
+      tabs: { async get(id) { assert.equal(id, tabId); return { url: page.url(), status: 'complete' }; } },
+      scripting: { async executeScript({ target, func }) {
+        assert.deepEqual(target, { tabId, frameIds: [0] });
+        return [{ result: await page.evaluate(func) }];
+      } },
+    };
+    let result;
+    try { result = await definition.execute({ tabId, scope: 'full' }, undefined, { sessionId: 'owner' }); }
+    finally {
+      if (previousChrome === undefined) delete globalThis.chrome;
+      else globalThis.chrome = previousChrome;
+    }
     assert.equal(result.snapshot.replace(/target=uid:\S+ /g, ''), [
       'RootWebArea "Outer"',
       ' Iframe "First frame"',
