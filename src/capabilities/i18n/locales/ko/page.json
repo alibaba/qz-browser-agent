@@ -36,7 +36,7 @@
   "page.highlightElement": "요소 강조",
   "page.injectStyles": "스타일 삽입",
   "page.modifyDom": "DOM 수정",
-  "page.readArticleRequiresASelectorWhenSourceSelector": "source=selector인 경우 read_article에 selector가 필요합니다.",
+  "page.readArticleRequiresASelectorWhenSourceSelector": "source=target인 경우 read_article에 target가 필요합니다.",
   "page.searchTerms": "검색어",
   "page.argumentCharacters": "(인수: {count}자)",
   "page.contentScriptReturnedAnInvalidResponse": "콘텐츠 스크립트 {action}에서 잘못된 응답을 반환했습니다.",

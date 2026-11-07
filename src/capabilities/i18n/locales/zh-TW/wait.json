@@ -39,7 +39,7 @@
   "wait.waitNotContinued": "任務未繼續",
   "wait.loginVerificationCompleted": "已驗證登入",
   "wait.userContinued": "任務已繼續",
-  "wait.waitForElementSelectorSupportsRawCssOrCss": "wait_for_element 的 selector 支援原始 CSS 或 css:<selector>；uid:<element_uid> 是快照參照，無法等待未來的 DOM 狀態。",
+  "wait.waitForElementSelectorSupportsRawCssOrCss": "wait_for_element 的 target 支援原始 CSS 或 css:<target>；uid:<element_uid> 是快照參照，無法等待未來的 DOM 狀態。",
   "wait.userWaitRuntimeIsUnavailable": "使用者輸入服務無法使用。",
   "wait.currentTaskHasNoWorkingTab": "目前任務沒有工作分頁。",
   "wait.waitUntilRequiresAValidAbsoluteTimeWithAn": "wait_until 需要有效的絕對時間，並明確指定時區。",

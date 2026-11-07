@@ -1,3 +1,4 @@
+import { isToolFailure } from "../contracts/tool-error.js";
 /** Cumulative usage derived from provider usage recorded on each model call. */
 
 const USD_TICKS = 10_000_000_000;
@@ -190,7 +191,7 @@ function toolEntriesFromMessages(messages: Record<string, unknown>[]): Record<st
       type: "tool",
       name: call.name,
       args: call.args,
-      isError: Boolean(result.error),
+      isError: isToolFailure(result),
       result,
       phase: "done",
     });

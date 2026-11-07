@@ -225,5 +225,12 @@
   "sessions.locationPositionUnavailable": "تعذّر تحديد موضعك. تحقق من الشبكة وخدمات الموقع، أو أخبرني بمدينة أو منطقة.",
   "sessions.locationTimeout": "انتهت مهلة الموقع. أبقِ اللوحة الجانبية مفتوحة واسمح بموقع المتصفح، أو أخبرني بمدينة أو منطقة.",
   "sessions.locationPanelUnavailable": "اللوحة الجانبية غير متصلة. افتحها في هذه النافذة وأعد المحاولة، أو أخبرني بمدينة أو منطقة.",
-  "sessions.locationResponseTimeout": "انتهت مهلة الموقع. اسمح بالموقع في المتصفح وشغّل خدمات الموقع في النظام، أو أخبرني بمدينة أو منطقة."
+  "sessions.locationResponseTimeout": "انتهت مهلة الموقع. اسمح بالموقع في المتصفح وشغّل خدمات الموقع في النظام، أو أخبرني بمدينة أو منطقة.",
+  "sessions.externalDrive": "خارجي",
+  "sessions.externalDriveReadOnly": "يتحكم عميل خارجي في هذه الجلسة مباشرة. هذه الواجهة للعرض فقط.",
+  "sessions.externalDriveWelcomeTitle": "يتحكم فيه وكيل خارجي",
+  "sessions.externalDriveWelcomeBody": "يتحكم وكيل خارجي في هذه الجلسة عبر MCP أو واجهة qz. ثبّت الدليل أو حدّثه بالأمر npx skills add alibaba/qz-browser-agent -g. تتصل أوامر CLI تلقائيًا؛ للاقتران يدويًا، شغّل الأمر أدناه وافتح الرابط المطبوع في هذا المتصفح.",
+  "sessions.externalDriveWelcomeCommandHint": "افتح الرابط المطبوع في هذا المتصفح",
+  "sessions.externalDriveWelcomeCopy": "نسخ",
+  "sessions.externalDriveWelcomeCopied": "تم النسخ"
 }

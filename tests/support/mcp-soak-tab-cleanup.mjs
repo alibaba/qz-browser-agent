@@ -1,30 +1,48 @@
-// Keep long manual runs bounded without deleting task history or resources.
-export async function closeCompletedTaskTabs({ mcp, sessionIds, activeSessionIds = [] }) {
+// The isolated browser fixture closes native task tabs as a user would. Native
+// Sessions cannot execute drive tools, and stopping a completed root keeps its tabs.
+export async function closeCompletedTaskTabs({ mcp, page, sessionIds, activeSessionIds = [] }) {
   const active = new Set(activeSessionIds);
   const owners = [...new Set(sessionIds)].filter(id => !active.has(id));
   const report = { at: new Date().toISOString(), closed: [], skipped: [], errors: [] };
   if (!owners.length) return report;
-  const contextId = owners[0];
-  try {
-    const listed = await mcp("qingzhou_execute_tool", { sessionId: contextId, name: "list_tabs", args: {}, wait: true });
-    report.pageTabsBefore = listed.result.length;
-    for (const sessionId of owners) {
-      const tabs = listed.result.filter(tab => (tab.ownedByCurrentTask ? contextId : tab.ownerSessionId) === sessionId);
-      if (!tabs.length) continue;
+  for (const sessionId of owners) {
+    try {
       const snapshot = await mcp("qingzhou_get_session_snapshot", { sessionId, compact: true });
-      if (!["completed", "aborted", "interrupted", "cancelled"].includes(snapshot.status)) {
+      const terminal = ["completed", "aborted", "interrupted", "cancelled", "error"];
+      if (!terminal.includes(snapshot.status) || snapshot.isStreaming || snapshot.runtime?.running) {
         report.skipped.push({ sessionId, status: snapshot.status });
         continue;
       }
-      for (const tab of tabs) {
-        try {
-          // Manual management uses the explicit Session, not a revoked completed run.
-          const result = await mcp("qingzhou_execute_tool", { sessionId, name: "close_tab", args: { tabId: tab.id }, wait: true });
-          if (result.result.closed !== tab.id) throw new Error(`Tab ${tab.id} was not closed`);
-          report.closed.push({ sessionId, tabId: tab.id });
-        } catch (error) { report.errors.push({ sessionId, tabId: tab.id, message: error.message }); }
-      }
-    }
-  } catch (error) { report.errors.push({ message: error.message }); }
+      const result = await page.evaluate(async ({ sessionId, runId, terminal }) => {
+        // Read the isolated profile's checkpoints, never write them. Chrome's
+        // existing onRemoved handler updates ownership and keeps history intact.
+        const runtimes = async () => Object.entries(await chrome.storage.local.get(null))
+          .filter(([key, value]) => key.startsWith("_session_runtime_") && value?.sessionId)
+          .map(([, value]) => value);
+        const owned = runtime => runtime?.ownedTabIds || [];
+        const settled = runtime => terminal.includes(runtime?.status) && !runtime.running && !runtime.pendingStart
+          && runtime.runId === runId && !runtime.waitId
+          && ["pendingFollowUps", "pendingFollowUpMessages", "pendingSteerings", "pendingSteeringMessages"]
+            .every(key => !runtime[key]?.length);
+        const result = { closed: [], skipped: [], errors: [] };
+        const initial = (await runtimes()).find(runtime => runtime.sessionId === sessionId);
+        for (const tabId of new Set(owned(initial))) {
+          const current = await runtimes();
+          const owner = current.find(runtime => runtime.sessionId === sessionId);
+          if (!settled(owner) || !owned(owner).includes(tabId)
+            || current.some(runtime => runtime.sessionId !== sessionId && owned(runtime).includes(tabId))) {
+            result.skipped.push({ sessionId, tabId, reason: "task_or_ownership_changed" });
+            continue;
+          }
+          try {
+            await chrome.tabs.remove(tabId);
+            result.closed.push({ sessionId, tabId });
+          } catch (error) { result.errors.push({ sessionId, tabId, message: error.message }); }
+        }
+        return result;
+      }, { sessionId, runId: snapshot.runId ?? snapshot.runtime?.runId ?? null, terminal });
+      for (const key of ["closed", "skipped", "errors"]) report[key].push(...result[key]);
+    } catch (error) { report.errors.push({ sessionId, message: error.message }); }
+  }
   return report;
 }

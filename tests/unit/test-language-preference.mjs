@@ -85,17 +85,38 @@ test("background observes latest preference, rejecting stale initial reads and c
   const japanese = deferred();
   const arabic = deferred();
   const f = fixture({ get: () => initial.promise, fetch: url => url.includes("/ja/") ? japanese.promise : arabic.promise });
-  const ready = f.runtime.initializeLanguage({ watch: true });
+  const applied = [];
+  const ready = f.runtime.initializeLanguage({ watch: true, onChange: () => applied.push(f.runtime.getLanguage()) });
   f.changed({ v: 1, language: "ja" });
   f.changed({ v: 1, language: "ar" });
   initial.resolve({ [LANGUAGE_PREFERENCE_KEY]: { v: 1, language: "zh-CN" } });
   arabic.resolve({ ok: true, json: async () => ({ qz_language: { message: "ar" } }) });
   await ready;
   assert.equal(f.runtime.getLanguage(), "ar");
+  assert.deepEqual(applied, ["ar"]);
   japanese.resolve({ ok: true, json: async () => ({ qz_language: { message: "ja" } }) });
   await turn();
   assert.equal(f.runtime.getLanguage(), "ar");
+  assert.deepEqual(applied, ["ar"], "late catalog completions cannot refresh the current display");
   assert.equal(f.runtime.withLanguage("ja", () => f.runtime.getLanguage()), "ja");
+});
+
+test("language refresh runs after catalog application, skips startup and cannot cause fallback", async () => {
+  const f = fixture();
+  const applied = [];
+  await f.runtime.initializeLanguage({ watch: true, onChange: () => {
+    applied.push([f.runtime.getLanguage(), f.runtime.lookupMessage("sample.label")]);
+    throw new Error("display refresh failed");
+  } });
+  assert.deepEqual(applied, [], "startup consumers retain their own readiness ordering");
+  f.changed({ v: 1, language: "ja" });
+  await f.runtime.whenLanguageReady();
+  assert.deepEqual(applied, [["ja", "ja: $5 $$6 $NAME$ {value}"]]);
+  assert.equal(f.runtime.getLanguage(), "ja", "observer failure must not reset the applied locale");
+  f.changed(undefined);
+  await f.runtime.whenLanguageReady();
+  assert.equal(f.runtime.getLocale(), "en-GB");
+  assert.equal(applied.at(-1)[0], "en");
 });
 
 test("readiness follows preference changes arriving during an earlier load", async () => {

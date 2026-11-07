@@ -16,23 +16,35 @@ for (const mode of ['development', 'production']) {
         window.chrome = { storage: { local: { get: async () => ({ securityGuardrails: { rules: [
           { action: 'block', type: 'domain', value: 'blocked.test' },
           { action: 'allow', type: 'pattern', value: 'https://blocked.test/allowed/*' },
-        ] } }) } }, scripting: { executeScript: async () => [] } };
+        ] } }) } },
+          tabs: { get: async id => ({ id, url: location.href, status: document.readyState === 'complete' ? 'complete' : 'loading' }) },
+          scripting: { executeScript: async ({ func, args = [] }) => func ? [{ result: await func(...args) }] : [] },
+        };
         const definitions = new Map();
+        let skillCode = '';
         const { createScriptTools, ToolExecutionError } = window.QZ_SCRIPT_TEST;
         createScriptTools({ registerTool: definition => definitions.set(definition.name, definition), ToolExecutionError,
-          skills: { loadScript: async () => { throw new Error("Inline script must not load a Skill resource"); } },
+          skills: { loadScript: async () => skillCode },
           scriptTimeoutProperty: { type: 'number' },
           evaluateCdpScript: (_tabId, parameters) => window.evaluateCdpExpression(parameters),
         });
-        window.runPageScript = code => definitions.get('run_script').execute({ code, target: 'page', tabId: 17, timeout: 5 }, undefined,
+        window.runPageScript = (code, args) => definitions.get('evaluate').execute({ code, args, tabId: 17, timeout: 5 }, undefined,
           { sessionId: 'browser-task', runId: 'browser-run' });
+        window.runPrivatePageScript = code => {
+          skillCode = code;
+          return definitions.get('run_skill_script').execute({ skill: 'fixture', script: 'scripts/page.js', target: 'page', tabId: 17, timeout: 5 }, undefined,
+            { sessionId: 'browser-task', runId: 'browser-run' });
+        };
       });
     });
 
     test.afterEach(async () => { await cdp?.detach(); });
 
-    test('DOM values and tool-call messages keep readable serialization and run identity', async ({ page }) => {
-      const result = await page.evaluate(() => window.runPageScript(`async () => {
+    test('public page functions return plain values while private Skill messages retain serialization and run identity', async ({ page }) => {
+      const plain = await page.evaluate(() => window.runPageScript('value => ({ text: document.querySelector("button").textContent.trim(), value, input: typeof input })', [null, 7]));
+      expect(plain).toEqual({ text: 'Real DOM', value: [null, 7], input: 'undefined' });
+      expect(await page.evaluate(() => window.runPageScript('() => document.querySelector("button")'))).toMatchObject({ code: 'SCRIPT_VALUE_NOT_SERIALIZABLE' });
+      const result = await page.evaluate(() => window.runPrivatePageScript(`async () => {
         const long = document.createElement('p'); long.textContent = '  ' + 'x'.repeat(250) + '  ';
         return { button: document.querySelector('button'), svg: document.querySelector('svg'), long, window, document };
       }`));
@@ -52,14 +64,27 @@ for (const mode of ['development', 'production']) {
         };
         window.addEventListener('message', respond);
         try {
-          const result = await window.runPageScript(`async () => { return await tools.echo({ element: document.querySelector('button') }); }`);
+          const result = await window.runPrivatePageScript(`async () => { return await tools.echo({ element: document.querySelector('button') }); }`);
           return { result, call };
         } finally { window.removeEventListener('message', respond); }
       });
       expect(bridged.result.ok).toBe(true);
       expect(bridged.result.result).toEqual({ accepted: true });
+      expect(bridged.result.trace ?? []).toEqual([]);
       expect(bridged.call).toMatchObject({ toolName: 'echo', sessionId: 'browser-task', runId: 'browser-run', depth: 1,
-        args: { tabId: 17, element: result.result.button } });
+        args: { element: result.result.button } });
+    });
+
+    test('page Skill traces contain explicit checkpoints and errors only', async ({ page }) => {
+      const result = await page.evaluate(() => window.runPrivatePageScript(`
+        trace('page ready');
+        console.log('read checkpoint');
+        throw new Error('checkpoint failure');
+      `));
+      expect(result.code).toBe('SCRIPT_EVALUATION_FAILED');
+      expect(result.details.trace.map(row => row.message).slice(0, 2)).toEqual(['page ready', 'read checkpoint']);
+      expect(result.details.trace).toHaveLength(3);
+      expect(result.details.trace[2].message).toContain('checkpoint failure');
     });
 
     test('native browser request surfaces block and recover without leaving wrappers installed', async ({ page }) => {
@@ -84,13 +109,13 @@ for (const mode of ['development', 'production']) {
           beacon: navigator.sendBeacon === originals.beacon, console: console.log === originals.log,
         } };
       });
-      expect(result.blocked.map(value => [value.ok, value.code, value.details.source])).toEqual([
-        [false, 'SECURITY_GUARDRAIL_BLOCKED', 'fetch'],
-        [false, 'SECURITY_GUARDRAIL_BLOCKED', 'XMLHttpRequest.open'],
-        [false, 'SECURITY_GUARDRAIL_BLOCKED', 'navigator.sendBeacon'],
+      expect(result.blocked.map(value => [value.code, value.details.action])).toEqual([
+        ['SECURITY_GUARDRAIL_BLOCKED', 'fetch'],
+        ['SECURITY_GUARDRAIL_BLOCKED', 'XMLHttpRequest.open'],
+        ['SECURITY_GUARDRAIL_BLOCKED', 'navigator.sendBeacon'],
       ]);
-      expect(result.allowed).toMatchObject({ ok: true, result: 'allowed' });
-      expect(result.failed).toMatchObject({ ok: false, code: 'SCRIPT_EVALUATION_FAILED' });
+      expect(result.allowed).toBe('allowed');
+      expect(result.failed).toMatchObject({ code: 'SCRIPT_EVALUATION_FAILED', message: expect.stringContaining('intentional script failure') });
       expect(result.restored).toEqual({ fetch: true, xhr: true, beacon: true, console: true });
       expect(requests).toEqual(['https://blocked.test/allowed/fetch']);
     });

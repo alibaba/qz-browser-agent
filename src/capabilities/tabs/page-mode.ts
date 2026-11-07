@@ -40,14 +40,14 @@ export function createPageModeRuntime(host: ModeHost, states = new Map<number, M
       // No attach or reload for an unchanged mode; a disconnected mobile preference is reapplied.
       if (readPageMode(tabId, states) === mode && (mode !== "desktop" || !previous)) {
         if (mode === "desktop") states.delete(tabId);
-        return { tabId, pageMode: mode, changed: false, reloaded: false };
+        return { pageMode: mode, changed: false, reloaded: false };
       }
       try {
         const result = await host.withDebugger(tabId, async (_target, send) => {
           check(signal);
           // The host may have restored a replaced navigation target while we waited.
           if (readPageMode(tabId, states) === mode && (mode !== "desktop" || !previous)) {
-            return { tabId, pageMode: mode, changed: false, reloaded: false };
+            return { pageMode: mode, changed: false, reloaded: false };
           }
           const state: ModeState = { sessionId: String(context.sessionId || ""), applied: null,
             connectionId: host.getDebuggerConnectionId(tabId), connection: () => host.getDebuggerConnectionId(tabId) };
@@ -63,7 +63,7 @@ export function createPageModeRuntime(host: ModeHost, states = new Map<number, M
             if (mode === "mobile") retain(tabId, state, context);
             state.applied = mode;
             if (mode === "desktop") states.delete(tabId);
-            return { tabId, pageMode: mode, changed: true, reloaded: reload };
+            return { pageMode: mode, changed: true, reloaded: reload };
           } catch (error) {
             // Cancellation may revoke the lease while cleanup runs. Never reacquire it for rollback.
             try {
@@ -82,12 +82,11 @@ export function createPageModeRuntime(host: ModeHost, states = new Map<number, M
             throw error;
           }
         }, context);
-        if (mode === "desktop") await host.releaseDebugger(tabId, context);
         return result;
       } catch (error) {
         const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
         if (signal?.aborted || code.startsWith("SESSION_") || code === "CDP_RUN_RELEASED" || code === "SECURITY_GUARDRAIL_BLOCKED") throw error;
-        throw new host.ToolExecutionError("PAGE_MODE_FAILED", t("modeFailed"), { tabId, requestedMode: mode, cause: error instanceof Error ? error.message : String(error) });
+        throw new host.ToolExecutionError("PAGE_MODE_FAILED", t("modeFailed"), { requestedMode: mode, cause: error instanceof Error ? error.message : String(error) });
       }
     })();
     pending.set(tabId, operation);
@@ -124,7 +123,7 @@ export function createPageModeRuntime(host: ModeHost, states = new Map<number, M
       const state = states.get(tabId);
       if (state?.sessionId !== context.sessionId || readPageMode(tabId, states) === "mobile") return;
       if ((context.source === "run_script" || context.runScriptToolDepth != null) && Number(context.senderTabId) === tabId) {
-        throw new host.ToolExecutionError("PAGE_MODE_REOBSERVE_REQUIRED", t("modeResumeRequired"), { tabId });
+        throw new host.ToolExecutionError("PAGE_MODE_REOBSERVE_REQUIRED", t("modeResumeRequired"));
       }
       await change(tabId, "mobile", signal, context, toolName !== "navigate");
     },

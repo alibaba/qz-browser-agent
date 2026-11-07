@@ -7,7 +7,21 @@ import { renderResult } from "../../services/mcp-bridge/src/terminal.mjs";
 import { QzError } from "../../services/mcp-bridge/src/client.mjs";
 
 const running = { endpoint: "http://127.0.0.1:23456", health: { features: { browserPairing: 1 }, status: { connected: true, clients: [{ clientId: "profile" }] } } };
-const dependencies = { findDaemon: async () => running };
+const dependencies = { findDaemon: async () => running,
+  ensureDaemon: () => assert.fail("the fixture service is already running"),
+  openConnectionBrowser: () => assert.fail("the selected fixture browser is already responding"),
+};
+function preparedCall(clientId, execute) {
+  return async (endpoint, name, args) => {
+    assert.equal(endpoint, running.endpoint);
+    assert.equal(args.clientId, clientId);
+    if (name === "qingzhou_call") {
+      assert.equal(args.method, "ping");
+      return { pong: true };
+    }
+    return execute(endpoint, name, args);
+  };
+}
 
 test("resource commands map once to MCP names and preserve names, format, and selected browser", async () => {
   for (const [argv, name, parameters] of [
@@ -38,11 +52,11 @@ test("resource commands map once to MCP names and preserve names, format, and se
     [["settings", "set", "modelParameters", '{"temperature":0.5}'], "qingzhou_update_settings", { config: { modelParameters: { temperature: 0.5 } } }],
   ]) {
     let count = 0;
-    const result = await runCli([...argv, "--client", "profile"], { ...dependencies, callTool: async (endpoint, actualName, args) => {
+    const result = await runCli([...argv, "--client", "profile"], { ...dependencies, callTool: preparedCall("profile", async (endpoint, actualName, args) => {
       count++; assert.equal(endpoint, running.endpoint); assert.equal(actualName, name);
       assert.deepEqual(args, { timeoutSeconds: 180, clientId: "profile", ...parameters });
       return { fixture: true };
-    } });
+    }) });
     assert.equal(count, 1); assert.deepEqual(result, { result: { fixture: true, clientId: "profile" } });
   }
 });
@@ -53,36 +67,42 @@ test("invalid settings and MCP input fail before discovery and never echo suppli
     ["mcp", "call", "qingzhou_get_skill", "{}"], ["mcp", "call", "qingzhou_get_settings", "[]"],
     ["mcp", "call", "qingzhou_get_settings", '{"clientId":"one"}', "--client", "two"]]) {
     await assert.rejects(runCli(argv, { findDaemon: () => assert.fail("validate before discovery") }), error => {
-      assert.equal(error.code, "invalid_arguments"); assert.doesNotMatch(error.message, /bad-json-secret/); return true;
+      assert.equal(error.code, "INVALID_ARGUMENTS"); assert.doesNotMatch(error.message, /bad-json-secret/); return true;
     });
   }
   const patch = { apiKey: "fixture-credential", model: "model-id" };
   await runCli(["settings", "set", "-"], { ...dependencies, readStdin: async () => JSON.stringify(patch),
-    callTool: async (_endpoint, name, args) => { assert.equal(name, "qingzhou_update_settings"); assert.deepEqual(args.config, patch); return { updated: ["apiKey", "model"], config: { hasApiKey: true, model: "model-id" } }; } });
+    callTool: preparedCall("profile", async (_endpoint, name, args) => { assert.equal(name, "qingzhou_update_settings"); assert.deepEqual(args.config, patch); return { updated: ["apiKey", "model"], config: { hasApiKey: true, model: "model-id" } }; }) });
 });
 
 test("removed commands fail before discovery; MCP has no command passthrough", async () => {
-  for (const argv of [["tools"], ["tools", "list"], ["tools", "show", "open_tab"],
+  for (const argv of [["tools", "show", "open_tab"],
     ["tools", "call", "open_tab", "-", "-s", "task"], ["tools", "job", "job-1"],
     ["call", "open_tab", "-s", "task"], ["logs"], ["logs", "clear"], ["input", "task"],
     ["downloads"], ["downloads", "list"], ["downloads", "show", "42"],
     ["mcp", "tools"], ["mcp", "call", "qingzhou_get_settings", "{}"]]) {
     await assert.rejects(runCli(argv, { findDaemon: () => assert.fail("syntax fails before discovery"),
-      readStdin: () => assert.fail("removed commands cannot consume stdin") }), error => error.code === "invalid_arguments");
+      readStdin: () => assert.fail("removed commands cannot consume stdin") }), error => error.code === "INVALID_ARGUMENTS");
   }
 });
 
 test("resource mutation failures are never replayed and JSON preserves export download details", async () => {
-  for (const argv of [["data", "delete", "prices"], ["images", "delete", "photos"], ["settings", "set", "vision", "true"]]) {
+  for (const [argv, name] of [[["data", "delete", "prices"], "qingzhou_delete_data_table"],
+    [["images", "delete", "photos"], "qingzhou_delete_image_collection"], [["settings", "set", "vision", "true"], "qingzhou_update_settings"]]) {
     let calls = 0;
-    await assert.rejects(runCli(argv, { ...dependencies, callTool: async () => { calls++; throw new Error("Disconnected after send"); } }), /Disconnected/);
+    await assert.rejects(runCli(argv, { ...dependencies, callTool: preparedCall("profile", async (_endpoint, actual) => {
+      assert.equal(actual, name); calls++; throw new Error("Disconnected after send");
+    }) }), /Disconnected/);
     assert.equal(calls, 1);
   }
   for (const [command, filename] of [["data", "prices.xlsx"], ["images", "photos.zip"], ["skills", "research.zip"]]) {
     const download = { downloadId: 42, filename, state: "complete", filepath: `/tmp/${filename}`, fileUrl: `file:///tmp/${filename}` };
     let stdout = "";
     const code = await main([command, "export", "source", "--json"], { ...dependencies,
-      stdout: { write: value => { stdout += value; } }, callTool: async () => download });
+      stdout: { write: value => { stdout += value; } }, callTool: preparedCall("profile", async (_endpoint, name) => {
+        assert.equal(name, { data: "qingzhou_export_data_table", images: "qingzhou_export_image_collection", skills: "qingzhou_export_skill" }[command]);
+        return download;
+      }) });
     assert.equal(code, 0); assert.deepEqual(JSON.parse(stdout), { ok: true, result: { ...download, clientId: "profile" } });
   }
 });
@@ -94,13 +114,13 @@ test("send waits for the new run, skips stale completed snapshots, and sends onl
     // completed task without this message would instead mean it was removed.
     transcript: [{ type: "user", clientMessageId: "message", runId: "new-run" }] });
   const result = await runCli(["send", "task", "-", "--stream"], { ...dependencies, readStdin: async () => "Add sources.",
-    callTool: async (_endpoint, name, args) => {
+    callTool: preparedCall("profile", async (_endpoint, name, args) => {
       assert.equal(args.clientId, "profile");
       if (name === "qingzhou_get_session_snapshot") { assert.equal(sends, 1); return snapshot(++reads < 2 ? "old-run" : "new-run"); }
       assert.equal(name, "qingzhou_send_message"); sends++; assert.equal(args.text, "Add sources.");
       assert.equal(args.wait, false); assert.equal(args.waitForStart, true); assert.equal(args.steer, false);
       return { accepted: true, sessionId: "task", disposition: "queued", clientMessageId: "message", runtime: { runId: "old-run", status: "pending" } };
-    },
+    }),
   });
   assert.equal(sends, 1); assert.equal(reads, 2); assert.equal(result.result.snapshot.runId, "new-run");
 });
@@ -115,13 +135,13 @@ test("send --steer targets the selected task once and streams only responses aft
   const result = await runCli(["send", "chosen-task", "Focus on sources.", "--steer", "--stream", "-c", "chosen-profile"], {
     findDaemon: async () => ({ ...running, health: { features: { browserPairing: 1 }, status: { connected: true, clients: [{ clientId: "chosen-profile" }] } } }),
     onTaskUpdate: event => updates.push(event),
-    callTool: async (_endpoint, name, args) => {
+    callTool: preparedCall("chosen-profile", async (_endpoint, name, args) => {
       assert.equal(args.sessionId, "chosen-task"); assert.equal(args.clientId, "chosen-profile");
       if (name === "qingzhou_get_session_snapshot") return done;
       assert.equal(name, "qingzhou_send_message"); sends++;
       assert.equal(args.steer, true); assert.equal(args.text, "Focus on sources."); assert.equal(args.wait, false);
       return { accepted: true, sessionId: "chosen-task", disposition: "queued", clientMessageId: "steer-message" };
-    },
+    }),
   });
   assert.equal(sends, 1); assert.equal(result.result.snapshot, done);
   assert.deepEqual(updates.filter(event => event.type === "text").map(event => event.text), ["Sources checked."]);
@@ -130,19 +150,20 @@ test("send --steer targets the selected task once and streams only responses aft
 test("send interruption after acceptance reports the same task and never sends twice", async () => {
   const controller = new AbortController(); let sends = 0;
   await assert.rejects(runCli(["send", "task", "Continue.", "--wait"], { ...dependencies, signal: controller.signal,
-    callTool: async (_endpoint, name) => {
+    callTool: preparedCall("profile", async (_endpoint, name) => {
       if (name === "qingzhou_send_message") { sends++; controller.abort(new DOMException("Stopped", "AbortError")); return { accepted: true, clientMessageId: "message", runtime: { runId: "new" } }; }
+      assert.equal(name, "qingzhou_get_session_snapshot");
       return { sessionId: "task", status: "completed", runId: "old" };
-    },
-  }), error => error.code === "interrupted" && error.details.sessionId === "task");
+    }),
+  }), error => error.code === "INTERRUPTED" && error.details.sessionId === "task");
   assert.equal(sends, 1);
 });
 
 test("a send accepted without a tracking identity fails with recovery guidance and is not replayed", async () => {
   let calls = 0;
   await assert.rejects(runCli(["send", "task", "Continue.", "--wait"], { ...dependencies,
-    callTool: async (_endpoint, name) => { calls++; assert.equal(name, "qingzhou_send_message"); return { accepted: true }; },
-  }), error => error.code === "invalid_response" && /qz watch task/.test(error.details.command));
+    callTool: preparedCall("profile", async (_endpoint, name) => { calls++; assert.equal(name, "qingzhou_send_message"); return { accepted: true }; }),
+  }), error => error.code === "INVALID_RESPONSE" && /qz watch task/.test(error.details.command));
   assert.equal(calls, 1);
 });
 
@@ -193,7 +214,11 @@ test("Skill resource chunks include an exact continuation command and missing re
   });
   assert.match(contributions, /Tool  research_search/); assert.doesNotMatch(contributions, /qz (tools|call|logs|input)\b/);
   await assert.rejects(runCli(["skills", "read", "research", "missing.js"], { ...dependencies,
-    callTool: async () => { throw new QzError("SKILL_RESOURCE_NOT_FOUND", "Resource missing"); },
+    callTool: preparedCall("profile", async (_endpoint, name, args) => {
+      assert.equal(name, "qingzhou_get_skill_resource");
+      assert.equal(args.path, "missing.js");
+      throw new QzError("SKILL_RESOURCE_NOT_FOUND", "Resource missing");
+    }),
   }), error => error.code === "SKILL_RESOURCE_NOT_FOUND");
 });
 
@@ -231,12 +256,12 @@ test("task limits and child creation expose MCP capabilities without passthrough
     [["create", "Inspect the source", "--parent", "parent-task"], "qingzhou_create_session", { title: "", firstMessage: "Inspect the source", parentSessionId: "parent-task" }],
   ]) {
     let count = 0;
-    await runCli(argv, { ...dependencies, callTool: async (_endpoint, actualName, args) => {
+    await runCli(argv, { ...dependencies, callTool: preparedCall("profile", async (_endpoint, actualName, args) => {
       count++;
       assert.equal(actualName, name);
       assert.deepEqual(args, { timeoutSeconds: 180, clientId: "profile", ...parameters });
       return { accepted: true };
-    } });
+    }) });
     assert.equal(count, 1);
   }
 });

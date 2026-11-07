@@ -97,15 +97,15 @@ test("replacement schema, execution, ownership, cancellation and effects use the
   const schemas = getToolSchemas(context).filter(tool => tool.function.name === base.name);
   assert.equal(schemas.length, 1);
   assert.equal(schemas[0].function.description, "Replacement en");
-  await assert.rejects(runtime.execute(base.name, {}, undefined, context), error => error.code === "MISSING_REQUIRED_ARGUMENTS");
-  await assert.rejects(runtime.execute(base.name, { value: 42 }, undefined, context), error => error.code === "INVALID_ARGUMENTS");
+  await assert.rejects(runtime.execute(base.name, { tabRef: 7 }, undefined, context), error => error.code === "MISSING_REQUIRED_ARGUMENTS");
+  await assert.rejects(runtime.execute(base.name, { tabRef: 7, value: 42 }, undefined, context), error => error.code === "INVALID_ARGUMENTS");
   assert.equal(resolutions, 0);
-  await assert.rejects(runtime.execute(base.name, { value: "x" }, undefined, { ...context, sessionId: "foreign" }),
+  await assert.rejects(runtime.execute(base.name, { tabRef: 7, value: "x" }, undefined, { ...context, sessionId: "foreign" }),
     error => error.code === "SESSION_TAB_FOREIGN");
   const abort = new AbortController(); abort.abort();
-  await assert.rejects(runtime.execute(base.name, { value: "x" }, abort.signal, context));
+  await assert.rejects(runtime.execute(base.name, { tabRef: 7, value: "x" }, abort.signal, context));
   assert.equal(executions, 0);
-  const result = await runtime.execute(base.name, { value: "success" }, undefined, context);
+  const result = await runtime.execute(base.name, { tabRef: 7, value: "success" }, undefined, context);
   assert.equal(result.value, "success");
   assert.equal(result.session, "own");
   assert.equal(executions, 1);

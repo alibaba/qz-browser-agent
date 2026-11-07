@@ -13,7 +13,7 @@ const AUDIT_SCRIPT = `
   const started = Date.now();
   while (Date.now() - started < 8000) {
     const app = doc.querySelector("#app");
-    const rendered = [".send-btn", ".tab-btn.active", "#btn-new", ".onboarding-action"].every(visible);
+    const rendered = [".send-btn", ".tab-btn.active", "#btn-new", ".onboarding-action", "#onboarding-primary-btn, .qz-btn--primary"].every(visible);
     if (rendered && app && !app.hasAttribute("data-workspace-booting")) break;
     await new Promise(resolve => win.setTimeout(resolve, 50));
   }

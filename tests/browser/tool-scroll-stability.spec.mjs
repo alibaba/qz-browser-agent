@@ -359,7 +359,7 @@ test.describe("completed tool card scroll stability", () => {
       const code = Array.from({ length: 520 }, (_, index) => (
         `const streamedValue${index} = rows.map((item) => item.score + ${index});`
       )).join("\n");
-      const argsText = JSON.stringify({ target: "inner", timeout: 30, code });
+      const argsText = JSON.stringify({ timeout: 30, code });
       let length = 2400;
       let eventSeq = 1;
       const update = () => ({
@@ -379,7 +379,7 @@ test.describe("completed tool card scroll stability", () => {
         if (finish) window.qingzhouConversationBenchmark.dispatchBackgroundEvent({
           sessionId, runId, eventSeq: eventSeq++, type: "tool_execution_start",
           toolCallId, spanId: `span-${toolCallId}`, toolName: "run_script",
-          args: { target: "inner", timeout: 30, code },
+          args: { timeout: 30, code },
         });
       };
       await window.qingzhouConversationBenchmark.runLiveReplay({
@@ -481,7 +481,7 @@ test.describe("completed tool card scroll stability", () => {
             toolCallId: "goal_strip_scroll_probe_tool",
             runId: "benchmark-visual-run",
             name: "run_script",
-            args: { target: "inner", code },
+            args: { code },
             result: { ok: true, result: rows },
             phase: "done",
             isRunning: false,
@@ -580,7 +580,7 @@ test.describe("completed tool card scroll stability", () => {
             toolCallId: "viewport_user_scroll_tool",
             runId,
             name: "run_script",
-            args: { target: "inner", code },
+            args: { code },
             result: { ok: true, result: rows },
             phase: "done",
             isRunning: false,
@@ -675,7 +675,7 @@ test.describe("completed tool card scroll stability", () => {
             toolCallId: "viewport_search_tool",
             runId: "viewport_search_run",
             name: "run_script",
-            args: { target: "inner", code },
+            args: { code },
             result: { ok: true, result: rows },
             phase: "done",
             isRunning: false,
@@ -739,7 +739,7 @@ test.describe("completed tool card scroll stability", () => {
               toolCallId,
               runId,
               name: "run_script",
-              args: { target: "inner", code },
+              args: { code },
               result: { ok: true, result: rows },
               phase: "done",
               isRunning: false,

@@ -27,7 +27,7 @@ interface CardState {
   sessionId: string | null; key: string; card: WaitCard; controller: AbortController; pending: boolean;
 }
 
-/** The card owns its draft and submission lifetime; only Background events resolve a wait. */
+/** The card owns its draft and rendering; Background validates submissions and resolves waits. */
 export function createWaitingCards(options: CardOptions) {
   const cards = new Map<HTMLElement, CardState>();
 
@@ -108,7 +108,8 @@ export function createWaitingCards(options: CardOptions) {
     try {
       if (type === "continue_task" && state.card.form.browserPermission) {
         const allowed = await requestBrowserPermission(state.card.form.browserPermission);
-        if (!owns(el, state)) return;
+        // Native dialogs outlive card rebuilds; Background validates the captured wait.
+        if (!options.isCurrentSession(command.sessionId)) return;
         if (!allowed) command.type = "cancel_wait";
       }
       if (type === "continue_task" && state.card.form.locationConsent) {

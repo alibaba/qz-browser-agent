@@ -405,6 +405,7 @@ test("saving Follow browser reloads back to its language after an RTL preference
 });
 
 test("Advanced keeps language settings when the built-in settings capability is absent", async ({ page }) => {
+  test.slow(); // This case builds an isolated capability package before checking the UI.
   const extensionDir = await ensureCapabilityExtension({ omit: ["settings"] });
   await page.route("**/extension/**", route => {
     const path = resolveTestAsset(decodeURIComponent(new URL(route.request().url()).pathname), { root: process.cwd(), extensionDir });

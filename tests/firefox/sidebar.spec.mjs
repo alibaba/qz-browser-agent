@@ -41,8 +41,9 @@ test("a temporary add-on opens the sidebar from the toolbar, not a tab", async (
   expect(firefoxSidebar.browserName).toBe("firefox");
   expect(firefoxSidebar.packageLabel).toBe("dist/extension-firefox");
   expect(firefoxSidebar.browserVersion).toMatch(/^Mozilla Firefox \d+\./);
+  await hideSidebars(firefoxSidebar);
   const closed = await readSidebar(firefoxSidebar);
-  expect(closed.panel).not.toBe(firefoxSidebar.sidebarUrl);
+  expect(closed.current).toBe("");
   expect(closed.tabs.some(url => url.includes("/sidepanel/sidepanel.html"))).toBe(false);
 
   const opened = await openFromToolbar(firefoxSidebar);

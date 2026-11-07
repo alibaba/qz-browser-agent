@@ -60,9 +60,11 @@ test("the firefox manifest drops rejected permissions and keeps the shared entri
   ]) {
     assert.equal(firefox.permissions.includes(permission), true, permission);
   }
-  for (const permission of ["history", "bookmarks", "downloads.open"]) {
+  for (const permission of ["history", "bookmarks", "downloads.open", "userScripts"]) {
     assert.equal(firefox.optional_permissions.includes(permission), true, permission);
   }
+  assert.equal(firefox.permissions.includes("userScripts"), false, "Firefox accepts userScripts only as an optional permission");
+  assert.equal(source.optional_permissions.includes("userScripts"), false, "Chrome continues to execute through CDP");
   assert.deepEqual(firefox.content_scripts, source.content_scripts);
   assert.deepEqual(firefox.sandbox, source.sandbox);
   assert.equal(firefox.content_security_policy.extension_pages, source.content_security_policy.extension_pages);

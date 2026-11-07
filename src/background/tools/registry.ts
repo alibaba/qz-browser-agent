@@ -25,19 +25,6 @@ export function withCommonToolParameters(parameters: ToolSchema): ToolSchema {
   return next;
 }
 
-/** Expose references to the model; execution keeps numeric tabId after host resolution. */
-export function withTabReferenceParameters(parameters: ToolSchema): ToolSchema {
-  if (!parameters.properties.tabId) return parameters;
-  return {
-    ...parameters,
-    properties: {
-      ...Object.fromEntries(Object.entries(parameters.properties).filter(([key]) => key !== "tabId")),
-      tabRef: { type: ["integer", "string"], description: t("tabRef") },
-    },
-    ...(parameters.required ? { required: parameters.required.map(field => field === "tabId" ? "tabRef" : field) } : {}),
-  };
-}
-
 export interface CoreToolSnapshot {
   readonly language: string;
   get(name: string): RegisteredTool | undefined;
@@ -109,12 +96,11 @@ export function createToolRegistry() {
         if (runtime.model?.noImages?.omitParameters?.some(field => normalizedParameters.required?.includes(field))) {
           throw new TypeError(`Tool ${name}: noImages may only omit optional parameters`);
         }
-        const modelParameters = runtime.page ? withTabReferenceParameters(normalizedParameters) : normalizedParameters;
         const identity = toolIdentity({ name, title: runtime.title, familyId: runtime.familyId, rendererId: runtime.rendererId });
         const presentation = getCoreToolMetadata(identity.capabilityId);
         return [name, materialize({
           ...runtime,
-          model: Object.freeze({ pageContext: presentation?.pageContext ? "working" : false, ...runtime.model }),
+          model: Object.freeze({ pageContext: presentation?.pageContext ? "explicit" : false, ...runtime.model }),
           behavior: runtime.behavior ? Object.freeze({ ...runtime.behavior }) : undefined,
           ...identity,
           profileFamily: presentation?.profileFamily || "",
@@ -127,8 +113,7 @@ export function createToolRegistry() {
           runtime: "core",
           hidden: definition.hidden === true,
           parameters: normalizedParameters,
-          schema: { type: "function", function: { name, description: runtime.page && parameters.properties.tabId
-            ? description.replace(/\btabId\b/g, "tabRef") : description, parameters: modelParameters } },
+          schema: { type: "function", function: { name, description, parameters: normalizedParameters } },
         } satisfies RegisteredTool)];
     })));
     const result: CoreToolSnapshot = Object.freeze({ language, get: (name: string) => localized.get(name), entries: () => localized.entries() });

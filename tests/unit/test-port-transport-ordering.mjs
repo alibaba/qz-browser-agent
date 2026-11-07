@@ -366,8 +366,9 @@ test("UI stop cannot overtake an earlier uploading follow-up and start a new run
       calls.push({ action: 'stop' });
       const revoked = await supervisor.revoke(sessionId);
       view = { status: 'aborted', running: false, runId: revoked.liveState.runId };
-      return { sessionId, runtime: view };
+      return { sessionId, title: 'Uploading follow-up', status: view.status, stopped: true };
     },
+    async state(sessionId) { return { sessionId, status: view.status, isStreaming: view.running, runId: view.runId, runtime: view }; },
     async submit(message) {
       calls.push({ action: 'submit' });
       const admitted = await supervisor.submitMessage(message.sessionId, {

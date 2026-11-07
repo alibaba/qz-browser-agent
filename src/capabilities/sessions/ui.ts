@@ -64,7 +64,8 @@ export default function (qz: UiExtensionAPI) {
     setAutomationsVisible: visible => automations?.setVisible(visible),
     closeAutomationsEditor: () => automations?.closeEditor(),
     showToast: qz.showToast, flashAction: qz.chat.flashAction, syncKeepAlive: qz.syncKeepAlive,
-    renderCurrentGoalStrip: qz.chat.renderGoal, liveElapsedTickMs: 100,
+    renderCurrentGoalStrip: qz.chat.renderGoal, syncExternalDriveChrome: () => qz.chat.syncExternalDriveChrome?.(),
+    liveElapsedTickMs: 100,
   });
   automations = automationsEnabled ? createAutomationsFeature({
     root: qz.root, signal: qz.signal, request,
@@ -127,7 +128,11 @@ export default function (qz: UiExtensionAPI) {
       activate: ({ refresh }) => { if (refresh) sessions.refresh({ requestFreshState: true }); },
       deactivate: sessions.clearInteractionHold,
       capture: () => ({ mode: sessions.getMode() }),
-      restore: state => { sessions.setMode(record(state).mode === "automation" ? "automation" : "manual"); sessions.refresh({ requestFreshState: true }); },
+      restore: state => {
+        const mode = String(record(state).mode || "");
+        sessions.setMode(mode === "automation" || mode === "external-drive" ? mode : "manual");
+        sessions.refresh({ requestFreshState: true });
+      },
   });
   qz.registerOverlay({ id: "session-artifacts", priority: 60, close: () => {
         if (!artifacts.hasBlockingOverlay()) return false; artifacts.closePanel(); return true;

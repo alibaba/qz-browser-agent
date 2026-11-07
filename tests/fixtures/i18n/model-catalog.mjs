@@ -34,7 +34,8 @@ const options = { loadedPluginSkillNames: [...skills.map(skill => skill.name), f
 const names = [];
 for (const file of discoverCapabilities(fileURLToPath(new URL('../../../src/', import.meta.url))).tools) {
   const { default: register } = await import(pathToFileURL(file));
-  register({ skills: {}, models: {}, registerTool: definition => names.push(definition.name) });
+  register({ skills: {}, models: {}, onDebuggerDetached() { return () => {}; },
+    registerTool: definition => names.push(definition.name) });
 }
 const registered = names.map(name => {
   const tool = tools.resolveToolDefinition(name);

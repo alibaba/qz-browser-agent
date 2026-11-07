@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { expect, test } from "./fixtures.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
 
-const frameDocument = (id, label) => `<!doctype html><button id="${id}" type="button" style="width:140px;height:32px" onclick="window.clicks=(window.clicks||0)+1">${label}</button>`;
+const frameDocument = (id, label) => `<!doctype html><button id="${id}" type="button" style="width:140px;height:32px" onclick="window.clicks=(window.clicks||0)+1;window.lastClickTrusted=event.isTrusted">${label}</button>`;
 
 function pageHtml(crossUrl) {
   return `<!doctype html><meta charset="utf-8"><title>Offscreen frames</title>
@@ -111,13 +111,13 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
         async call(name, args) {
           controller = new AbortController();
           try { return await runtime.execute(name, { tabId, ...args }, controller.signal, { ...context, workingTabId: tabId, source: "run_script" }); }
-          catch (error) { return { error: error.message, code: error.code, details: error.details }; }
+          catch (error) { return { message: error.message, code: error.code, hint: error.hint, details: error.details }; }
         },
       };
     });
     const call = (name, args) => worker.evaluate(({ name, args }) => elementHarness.call(name, args), { name, args });
     const opened = await call("open_tab", { url: `http://127.0.0.1:${parent.address().port}/` });
-    expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
+    expect(opened, JSON.stringify(opened)).not.toHaveProperty("message");
     const page = browser.pages().find(item => item.url().startsWith("http://127.0.0.1:"));
     const nativeDialogs = [];
     page.on('dialog', dialog => { nativeDialogs.push(dialog); });
@@ -165,19 +165,22 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     expect(fixedClick, JSON.stringify(fixedClick)).toMatchObject({ code: "CLICK_POINT_OUT_OF_VIEWPORT" });
     expect(fixedClick.inputDelivered).not.toBe(true);
     expect(fixedClick.clickDispatched).not.toBe(true);
-    expect(fixedClick.element?.state?.clickablePointInViewport).toBe(false);
+    expect(fixedClick.details.target).toMatch(/^uid:t\d+\.[0-9a-z]{6}\.\d+$/);
+    const fixedState = await call("inspect_element", { target: fixedClick.details.target });
+    expect(fixedState.state?.clickablePointInViewport).toBe(false);
+    expect(fixedClick.hint).toBeTruthy();
+    expect(Object.keys(fixedClick).every(key => ["code", "message", "hint", "details"].includes(key))).toBe(true);
     expect(await page.frame({ name: "fixed" }).evaluate(() => window.clicks || 0)).toBe(0);
     expect(await page.evaluate(() => window.scrollY)).toBe(0);
 
     const crossClick = await call("act_on_element", { target: found.cross, action: "click" });
-    expect(crossClick, JSON.stringify(crossClick)).toMatchObject({
-      clickDispatched: true, inputDelivered: true,
-      element: { inViewport: true, state: { clickablePointInViewport: true } },
-    });
+    expect(crossClick, JSON.stringify(crossClick)).toEqual({});
+    const crossAfter = await call("inspect_element", { target: found.cross });
+    expect(crossAfter).toMatchObject({ inViewport: true, state: { clickablePointInViewport: true } });
     expect(crossClick).not.toHaveProperty("code");
     const crossDebug = {
       clicks: await page.frame({ name: "cross" }).evaluate(() => window.clicks || 0),
-      point: crossClick.element?.clickablePoint || null,
+      point: crossAfter.clickablePoint || null,
       placement: await framePlacement(page, "#cross"),
       last: await page.evaluate(() => ({ click: window.lastClick || "", point: window.lastPoint || null })),
       local: await page.frame({ name: "cross" }).evaluate(() => {
@@ -186,6 +189,7 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
       }),
     };
     expect(crossDebug.clicks, JSON.stringify(crossDebug)).toBe(1);
+    expect(await page.frame({ name: "cross" }).evaluate(() => window.lastClickTrusted)).toBe(true);
     const afterCross = await framePlacement(page, "#cross");
     expect(afterCross.scrollY).toBeGreaterThan(0);
     expect(afterCross.top).toBeLessThan(afterCross.height);
@@ -198,9 +202,10 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     });
     const sameBefore = await page.evaluate(() => window.scrollY);
     const sameClick = await call("act_on_element", { target: found.same, action: "click" });
-    expect(sameClick, JSON.stringify(sameClick)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+    expect(sameClick, JSON.stringify(sameClick)).toEqual({});
     expect(sameClick).not.toHaveProperty("code");
     expect(await page.frame({ name: "same" }).evaluate(() => window.clicks || 0)).toBe(1);
+    expect(await page.frame({ name: "same" }).evaluate(() => window.lastClickTrusted)).toBe(true);
     const afterSame = await framePlacement(page, "#same");
     expect(afterSame.scrollY).toBeLessThan(sameBefore);
     expect(afterSame.top).toBeLessThan(afterSame.height);
@@ -213,7 +218,7 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
       state: { clickablePointInViewport: false },
     });
     const belowClick = await call("act_on_element", { target: found.below, action: "click" });
-    expect(belowClick, JSON.stringify(belowClick)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+    expect(belowClick, JSON.stringify(belowClick)).toEqual({});
     expect(belowClick).not.toHaveProperty("code");
     expect(await page.evaluate(() => window.belowClicks)).toBe(1);
     const afterBelow = await framePlacement(page, "#below");

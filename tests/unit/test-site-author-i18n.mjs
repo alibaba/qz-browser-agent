@@ -22,9 +22,21 @@ test("site Skill examples preserve their executable contracts across languages",
     assert.ok(source, `${language} includes a runnable collection example`);
     const run = async (args, response) => {
       let requests = 0;
-      const script = vm.runInNewContext(`(${source})`, {
-        args, URL, location: { href: "https://example.com/list" },
-        fetch: async () => { requests += 1; return response; },
+      const script = vm.runInNewContext(`(async () => {${source}\n})`, {
+        args: { tabRef: 'research', ...args },
+        tools: { async evaluate({ tabRef, code, args: pageArgs }) {
+          assert.equal(tabRef, 'research');
+          const pageScript = vm.runInNewContext(`(${code.toString()})`, {
+            URL, location: { href: "https://example.com/list" },
+            fetch: async (url, options) => {
+              assert.equal(url, 'https://example.com/api/hot');
+              assert.equal(options.credentials, 'include');
+              requests += 1;
+              return response;
+            },
+          });
+          return pageScript(pageArgs);
+        } },
       });
       return { result: JSON.parse(JSON.stringify(await script())), requests };
     };

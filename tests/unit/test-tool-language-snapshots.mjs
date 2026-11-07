@@ -262,9 +262,9 @@ test('delayed failures keep the calling run language through runtime and nested 
     await entered; language = 'en'; release();
     const failure = await pending;
     assert.equal(failure.code, 'DATA_ROW_CONFLICT');
-    assert.match(failure.error, /\p{Script=Han}/u, `${nested ? 'nested' : 'direct'} ${throws ? 'throw' : 'payload'}`);
-    assert.match(failure.codeLabel, /\p{Script=Han}/u);
+    assert.match(failure.message || failure.error, /\p{Script=Han}/u, `${nested ? 'nested' : 'direct'} ${throws ? 'throw' : 'payload'}`);
+    if (nested) assert.ok(Object.keys(failure.result).every(key => ['code', 'message', 'hint', 'details'].includes(key)));
   }
   const fresh = await runtime.execute('__language_failure_probe', {}, undefined, { language: 'en', toolRegistrySnapshot: runtime.snapshot('en') });
-  assert.doesNotMatch(fresh.error, /\p{Script=Han}/u);
+  assert.doesNotMatch(fresh.message || fresh.error, /\p{Script=Han}/u);
 });

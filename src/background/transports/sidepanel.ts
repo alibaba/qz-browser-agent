@@ -249,18 +249,9 @@ export function createSidepanelTransport(api: BackgroundApi, {
         return true;
       }
       case "stop_session": {
-        const stopped = await call("sessions.stop", message.sessionId, { source: message.source || "ui" }, signal);
+        await call("sessions.stop", message.sessionId, { source: message.source || "ui" }, signal);
         if (message.requestId) {
-          const stoppedRecord = object(stopped);
-          const runtime = object(stoppedRecord.runtime);
-          post(port, "state", message, {
-            sessionId: stoppedRecord.sessionId || message.sessionId,
-            isStreaming: false,
-            status: runtime.status || stoppedRecord.status || "idle",
-            runtime,
-            runId: runtime.runId || stoppedRecord.runId || null,
-            hasHistory: true,
-          });
+          post(port, "state", message, await call("sessions.state", message.sessionId));
         }
         return true;
       }

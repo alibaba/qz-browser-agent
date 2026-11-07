@@ -81,7 +81,7 @@
   "documents.failedToCreateTemporaryPdfRenderTab": "No se pudo abrir una pestaña temporal para crear el PDF.",
   "documents.temporaryPdfRenderingRequiresTheChromeDebuggerRuntime": "Crear el PDF requiere acceso al depurador de Chrome.",
   "documents.chromePagePrinttopdfReturnedEmptyData": "Chrome Page.printToPDF no devolvió datos.",
-  "documents.temporaryTabDidNotFinishLoading": "La pestaña temporal {tabId} no terminó de cargar.",
+  "documents.temporaryTabDidNotFinishLoading": "La pestaña temporal no terminó de cargar.",
   "documents.documentArtifactHasNoContent": "El documento generado está vacío.",
   "documents.docxDocumentXmlNotFound": "Al archivo DOCX le falta document.xml.",
   "documents.xlsxWorkbookXmlNotFound": "Al archivo XLSX le falta workbook.xml.",

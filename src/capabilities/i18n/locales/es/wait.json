@@ -39,7 +39,7 @@
   "wait.waitNotContinued": "Tarea no reanudada",
   "wait.loginVerificationCompleted": "Inicio de sesión verificado",
   "wait.userContinued": "Tarea reanudada",
-  "wait.waitForElementSelectorSupportsRawCssOrCss": "El selector de wait_for_element admite CSS o css:<selector>; uid:<element_uid> hace referencia a una instantánea y no permite esperar un estado futuro del DOM.",
+  "wait.waitForElementSelectorSupportsRawCssOrCss": "El target de wait_for_element admite CSS o css:<target>; uid:<element_uid> hace referencia a una instantánea y no permite esperar un estado futuro del DOM.",
   "wait.userWaitRuntimeIsUnavailable": "El servicio de entrada del usuario no está disponible.",
   "wait.currentTaskHasNoWorkingTab": "La tarea actual no tiene pestaña de trabajo.",
   "wait.waitUntilRequiresAValidAbsoluteTimeWithAn": "wait_until requiere una fecha y hora absolutas válidas con zona horaria explícita.",

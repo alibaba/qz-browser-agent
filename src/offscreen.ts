@@ -48,7 +48,7 @@ chrome.runtime.onMessage.addListener((input: unknown, _sender, sendResponse) => 
         ready: false,
         sandboxReady: false,
         error: messageOf(err),
-        code: record(err).code || "INNER_RUNNER_SANDBOX_NOT_READY",
+        code: record(err).code || "SCRIPT_CONTEXT_UNAVAILABLE",
       }));
     return true;
   }
@@ -71,11 +71,27 @@ chrome.runtime.onMessage.addListener((input: unknown, _sender, sendResponse) => 
         engine: "offscreen_inner",
         execution_world: "inner",
         error: messageOf(err),
-        code: record(err).code || "INNER_RUNNER_FAILED",
+        code: record(err).code || "SCRIPT_CONTEXT_UNAVAILABLE",
         details: record(err).details || {},
         trace: [],
         elapsedMs: 0,
       }));
+    return false;
+  }
+  if (msg?.type === "run_script_inner_trace_snapshot") {
+    const requestId = String(msg.requestId || "");
+    const pending = pendingRuns.has(requestId);
+    sendResponse({ ok: true, accepted: pending, requestId });
+    if (!pending) return false;
+    try {
+      postToSandbox({ type: "trace_snapshot", requestId });
+    } catch {
+      chrome.runtime.sendMessage({
+        type: "run_script_inner_trace_snapshot_result",
+        requestId,
+        trace: [],
+      }).catch(() => {});
+    }
     return false;
   }
   if (msg?.type === "run_script_inner_cancel") {
@@ -107,6 +123,13 @@ window.addEventListener("message", (event) => {
     traceInnerOffscreen(`sandbox.${data.phase || "trace"}`, record(data.details));
     return;
   }
+  if (data.type === "script_trace") {
+    const requestId = String(data.requestId || "");
+    if (pendingRuns.has(requestId)) {
+      void chrome.runtime.sendMessage({ type: "run_script_inner_diagnostic", requestId, row: data.row }).catch(() => {});
+    }
+    return;
+  }
   if (data.type === "result") {
     const requestId = String(data.requestId || "");
     const pending = pendingRuns.get(requestId);
@@ -125,7 +148,7 @@ window.addEventListener("message", (event) => {
         response: {
           ok: false,
           error: messageOf(err),
-          code: record(err).code || "INNER_TOOL_CALL_FAILED",
+          code: record(err).code || "RUN_SCRIPT_TOOL_CALL_FAILED",
           details: record(err).details || {},
         },
       });
@@ -140,6 +163,14 @@ window.addEventListener("message", (event) => {
     relayInnerFetchCancel(data).catch(() => {
       // The request may already have completed; cancellation is best-effort.
     });
+    return;
+  }
+  if (data.type === "trace_snapshot") {
+    chrome.runtime.sendMessage({
+      type: "run_script_inner_trace_snapshot_result",
+      requestId: String(data.requestId || ""),
+      trace: Array.isArray(data.trace) ? data.trace : [],
+    }).catch(() => {});
   }
 });
 
@@ -156,8 +187,8 @@ function runInnerScript(msg: Record<string, unknown>): Promise<unknown> {
       if (pendingRuns.get(requestId) !== pending) return;
       traceInnerOffscreen("run.start", { requestId });
       postToSandbox({ type: "execute", requestId, scriptSource: String(msg.source || ""),
-        scriptArgs: record(msg.scriptArgs), securityGuardrails: record(msg.securityGuardrails),
-        fetchBridge: msg.fetchBridge === true });
+        scriptArgs: msg.scriptArgs, securityGuardrails: record(msg.securityGuardrails),
+        fetchBridge: msg.fetchBridge === true, strictResult: msg.strictResult === true });
     }).catch(error => {
       if (pendingRuns.get(requestId) !== pending) return;
       pendingRuns.delete(requestId);
@@ -310,7 +341,7 @@ function traceInnerOffscreen(phase: string, details: Record<string, unknown> = {
 }
 
 function makeSandboxReadyTimeoutError() {
-  return Object.assign(new Error("run_script inner sandbox did not report ready"), { code: "INNER_RUNNER_SANDBOX_NOT_READY" });
+  return Object.assign(new Error("The script context did not become ready."), { code: "SCRIPT_CONTEXT_UNAVAILABLE" });
 }
 
 function publishInnerRunResult(requestId: unknown, result: unknown) {

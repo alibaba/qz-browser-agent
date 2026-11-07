@@ -1,10 +1,16 @@
 import { parseArgs } from "node:util";
 import { QzError } from "./client.mjs";
 import { browserName } from "./browser-registry.mjs";
-import { COMMANDS, commandOptions } from "./commands.mjs";
+import { COMMANDS, DRIVE_SESSION_REQUIRED, commandOptions } from "./commands.mjs";
 
 function invalid(message) {
-  throw new QzError("invalid_arguments", message);
+  throw new QzError("INVALID_ARGUMENTS", message, {
+    hint: "Run qz --help, or npm run qz -- --help, to check the command and its arguments.",
+  });
+}
+
+function requireDriveSession(command, options) {
+  if (!String(options.session || "").trim()) invalid(`qz ${command} requires --session <id>. ${DRIVE_SESSION_REQUIRED}`);
 }
 
 function helpTopic(parts) {
@@ -14,20 +20,29 @@ function helpTopic(parts) {
   invalid("Use qz help COMMAND.");
 }
 
+const argumentOptions = {
+  session: { type: "string", short: "s" }, timeout: { type: "string" },
+  title: { type: "string", short: "t" }, client: { type: "string", short: "c" },
+  "wait-id": { type: "string" }, format: { type: "string" }, query: { type: "string" },
+  start: { type: "string" }, limit: { type: "string" }, scope: { type: "string" }, filename: { type: "string" },
+  parent: { type: "string" }, port: { type: "string" }, name: { type: "string" },
+  wait: { type: "boolean" }, stream: { type: "boolean" }, steer: { type: "boolean" },
+  json: { type: "boolean" }, plain: { type: "boolean" }, "no-color": { type: "boolean" },
+  lang: { type: "string" }, profile: { type: "string" }, args: { type: "string" },
+  keep: { type: "string", multiple: true },
+  help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
+};
+
+/** Identify the command for syntax-error presentation while consuming option values normally. */
+export function commandNameFromArgs(argv) {
+  return parseArgs({ args: argv, allowPositionals: true, strict: false, options: argumentOptions }).positionals[0] || "help";
+}
+
 /** Parse syntax only. A prompt or args value of "-" is read from stdin by the caller. */
 export function parseCommand(argv) {
   let parsed;
   try {
-    parsed = parseArgs({ args: argv, allowPositionals: true, strict: true, tokens: true, options: {
-      session: { type: "string", short: "s" }, timeout: { type: "string" },
-      title: { type: "string", short: "t" }, client: { type: "string", short: "c" },
-      "wait-id": { type: "string" }, format: { type: "string" }, query: { type: "string" },
-      start: { type: "string" }, limit: { type: "string" }, scope: { type: "string" }, filename: { type: "string" },
-      parent: { type: "string" }, port: { type: "string" }, name: { type: "string" }, "no-open": { type: "boolean" },
-      wait: { type: "boolean" }, stream: { type: "boolean" }, steer: { type: "boolean" },
-      json: { type: "boolean" }, plain: { type: "boolean" }, "no-color": { type: "boolean" },
-      help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
-    } });
+    parsed = parseArgs({ args: argv, allowPositionals: true, strict: true, tokens: true, options: argumentOptions });
   } catch (error) { invalid(error.message); }
 
   const options = { ...parsed.values };
@@ -35,7 +50,7 @@ export function parseCommand(argv) {
   for (const token of parsed.tokens) {
     if (token.kind !== "option" || token.value === undefined) continue;
     const name = token.name;
-    if (seen.has(name)) invalid(`Provide --${name} only once.`);
+    if (seen.has(name) && !argumentOptions[name].multiple) invalid(`Provide --${name} only once.`);
     seen.add(name);
   }
   if (options.json && options.plain) invalid("Choose --json or --plain.");
@@ -57,11 +72,15 @@ export function parseCommand(argv) {
   for (const name of ["session", "client", "wait-id", "parent"]) {
     if (options[name] !== undefined && !options[name].trim()) invalid(`--${name} requires a non-empty ID.`);
   }
+  if (options.keep !== undefined) {
+    options.keep = options.keep.map(value => value.trim());
+    if (options.keep.some(value => !value)) invalid("--keep requires a non-empty tabRef.");
+  }
   if (options.name !== undefined) {
     try { options.name = browserName(options.name); } catch (error) { invalid(error.message); }
   }
-  if (options.client !== undefined && (options.name !== undefined || options["no-open"])) {
-    invalid("Use --client to select an existing browser, or --name/--no-open to prepare a binding URL.");
+  if (options.client !== undefined && options.name !== undefined) {
+    invalid("Use --client to select an existing browser, or --name to name a new profile.");
   }
   if (options.port !== undefined) {
     const port = Number(options.port);
@@ -70,6 +89,8 @@ export function parseCommand(argv) {
   }
   if (options.filename !== undefined && !options.filename.trim()) invalid("--filename requires a non-empty name.");
   if (options.scope !== undefined && !["all", "global", "site", "resident"].includes(options.scope)) invalid("--scope must be all, global, site, or resident.");
+  if (options.profile !== undefined && !["full", "drive"].includes(options.profile)) invalid("--profile must be full or drive.");
+  if (options.lang !== undefined && !options.lang.trim()) invalid("--lang requires a value.");
   if (options.client !== undefined) {
     options["client-id"] = options.client;
     delete options.client;
@@ -90,7 +111,10 @@ export function parseCommand(argv) {
   }
 
   let command = originalCommand, action, id;
-  if (command === "browsers") {
+  if (command === "connect") {
+    if (words.length !== 1 || words[0] !== "uri") invalid("Use qz connect uri to print a browser connection URL.");
+    action = "uri";
+  } else if (command === "browsers") {
     action = words[0] || "list";
     if (action === "list" ? words.length > 1 : action !== "forget" || words.length !== 2 || !words[1].trim()) invalid("Use qz browsers [list], or qz browsers forget NAME|UUID.");
     id = words[1];
@@ -141,6 +165,23 @@ export function parseCommand(argv) {
     id = words[0];
     if (command === "submit") options.args = words[1];
     if (command === "watch") options.wait = true;
+  } else if (command === "script") {
+    if (words.length > 1) invalid("Use qz script --session ID [FILE|-] [--args JSON].");
+    requireDriveSession("script", options);
+    options.file = words[0] ?? "-";
+    if (options.args !== undefined) {
+      try { options.args = JSON.parse(options.args); } catch { invalid("--args must be valid JSON."); }
+    }
+  } else if (command === "session") {
+    action = words[0] || "";
+    const count = ["create", "list"].includes(action) ? 1 : 2;
+    if (!Object.hasOwn(COMMANDS.session.actions, action) || words.length !== count || words.some(word => !word.trim())) {
+      invalid("Use qz session create --title TITLE, qz session list, qz session show ID, or qz session cancel ID.");
+    }
+    if (action === "create" && !String(options.title || "").trim()) invalid("qz session create requires --title TITLE. Choose a readable task title.");
+    id = words[1];
+  } else if (command === "skill") {
+    if (words.length) invalid("Use qz skill.");
   } else if (command === "tasks") {
     if (words.length) invalid("Use qz tasks to list tasks, qz create PROMPT, qz show ID, or qz cancel ID.");
     action = "list";

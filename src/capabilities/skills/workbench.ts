@@ -135,9 +135,10 @@ export const SKILL_AUTHOR_TOOL_PARAMETERS = {
     type: "object",
     properties: {
       url: { type: "string", get description() { return workbenchT("zipUrl"); } },
+      tabRef: { type: ["integer", "string"], get description() { return workbenchT("zipPage"); } },
       overwrite: { type: "boolean", get description() { return workbenchT("zipOverwrite"); } },
     },
-    required: ["url"],
+    required: ["url", "tabRef"],
   },
   importGitRepository: {
     type: "object",
@@ -336,19 +337,18 @@ return await tools.manage_skill({ ...payload, action: "delete" });`,
 return await tools.manage_skill({ action: "list_skills", scope });`,
   "scripts/load-available-renderers.js": `// Host-handled by qingzhou-skill-author:load_available_renderers.
 return { ok: true };`,
-  "scripts/import-page-zip.js": `const payload = { url: args.url, overwrite: args.overwrite === true };
+  "scripts/import-page-zip.js": `const payload = { url: args.url, tabRef: args.tabRef, overwrite: args.overwrite === true };
 return await tools.import_skill_from_page_zip(payload);`,
   "scripts/import-git-repository.js": `const opened = await tools.open_tab({ url: args.repositoryUrl });
 return await tools.import_git_skill_repository({
   repositoryUrl: args.repositoryUrl,
-  tabRef: opened.id,
+  tabRef: opened.tabRef,
   overwrite: args.overwrite === true,
 });`,
   "scripts/install-skill-to-git.js": `const opened = await tools.open_tab({ url: args.repositoryUrl });
-await tools.use_tab({ tabRef: opened.id });
 return await tools.install_skill_to_git({
   name: args.name,
-  tabRef: opened.id,
+  tabRef: opened.tabRef,
   commitMessage: args.commitMessage,
 });`,
 };

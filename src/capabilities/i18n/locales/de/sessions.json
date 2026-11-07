@@ -225,5 +225,12 @@
   "sessions.locationPositionUnavailable": "Position konnte nicht bestimmt werden. Prüfe Netzwerk und Standortdienste, oder nenne einfach eine Stadt oder Region.",
   "sessions.locationTimeout": "Standortzeit überschritten. Lass die Seitenleiste offen und erlaube den Browser-Standort, oder nenne einfach eine Stadt oder Region.",
   "sessions.locationPanelUnavailable": "Seitenleiste ist nicht verbunden. Öffne sie in diesem Fenster und versuche es erneut, oder nenne einfach eine Stadt oder Region.",
-  "sessions.locationResponseTimeout": "Standortzeit überschritten. Erlaube den Standort im Browser und schalte die Standortdienste ein, oder nenne einfach eine Stadt oder Region."
+  "sessions.locationResponseTimeout": "Standortzeit überschritten. Erlaube den Standort im Browser und schalte die Standortdienste ein, oder nenne einfach eine Stadt oder Region.",
+  "sessions.externalDrive": "Extern",
+  "sessions.externalDriveReadOnly": "Ein externer Client steuert diese Sitzung. Diese Ansicht ist schreibgeschützt.",
+  "sessions.externalDriveWelcomeTitle": "Von einem externen Agenten gesteuert",
+  "sessions.externalDriveWelcomeBody": "Ein externer Agent steuert diese Sitzung über MCP oder die qz-CLI. Installieren oder aktualisieren Sie die Anleitung mit npx skills add alibaba/qz-browser-agent -g. CLI-Befehle verbinden sich automatisch; führen Sie zum manuellen Koppeln den folgenden Befehl aus und öffnen Sie die ausgegebene URL in diesem Browser.",
+  "sessions.externalDriveWelcomeCommandHint": "Die ausgegebene URL in diesem Browser öffnen",
+  "sessions.externalDriveWelcomeCopy": "Kopieren",
+  "sessions.externalDriveWelcomeCopied": "Kopiert"
 }

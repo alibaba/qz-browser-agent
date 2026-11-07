@@ -366,8 +366,12 @@ async function screenActionFeedbackRoundTrip(page, browserContext, providerServe
   assert.equal(macroEnd?.result?.result?.ok, true);
   assert.equal(macroEnd?.result?.result?.filled, 10);
   assert.deepEqual(macroEnd?.result?.result?.batch?.state, observedState);
-  assert.equal(macroEnd?.result?._display, undefined, "run_script should not synthesize an action animation");
-  assert.match(macroEnd?.result?._image, /^data:image\/jpeg;base64,/);
+  assert.deepEqual(Object.keys(macroEnd?.result?._display || {}), ["script"], "run_script should expose script metadata without synthesizing an action animation");
+  assert.equal(macroEnd.result._display.script.valueOnly, true);
+  assert.ok(Array.isArray(macroEnd.result._display.script.trace));
+  assert.equal(macroEnd.result._images?.length, 1, "only the explicitly returned final screenshot should be promoted");
+  assert.equal(macroEnd.result._images[0].mimeType, "image/jpeg");
+  assert.match(macroEnd.result._images[0].data, /^[A-Za-z0-9+/]+={0,2}$/);
   const feedbackPixels = await page.evaluate(async id => {
     const event = window.__qzBackgroundE2E.events().find(item => (
       item?.type === "tool_execution_end"
@@ -375,7 +379,8 @@ async function screenActionFeedbackRoundTrip(page, browserContext, providerServe
       && item?.toolName === "run_script"
       && item?.toolCallId === "call_screen_macro"
     ));
-    const response = await fetch(event?.result?._image || "");
+    const image = event.result._images[0];
+    const response = await fetch("data:" + image.mimeType + ";base64," + image.data);
     const bitmap = await createImageBitmap(await response.blob());
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const ctx = canvas.getContext("2d");
@@ -410,6 +415,14 @@ async function screenActionFeedbackRoundTrip(page, browserContext, providerServe
   assert.equal(requests[3].containsDisplayProjection, false, "chat-only action metadata must not enter model context");
 
   const history = await historyMessages(page, sessionId);
+  const macroMessage = history.find(message => message.role === "tool" && message.tool_call_id === "call_screen_macro");
+  assert.ok(macroMessage, "the script receipt should reach model history");
+  const macroReceipt = JSON.parse(macroMessage.content);
+  assert.deepEqual(Object.keys(macroReceipt).sort(), ["ok", "result", "trace"]);
+  assert.equal(macroReceipt.ok, true);
+  assert.ok(Array.isArray(macroReceipt.trace) && macroReceipt.trace.every(line => typeof line === "string"));
+  assert.equal(macroReceipt.result.filled, 10);
+  assert.deepEqual(macroReceipt.result.batch.state, observedState);
   assert.equal(imageProjectionStats(history).totalImageCount, 9, "model projection must preserve all nine original history images");
   const exported = await request(page, "get_messages", { sessionId }, "messages");
   const exportedMessages = (exported.session?.entries || []).map(entry => entry.message);
@@ -441,6 +454,12 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
       assert.equal(collectRequest.uidBatch?.[variant]?.targets?.length, 2, `list_images on tab ${variant} must yield two uid targets`);
     }
 
+    const targetTabIds = await page.evaluate(async () => {
+      const tabs = await chrome.tabs.query({});
+      return Object.fromEntries(["a", "b", "c"].map(variant => [variant,
+        tabs.find(tab => String(tab.url || "").endsWith(`/uid-batch/${variant}`))?.id]));
+    });
+    for (const variant of ["a", "b", "c"]) assert.equal(typeof targetTabIds[variant], "number");
     const fixturePage = variant => browserContext.pages().find(candidate => candidate.url().includes(`/uid-batch/${variant}`));
     const renamed = fixturePage("b");
     assert.ok(renamed, "fixture tab b must be open");
@@ -466,7 +485,7 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
         }
         return original.call(chrome.scripting, options);
       };
-    }, collectRequest.uidBatch.a.tabId);
+    }, targetTabIds.a);
     providerServer.release("QZ_E2E_TABUIDS_COLLECT");
     const seen = await worker.evaluate(async tabId => {
       const deadline = Date.now() + 15_000;
@@ -474,9 +493,9 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
         await new Promise(resolve => setTimeout(resolve, 25));
       }
       return globalThis.__uidBatchProbe.seen;
-    }, collectRequest.uidBatch.b.tabId);
-    assert.ok(seen.includes(collectRequest.uidBatch.b.tabId), "different uid tabs must execute concurrently");
-    assert.equal(seen.filter(tabId => tabId === collectRequest.uidBatch.a.tabId).length, 1,
+    }, targetTabIds.b);
+    assert.ok(seen.includes(targetTabIds.b), "different uid tabs must execute concurrently");
+    assert.equal(seen.filter(tabId => tabId === targetTabIds.a).length, 1,
       "a second call on the held uid tab must wait for its lane");
     await worker.evaluate(() => globalThis.__uidBatchProbe.restore());
     await waitEvent(page, { type: "agent_end", sessionId, runId: started.runId }, after, 90_000);
@@ -485,12 +504,14 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
     const events = await sessionEvents(page, sessionId, after);
     const collectStart = variant => events.find(event => event.type === "tool_execution_start" && event.toolCallId === `uid_batch_collect_${variant}`);
     const collectEnd = variant => events.find(event => event.type === "tool_execution_end" && event.toolCallId === `uid_batch_collect_${variant}`);
-    for (const variant of ["a", "b", "c", "a_again", "mixed", "css"]) {
+    const collectPages = { a: "a", b: "b", c: "c", a_again: "a", mixed: "a", css: "b", pair_a: "a", pair_b: "b" };
+    for (const [variant, tabRef] of Object.entries(collectPages)) {
       const start = collectStart(variant);
       assert.ok(start, `collect_images ${variant} must start`);
-      assert.equal(start.args?.tabId, undefined, `collect_images ${variant} must not inherit the working tab`);
-      assert.equal(start.args?._tabId, undefined, `collect_images ${variant} must not carry the working tab mirror`);
-      assert.equal(start.args?._pageUrl, undefined, `collect_images ${variant} must not carry the working page url`);
+      assert.equal(start.args?.tabRef, tabRef, `collect_images ${variant} retains its explicitly requested page`);
+      assert.equal(start.args?.tabId, targetTabIds[tabRef], `collect_images ${variant} resolves its page without an implicit default`);
+      assert.equal(start.args?._tabId, undefined, `collect_images ${variant} must not carry a page mirror`);
+      assert.equal(start.args?._pageUrl, undefined, `collect_images ${variant} must not carry an implicit page url`);
     }
     const unchanged = collectEnd("a");
     assert.equal(unchanged?.isError, false, `the unchanged tab must collect: ${JSON.stringify(unchanged?.result || {})}`);
@@ -509,17 +530,27 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
     assert.equal(movedEnd?.result?.code, "STALE_ELEMENT_UID_PAGE_CHANGED");
     assert.equal(collectEnd("a_again")?.isError, false, "a second same-tab call succeeds after the first");
     const mixed = collectEnd("mixed");
-    assert.equal(mixed?.isError, false, JSON.stringify(mixed?.result));
-    assert.equal(mixed?.result?.collected, 2, "one cross-tab call resolves each uid on its own tab");
-    assert.deepEqual(mixed?.result?.images?.map(image => new URL(image.pageUrl).pathname),
-      ["/uid-batch/a", "/uid-batch/b-renamed"]);
-    assert.deepEqual(mixed?.result?.images?.map(image => image.target),
-      [collectRequest.uidBatch.a.targets[0], collectRequest.uidBatch.b.targets[0]]);
+    assert.equal(mixed?.isError, true, "one page reference cannot authorize targets from different tabs");
+    assert.equal(mixed?.result?.code, "BATCH_TAB_REFERENCE_ERROR");
+    assert.equal(mixed?.result?.details?.reason, "conflicting_target");
+    const pair = ["a", "b"].map(variant => {
+      const result = collectEnd(`pair_${variant}`);
+      assert.equal(result?.isError, false, JSON.stringify(result?.result));
+      assert.equal(result?.result?.table, "uid_batch_pair_e2e");
+      assert.equal(result?.result?.collected, 1);
+      assert.equal(result?.result?.images?.length, 1);
+      return result.result;
+    });
+    const pairImages = pair.flatMap(result => result.images);
+    assert.equal(pairImages.length, 2);
+    assert.deepEqual(pairImages.map(image => new URL(image.pageUrl).pathname), ["/uid-batch/a", "/uid-batch/b-renamed"]);
+    assert.deepEqual(pairImages.map(image => image.target), [collectRequest.uidBatch.a.targets[0], collectRequest.uidBatch.b.targets[0]]);
+    assert.equal(Math.max(...pair.map(result => result.totalRows)), 2, "two explicit page calls append both rows to the same gallery");
     const css = collectEnd("css");
     assert.equal(css?.isError, false, JSON.stringify(css?.result));
     assert.equal(css?.result?.collected, 2);
     assert.deepEqual(css?.result?.images?.map(image => new URL(image.pageUrl).pathname),
-      ["/uid-batch/b-renamed", "/uid-batch/a"], "CSS uses the owned working tab while the uid retains its own tab");
+      ["/uid-batch/b-renamed", "/uid-batch/b-renamed"], "CSS and uid targets use the same explicitly owned page");
   } finally {
     await worker.evaluate(() => globalThis.__uidBatchProbe?.restore()).catch(() => undefined);
     providerServer.release("QZ_E2E_TABUIDS_COLLECT");
@@ -1002,11 +1033,15 @@ async function skillResultSelectionRoundTrip(page, providerServer) {
     const modelRequests = providerServer.requests.filter(item => item.marker === marker);
     assert.equal(modelRequests.length, 3, "the task resumes once after the user settles the selection");
     const modelResult = modelRequests.at(-1).selectionResult;
+    assert.deepEqual(Object.keys(modelResult).sort(), ["ok", "result", "trace"]);
+    assert.equal(modelResult.ok, !cancel);
+    assert.ok(Array.isArray(modelResult.trace) && modelResult.trace.every(line => typeof line === "string"));
+    if (!cancel) assert.deepEqual(modelResult.trace, [], "successful Skill execution stays silent without explicit diagnostics");
+    const selection = modelResult.result;
     if (cancel) {
-      assert.equal(modelResult.code, "USER_CANCELLED_WAIT");
-      assert.equal(modelResult.selectedItems, undefined);
+      assert.equal(selection.code, "USER_CANCELLED_WAIT");
+      assert.equal(selection.selectedItems, undefined);
     } else {
-      const selection = modelResult.result || modelResult;
       assert.deepEqual(selection.selectedIds, candidateIds.slice(1));
       assert.deepEqual(selection.selectedItems.map(item => item.id), candidateIds.slice(1));
       assert.equal(selection.selectedItems[0].company, "Harbor");
@@ -1522,10 +1557,19 @@ async function stopCutsOffLateStreaming(page, providerServer) {
 
   const afterStop = await eventCount(page);
   const stopped = await request(page, "stop_session", { sessionId }, "state");
-  assert.equal(stopped.status, "aborted");
+  assert.equal(stopped.sessionId, sessionId);
+  assert.equal(stopped.runtime.status, stopped.status, 'the acknowledgement reports the current state');
+  assert.equal(stopped.runtime.runId, stopped.runId);
+  assert.equal(stopped.runtime.running, stopped.isStreaming);
+  assert.ok(Array.isArray(stopped.runtime.pendingFollowUpMessages));
+  const stopBoundary = await waitEvent(page, {
+    type: 'state', sessionId, runId: stoppedRun.runId, status: 'aborted',
+  }, afterStop);
+  assert.equal(stopBoundary.runtime.running, false);
   assert.deepEqual(
-    stopped.runtime?.pendingFollowUpMessages?.map(message => message.clientMessageId),
+    stopBoundary.runtime.pendingFollowUpMessages.map(message => message.clientMessageId),
     queued.pendingFollowUpMessages.map(message => message.clientMessageId),
+    'the durable stop broadcast retains every queued message before automatic recovery',
   );
   const oldRunUpdates = { type: "message_update", sessionId, runId: stoppedRun.runId };
   const countAtStop = await matchingEventCount(page, oldRunUpdates, after);
@@ -1873,9 +1917,10 @@ async function serviceWorkerRestartKeepsImagesAndThinking(page, browserContext, 
     for (const entry of screenshots) {
       assert.equal(entry.isError, false);
       assert.match(entry.image || "", /^data:image\/jpeg;base64,/);
-      assert.ok(entry.args._tabId > 0, "real execution must enrich the model's empty screenshot arguments");
-      assert.equal(entry.args._pageTitle, "Act on screen behavior fixture");
-      assert.equal(entry.args._pageUrl, providerServer.screenActionUrl);
+      assert.equal(entry.args.tabRef, "worker_images", "each screenshot retains the explicitly requested page alias");
+      assert.equal(entry.args._tabId, undefined, "public screenshot arguments contain no implicit page mirror");
+      assert.equal(entry.result._pageTitle, "Act on screen behavior fixture");
+      assert.equal(entry.result._pageUrl, providerServer.screenActionUrl);
     }
     const expected = project(before);
     assert.equal(expected.thinking.length, 9);
@@ -2424,8 +2469,8 @@ async function createProviderServer() {
         res.write(`data: ${JSON.stringify(streamChunk(`QZ_SCREENSHOT_${count - 1}`, false))}\n\n`);
       }
       const call = count === 1
-        ? streamToolCall("call_worker_images_open", "open_tab", JSON.stringify({ url: `http://127.0.0.1:${server.address().port}/screen-action-target` }))
-        : streamToolCall(`call_worker_image_${count - 1}`, "screenshot", "{}");
+        ? streamToolCall("call_worker_images_open", "open_tab", JSON.stringify({ url: `http://127.0.0.1:${server.address().port}/screen-action-target`, tabAlias: "worker_images" }))
+        : streamToolCall(`call_worker_image_${count - 1}`, "screenshot", JSON.stringify({ tabRef: "worker_images" }));
       res.write(`data: ${JSON.stringify(call)}\n\n`);
       res.write(`data: ${JSON.stringify(streamToolCallsDone())}\n\n`);
       res.end("data: [DONE]\n\n");
@@ -2454,26 +2499,30 @@ async function createProviderServer() {
         connection: "keep-alive",
       });
       const base = `http://127.0.0.1:${server.address().port}`;
-      // Alias bindings only live inside one batch, so later batches address tabs by id.
+      // Later batches reuse the public reference returned by each opening.
       const results = uidBatchToolResults(body);
       const calls = count === 1
         ? ["a", "b", "c"].map(variant => [`uid_batch_open_${variant}`, "open_tab", JSON.stringify({ url: `${base}/uid-batch/${variant}`, tabAlias: variant })])
         : count === 2
-          ? ["a", "b", "c"].map(variant => [`uid_batch_list_${variant}`, "list_images", JSON.stringify({ tabId: results[`open_${variant}`]?.id })])
+          ? ["a", "b", "c"].map(variant => [`uid_batch_list_${variant}`, "list_images", JSON.stringify({ tabRef: results[`open_${variant}`]?.tabRef })])
           : ["a", "b", "c"].map(variant => [`uid_batch_collect_${variant}`, "collect_images", JSON.stringify({
+            tabRef: results[`open_${variant}`]?.tabRef,
             table: "uid_batch_e2e",
             targets: uidBatchTargets(body)[variant]?.targets || [],
           })]);
       if (count === 3) {
         const targets = uidBatchTargets(body);
         calls.push(["uid_batch_collect_a_again", "collect_images", JSON.stringify({
-          table: "uid_batch_e2e", targets: targets.a?.targets?.slice(0, 1) || [],
+          tabRef: results.open_a?.tabRef, table: "uid_batch_e2e", targets: targets.a?.targets?.slice(0, 1) || [],
         })]);
         calls.push(["uid_batch_collect_mixed", "collect_images", JSON.stringify({
-          table: "uid_batch_e2e", targets: [targets.a?.targets?.[0], targets.b?.targets?.[0]],
+          tabRef: results.open_a?.tabRef, table: "uid_batch_e2e", targets: [targets.a?.targets?.[0], targets.b?.targets?.[0]],
         })]);
         calls.push(["uid_batch_collect_css", "collect_images", JSON.stringify({
-          table: "uid_batch_e2e", targets: ["css:#img-2", targets.a?.targets?.[0]],
+          tabRef: results.open_b?.tabRef, table: "uid_batch_e2e", targets: ["css:#img-2", targets.b?.targets?.[0]],
+        })]);
+        for (const variant of ["a", "b"]) calls.push([`uid_batch_collect_pair_${variant}`, "collect_images", JSON.stringify({
+          tabRef: results[`open_${variant}`]?.tabRef, table: "uid_batch_pair_e2e", targets: targets[variant]?.targets?.slice(0, 1) || [],
         })]);
         // The scenario renames one document and navigates another before these calls stream.
         await waitForRelease("QZ_E2E_TABUIDS_COLLECT");
@@ -2591,28 +2640,36 @@ async function createProviderServer() {
         connection: "keep-alive",
       });
       const call = count === 1
-        ? streamToolCall("call_screen_open", "open_tab", JSON.stringify({ url: `http://127.0.0.1:${server.address().port}/screen-action-target` }))
+        ? streamToolCall("call_screen_open", "open_tab", JSON.stringify({ url: `http://127.0.0.1:${server.address().port}/screen-action-target`, tabAlias: "screen_fixture" }))
         : count === 2
-          ? streamToolCall("call_screen_capture", "screenshot", JSON.stringify({ actionable: true }))
+          ? streamToolCall("call_screen_capture", "screenshot", JSON.stringify({ tabRef: "screen_fixture", actionable: true }))
           : count > 3
-            ? streamToolCall(`call_screen_observation_${count}`, "screenshot", "{}")
+            ? streamToolCall(`call_screen_observation_${count}`, "screenshot", JSON.stringify({ tabRef: "screen_fixture" }))
           : streamToolCall("call_screen_macro", "run_script", JSON.stringify({
             timeout: 30,
-            mutatesPage: true,
             code: `async () => {
-  // Run page actions sequentially in a fixed layout, then capture the result for the model.
-  const dpr = window.devicePixelRatio || 1;
-  const point = selector => {
-    const rect = document.querySelector(selector).getBoundingClientRect();
-    return {
-      x: (rect.left + rect.width / 2) * dpr,
-      y: (rect.top + rect.height / 2) * dpr,
-    };
-  };
+  // Read the fixed layout in the page, then run native actions sequentially outside it.
+  const { points, primaryModifier } = await tools.evaluate({
+    tabRef: "screen_fixture",
+    code: () => {
+      const dpr = window.devicePixelRatio || 1;
+      const targets = ["#click-target", "#double-click-target", "#hover-target", "#long-press-target",
+        "#text-target", "#wheel-target", "#drag-source", "#drop-target"];
+      return {
+        points: Object.fromEntries(targets.map(target => {
+          const rect = document.querySelector(target).getBoundingClientRect();
+          return [target, { x: (rect.left + rect.width / 2) * dpr, y: (rect.top + rect.height / 2) * dpr }];
+        })),
+        primaryModifier: /Mac/i.test(navigator.platform) ? "Meta" : "Control",
+      };
+    },
+  });
+  const point = target => points[target];
   const actionResults = [];
-  await tools.screenshot({});
+  await tools.screenshot({ tabRef: "screen_fixture" });
   const perform = async (action, args = {}) => {
     const result = await tools.act_on_screen({
+      tabRef: "screen_fixture",
       action,
       returnScreenshot: false,
       ...args,
@@ -2642,7 +2699,6 @@ async function createProviderServer() {
   await perform("hover", point("#hover-target"));
   await perform("long_press", { ...point("#long-press-target"), durationMs: 300 });
   await perform("type", { ...point("#text-target"), text: "扩展替换值", replace: true });
-  const primaryModifier = /Mac/i.test(navigator.platform) ? "Meta" : "Control";
   await perform("press", { key: primaryModifier + "+A" });
   await perform("type", { text: "扩展最终值", replace: false });
   await perform("press", { key: "Enter" });
@@ -2656,7 +2712,7 @@ async function createProviderServer() {
     endY: dragEnd.y,
   });
 
-  const state = window.__readScreenActionState();
+  const state = await tools.evaluate({ tabRef: "screen_fixture", code: () => window.__readScreenActionState() });
   if (state.clickCount !== 1
     || state.doubleClickClicks !== 2
     || state.doubleClickCount !== 1
@@ -2678,9 +2734,10 @@ async function createProviderServer() {
     || state.dropped !== true) {
     throw new Error("screen action HTML state did not match the expected sequence: " + JSON.stringify(state));
   }
-  await tools.screenshot({});
+  const screenshot = await tools.screenshot({ tabRef: "screen_fixture" });
   return {
     ok: true,
+    screenshot,
     filled: actionResults.length,
     batch: {
       actions: actionResults,
@@ -2958,7 +3015,6 @@ function uidBatchTargets(body) {
     const listed = results[`list_${variant}`];
     if (!listed) continue;
     byVariant[variant] = {
-      tabId: listed.tabId,
       targets: (Array.isArray(listed.images) ? listed.images : [])
         .map(image => String(image?.target || ""))
         .filter(target => target.startsWith("uid:")),

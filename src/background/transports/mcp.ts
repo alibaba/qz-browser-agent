@@ -11,6 +11,9 @@ export const QINGZHOU_MCP_METHODS = Object.freeze([
   "runtime_message",
   "list_sessions",
   "create_session",
+  "create_drive_session",
+  "list_drive_sessions",
+  "get_drive_session",
   "send_message",
   "follow_up",
   "get_user_input",
@@ -25,6 +28,7 @@ export const QINGZHOU_MCP_METHODS = Object.freeze([
   "stop_session",
   "clear_goal",
   "list_tools",
+  "get_tool",
   "execute_tool",
   "call_tool",
   "list_data_tables",
@@ -72,8 +76,11 @@ export function createMcpTransport(api: BackgroundApi, { bridge = {} }: { bridge
       case "get_bridge_config": return bridge.getConfig?.() || {};
       case "save_bridge_config": return bridge.saveConfig?.(params.config || params);
       case "runtime_message": return call("system.runtimeMessage", params.message || {}, params, signal);
-      case "list_sessions": return call("sessions.list", params);
+      case "list_sessions": return call("sessions.list", { ...params, publicView: true });
       case "create_session": return call("sessions.create", params, signal);
+      case "create_drive_session": return call("sessions.createDrive", params, signal);
+      case "list_drive_sessions": return call("sessions.listDrive", params, signal);
+      case "get_drive_session": return call("sessions.getDrive", params, signal);
       case "send_message": return call("sessions.send", params, signal);
       case "follow_up": return call("sessions.followUp", params, signal);
       case "get_user_input": return call("sessions.userInput", params);
@@ -85,9 +92,11 @@ export function createMcpTransport(api: BackgroundApi, { bridge = {} }: { bridge
       case "get_session_snapshot": return call("sessions.snapshot", params.sessionId, params);
       case "get_messages": return call("sessions.messages", params.sessionId, params);
       case "get_history": return call("sessions.history", params.sessionId);
-      case "stop_session": return call("sessions.stop", params.sessionId, { source: "mcp_bridge", cascade: params.cascade !== false }, signal);
+      case "stop_session": return call("sessions.stop", params.sessionId, { source: "mcp_bridge", cascade: params.cascade !== false,
+        keepTabs: params.keepTabs === true, ...(params.keepTabRefs !== undefined ? { keepTabRefs: params.keepTabRefs } : {}) }, signal);
       case "clear_goal": return call("sessions.clearGoal", params.sessionId, "mcp_bridge", signal);
       case "list_tools": return call("tools.list", params);
+      case "get_tool": return call("tools.get", params);
       case "execute_tool":
       case "call_tool": return call("tools.execute", params, signal);
       case "list_data_tables": return call("data.listTables");

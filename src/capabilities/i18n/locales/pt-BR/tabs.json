@@ -1,7 +1,7 @@
 {
   "tabs.tabs": "Abas",
-  "tabs.tab": "Aba {tabId}",
-  "tabs.current": "Atual",
+  "tabs.tab": "Aba {tabRef}",
+  "tabs.current": "Visível para o usuário",
   "tabs.window": "Janela {windowId}",
   "tabs.qingzhouTask": "Tarefa do qz",
   "tabs.organizedInto": "Organizadas em “{name}”",
@@ -38,8 +38,6 @@
   "tabs.usePage": "Definir aba de trabalho",
   "tabs.navigatePage": "Acessar URL",
   "tabs.organizeTabsTool": "Organizar abas",
-  "tabs.currentSessionWorkingTabIsNotAWebPage": "A aba de trabalho desta tarefa não é uma página da web comum.",
-  "tabs.tabIsNotAWebPageAndCannotBe": "A aba {tabId} não é uma página da web comum e não pode ser usada como aba de trabalho.",
   "tabs.openingAnAgentOwnedTabRequiresTheCurrentSession": "Abrir uma aba exclusiva exige o serviço de abas da tarefa atual.",
   "tabs.viewWorkingPageShort": "Aba de trabalho",
   "tabs.usePageShort": "Usar aba",

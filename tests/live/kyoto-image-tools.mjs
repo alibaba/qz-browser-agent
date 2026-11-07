@@ -136,10 +136,10 @@ function installToolProbe({ mcpRuntime, sessionCommands, sessionAgentHost, sessi
     start({ urls, rounds, select, reads }) {
       void (async () => {
         const root = (await sessionCommands.createSessionFromApi({ title: "Kyoto parallel image measurement" })).session;
-        state.rootId = root.id;
+        state.rootId = root.sessionId;
         await Promise.all(urls.map(async (url, index) => {
-          const session = (await sessionCommands.createSessionFromApi({ title: `Kyoto ${index}`, parentSessionId: root.id })).session;
-          const child = { id: session.id, runId: crypto.randomUUID(), index, url, stage: "open_tab", collected: 0, readImages: 0, screenshots: 0 };
+          const session = (await sessionCommands.createSessionFromApi({ title: `Kyoto ${index}`, parentSessionId: root.sessionId })).session;
+          const child = { id: session.sessionId, runId: crypto.randomUUID(), index, url, stage: "open_tab", collected: 0, readImages: 0, screenshots: 0 };
           state.children.push(child);
           // Admit the scripted run through the real Agent event/supervisor path;
           // do not bypass tab ownership or CDP run-authority checks.

@@ -98,7 +98,7 @@ export function createLanguageRuntime(environment: () => LanguageEnvironment = (
     try { await operation; }
     finally { loads.delete(language); }
   }
-  function apply(value: string) {
+  function apply(value: string, onChange?: () => void) {
     const ticket = ++generation;
     const nextLocale = value === "system" ? browserLocale() : value;
     pending = load(resolveLanguage(nextLocale)).then(() => {
@@ -110,15 +110,19 @@ export function createLanguageRuntime(environment: () => LanguageEnvironment = (
       if (ticket !== generation) return;
       locale = browserLocale();
       preference = value;
+    }).then(() => {
+      if (ticket !== generation) return;
+      try { onChange?.(); }
+      catch { /* Display refresh failures cannot invalidate an applied language. */ }
     });
     return pending;
   }
-  function initializeLanguage({ watch = false }: { watch?: boolean } = {}): Promise<void> {
+  function initializeLanguage({ watch = false, onChange }: { watch?: boolean; onChange?: () => void } = {}): Promise<void> {
     if (initialization) return initialization;
     const ticket = generation;
     if (watch) environment().chrome?.storage?.onChanged?.addListener((changes, area) => {
       if (area === "local" && Object.hasOwn(changes, LANGUAGE_PREFERENCE_KEY)) {
-        void apply(storedPreference(changes[LANGUAGE_PREFERENCE_KEY]?.newValue));
+        void apply(storedPreference(changes[LANGUAGE_PREFERENCE_KEY]?.newValue), onChange);
       }
     });
     initialization = readLanguagePreference().catch(() => "system").then(async value => {

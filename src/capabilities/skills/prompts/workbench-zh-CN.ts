@@ -14,18 +14,18 @@ export default `# 技能工作台
 7. 创建新 skill 时调用本 skill 暴露的“创建技能”Skill 工具；写入或编辑 \`plugin.json\`、\`scripts/*.js\`、\`references/*.md\` 等资源时调用“编辑技能资源”，一次只改一个资源且一次只做一个动作；修改已有 skill 正文或元信息时调用“更新技能”；删除时调用“删除技能”。
 8. Skill 脚本不要承载完整流程，只封装可重复、边界明确、适合 LLM tool 调用的局部动作；skill 本身就是用户可选择的入口，不要额外设计 Skill slash command。
 9. 写入或更新后，轻舟会刷新 Skill 注册表；显式声明的新工具和工具结果渲染应立即对当前对话生效。
-10. Skill 脚本默认使用 \`runtime:"page"\` 注入当前任务网页，页面工具会自动获得可选参数 \`tabRef\`：传当前任务拥有的标签页别名或正整数 ID（也可用数字字符串），省略时使用当前任务工作标签页。在 \`plugin.json\` 中声明时，使用 \`tabRef\` 和 \`type:["integer","string"]\`。未知别名会报错，不会回退到工作标签页。与页面无关、需要自身设置或网络 API 的脚本使用 \`runtime:"inner"\`：通过 \`$plugin.config\` 读取 manifest 设置，通过标准 \`fetch\` 访问 \`network.allowedOrigins\` 声明的来源。不要给用户自定义 Skill 配置 \`runtime:"host"\`；host 只用于轻舟 core 显式注册的受控后台动作。
-11. Skill 脚本工具会自动拥有必填的 \`timeout\` 调用参数；不要把超时写进业务 schema。单位是秒，\`timeout <= 0\` 表示无限等待，\`timeout > 0\` 表示最多等待对应秒数；调用 Skill 工具、\`run_script\` 或 \`run_skill_script\` 时由模型按任务复杂度主动选择。
+10. 新建 Skill 脚本统一声明 \`runtime:"script"\`，与 \`run_script\` 一样在页面外执行。使用 \`qz\` SDK：通过 \`qz.tab(tabRef)\` 绑定页面，以 \`page.locator(query)\` 定位、操作和等待元素；页面 DOM 访问和复用登录态的请求放入自包含的 \`page.evaluate(code,args?)\` 函数。若工具操作调用方指定的页面，须在 schema 中声明 \`tabRef\`（\`type:["integer","string"]\`）并列入 \`required\`；脚本自行打开页面时使用 \`qz.openTab\` 返回的引用。通过 \`$plugin.config\` 读取设置，外层 \`fetch\` 仅访问 \`network.allowedOrigins\` 声明的来源。
+11. 新 Skill 脚本工具与 \`run_script\` 语义一致：脚本直接 return 业务 JSON；await 工具调用（含 Skill 工具）成功直接返回业务值，失败抛错。模型收到 \`{ok,result,trace}\` 回执，\`trace\` 仅按序记录报错与脚本显式输出的 \`trace()\`/\`console\`（含嵌套脚本），建议在关键阶段用 \`trace()\` 打点以便失败定位；renderer 路径始终相对于脚本 return 的业务值解析。独立页面流程用 \`Promise.all\`，并在 return 前 await 所有调用。宿主自动注入可选 \`timeout\`（秒，默认 120；0 不设单次时限，仍受父调用取消与期限约束），请勿将 \`timeout\` 写进业务 schema。存量旧执行模式脚本保留原有调用契约。
 12. Skill 工具曝光由 skill 的 \`scope\` 决定，不在 manifest 里额外配置：\`scope:"resident"\` 常驻曝光；\`scope:"site"\` 在当前页面匹配 skill 的 \`domains/urlPatterns\` 时曝光，也可由当前会话 \`load_skill\` 后曝光；\`scope:"global"\` 只在当前会话 \`load_skill\` 后曝光。\`builtin\`、\`readOnly\` 和 \`source\` 只描述来源与权限，不改变加载策略。
 13. 接入外部 MCP 时，先 \`load_skill("qingzhou-mcp")\`，按该 skill 完成 registry 搜索、未注册 URL 探测和必要的最小试调用。只有确认要长期复用时，才把选中的 MCP server 和工具绑定写入目标 skill；已注册 MCP 必须通过对应 Skill 工具名调用。
-14. Agent 用现有页面或 Network 工具找到 Skill Zip URL 后，先确保来源页面是当前任务的工作标签页，再把该 URL 传给“导入页面 Zip”。这个工具不负责扫描或猜测下载链接；下载在该页面的认证上下文中完成，解压、校验和 Skill 写入由 Background 统一处理。不要用页面脚本手工拼 base64 或自己解析 Zip。
+14. Agent 用现有页面或 Network 工具找到 Skill Zip URL 后，把来源页面的 tabRef 和该 URL 传给“导入页面 Zip”。这个工具不负责扫描或猜测下载链接；下载在该页面的认证上下文中完成，解压、校验和 Skill 写入由 Background 统一处理。不要用页面脚本手工拼 base64 或自己解析 Zip。
 15. 用户给出支持的 GitHub 或 GitLab 仓库/目录页时，调用“探测并导入 Git 仓库”。它会打开仓库页面、等待必要登录、探测分支与 Zip，并绑定为可更新的 Skill 来源；发生同名或本地修改冲突时，不得未经用户确认传 \`overwrite:true\`。
 16. 用户明确要求把某个本地 Skill 安装到 Git 仓库时，调用“安装 Skill 到 Git”。目标 URL 必须由当前产品的 Git 发布适配器支持；目录决定安装位置，工具会创建或更新 \`<目录>/<skill-name>/SKILL.md\` 及其资源并生成一次 commit。未安装对应发布适配器时，先导出 Skill 再由用户提交。
 17. Skill 包可以携带 DOCX、XLSX、PDF 参考资源。调用 \`load_skill_resource(name,path)\` 时会自动通过 document pipeline 返回首块预览和 \`docModelId\`；需要继续读取时先 \`load_skill("qingzhou-documents")\`，再调用 \`document_read_chunk\`。这些二进制资源不能使用文本 replace/append/set 编辑。
 
 ## 页面模式前置条件
 
-- 基于网页创建或更新 Skill 时，先从当前任务的页面上下文或 \`list_tabs\` 返回的 \`pageMode\` 确认目标页模式，不凭窗口宽度或 URL 猜测；模式缺失或正在切换时，先重新观察确认。
+- 基于网页创建或更新 Skill 时，先从当前任务的页面上下文 确认目标页模式，不凭窗口宽度或 URL 猜测；模式缺失或正在切换时，先重新观察确认。
 - 如果流程是在 \`pageMode:"mobile"\` 下采集或验证的，必须在生成的 \`SKILL.md\` / content 的前置条件中写明“在移动模式下验证”，并写清复用步骤：新页面用 \`open_tab\` 的 \`mode:"mobile"\` 打开；已有任务所属页面用 \`set_page_mode\` 的 \`mode:"mobile"\` 切换。切换会刷新页面，操作前重新读取页面或截图，不复用旧元素引用和坐标。
 - 记录实际验证过的模式；只验证移动模式时，不宣称桌面模式也适用。两种模式流程不同则分别说明。模式要求放在 Skill 正文中，不新增 manifest 字段，也不固化创建时的 tabRef。
 
@@ -33,13 +33,13 @@ export default `# 技能工作台
 
 - \`SKILL.md\` / skill content：解释“怎么完成任务”。例如检索 B 站视频时，写清如何打开 B 站、如何搜索、如何筛选、何时进入详情页、哪些页面状态代表成功、遇到风控/空结果怎么处理。
 - \`plugin.json\`：可选。只有需要把脚本工具化或定制工具结果 UI 时才创建。它让工具进入 LLM schema，让工具结果用轻舟组件展示。
-- \`scripts/*.js\`：可选，且必须由 \`plugin.json.tools[]\` 显式声明后才会成为工具。页面动作使用 \`runtime:"page"\`；纯计算、Skill 自身设置或外部 API 使用 \`runtime:"inner"\`。脚本只实现边界明确的局部动作，不承载完整任务流程。
+- \`scripts/*.js\`：可选，必须由 \`plugin.json.tools[]\` 显式声明并配置 \`runtime:"script"\` 后才成为工具。脚本封装可复用的局部动作；页面操作、计算、Skill 设置和外部 API 都使用同一种外层执行模式。
 - 如果一个工具需要多步前置流程，工具描述或 skill content 要明确“先 load_skill 读取流程，再在合适页面调用脚本”。
 - 创建、更新、删除 skill 不再直接使用裸露 core tool；统一调用本 skill 暴露的 Skill 工具，让创建逻辑、目录规范和结果 UI 都走同一个入口。
 
 ## Skill 包导入与 Git 分发
 
-- “导入页面 Zip”只接收 Agent 已经发现的完整 http(s) 下载地址，默认使用当前任务 workingTabId 的页面登录态下载，不扫描 DOM、Network 或猜测 URL。它可以一次导入一个或多个标准 Skill；默认不覆盖同名项，只有用户确认后才传 \`overwrite:true\`。
+- “导入页面 Zip”只接收 Agent 已经发现的完整 http(s) 下载地址，显式传入来源页面的 tabRef 以复用该页登录态，不扫描 DOM、Network 或猜测 URL。它可以一次导入一个或多个标准 Skill；默认不覆盖同名项，只有用户确认后才传 \`overwrite:true\`。
 - “探测并导入 Git 仓库”接收支持的 GitHub 或 GitLab 的仓库根页/目录页 URL。它复用技能页的 Git 来源能力，保留仓库、分支、目录和更新摘要，后续仍可在技能页检查更新或解除绑定。
 - “安装 Skill 到 Git”接收本地 Skill 名称和已支持的 Git 发布目标 URL。调用本身会产生外部 Git commit，必须以用户的明确安装/提交要求为前提；成功后核对返回的 \`targetPath\`、\`fileCount\` 和 \`commitId\`。
 - 页面 Zip 导入和 Git 导入都是 package 级操作，不要先拆成 \`create_skill\` + 多次 \`edit_skill_resource\`；Skill 正文、资源、manifest 和来源元数据必须作为一个包校验并写入。
@@ -113,13 +113,14 @@ export default `# 技能工作台
       "title": "分析当前页面",
       "description": "读取当前页面的可见结构并返回摘要",
       "script": "scripts/inspect-page.js",
-      "needsPage": true,
+      "runtime": "script",
       "parameters": {
         "type": "object",
         "properties": {
-          "tabRef": { "type": ["integer", "string"], "description": "当前任务拥有的标签页别名或正整数 ID；省略时使用工作标签页" },
+          "tabRef": { "type": ["integer", "string"], "description": "必填，当前任务拥有的标签页别名或 qz.openTab、qz.listTabs 返回的引用" },
           "limit": { "type": "integer", "description": "最多返回多少条链接" }
-        }
+        },
+        "required": ["tabRef"]
       }
     }
   ],
@@ -139,7 +140,7 @@ export default `# 技能工作台
 }
 \`\`\`
 
-## Skill 设置 DSL 与 inner 网络
+## Skill 设置 DSL 与脚本网络访问
 
 需要 Endpoint、Token 或其他用户配置时，在 manifest 顶层声明 \`settings.fields\`；不要新增业务专用设置页或 host action。设置页的控件、分组和宽度只由下面这套通用 DSL 决定，不支持自定义 \`style\`、\`theme\` 或任意组件名：
 
@@ -149,7 +150,7 @@ export default `# 技能工作台
 - \`number\` 可声明 \`min\`、\`max\`、\`step\`；\`select\` 必须声明非空 \`options\`，每项使用 \`{ "label": "显示文字", "value": "稳定字符串值" }\`；\`boolean\` 的值和默认值必须是真正的 JSON boolean，不能用字符串 \`"true"\` / \`"false"\` 代替。
 - 字段较多时用 \`settings.layout.sections\` 分组。每组支持 \`title\`、可选 \`description\` 和字段 key 数组 \`fields\`；一个字段最多进入一个分组，未分组字段仍会显示。layout 只控制通用设置页的展示，不进入存储或脚本配置。
 
-脚本通过 \`$plugin.config.<key>\` 读取设置。\`type:"secret"\` 的值会回填到本地设置页的 password 控件，但不会注入 page runtime；需要密钥的工具必须使用 \`runtime:"inner"\`。动态网络来源引用一个 \`type:"url"\` 设置字段，Skill 使用普通 \`fetch\`。
+脚本通过 \`$plugin.config.<key>\` 读取设置。密钥不会自动进入页面函数，只通过 \`args\` 传入该函数需要的字段。动态网络来源引用 \`type:"url"\` 设置，使用普通 fetch。
 
 \`\`\`json
 {
@@ -178,7 +179,7 @@ export default `# 技能工作台
   "tools": [{
     "name": "query_api",
     "title": "查询 API",
-    "runtime": "inner",
+    "runtime": "script",
     "script": "scripts/query-api.js",
     "parameters": { "type": "object", "properties": { "query": { "type": "string" } } }
   }]
@@ -187,15 +188,14 @@ export default `# 技能工作台
 
 ## 脚本约定
 
-Skill 脚本与 \`run_script.code\` 使用同一种源码形态：默认写成单个 \`async () => { ... }\` 函数表达式，由轻舟自动调用。不要写顶层 \`return\`、IIFE、\`main();\` 或把结果包在 \`result\` 字段里。\`runtime:"page"\` 在当前任务工作标签页或用 \`tabRef\` 指定的自有页面上执行；\`runtime:"inner"\` 在无 DOM 的 Worker 中执行，不需要 tab，可用标准 Web APIs、\`$plugin.config\`、\`fetch\` 和 \`tools/tool\`。
+Skill 脚本与 \`run_script.code\` 使用同一种源码形态：顶层 \`await\` 和 \`return\`（兼容已有函数表达式）。脚本在页面外运行，页面导航不会销毁它，提供 \`args\`、\`$plugin\`、\`qz\`、\`trace()\` 与 Web APIs，不包含 \`window/document\`；await SDK 调用成功直接返回业务值，失败抛错。用 \`const page = qz.tab(args.tabRef)\` 绑定页面，再调用 \`page.goto(url)\`、\`page.read({limit})\`、\`page.locator(targetOrQuery)\`。Locator 支持 \`role/name/text\` 条件或 \`uid:/css:\` 引用，要求唯一匹配，在元素就绪后只派发一次动作。方法包括 \`click()\`、\`fill(value)\`、\`press(key)\`、\`inspect()\`、\`read({limit})\`、\`wait({state:"visible"})\`、\`count()\` 和 \`wait({count:3})\`。传给 \`page.evaluate(code,args?)\` 的页面函数必须自包含：通过函数形参接收传入数据，不能捕获外层变量或调用 qz SDK。导航和点击通过外层 SDK 执行，之后再读取新页面；页面卸载可能中断单次 evaluate，代码不会自动重放。通过 \`qz.listTools({names})\` 查询扩展工具，再用 \`qz.call(name,args)\` 调用。
 
 \`\`\`js
-async () => {
-  const limit = Number(args.limit || 10);
+const page = qz.tab(args.tabRef);
+return await page.evaluate(({ limit }) => {
   const links = Array.from(document.querySelectorAll("a[href]"))
     .slice(0, limit)
     .map(a => ({ text: a.innerText.trim(), href: a.href }));
-
   return {
     title: document.title,
     url: location.href,
@@ -203,10 +203,10 @@ async () => {
     textLength: document.body?.innerText?.length || 0,
     links
   };
-}
+}, { limit: Number(args.limit ?? 10) });
 \`\`\`
 
-两种脚本都可用 \`args/input\`、\`$plugin\`、\`tools/tool\` 和 Web APIs；page 额外可用 \`window/document\` 和宿主解析后的数字 \`tabId\`。该运行时值不是作者声明的页面目标参数；调用页面工具时使用 \`tabRef\`。inner 没有 DOM，网络来源和 method 必须在 manifest \`network\` 中声明。不要使用 Node.js、\`fs/path/process/require\`、npm 包、本地 shell 或服务器文件系统。
+有依赖的步骤按顺序 await；独立分支使用 \`Promise.all\`，各分支在自己的工具完成后即可继续，同页动作仍串行。结果保持输入顺序，一个 Promise 拒绝不会取消其他分支；需要所有结果时用 \`Promise.allSettled\`。返回前 await 所有必要工作：脚本退出会取消未完成调用，已完成操作不会回滚。外层网络来源和 method 必须在 \`network\` 声明；使用页面登录态的 fetch 放进 \`page.evaluate\`。不要使用 Node.js、fs/path/process/require、npm 包、本地 shell 或服务器文件系统。
 
 ### 页面 state 与安全返回规范
 
@@ -250,7 +250,7 @@ async () => {
 - 新增、整体替换或编辑 \`plugin.json\`、\`scripts/*.js\`、\`references/*.md\` 等资源时，调用“编辑技能资源”：\`name\`、\`path\`、\`action\`、\`type\`、\`title\`、\`description\`、\`content\`、\`oldText\`、\`newText\` 等都是顶层参数，一次只改一个资源，一次只做一个动作。
 - 大段脚本/JSON 整体替换用 \`action:"set"\`，先写 \`path/type/title/description\`，最后写长 \`content\`。
 - 小范围修改用 \`action:"replace"\` + 顶层 \`oldText/newText\`，从刚读取的资源 content 中原样复制最小但唯一的连续片段作为 \`oldText\`，不要凭记忆重写；追加/前置用 \`append\` / \`prepend\`；重命名用 \`rename\`；删除用 \`delete\`。
-- 修改已有资源前先用 \`load_skill\` 查看资源清单，再用 \`load_skill_resource(name,path)\` 读取目标文件。不要把多个资源或多个 edits 塞进数组对象里。
+- 修改已有资源前先用 \`load_skill\` 查看资源清单，再用 \`load_skill_resource(name,path)\` 读取目标文件。不要把多个资源或多个 edits 塞进数组对象里。 保留已有 runtime 声明和脚本行为；改变执行模式时同时修改 manifest 与代码。
 - DOCX、XLSX、PDF 资源由导入流程保留原始字节并交给 document pipeline 读取；“编辑技能资源”只处理文本内容，不要把二进制文件转写成 base64 文本参数。
 
 ## UI 与渲染

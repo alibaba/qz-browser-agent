@@ -19,8 +19,13 @@ import {
   settleImportedTranscript,
 } from "../../src/shared/session/session-exchange.js";
 import { ROOT_SESSION_ID } from "../../src/shared/session/session-store.js";
+import { t } from "../../src/shared/i18n/backend.js";
+import { createKeyedSerialQueue } from "../../src/background/internal/serial-queue.js";
 
 await creationRunAndHistoryFlow();
+await publicSessionObservations();
+await publicTaskMessagesUseModelValues();
+await publicTaskMessagesKeepUncommittedWorkAsProgress();
 await duplicateAcceptedPromptIsIdempotent();
 await submittedMessageStartsOrQueuesAtomically();
 await acceptedCleanupIsPostCommitAndNonBlocking();
@@ -52,6 +57,12 @@ await stopBeforeStartDropsUnstartedPrompt();
 await stopPortOrderingAndIdleNoOp();
 await cancelledRemoteAdmissionsDoNotStartWork();
 await cancelledRemoteTerminalCommandsLeaveTasksIntact();
+await externalDriveSessionsRejectBuiltInMessages();
+await idleDriveStopPersistsTerminalState();
+await stopCapturesPopupsAcceptedBeforeRevocation();
+await selectedDriveTabsAreValidatedBeforeStop();
+await concurrentDriveStopsKeepTheFirstRetentionDecision();
+await retentionCleanupRetriesWithoutOrphaningTheSession();
 
 console.log("session command runtime integration tests passed");
 
@@ -171,6 +182,156 @@ async function creationRunAndHistoryFlow() {
   const listed = await fixture.commands.listSessionsRuntime({ limit: 1 });
   assert.equal(listed.sessions.length, 1);
   assert.equal(listed.sessions[0].id, sessionId);
+}
+
+async function publicSessionObservations() {
+  const fixture = createFixture();
+  const created = await fixture.commands.createSessionFromApi({ title: 'Compare public prices' });
+  const { id, ...session } = created.session;
+  const sessionId = session.sessionId;
+  assert.equal(id, sessionId, 'legacy CLI/MCP clients can read session.id');
+  assert.equal(typeof id, 'string');
+  assert.deepEqual(session, { sessionId, title: 'Compare public prices', status: 'idle' });
+  assert.equal(created.started, false);
+  assert.equal((await fixture.repository.getMetadata(sessionId)).id, sessionId, 'stored identity remains internal');
+  fixture.setRuntime(sessionId, {
+    status: 'completed', running: false, runId: 'private-run',
+    workingTab: { id: 73, title: 'Private page', url: 'https://example.test/' },
+    visitedTaskSites: [{ id: 73, url: 'https://example.test/' }],
+  });
+  const completed = { ...session, status: 'completed' };
+  const listed = await fixture.commands.listSessionsRuntime({ publicView: true });
+  assert.deepEqual(listed.sessions, [completed]);
+  const scoped = await fixture.commands.listSessionsRuntime({ publicView: true, scope: 'session', sessionId });
+  assert.deepEqual(scoped, { scope: 'session', session: completed, otherCount: 0 });
+  const internal = await fixture.commands.listSessionsRuntime();
+  assert.equal(internal.sessions[0].id, sessionId, 'UI summaries retain their existing stored identity');
+  assert.equal(internal.sessions[0].workingTab.id, 73, 'public observations do not change private runtime state');
+  fixture.transcripts.set(sessionId, [{ type: 'assistant', content: 'Prices collected' }]);
+  const tail = await fixture.commands.getLastMessagesRuntime({ sessionId, num: 1 });
+  assert.deepEqual(tail.session, completed);
+  assert.equal(tail.runId, undefined);
+  assert.equal(tail.messages[0].content, 'Prices collected');
+  const waited = await fixture.commands.waitSessionsRuntime({ sessionIds: [sessionId], num: 1 });
+  assert.deepEqual(Object.fromEntries(Object.keys(completed).map(key => [key, waited.sessions[0][key]])), completed);
+  assert.equal(waited.sessions[0].runId, undefined);
+  assert.equal(waited.sessions[0].lastMessages[0].content, 'Prices collected');
+  fixture.setRuntime(sessionId, { status: 'running', running: true, runId: 'private-stop-run' });
+  const stopped = await fixture.commands.stopSessionRuntime(sessionId, { source: 'tool', cascade: false });
+  assert.deepEqual(stopped, {
+    sessionId, title: session.title, status: 'aborted', stopped: true,
+    stoppedChildren: [], stoppedChildCount: 0,
+  });
+  const deleted = await fixture.commands.deleteSessionRuntime(sessionId, { source: 'tool', requestedBy: 'parent' });
+  assert.equal(deleted.deleted, true);
+  assert.equal(deleted.source, undefined);
+  assert.equal(deleted.requestedBy, undefined);
+}
+
+async function publicTaskMessagesUseModelValues() {
+  const business = { tabId: "authored value", _pageContext: { label: "authored context" }, nodes: [{ selector: "authored selector" }] };
+  const receipt = { ok: true, result: business, trace: ["Collected both pages"] };
+  const failure = { ok: false, result: { code: "TARGET_NOT_FOUND", message: "Refresh the target", details: { tabRef: "catalog" } }, trace: ["Page loaded", "Target missing"] };
+  const calls = [
+    { id: "reused", name: "read_article", args: { tabRef: "first" }, result: { text: "First page" } },
+    { id: "script", name: "run_script", args: { code: "return args", args: business }, result: receipt },
+    { id: "failure", name: "run_script", args: { code: "throw new Error('missing')" }, result: failure, isError: true },
+    { id: "reused", name: "read_article", args: { tabRef: "second" }, result: { text: "Second page" } },
+  ];
+  const messages = [{ role: "user", content: "Compare pages" }, ...calls.flatMap(call => [
+    { role: "assistant", content: null, tool_calls: [{ id: call.id, type: "function", function: { name: call.name, arguments: JSON.stringify(call.args) } }] },
+    { role: "tool", tool_call_id: call.id, content: JSON.stringify(call.result), _toolIsError: call.isError === true },
+  ]), { role: "assistant", content: "Comparison complete" }];
+  for (const source of ["live", "stored"]) {
+    const f = createFixture(), sessionId = `public-tools-${source}`;
+    await f.repository.createMetadata({ id: sessionId, title: "Compare pages" });
+    const ui = calls.map((call, index) => ({ type: "tool", name: call.name, toolCallId: call.id, runId: `run-${index}`,
+      args: { ...call.args, tabId: 987 }, argsText: "HOST_ONLY_ARGS", result: { _pageContext: "HOST_ONLY_RESULT" },
+      phase: "done", isRunning: false, isError: call.isError === true }));
+    // A stale UI checkpoint must not append running work to a completed conversation.
+    ui.push({ type: "tool", name: "stale_progress", args: { tabId: 988 }, result: "HOST_ONLY_STALE", isRunning: true });
+    if (source === "live") f.agent(sessionId).messages.push(...messages);
+    else await f.commands.saveSessionRecordRuntime({ sessionId, conversation: serializeConversation(messages), transcript: ui });
+    f.transcripts.set(sessionId, ui);
+    f.setRuntime(sessionId, { status: "completed", running: false });
+    const originalUi = structuredClone(ui);
+    const tail = await f.commands.getLastMessagesRuntime({ sessionId, num: 50 });
+    assert.deepEqual(tail.messages.filter(item => item.type === "tool").map(item => ({
+      name: item.name, args: JSON.parse(item.args), result: JSON.parse(item.result), isError: item.isError,
+    })), calls.map(call => ({ name: call.name, args: call.args, result: call.result, isError: call.isError === true })), source);
+    assert.equal(tail.messages.at(-1).content, "Comparison complete");
+    assert.equal(JSON.stringify(tail).includes("HOST_ONLY"), false, source);
+    const waited = await f.commands.waitSessionsRuntime({ sessionIds: [sessionId], num: 50 });
+    assert.deepEqual(waited.sessions[0].lastMessages, tail.messages, "wait and last_messages share the public contract");
+    assert.deepEqual(ui, originalUi, "public reads must not rewrite UI evidence");
+    assert.equal(JSON.parse(f.commands.compactTranscriptEvent(ui[0]).args).tabId, 987, "the existing UI compact projection remains available");
+  }
+}
+
+async function publicTaskMessagesKeepUncommittedWorkAsProgress() {
+  const f = createFixture(), sessionId = "public-progress";
+  await f.repository.createMetadata({ id: sessionId, title: "Read pages" });
+  const agent = f.agent(sessionId);
+  const completed = text => [
+    { role: "assistant", content: null, tool_calls: [{ id: "reused", type: "function", function: { name: "read_article", arguments: '{"tabRef":"page"}' } }] },
+    { role: "tool", tool_call_id: "reused", content: JSON.stringify({ text }), _toolIsError: false },
+  ];
+  agent.messages.push(...completed("Previously committed page"));
+  const ui = [
+    { type: "tool", name: "read_article", toolCallId: "reused", runId: "new-run", args: { tabId: 987 }, argsText: "HOST_ONLY", result: "HOST_ONLY_UNCOMMITTED", phase: "done", isRunning: false },
+    { type: "tool", name: "evaluate", args: { tabId: 987 }, argsText: "HOST_ONLY_PARTIAL", result: "HOST_ONLY_PARTIAL", phase: "preparing", isRunning: true },
+  ];
+  f.transcripts.set(sessionId, ui);
+  f.setRuntime(sessionId, { status: "running", running: true, runId: "new-run" });
+  const tail = await f.commands.getLastMessagesRuntime({ sessionId, num: 50 });
+  assert.equal(tail.messages.length, 2);
+  assert.deepEqual(JSON.parse(tail.messages[0].result), { text: "Previously committed page" }, "a reused ID must not substitute an uncommitted UI result");
+  const progress = tail.messages[1];
+  assert.equal(progress.name, "evaluate");
+  assert.equal(progress.isRunning, true);
+  assert.equal(progress.phase, "preparing");
+  assert.equal(progress.args, null);
+  assert.equal(progress.result, null);
+  assert.equal(progress.argsText, "");
+  assert.equal(JSON.stringify(tail).includes("HOST_ONLY"), false);
+  assert.deepEqual((await f.commands.getLastMessagesRuntime({ sessionId, num: 1 })).messages, [progress], "tail limit applies after adding progress");
+
+  ui[1].name = "ask_user";
+  const question = { type: "wait", title: "Choose currency", message: "Which currency should this budget use?", status: "waiting",
+    form: { fields: [], internal: "HOST_ONLY_FORM" } };
+  ui.push(question);
+  f.setRuntime(sessionId, { status: "waiting_user", running: true });
+  const waiting = await f.commands.getLastMessagesRuntime({ sessionId, num: 50 });
+  assert.deepEqual(waiting.messages.at(-1), {
+    type: "wait", title: question.title, message: question.message, status: "waiting", reason: "",
+  }, "a parent must see the child's current question before the tool result is committed");
+  assert.equal(waiting.messages.at(-2).name, "ask_user");
+  assert.equal(waiting.messages.at(-2).args, null);
+  assert.equal(waiting.messages.at(-2).argsText, "");
+  assert.equal(JSON.stringify(waiting).includes("HOST_ONLY"), false);
+  question.status = "resolved";
+  f.setRuntime(sessionId, { status: "running", running: true });
+  const resolved = await f.commands.getLastMessagesRuntime({ sessionId, num: 50 });
+  assert.equal(resolved.messages.some(item => item.type === "wait"), false, "resolved UI questions must not become current task progress");
+  ui.pop();
+
+  agent.messages.push(...completed("Newly committed page"));
+  ui[1].isRunning = false;
+  f.setRuntime(sessionId, { status: "completed", running: false });
+  const committed = await f.commands.getLastMessagesRuntime({ sessionId, num: 50 });
+  assert.deepEqual(committed.messages.map(item => JSON.parse(item.result).text), ["Previously committed page", "Newly committed page"]);
+
+  const legacyId = "legacy-public-progress";
+  await f.repository.createMetadata({ id: legacyId, title: "Legacy task" });
+  f.transcripts.set(legacyId, [{ type: "assistant", content: "Legacy answer" }, ...ui]);
+  f.setRuntime(legacyId, { status: "completed", running: false });
+  const legacy = await f.commands.getLastMessagesRuntime({ sessionId: legacyId, num: 50 });
+  assert.equal(legacy.messages[0].content, "Legacy answer");
+  assert.equal(legacy.messages.length, 3);
+  for (const tool of legacy.messages.slice(1)) {
+    assert.equal(tool.args, null); assert.equal(tool.result, null); assert.equal(tool.argsText, "");
+  }
+  assert.equal(JSON.stringify(legacy).includes("HOST_ONLY"), false, "old records without a public conversation must not expose UI payloads");
 }
 
 async function duplicateAcceptedPromptIsIdempotent() {
@@ -1828,7 +1989,7 @@ async function stopPortOrderingAndIdleNoOp() {
   const checkpoint = fixture.runtimes.get("ordered-stop");
   const stopped = await fixture.commands.stopSessionRuntime("ordered-stop", { cascade: false });
   assert.equal(stopped.stopped, false);
-  assert.equal(stopped.hadRuntime, false);
+  assert.equal(stopped.hadRuntime, undefined, 'public stop receipts omit private runtime state');
   assert.equal(fixture.runtimes.get("ordered-stop"), checkpoint, "idle stop must not rewrite its terminal checkpoint");
   assert.equal(calls.some(([kind]) => kind === "persist"), false);
 }
@@ -1987,6 +2148,131 @@ async function serializedSessionDraftMutations() {
   })).draft.text, "latest", "creation and lifecycle sync must share the Session write order");
 }
 
+async function externalDriveSessionsRejectBuiltInMessages() {
+  const fixture = createFixture();
+  await fixture.repository.createMetadata({ id: "drive-view", title: "Drive", source: "external-drive" });
+  await fixture.repository.createMetadata({ id: "normal-view", title: "Normal" });
+  const message = t("drive.sendMessageRejected");
+  for (const run of [
+    () => fixture.commands.submitSessionMessageRuntime({ sessionId: "drive-view", text: "hello" }),
+    () => fixture.commands.followUpSessionRuntime({ sessionId: "drive-view", text: "hello" }),
+    () => fixture.commands.resendSessionMessageRuntime({ sessionId: "drive-view", text: "hello", clientMessageId: "m1" }),
+    () => fixture.commands.startSessionPromptTask({ sessionId: "drive-view", text: "hello" }),
+  ]) {
+    await assert.rejects(run(), error => error.code === "DRIVE_MODEL_DISABLED" && error.message === message);
+  }
+  assert.equal(fixture.agents.has("drive-view"), false);
+  const admitted = await fixture.commands.submitSessionMessageRuntime({ sessionId: "normal-view", text: "still works" });
+  assert.equal(admitted.disposition, "started");
+  assert.equal(fixture.agents.has("normal-view"), true);
+  await admitted.promise;
+}
+
+async function idleDriveStopPersistsTerminalState() {
+  const persisted = [];
+  const f = createFixture({ persistSessionRuntime: (id, options) => persisted.push({ id, options, state: { ...f.runtimes.get(id) } }) });
+  await f.repository.createMetadata({ id: 'idle-drive', source: 'external-drive' });
+  const result = await f.commands.stopSessionRuntime('idle-drive', { keepTabs: true });
+  assert.equal(result.status, 'aborted');
+  assert.equal(result.stopped, true);
+  assert.equal(f.runtimes.get('idle-drive').driveKeepTabs, true);
+  await f.commands.stopSessionRuntime('idle-drive');
+  assert.equal(f.runtimes.get('idle-drive').driveKeepTabs, true, 'repeated cancel preserves the original keep decision');
+  assert.ok(persisted.some(item => item.id === 'idle-drive' && item.options.terminal && item.state.status === 'aborted'));
+  assert.equal(f.agents.has('idle-drive'), false);
+}
+
+async function stopCapturesPopupsAcceptedBeforeRevocation() {
+  let stopping = false, f;
+  f = createFixture({ wrapRepository: repository => ({
+    ...repository,
+    async listMetadata() {
+      if (stopping) {
+        stopping = false;
+        f.setRuntime('late-popup-stop', { ownedTabIds: [11, 12], createdTabIds: [11, 12], popupTabIds: [12] });
+      }
+      return repository.listMetadata();
+    },
+  }) });
+  await f.repository.createMetadata({ id: 'late-popup-stop', source: 'external-drive' });
+  f.setRuntime('late-popup-stop', { status: 'running', running: true, runId: 'run',
+    ownedTabIds: [11], createdTabIds: [11], popupTabIds: [] });
+  stopping = true;
+  await f.commands.stopSessionRuntime('late-popup-stop');
+  assert.deepEqual(f.closedTabs[0][1].createdTabIds, [11, 12],
+    'stop must include pages accepted while it loads metadata, before write authority is revoked');
+}
+
+async function selectedDriveTabsAreValidatedBeforeStop() {
+  const f = createFixture();
+  await f.repository.createMetadata({ id: "selective-keep", source: "external-drive" });
+  f.setRuntime("selective-keep", {
+    status: "running", running: true, ownedTabIds: [11, 12, 13], createdTabIds: [11, 12],
+    tabAliases: { result: 11, intermediate: 12 },
+  });
+  let capturedRuns = 0;
+  f.supervisor.takeDriveRunForRelease = () => { capturedRuns++; return ""; };
+  for (const [keepTabRefs, code] of [
+    [["result", "missing"], "BATCH_TAB_REFERENCE_ERROR"],
+    [["result", 999], "SESSION_TAB_FOREIGN"],
+    ["result", "INVALID_ARGUMENTS"],
+  ]) {
+    await assert.rejects(f.commands.stopSessionRuntime("selective-keep", { keepTabRefs }), error => error.code === code);
+    assert.equal(f.runtimes.get("selective-keep").status, "running");
+    assert.equal(capturedRuns, 0, "invalid keep references must not revoke the active run");
+    assert.deepEqual(f.closedTabs, []);
+    assert.deepEqual(f.releasedRuns, []);
+  }
+  await f.commands.stopSessionRuntime("selective-keep", { keepTabRefs: ["result", "11", 13] });
+  assert.equal(f.runtimes.get("selective-keep").status, "aborted");
+  assert.deepEqual(f.runtimes.get("selective-keep").driveKeepTabIds, [11, 13]);
+  assert.deepEqual(f.closedTabs.at(-1)[1].keepTabIds, [11, 13]);
+  assert.deepEqual(f.closedTabs.at(-1)[1].createdTabIds, [11, 12]);
+  f.setRuntime("selective-keep", { tabAliases: {}, ownedTabIds: [], createdTabIds: [] });
+  await f.commands.stopSessionRuntime("selective-keep", { keepTabRefs: ["intermediate"] });
+  assert.deepEqual(f.runtimes.get("selective-keep").driveKeepTabIds, [11, 13], "repeated cancel keeps the original choice after aliases expire");
+}
+
+async function concurrentDriveStopsKeepTheFirstRetentionDecision() {
+  const f = createFixture();
+  const queue = createKeyedSerialQueue(), revoke = f.supervisor.revoke;
+  f.supervisor.revoke = (id, options) => queue.run(id, () => revoke(id, options));
+  await f.repository.createMetadata({ id: "concurrent-keep", source: "external-drive" });
+  f.setRuntime("concurrent-keep", { status: "idle", ownedTabIds: [21, 22], createdTabIds: [21, 22],
+    tabAliases: { first: 21, second: 22 } });
+  await Promise.all([
+    f.commands.stopSessionRuntime("concurrent-keep", { keepTabRefs: ["first"] }),
+    f.commands.stopSessionRuntime("concurrent-keep", { keepTabRefs: ["second"] }),
+  ]);
+  assert.deepEqual(f.runtimes.get("concurrent-keep").driveKeepTabIds, [21]);
+  assert.ok(f.closedTabs.every(([, options]) => options.keepTabIds.length === 1 && options.keepTabIds[0] === 21));
+}
+
+async function retentionCleanupRetriesWithoutOrphaningTheSession() {
+  let fail = true;
+  const cleaned = [];
+  const f = createFixture({ removeSessionResources: async id => {
+    cleaned.push(id);
+    if (fail) throw new Error('document store unavailable');
+  } });
+  await f.repository.createMetadata({ id: 'retention-old', source: 'external-drive' });
+  await f.repository.createMetadata({ id: 'ordinary', title: 'Keep' });
+  f.setRuntime('retention-old', { status: 'idle' });
+  const skipped = await f.commands.deleteSessionRuntime('retention-old', {}, undefined, async () => false);
+  assert.equal(skipped.deleted, false);
+  assert.deepEqual(cleaned, []);
+  await assert.rejects(f.commands.deleteSessionRuntime('retention-old', {}, undefined, async () => true), /document store unavailable/);
+  assert.equal((await f.repository.getMetadata('retention-old')).driveRetentionPending, true);
+  assert.equal(f.repository.isWriteBlocked('retention-old'), true);
+  assert.equal(f.broadcasts.some(event => event.type === 'session_deleted'), false);
+  fail = false;
+  assert.equal((await f.commands.deleteSessionRuntime('retention-old', {}, undefined, async () => true)).deleted, true);
+  assert.equal(await f.repository.getMetadata('retention-old'), null);
+  assert.equal(f.runtimes.has('retention-old'), false);
+  assert.equal((await f.repository.getMetadata('ordinary')).title, 'Keep');
+  assert.deepEqual(cleaned, ['retention-old', 'retention-old']);
+}
+
 function createFixture(options = {}) {
   const baseRepository = createSessionRepository({ storage: options.storage || createMemoryStorage() });
   const repository = options.wrapRepository?.(baseRepository) || baseRepository;
@@ -2049,6 +2335,7 @@ function createFixture(options = {}) {
   };
   const revoke = async (sessionId, options = {}, remove = false) => {
     const id = normalizeId(sessionId);
+    if (options.canRemove && !await options.canRemove()) return null;
     const discardedPrompt = agents.get(id)?.discardUnstartedPrompt?.() || null;
     const snapshot = { ...snapshotFor(id), discardedPrompt };
     const task = tasks.get(id);
@@ -2063,6 +2350,8 @@ function createFixture(options = {}) {
   const supervisor = {
     withRuntime: (_id, operation) => operation(),
     isRunCurrent: (id, runId) => runtimes.get(normalizeId(id))?.runId === runId,
+    takeDriveRunForRelease() { return ""; },
+    finishDriveRunRelease() {},
     getRuntime: id => runtimes.get(normalizeId(id)) || null,
     getTask: id => tasks.get(normalizeId(id)) || null,
     has: id => agents.has(normalizeId(id)) || runtimes.has(normalizeId(id)),
@@ -2228,6 +2517,7 @@ function createFixture(options = {}) {
         };
       },
       closeOwnedTabsAfterTerminal: async (id, reason) => closedTabs.push([id, reason]),
+      settleStoppedDriveTabs: async (id, options) => closedTabs.push([id, options]),
     },
     sessionRuntimeReady: Promise.resolve(),
     sessionSupervisor: supervisor,
@@ -2283,6 +2573,7 @@ function createFixture(options = {}) {
       }
       return { deletedFileCount: 1, deletedModelCount: 1 };
     },
+    removeSessionResources: options.removeSessionResources,
     removeSessionObservations: async sessionId => {
       draftCleanupOrder.push(`observations:${sessionId}`);
       removedSessionObservations.push(sessionId);

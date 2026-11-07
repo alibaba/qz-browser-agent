@@ -1,3 +1,4 @@
+import { bindToolResultPresentation, getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { registerHooks } from 'node:module';
@@ -8,6 +9,7 @@ import { parseSkillManifest } from '../../src/shared/skills/skill-manifest.js';
 import { QINGZHOU_SKILL_SCHEMA_VERSION } from '../../src/shared/skills/skill-utils.js';
 import { withLanguage } from '../../src/shared/i18n/index.js';
 import { issueToolEffects, consumeToolEffects } from '../../src/background/tools/effects.js';
+import { markToolValue, isToolValue, toolError } from '../../src/shared/contracts/tool-error.js';
 
 const renderer = { type: 'selection', title: 'Choose opportunities', itemsPath: 'jobs', itemIdPath: 'key',
   itemTitlePath: 'company', itemSubtitlePath: 'role', itemMeta: [{ label: 'Location', path: 'location' }],
@@ -17,8 +19,30 @@ const jobs = [{ key: 'job-a', company: 'Northstar', role: 'Backend engineer', lo
 { key: 'job-b', company: 'Harbor', role: 'Platform engineer', location: 'London', url: 'javascript:alert(1)' }];
 const context = { sessionId: 'selection-session', runId: 'selection-run', toolCallId: 'selection-call', language: 'en' };
 const metadata = { id: 'selection-example', runtime: 'inner', renderer };
-const result = () => ({ ok: true, hasResult: true, result: { jobs: structuredClone(jobs), _plugin: metadata }, _plugin: metadata });
+const result = () => bindToolResultPresentation({ ok: true, hasResult: true, result: { jobs: structuredClone(jobs) } }, { _plugin: metadata });
 const selected = ids => ({ submitted: true, answers: { selectedIds: ids } });
+
+test('direct script values keep business envelope keys; actual failures never open a chooser', async () => {
+  const value = bindToolResultPresentation(markToolValue({ jobs, ok: false, error: 'business data',
+    result: { jobs: [] }, trace: ['business'] }), { _plugin: { ...metadata, runtime: 'script' },
+    _display: { script: { valueOnly: true, trace: [{ level: 'trace', message: 'collected' }] } } });
+  const chosen = await selectSkillResults(renderer, value, undefined, context, async () => selected(['job-a']));
+  assert.deepEqual(chosen, { selectedIds: ['job-a'], selectedItems: [jobs[0]], totalItems: 2 });
+  assert.ok(isToolValue(chosen));
+  assert.equal(getToolResultPresentation(chosen)._plugin.runtime, 'script');
+  assert.equal(getToolResultPresentation(chosen)._display.script.trace[0].message, 'collected');
+  const failed = toolError('SCRIPT_EVALUATION_FAILED', 'Script failed');
+  assert.equal(await selectSkillResults(renderer, failed, undefined, context, () => assert.fail('failure cannot become candidates')), failed);
+});
+
+test('successful Skill receipts keep their trace and select from error-shaped business data', async () => {
+  const receipt = bindToolResultPresentation({ ok: true, result: { jobs, ok: false, error: 'business' },
+    trace: [{ level: 'trace', message: 'collected' }] }, { _plugin: { ...metadata, runtime: 'script' } });
+  const chosen = await selectSkillResults(renderer, receipt, undefined, context, async () => selected(['job-b']));
+  assert.equal(chosen.ok, true);
+  assert.deepEqual(chosen.result, { selectedIds: ['job-b'], selectedItems: [jobs[1]], totalItems: 2 });
+  assert.deepEqual(chosen.trace, receipt.trace);
+});
 
 test('maps declared paths to cards, preserves provenance and effects, returns only chosen source rows', async () => {
   const input = result();
@@ -35,8 +59,8 @@ test('maps declared paths to cards, preserves provenance and effects, returns on
       ] }]);
     return selected(['job-b']);
   });
-  assert.deepEqual(output.result, { selectedIds: ['job-b'], selectedItems: [jobs[1]], totalItems: 2, _plugin: metadata });
-  assert.equal(output._plugin, metadata); assert.equal(output.ok, true);
+  assert.deepEqual(output.result, { selectedIds: ['job-b'], selectedItems: [jobs[1]], totalItems: 2 });
+  assert.equal(getToolResultPresentation(output)._plugin, metadata); assert.equal(output.ok, true);
   assert.equal(Object.hasOwn(output.result, 'jobs'), false);
   assert.deepEqual(input.result.jobs, jobs, 'collecting a selection never mutates a tool result');
   assert.deepEqual(consumeToolEffects(output, context), [{ type: 'context.siteChanged' }]);
@@ -44,7 +68,7 @@ test('maps declared paths to cards, preserves provenance and effects, returns on
 });
 
 test('nested source paths, single choice, empty results, optional empty selection and MCP data', async () => {
-  const nested = { _plugin: metadata, result: { payload: { jobs } } };
+  const nested = bindToolResultPresentation({ result: { payload: { jobs } } }, { _plugin: metadata });
   const single = await selectSkillResults({ ...renderer, sourcePath: 'payload', selectionMode: 'single' }, nested, undefined, context,
     async (_name, args) => { assert.equal(args.fields[0].type, 'single_choice'); return selected('job-a'); });
   assert.deepEqual(single.result.selectedIds, ['job-a']);
@@ -53,7 +77,7 @@ test('nested source paths, single choice, empty results, optional empty selectio
   const none = await selectSkillResults({ ...renderer, required: false }, { jobs }, undefined, context, async () => selected([]));
   assert.deepEqual(none, { selectedIds: [], selectedItems: [], totalItems: 2 });
   for (const body of [{ structuredContent: { jobs } }, { content: [{ type: 'text', text: JSON.stringify({ jobs }) }] }]) {
-    const mcp = await selectSkillResults(renderer, { ...body, _plugin: { runtime: 'mcp' } }, undefined, context, async () => selected(['job-a']));
+    const mcp = await selectSkillResults(renderer, bindToolResultPresentation(body, { _plugin: { runtime: 'mcp' } }), undefined, context, async () => selected(['job-a']));
     assert.deepEqual(mcp.selectedItems, [jobs[0]]);
     assert.equal(Object.hasOwn(mcp, 'structuredContent'), false);
     assert.equal(Object.hasOwn(mcp, 'content'), false);
@@ -150,11 +174,19 @@ test('real tool runtime stops collection timeout before human wait, isolates Ses
     resources: [{ path: 'plugin.json', type: 'json', content: JSON.stringify({ format: 'qingzhou.plugin', schemaVersion: 1, id: 'selection',
       tools: [{ name: 'choose', runtime: 'inner', script: 'scripts/choose.js', parameters: { type: 'object', properties: { slow: { type: 'boolean' }, bad: { type: 'boolean' } } }, renderer }] }) },
     { path: 'scripts/choose.js', type: 'script', content: 'async () => ({})' }] }]);
-  const supervisor = createSessionSupervisor({ createAgent: () => ({ getRunState: () => ({ runId: 'run' }), abort() {} }) });
+  const supervisor = createSessionSupervisor({ createAgent: () => {
+    let emit = () => {};
+    return {
+      subscribe(listener) { emit = listener; return () => { emit = () => {}; }; },
+      start() { emit({ type: 'agent_start', runId: 'run', eventSeq: 1 }); },
+      getRunState: () => ({ runId: 'run' }), abort() {},
+    };
+  } });
   const events = [];
   const runtime = createToolRuntime({ sessions: supervisor, emit: event => events.push(event) });
   const run = async (id, args = {}) => {
-    await supervisor.getAgent(id);
+    const agent = await supervisor.getAgent(id);
+    agent.start();
     return runtime.execute('selection__choose', { timeout: 0.1, ...args }, undefined,
       { sessionId: id, runId: 'run', language: 'en', skillToolRegistrySnapshot: snapshot });
   };

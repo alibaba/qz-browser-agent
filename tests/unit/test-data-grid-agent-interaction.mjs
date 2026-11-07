@@ -1,3 +1,4 @@
+import "../support/default-locale.mjs";
 import assert from "node:assert/strict";
 import { getAgentPrompts } from "../../src/background/agent/prompts.js";
 const previousChrome = globalThis.chrome;
@@ -388,9 +389,11 @@ function assertAgentPromptContract() {
   assert.match(promptsSource, /data_store create_table 传 table \+ columns/, "system prompt should route schema-only table creation through create_table");
   assert.match(promptsSource, /业务字段都在 row\.data 内/, "system prompt should explain the data_store row wrapper");
   assert.match(promptsSource, /不要用 row\["标题"\] 取业务字段/, "system prompt should prevent top-level row field access");
-  assert.match(promptsSource, /run_script\(\{target:"inner"[\s\S]*tools\.data_store 读取、计算和分批写回/, "system prompt should route page-independent table crunching through inner run_script");
-  assert.match(promptsSource, /与页面无关的纯 JS 计算[^\n]*直接使用 run_script\(\{target:"inner"/, "system prompt should route page-independent computation directly to inner mode");
-  assert.match(promptsSource, /最后只返回表名、行数、聚合口径、少量样例和异常统计/, "system prompt should keep table crunching summaries small");
+  assert.match(promptsSource, /数据处理使用 run_script。它在页面外运行（无 DOM/, "system prompt keeps page-independent table crunching available without choosing a page");
+  assert.match(promptsSource, /大批 rows 在 run_script 内部分批调用 qz\.call\("data_store", args\) 落库并验证 schema\/list/, "table workflows batch writes and verify the stored schema and rows");
+  assert.match(promptsSource, /qz\.tab\(tabRef\) 绑定明确页面/, "orchestration selects each page explicitly");
+  assert.doesNotMatch(promptsSource, /run_script\(\{target:/, "the prompt should not expose script execution internals");
+  assert.match(promptsSource, /仅 return 下一步所需的精简业务数据/, "system prompt should keep table crunching summaries small");
   assert.match(promptsSource, /聚合结果或派生表使用稳定唯一 dedupField/, "system prompt should require stable unique dedup fields for aggregated outputs");
 }
 

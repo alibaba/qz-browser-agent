@@ -371,7 +371,7 @@ test("choice validation clears on change and empty forms send a plain continue c
   ]);
 });
 
-for (const outcome of ["grant", "deny", "error", "dispose", "switch", "resolve"]) {
+for (const outcome of ["grant", "deny", "error", "dispose", "switch", "resolve", "rehydrate", "new-wait"]) {
   test(`browser permission card: ${outcome}`, async ({ page }) => {
     await page.evaluate(() => {
       const f = window.waitFixture;
@@ -393,6 +393,13 @@ for (const outcome of ["grant", "deny", "error", "dispose", "switch", "resolve"]
       if (outcome === "dispose") f.cards.dispose(f.el);
       if (outcome === "switch") f.state.sessionId = "session-b";
       if (outcome === "resolve") f.cards.patch(f.el, { ...f.entry, status: "aborted" }, "session-a");
+      if (["rehydrate", "new-wait"].includes(outcome)) {
+        f.cards.reset();
+        const entry = { ...f.entry };
+        if (outcome === "new-wait") entry.waitId = "wait-b";
+        f.el = f.cards.create(entry, "session-a");
+        document.querySelector("#messages").replaceChildren(f.el);
+      }
       if (outcome === "error") f.permissionReply.reject(new Error("permission service unavailable"));
       else f.permissionReply.resolve(outcome !== "deny");
     }, outcome);
@@ -401,8 +408,10 @@ for (const outcome of ["grant", "deny", "error", "dispose", "switch", "resolve"]
       await button.click();
       await page.evaluate(() => window.waitFixture.permissionReply.resolve(true));
     }
-    expect(await page.evaluate(() => window.waitFixture.state.commands.map(command => command.type)))
-      .toEqual(["grant", "error"].includes(outcome) ? ["continue_task"] : outcome === "deny" ? ["cancel_wait"] : []);
+    // Approval belongs to the captured wait; Background rejects it if that wait has ended.
+    const type = outcome === "switch" ? null : outcome === "deny" ? "cancel_wait" : "continue_task";
+    expect(await page.evaluate(() => window.waitFixture.state.commands))
+      .toEqual(type ? [{ type, sessionId: "session-a", waitId: "wait-a" }] : []);
   });
 }
 

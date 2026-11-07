@@ -1,3 +1,4 @@
+import { createElementObservation, toRect, type ImageObservation } from "#sdk/shared/browser";
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
@@ -13,9 +14,9 @@ type MediaHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "getToolRuntimeDependencies" | "makeSessionTabTargetError"
   | "sendToContent" | "assertTabAllowed" | "assertUrlAllowed" | "clampNumber"
   | "sendCdp" | "withDebugger" | "getPageContext"> & Pick<ToolExtensionAPI["element"],
-  "resolveSelectorTarget" | "resolveElementReference" | "makeSnapshotId" | "makeElementUid" | "registerElementRef"
-  | "elementTargetForUid" | "elementTargetForSelector" | "elementTargetForRef" | "elementTargetGrammar"
-  | "getElementTargetDescription" | "callElement" | "bindBackendNodes" | "readMainDocumentId"> & PageObservationHost & {
+  "resolveSelectorTarget" | "resolveElementReference" | "bindElementReferences"
+  | "elementTargetForSelector" | "elementTargetForRef" | "elementTargetGrammar"
+  | "getElementTargetDescription" | "callElement"> & PageObservationHost & {
   queryDataRows?: typeof queryDataRows; updateDataTableMetadata?: typeof updateDataTableMetadata;
   upsertDataRows?: typeof upsertDataRows; saveImageAsset?: typeof saveImageAsset;
   now?(): number;
@@ -38,7 +39,7 @@ const record = (value: unknown): Fields => value && typeof value === "object" &&
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || record(error).error || error || "");
 import { elementPageFunction } from "#sdk/background/browser";
-import { requireToolFields } from "#sdk/background/tools";
+import { requireToolFields, toolError } from "#sdk/background/tools";
 import { rasterizeSvg } from "./image-conversion.js";
 import {
   queryDataRows,
@@ -67,20 +68,15 @@ export function registerMediaTools({
   sendToContent: contentRequest,
   resolveSelectorTarget,
   resolveElementReference,
-  makeSnapshotId,
-  makeElementUid = (snapshotId: string, seq: number, mark = "") => `${snapshotId}.${mark}${seq}`,
-  registerElementRef,
-  elementTargetForUid,
+  bindElementReferences,
   elementTargetForSelector,
   elementTargetForRef,
   elementTargetGrammar: ELEMENT_TARGET_GRAMMAR,
   getElementTargetDescription,
-  callElement = async (tabId, binding, action, params = {}) => {
-    const result = await contentRequest(binding.tabId || tabId, action, { ...params, selector: binding.selector, index: binding.index ?? 0 });
+  callElement = async (tabId, binding, action, params = {}, context = {}) => {
+    const result = await contentRequest(binding.tabId || tabId, action, { ...params, selector: binding.selector, index: binding.index ?? 0 }, context);
     return result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : {};
   },
-  bindBackendNodes = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 0) }),
-  readMainDocumentId = async () => "",
   getTabPageState,
   pageStateDelta,
   commitObservedPageNavigation,
@@ -108,8 +104,8 @@ const screenActions = createScreenActionRuntime({
   now: screenSnapshotNow,
 });
 
-async function sendToContent(tabId: number, action: string, args: Fields): Promise<ImageMetadata> {
-  return imageMetadata(await contentRequest(tabId, action, args));
+async function sendToContent(tabId: number, action: string, args: Fields, context?: ToolContext): Promise<ImageMetadata> {
+  return imageMetadata(await contentRequest(tabId, action, args, context));
 }
 function imageCallTarget(candidate: ImageMetadata): ElementTarget {
   const stored = candidate.ref && typeof candidate.ref === "object" && !Array.isArray(candidate.ref) ? candidate.ref as ElementReference : undefined;
@@ -175,14 +171,15 @@ function emitDataChanged(payload: Fields, context: ToolContext = {}) {
 
 registerTool({
   name: "screenshot",
-  behavior: { nestedObservation: true, parallelRead: args => args.actionable !== true && !String(args.destination || "").trim(),
+  argumentAliases: { selector: "target" },
+  behavior: { targetLookup: "light", nestedObservation: true, parallelRead: args => args.actionable !== true && !String(args.destination || "").trim(),
     timeoutResult: { kind: "read", pending: "screenshot capture" } },
   requires: { images: true },
   get description() { return toolT("screenshotDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("screenshotTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("screenshotTabId") },
       target: { type: "string", description: toolT("screenshotTarget", { targetDescription: getElementTargetDescription() }) },
       index: { type: "number", description: toolT("screenshotIndex") },
       destination: { type: "string", description: toolT("screenshotDestination") },
@@ -193,8 +190,9 @@ registerTool({
       maxHeight: { type: "number", description: toolT("screenshotMaxHeight") },
       actionable: { type: "boolean", description: toolT("screenshotActionable") },
     },
+    required: ["tabRef"],
   } as const; },
-  page: "owned",
+  page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, target = "", index = 0, destination = "", format = "jpeg", quality = 70, padding = 0, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE, actionable = false }, signal, context = {}) => {
     const hasElementTarget = !!String(target || "").trim();
@@ -203,8 +201,7 @@ registerTool({
     let screenCapture = null;
 
     if (hasElementTarget) {
-      if (tabId) await waitForParsedDocument(tabId, context);
-      ref = await resolveElementReference(tabId, { target, index }, context);
+      ref = await resolveElementReference(tabId, { target, index, readOnly: true }, context);
       shot = await captureElementScreenshot(ref.tabId!, ref, {
         format,
         quality,
@@ -228,7 +225,7 @@ registerTool({
     const effectiveTabId = ref?.tabId || tabId;
     let collection = null;
     if (String(destination || "").trim()) {
-      context.reportPartial?.({ tabId: effectiveTabId, _image: shot.dataUrl, method: shot.method, actionable: false }, "image collection save confirmation");
+      context.reportPartial?.({ _image: shot.dataUrl, method: shot.method, actionable: false }, "image collection save confirmation");
       collection = await saveScreenshotToImageCollection({
         shot,
         destination,
@@ -245,10 +242,7 @@ registerTool({
       method: shot.method,
       ...(String(destination || "").trim() ? { destination: normalizeImageCollectionTableName(destination) } : {}),
       saved: Boolean(collection?.assetId),
-      tabId: effectiveTabId,
-      target: ref?.target || undefined,
-      uid: ref?.uid || undefined,
-      selector: shot.selector || ref?.selector || undefined,
+      ...createElementObservation({}, ref?.target),
       index: ref?.index,
       clip: shot.clip || undefined,
       clipped: shot.clipped || undefined,
@@ -275,6 +269,9 @@ registerTool({
     };
   },
   validateArgs: ({ target = "", actionable = false }) => {
+    if (String(target).trim() === "viewport") {
+      throw new ToolExecutionError("SCREENSHOT_TARGET_INVALID", toolT("screenshotViewportTarget"));
+    }
     if (!String(target || "").trim() || !actionable) return;
     throw new ToolExecutionError(
       "SCREENSHOT_COORDINATES_UNAVAILABLE",
@@ -286,7 +283,7 @@ registerTool({
 
 registerTool({
   name: "act_on_screen",
-  behavior: { nestedObservation: args => args.returnScreenshot === true, timeoutTrace: "screen_action_trace",
+  behavior: { mayOpenPopup: true, nestedObservation: args => args.returnScreenshot === true, timeoutTrace: "screen_action_trace",
     timeoutResult: { kind: "action", pending: "screen action outcome confirmation" } },
   requires: { images: true },
   effects: (_args, result) => record(result).urlChanged === true ? [{ type: "context.siteChanged" }] : [],
@@ -294,6 +291,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
+      tabRef: { type: ["integer", "string"], description: toolT("actOnScreenTab") },
       action: { type: "string", enum: ["click", "double_click", "long_press", "hover", "type", "press", "scroll", "drag"] },
       returnScreenshot: { type: "boolean", description: toolT("actOnScreenReturnScreenshot") },
       x: { type: "number", minimum: 0, description: toolT("actOnScreenX") },
@@ -309,7 +307,7 @@ registerTool({
       deltaY: { type: "number", description: toolT("actOnScreenDeltaY") },
       repeat: { type: "number", minimum: 1, maximum: 20, description: toolT("actOnScreenRepeat") },
     },
-    required: ["action", "returnScreenshot"],
+    required: ["action", "returnScreenshot", "tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 20000, maxMs: 120000 },
@@ -326,59 +324,40 @@ registerTool({
 
 registerTool({
   name: "list_images",
+  behavior: { targetLookup: "light" },
+  argumentAliases: { selector: "target" },
   get description() { return toolT("listImagesDescription"); },
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("listImagesTabId") },
-      selector: { type: "string", description: toolT("listImagesSelector") },
+      tabRef: { type: ["integer", "string"], description: toolT("listImagesTabId") },
+      target: { type: "string", description: toolT("listImagesSelector") },
       minWidth: { type: "number", description: toolT("listImagesMinWidth") },
       minHeight: { type: "number", description: toolT("listImagesMinHeight") },
       visibleOnly: { type: "boolean", description: toolT("listImagesVisibleOnly") },
       limit: { type: "number", description: toolT("listImagesLimit") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, selector = "", minWidth = 1, minHeight = 1, visibleOnly = true, limit = 100 }, _signal, context = {}) => {
+  execute: async ({ tabId, target: selector = "", minWidth = 1, minHeight = 1, visibleOnly = true, limit = 100 }, _signal, context = {}) => {
     const target = await resolveSelectorTarget(tabId, selector, 0, context);
     if (!target.tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "list_images" });
+    if (!selector) await waitForParsedDocument(target.tabId, context);
     const result = target.uid
       ? imageMetadata(await callElement(target.tabId, target, "listImageElements", { minWidth, minHeight, visibleOnly, limit }, context))
-      : await sendToContent(target.tabId, "listImageElements", { selector: target.selector, minWidth, minHeight, visibleOnly, limit });
-    if (result?.error) return result;
-    const snapshotId = makeSnapshotId(target.tabId, context);
+      : await sendToContent(target.tabId, "listImageElements", { selector: target.selector, minWidth, minHeight, visibleOnly, limit }, context);
+    if (result?.error) return toolError(result.code || "LIST_IMAGES_FAILED", errorMessage(result), {
+      hint: "Pass a valid target, or use get_ax_tree to find the image region before retrying list_images.",
+      details: { target: target.target || elementTargetForSelector(target.selector || selector) },
+    });
     const listed = (result.images || []).slice(0, clampNumber(limit, 1, 1000, 100));
-    const selectors = listed.map(item => String(item.selector || ""));
-    let bound = { loaderId: "", ids: selectors.map(() => 0) };
-    try {
-      bound = await bindBackendNodes(target.tabId, selectors, context);
-    } catch (error) {
-      const code = errorCode(error);
-      // A read-only tab cannot attach the debugger. Keep the images and resolve them by selector.
-      if (code !== "SESSION_TAB_UNOWNED" && code !== "SESSION_TAB_FOREIGN") throw error;
-    }
-    const documentId = await readMainDocumentId(target.tabId);
-    const images = listed.map((item, rank) => {
-        const uid = makeElementUid(snapshotId, rank + 1, "i");
-        registerElementRef({
-          uid,
-          tabId: target.tabId,
-          sessionId: context.sessionId || "",
-          pageUrl: result.pageUrl || "",
-          selector: item.selector || "",
-          index: 0,
-          role: "img",
-          name: item.alt || item.title || "",
-          imageSrc: item.currentSrc || item.src || "",
-          imageIndex: item.index,
-          backendNodeId: bound.ids[rank] || undefined,
-          loaderId: bound.loaderId || undefined,
-          documentId: documentId || undefined,
-          source: "list_images",
-        });
-        return imageDiscoveryResultItem(item, elementTargetForUid(uid));
-      });
+    const bindings = await bindElementReferences(target.tabId, listed.map(item => ({
+      ...item, index: 0, role: "img", name: item.alt || item.title || "",
+      imageSrc: item.currentSrc || item.src || "", imageIndex: item.index,
+    })), context, target.ref);
+    const images = listed.map((item, index) => imageDiscoveryResultItem(item, bindings[index].target));
     const pageContext = imageDiscoveryPageContext(result.pageContext);
     return {
       ok: result.ok !== false,
@@ -387,7 +366,6 @@ registerTool({
       pageUrl: clipImageDiscoveryText(result.pageUrl, 2048),
       pageTitle: clipImageDiscoveryText(result.pageTitle, 500),
       ...(pageContext ? { pageContext } : {}),
-      tabId: target.tabId,
       images,
       note: toolT("imageCandidatesGuidance"),
     };
@@ -399,9 +377,7 @@ async function resolveSelectedImageTarget(selectedTarget: string, tabId: number 
     target: selectedTarget,
     index: 0,
   }, context);
-  // Mixed UID/CSS calls keep tabId unset globally. The runtime checks the CSS
-  // default's ownership; apply that default only to the selector target here.
-  if (!ref.uid && !ref.tabId) ref.tabId = Number(context.workingTabId) || undefined;
+  if (!ref.uid && !ref.tabId) ref.tabId = tabId;
   if (!ref.tabId) {
     throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "collect_images" });
   }
@@ -412,7 +388,7 @@ async function resolveSelectedImageTarget(selectedTarget: string, tabId: number 
     throw new ToolExecutionError(
       listed.code || "LIST_IMAGES_FAILED",
       listed.error || "Failed to resolve selected image target",
-      { ...(listed.details || listed), target: selectedTarget },
+      { target: selectedTarget },
     );
   }
   const matched = Array.isArray(listed?.images) ? listed.images : [];
@@ -472,11 +448,12 @@ function assertSelectedImageSource(candidate: ImageMetadata = {}, observed: Imag
 
 registerTool({
   name: "collect_images",
-  behavior: { parallelTab: true, uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) },
+  behavior: { targetLookup: "light", parallelTab: true, uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) },
   get description() { return toolT("collectImagesDescription"); },
   get parameters() { return {
     type: "object",
     properties: {
+      tabRef: { type: ["integer", "string"], description: toolT("listImagesTabId") },
       table: { type: "string", description: toolT("collectImagesTable") },
       targets: { type: "array", items: { type: "string" }, description: toolT("collectImagesTargets", { targetDescription: getElementTargetDescription() }) },
       urls: { type: "array", items: { type: "string" }, description: toolT("collectImagesUrls") },
@@ -490,6 +467,7 @@ registerTool({
       quality: { type: "number", description: toolT("collectImagesQuality") },
     },
     required: ["table"],
+    anyOf: [{ required: ["urls"], properties: { urls: { minItems: 1 }, targets: { maxItems: 0 } } }, { required: ["tabRef", "targets"], properties: { targets: { minItems: 1 } } }],
   } as const; },
   page: args => Array.isArray(args.urls) && args.urls.some(url => String(url || "").trim()) && !(Array.isArray(args.targets) && args.targets.some(target => String(target || "").trim())) ? false : "owned",
   timeout: { defaultMs: 120000, maxMs: 600000 },
@@ -508,7 +486,7 @@ registerTool({
       format = "jpeg",
       quality = 0.88,
     } = args || {};
-    const { tabId } = args as typeof args & { tabId?: number };
+    const { tabId } = args;
     const tableDefaulted = !String(table || "").trim();
     const tableName = resolveImageCollectionTableName(table);
     const targetList = [...new Set(normalizeStringList(targets))];
@@ -651,6 +629,7 @@ registerTool({
 
 registerTool({
   name: "read_image_asset",
+  behavior: { nestedObservation: true },
   requires: { images: true },
   model: { pageContext: false, get imagePrompt() { return toolT("readImagePrompt"); } },
   get description() { return toolT("readImageAssetDescription"); },
@@ -691,6 +670,8 @@ registerTool({
 
 registerTool({
   name: "read_image",
+  behavior: { targetLookup: "light", nestedObservation: true },
+  argumentAliases: { selector: "target" },
   requires: { images: true },
   model: { get imagePrompt() { return toolT("readImagePrompt"); } },
   get description() { return toolT("readImageDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
@@ -698,7 +679,7 @@ registerTool({
     type: "object",
     properties: {
       url: { type: "string", description: toolT("readImageUrl") },
-      tabId: { type: "number", description: toolT("screenshotTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("screenshotTabId") },
       target: { type: "string", description: toolT("readImageTarget", { targetDescription: getElementTargetDescription() }) },
       index: { type: "number", description: toolT("screenshotIndex") },
       detail: { type: "string", enum: ["low", "auto", "high"], description: toolT("readImageDetail") },
@@ -708,6 +689,7 @@ registerTool({
       format: { type: "string", enum: ["jpeg", "png", "webp"], description: toolT("readImageFormat") },
       quality: { type: "number", description: toolT("readImageQuality") },
     },
+    anyOf: [{ required: ["url"] }, { required: ["tabRef", "target"] }],
   } as const; },
   page: args => String(args.url || "").trim() ? false : "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -784,22 +766,11 @@ registerTool({
       });
     } catch (err) {
       if (isCdpFallbackForbiddenError(err) || String(errorCode(err)).startsWith("STALE_ELEMENT_UID")) throw err;
-      return {
-        error: canvasResult?.error || record(err).message || "Cannot read image pixels from the loaded DOM image",
-        code: canvasResult?.code || errorCode(err) || "IMAGE_DOM_READ_FAILED",
-	        details: {
-	          ...(canvasResult?.details || {}),
-	          selector: ref.selector,
-	          target: ref.target,
-	          uid: ref.uid || undefined,
-	          index: ref.index,
-          tabId: ref.tabId,
-          src,
-          currentSrc: canvasResult?.currentSrc || "",
-          fallbackError: record(err).message || "",
-          fallbackCode: errorCode(err) || "",
-        },
-      };
+      return toolError(canvasResult?.code || errorCode(err) || "IMAGE_DOM_READ_FAILED",
+        String(canvasResult?.error || record(err).message || "Cannot read image pixels from the loaded DOM image"), {
+          hint: "Refresh the target with list_images, or pass the image URL to read_image.",
+          details: { target: ref.target || target },
+        });
     }
   },
 });
@@ -937,7 +908,7 @@ async function readImageForAssetCollection(candidate: ImageMetadata = {}, option
       if (candidate.expectedSrc || isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(err.code).startsWith("STALE_ELEMENT_UID"))) throw err;
       pageReadError = normalizeImageReadError(err, "IMAGE_PAGE_BINARY_FAILED", {
         stage: "page_canvas",
-        selector: candidate.selector,
+        target: candidate.target,
         index: candidate.originalIndex,
         src: candidate.currentSrc || candidate.src || "",
       });
@@ -960,8 +931,7 @@ async function readImageForAssetCollection(candidate: ImageMetadata = {}, option
         canvasResult?.code || "IMAGE_PAGE_BINARY_FAILED",
         canvasResult?.error || "Cannot read image binary from page element",
         {
-          ...(canvasResult?.details || {}),
-          selector: candidate.selector,
+          target: candidate.target,
           index: candidate.originalIndex,
           src: canvasResult?.src || candidate.currentSrc || candidate.src || "",
           currentSrc: canvasResult?.currentSrc || candidate.currentSrc || "",
@@ -975,7 +945,7 @@ async function readImageForAssetCollection(candidate: ImageMetadata = {}, option
   if (!imageUrl) {
     if (mode === "auto" && canReadPage) return captureFallback();
     throw new ToolExecutionError("IMAGE_SOURCE_URL_MISSING", t("imageCandidateHasNoUrlForDownloadFallback"), {
-      selector: candidate.selector,
+      target: candidate.target,
       index: candidate.originalIndex,
     });
   }
@@ -1002,7 +972,7 @@ async function readImageForAssetCollection(candidate: ImageMetadata = {}, option
   } catch (err) {
     downloadError = normalizeImageReadError(err, "IMAGE_URL_FETCH_FAILED", {
       stage: "url_fetch",
-      selector: candidate.selector,
+      target: candidate.target,
       index: candidate.originalIndex,
       src: imageUrl,
     });
@@ -1025,8 +995,7 @@ async function captureImageCandidateScreenshot(candidate: ImageMetadata = {}, op
   const selector = binding.selector;
   if (!tabId || (!selector && !binding.uid && !Number(binding.ref?.backendNodeId || 0))) {
     throw new ToolExecutionError("IMAGE_ELEMENT_SCREENSHOT_UNAVAILABLE", t("cannotScreenshotImageCandidateWithoutTabidAndSelector"), {
-      tabId,
-      selector,
+      target: candidate.target,
       index: candidate.originalIndex,
       src: candidate.currentSrc || candidate.src || "",
     });
@@ -1091,7 +1060,6 @@ function normalizeImageReadError(err: unknown, fallbackCode: string, fallbackDet
     errorMessage(err) || "Image read failed",
     {
       ...fallbackDetails,
-      ...(record(record(err).details) || {}),
     },
   );
 }
@@ -1108,7 +1076,7 @@ function combineImageCollectionReadError({ mode, candidate = {}, pageReadError =
     errorMessage(primary) || "Failed to collect image binary",
     {
       mode,
-      selector: candidate.selector,
+      target: candidate.target,
       index: candidate.originalIndex,
       src: candidate.currentSrc || candidate.src || "",
       errors,
@@ -1158,7 +1126,6 @@ function buildImageCollectionRow({ candidate = {}, image = null, asset = null, t
     pageUrl,
     pageTitle: candidate.pageTitle || pageMeta.pageTitle || "",
     target,
-    selector,
     originalIndex: candidate.originalIndex ?? "",
     alt: image?.alt || candidate.alt || "",
     title: image?.title || candidate.title || "",
@@ -1173,7 +1140,6 @@ function buildImageCollectionRow({ candidate = {}, image = null, asset = null, t
     source: image?.sourceKind || candidate.sourceKind || "",
     assetSha256: asset?.sha256 || "",
     deduped: Boolean(asset?.deduped),
-    tabId: tabId || "",
     table: tableName,
     collectedAt,
     error,
@@ -1199,7 +1165,6 @@ function imageCollectionColumns() {
     "captureMethod",
     "source",
     "target",
-    "selector",
     "originalIndex",
     "collectedAt",
     "sourceKey",
@@ -1262,25 +1227,24 @@ function normalizeStringList(value: unknown) {
   return list.map(item => String(item || "").trim()).filter(Boolean);
 }
 
-function imageDiscoveryResultItem(item: ImageMetadata = {}, target = "") {
+function imageDiscoveryResultItem(item: ImageMetadata = {}, target = ""): ImageObservation {
   const source = String(item.currentSrc || item.src || "").trim();
   const context = imageDiscoveryTextContext(item.context, [item.alt, item.title]);
   return {
     index: item.index,
-    rank: item.rank,
-    selector: clipImageDiscoveryText(item.selector, 1000),
+    rank: finiteImageMetadataNumber(item.rank),
     alt: clipImageDiscoveryText(item.alt, 500),
     title: clipImageDiscoveryText(item.title, 500),
     loading: clipImageDiscoveryText(item.loading, 80),
     complete: Boolean(item.complete),
     naturalWidth: finiteImageMetadataNumber(item.naturalWidth),
     naturalHeight: finiteImageMetadataNumber(item.naturalHeight),
-    rect: normalizeImageDiscoveryRect(item.rect),
+    rect: toRect(item.rect),
     visible: Boolean(item.visible),
     hasSrcset: item.hasSrcset === true || Boolean(String(item.srcset || "").trim()),
     ...(context ? { context } : {}),
     ...imageSourceResultFields(source),
-    target,
+    ...createElementObservation({}, target),
   };
 }
 
@@ -1327,13 +1291,10 @@ function normalizeImageDiscoveryText(value: unknown, lowerCase = true) {
 }
 
 function imageCollectionFailureItem(row: Fields = {}) {
-  return {
-    target: row.target || undefined,
-    selector: clipImageDiscoveryText(row.selector, 1000) || undefined,
-    ...imageSourceResultFields(row.src),
-    error: clipImageDiscoveryText(row.error, 1000),
-    code: row.errorCode || "",
-  };
+  return toolError(String(row.errorCode || "IMAGE_COLLECTION_READ_FAILED"), clipImageDiscoveryText(row.error, 1000), {
+    hint: "Check the image URL or refresh the target with list_images before retrying collect_images.",
+    details: { ...(row.target ? { target: row.target } : {}), ...imageSourceResultFields(row.src) },
+  });
 }
 
 function imageCollectionStoredRow(row: Fields = {}) {
@@ -1412,14 +1373,6 @@ function finiteImageMetadataNumber(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
-function normalizeImageDiscoveryRect(input: unknown = {}) {
-  return {
-    x: finiteImageMetadataNumber(record(input).x),
-    y: finiteImageMetadataNumber(record(input).y),
-    w: finiteImageMetadataNumber(record(input).w),
-    h: finiteImageMetadataNumber(record(input).h),
-  };
-}
 
 function formatImageDiscoveryBytes(bytes: unknown) {
   const value = Math.max(0, Number(bytes) || 0);
@@ -1553,10 +1506,7 @@ function buildReadImageResult({ dataUrl, detail, tabId, target, uid, selector, i
   return {
     _image: dataUrl,
     _imageDetail: normalizeImageDetail(detail),
-    tabId: tabId || undefined,
-    target: resolvedTarget,
-    uid: uid || undefined,
-    selector,
+    ...createElementObservation({}, resolvedTarget),
     index: index ?? undefined,
     method,
     src: metadata.src || metadata.currentSrc || "",
@@ -1568,7 +1518,7 @@ function buildReadImageResult({ dataUrl, detail, tabId, target, uid, selector, i
     height: metadata.height || undefined,
     resized: metadata.resized || undefined,
     ...(metadata.animationFlattened ? { animationFlattened: true } : {}),
-    rect: metadata.rect || undefined,
+    rect: metadata.rect ? toRect(metadata.rect) : undefined,
     mimeType: metadata.mimeType || dataUrl.slice(5, dataUrl.indexOf(";")),
     bytes: metadata.bytes || estimateDataUrlBytes(dataUrl),
     note: resolvedTarget
@@ -1639,7 +1589,7 @@ async function normalizeMediaImage(input: Blob | string, options: ImageSizeOptio
 }
 
 async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { format = "jpeg", quality = 70, padding = 0, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE }: ScreenshotOptions & { padding?: number } = {}, context: ToolContext = {}): Promise<ElementScreenshot> {
-  if (!tabId) throw new ToolExecutionError("MISSING_TAB_ID", t("elementScreenshotRequiresTabid"), { ref });
+  if (!tabId) throw new ToolExecutionError("TAB_REF_REQUIRED", t("elementScreenshotRequiresTabid"), { target: ref.target || elementTargetForRef(ref) });
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "screenshot", source: "element" });
   let boundsInfo: BoundsInfo | null = null;
   let runtimeError: unknown = null;
@@ -1663,7 +1613,7 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
       const contentBounds = await sendToContent(tabId, "getElementScreenshotBounds", {
         selector: ref.selector,
         index: ref.index,
-      });
+      }, context);
       if (contentBounds?.error) {
         selectorError = contentBounds;
       } else {
@@ -1701,21 +1651,18 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
       errorCode(error) || "ELEMENT_SCREENSHOT_BOUNDS_FAILED",
       errorMessage(error) || "Cannot resolve element bounds for screenshot",
       {
-        ...(record(record(error).details) || {}),
         target: ref.target || elementTargetForRef(ref),
-        selector: ref.selector,
         index: ref.index,
-        uid: ref.uid || undefined,
         runtimeError: record(runtimeError).message || undefined,
         cdpError: record(cdpError).message || undefined,
-        selectorError: record(selectorError).error || record(selectorError).message || undefined,
+        targetResolutionError: record(selectorError).error || record(selectorError).message || undefined,
       },
     );
   }
 
   const layoutMetrics = await getScreenshotLayoutMetrics(tabId, context);
   if (ref.ref?.frameId) {
-    const bounds = normalizeRuntimeBounds(boundsInfo.bounds);
+    const bounds = toRect(boundsInfo.bounds, NaN);
     boundsInfo.bounds = { ...bounds, x: bounds.x + layoutMetrics.pageX, y: bounds.y + layoutMetrics.pageY };
   }
   const { clip, clipped, outputWidth, outputHeight, resized } = buildScreenshotClip(boundsInfo.bounds, {
@@ -1735,10 +1682,7 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
   const result = record(await sendCdp(tabId, "Page.captureScreenshot", params, context));
 	  if (!result?.data) {
 	    throw new ToolExecutionError("ELEMENT_SCREENSHOT_EMPTY", t("cdpReturnedEmptyElementScreenshot"), {
-	      tabId,
 	      target: ref.target || elementTargetForRef(ref),
-	      uid: ref.uid || undefined,
-	      selector: ref.selector,
       clip,
     });
   }
@@ -1765,7 +1709,7 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
 async function getFrameElementScreenshotBounds(tabId: number, ref: ScreenshotRef, context: ToolContext): Promise<BoundsInfo> {
   const value = imageMetadata(await callElement(tabId, imageCallTarget({ ...ref, tabId }), "getElementScreenshotBounds", {}, context));
   if (value.error) throw new ToolExecutionError(value.code || "ELEMENT_HAS_NO_RENDERED_BOX", value.error, value.details);
-  const bounds = normalizeRuntimeBounds(value.bounds);
+  const bounds = toRect(value.bounds, NaN);
   const viewport = record(value.viewport);
   return withDebugger(tabId, async (_target, send) => {
     const owner = record(await send("DOM.getFrameOwner", { frameId: ref.ref!.frameId }));
@@ -1789,10 +1733,7 @@ async function getElementScreenshotBoundsFromRuntime(tabId: number, backendNodeI
     const resolved = record(await send("DOM.resolveNode", { backendNodeId }));
     const objectId = record(resolved.object).objectId;
     if (!objectId) {
-      throw new ToolExecutionError("ELEMENT_RESOLVE_FAILED", t("cannotResolveElementNodeForScreenshot"), {
-        tabId,
-        backendNodeId,
-      });
+      throw new ToolExecutionError("ELEMENT_RESOLVE_FAILED", t("cannotResolveElementNodeForScreenshot"));
     }
 
     const evaluated = await send("Runtime.callFunctionOn", {
@@ -1805,13 +1746,11 @@ async function getElementScreenshotBoundsFromRuntime(tabId: number, backendNodeI
     const value = record(rawValue);
     if (!rawValue || value.error) {
       throw new ToolExecutionError("ELEMENT_HAS_NO_RENDERED_BOX", String(value.error || "Element has no rendered box to screenshot"), {
-        tabId,
-        backendNodeId,
         rect: value?.rect,
       });
     }
 
-    const bounds = normalizeRuntimeBounds(value.bounds);
+    const bounds = toRect(value.bounds, NaN);
     return {
       method: "runtime_rect",
       selector: String(value.selector || ""),
@@ -1829,9 +1768,7 @@ async function getElementScreenshotBoundsFromCdp(tabId: number, backendNodeId: n
   const bounds = boundsFromQuad(quad);
   if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
     throw new ToolExecutionError("ELEMENT_HAS_NO_RENDERED_BOX", t("elementHasNoRenderedBoxToScreenshot"), {
-      tabId,
-      backendNodeId,
-      model,
+
     });
   }
   return {
@@ -1862,15 +1799,6 @@ async function getScreenshotLayoutMetrics(tabId: number, context: ToolContext = 
   };
 }
 
-function normalizeRuntimeBounds(bounds: unknown) {
-  const source = record(bounds);
-  return {
-    x: toFiniteNumber(source.x, NaN),
-    y: toFiniteNumber(source.y, NaN),
-    width: toFiniteNumber(source.width, NaN),
-    height: toFiniteNumber(source.height, NaN),
-  };
-}
 
 function boundsFromQuad(quad: unknown) {
   if (!Array.isArray(quad) || quad.length < 8) return null;
@@ -2012,7 +1940,7 @@ async function withVisibleCapture<T>(windowId: number, fn: () => Promise<T>): Pr
 }
 
 async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg", quality = 70, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE }: ScreenshotOptions = {}, context: ToolContext = {}) {
-  if (!tabId) throw new ToolExecutionError("MISSING_TAB_ID", t("screenshotRequiresTabid"));
+  if (!tabId) throw new ToolExecutionError("TAB_REF_REQUIRED", t("screenshotRequiresTabid"));
   let phaseStartedAt = Date.now();
   let currentPhase = "guardrails";
   recordScreenCaptureTrace("guardrails.started", tabId, context);
@@ -2056,7 +1984,7 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
         height: normalized.height,
       });
       context.signal?.throwIfAborted();
-      context.reportPartial?.({ tabId, _image: normalized.dataUrl, method: "cdp", actionable: false }, "screenshot dimensions and coordinate validation");
+      context.reportPartial?.({ _image: normalized.dataUrl, method: "cdp", actionable: false }, "screenshot dimensions and coordinate validation");
       const cssSize = await cssSizePending;
       return {
         ...cssSize,
@@ -2122,7 +2050,7 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
       height: normalized.height,
     });
     context.signal?.throwIfAborted();
-    context.reportPartial?.({ tabId, _image: normalized.dataUrl, method: "visible_tab", actionable: false }, "screenshot dimensions and coordinate validation");
+    context.reportPartial?.({ _image: normalized.dataUrl, method: "visible_tab", actionable: false }, "screenshot dimensions and coordinate validation");
     const cssSize = await cssSizePending;
     return {
       ...cssSize,

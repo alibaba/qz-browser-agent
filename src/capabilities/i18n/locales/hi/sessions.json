@@ -225,5 +225,12 @@
   "sessions.locationPositionUnavailable": "स्थिति नहीं मिल सकी। नेटवर्क और स्थान सेवाएँ जाँचें, या बस शहर या क्षेत्र बता दें।",
   "sessions.locationTimeout": "स्थान का समय समाप्त। साइड पैनल खुला रखें और ब्राउज़र स्थान की अनुमति दें, या बस शहर या क्षेत्र बता दें।",
   "sessions.locationPanelUnavailable": "साइड पैनल जुड़ा नहीं है। इसे इस विंडो में खोलकर फिर कोशिश करें, या बस शहर या क्षेत्र बता दें।",
-  "sessions.locationResponseTimeout": "स्थान का समय समाप्त। ब्राउज़र में स्थान की अनुमति दें और सिस्टम की स्थान सेवाएँ चालू करें, या बस शहर या क्षेत्र बता दें।"
+  "sessions.locationResponseTimeout": "स्थान का समय समाप्त। ब्राउज़र में स्थान की अनुमति दें और सिस्टम की स्थान सेवाएँ चालू करें, या बस शहर या क्षेत्र बता दें।",
+  "sessions.externalDrive": "बाहरी",
+  "sessions.externalDriveReadOnly": "यह सत्र बाहरी क्लाइंट सीधे चला रहा है। यहाँ केवल देखा जा सकता है।",
+  "sessions.externalDriveWelcomeTitle": "बाहरी एजेंट द्वारा संचालित",
+  "sessions.externalDriveWelcomeBody": "इस सत्र को कोई बाहरी एजेंट MCP या qz CLI से सीधे चलाता है। गाइड इंस्टॉल या अपडेट करें: npx skills add alibaba/qz-browser-agent -g। CLI कमांड अपने आप कनेक्ट होती हैं; मैन्युअल पेयरिंग के लिए नीचे की कमांड चलाएँ और दिखाया गया URL इसी ब्राउज़र में खोलें।",
+  "sessions.externalDriveWelcomeCommandHint": "दिखाया गया URL इसी ब्राउज़र में खोलें",
+  "sessions.externalDriveWelcomeCopy": "कॉपी करें",
+  "sessions.externalDriveWelcomeCopied": "कॉपी हो गया"
 }

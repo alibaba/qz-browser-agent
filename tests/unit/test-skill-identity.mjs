@@ -211,7 +211,7 @@ const afterCreate = structuredClone(storage._skills);
 for (const name of ["rt6", "R T 6", "rt-6", "RT_6"]) {
   assert.deepEqual(await create(name), {
     action: "create", error: "技能已存在：rt5，请改用更新技能或编辑技能资源。", code: "SKILL_ALREADY_EXISTS",
-    details: { name: "rt6", displayName: "rt5", originalCode: "SKILL_ALREADY_EXISTS", originalError: `技能已存在：${name}` },
+    details: { name: "rt6", displayName: "rt5" },
     codeLabel: "技能已存在",
   });
   assert.deepEqual(storage._skills, afterCreate);

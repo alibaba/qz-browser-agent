@@ -3,6 +3,8 @@ import test from "node:test";
 import { readSessionSnapshot } from "../../src/shared/session/session-recovery.js";
 import { createSessionRecord, serializeConversation, transcriptFromConversation, updateTranscriptWithAgentEvent } from "../../src/shared/session/session-codec.js";
 import { createLoopAgent } from "../support/agent-provider-error-recovery-fixture.mjs";
+import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
+import { projectMessage } from "../../src/background/llm/message-projection.js";
 
 const user = (content, clientMessageId = "u1") => ({ role: "user", content, clientMessageId });
 const assistant = content => ({ role: "assistant", content });
@@ -10,6 +12,22 @@ const toolCall = {
   role: "assistant", content: null,
   tool_calls: [{ id: "tool-1", type: "function", function: { name: "lookup", arguments: '{"query":"inspect"}' } }],
 };
+
+test('conversation fallback preserves explicit execution status outside authored result data and provider wire', () => {
+  const business = { error: 'authored', code: 'BUSINESS_ERROR', message: 'Business status', ok: false };
+  for (const isError of [false, true]) {
+    const message = { role: 'tool', tool_call_id: 'tool-1', content: JSON.stringify(business), _toolIsError: isError };
+    const conversation = serializeConversation([toolCall, message]);
+    const stored = conversation.entries.at(-1).message;
+    assert.equal(stored._toolIsError, isError);
+    const recovered = transcriptFromConversation(conversation).find(entry => entry.type === 'tool');
+    assert.equal(recovered.isError, isError);
+    assert.deepEqual(recovered.result, business);
+    assert.deepEqual(projectMessage(stored, false), { role: 'tool', tool_call_id: 'tool-1', content: message.content });
+  }
+  const legacy = transcriptFromConversation([toolCall, { role: 'tool', tool_call_id: 'tool-1', content: JSON.stringify(business) }]);
+  assert.equal(legacy.find(entry => entry.type === 'tool').isError, true, 'legacy records retain their compatibility classification');
+});
 
 test("saved display history is returned unchanged while the current model conversation remains available", () => {
   const old = [user("question"), assistant("saved answer")];
@@ -55,17 +73,19 @@ test("reading does not repair saved tool state from a different model result", (
 
 test("the actual executed screenshot and page metadata survive a display snapshot read", async () => {
   const agent = createLoopAgent([]);
-  agent.messages = [user("inspect"), toolCall];
-  agent._dynamicContextSnapshot = { workingTab: { id: 42, title: "Saved page", url: "https://example.test/saved" } };
-  agent._browserContext.getTab = async id => ({ id, title: "Saved page", url: "https://example.test/saved" });
+  const calls = [{ ...toolCall.tool_calls[0], function: { name: "lookup", arguments: '{"query":"inspect","tabRef":"saved"}' } }];
+  agent.messages = [user("inspect"), { ...toolCall, tool_calls: calls }];
   agent._tools = {
+    getTabAliases: () => ({ saved: 42 }),
     getIdentity: () => ({ capabilityId: "lookup", title: "Inspect page", familyId: "page" }),
-    getModelPolicy: () => ({ pageContext: "working" }),
-    execute: async () => ({ ok: true, _image: "data:image/png;base64,AAAA" }),
+    getModelPolicy: () => ({ pageContext: "explicit" }),
+    execute: async () => bindToolResultPresentation({ ok: true, _image: "data:image/png;base64,AAAA" }, {
+      _pageTitle: "Saved page", _pageUrl: "https://example.test/saved",
+    }),
   };
   let rich = transcriptFromConversation([agent.messages[0]]);
   agent.subscribe(event => { rich = updateTranscriptWithAgentEvent(rich, event).transcript; });
-  agent.messages.push(...await agent._executeToolCalls(toolCall.tool_calls, new AbortController().signal));
+  agent.messages.push(...await agent._executeToolCalls(calls, new AbortController().signal));
   rich.push({ type: "thinking", text: "reasoning after screenshot", spanId: "after-tool" });
   const active = agent.exportSession();
   assert.equal(transcriptFromConversation(active).find(entry => entry.type === "tool").image, null);
@@ -74,7 +94,10 @@ test("the actual executed screenshot and page metadata survive a display snapsho
   assert.deepEqual(recovered, record.transcript);
   const tool = recovered.find(entry => entry.type === "tool");
   assert.equal(tool.image, "data:image/png;base64,AAAA");
-  assert.deepEqual(tool.args, { query: "inspect", tabId: 42, _tabId: 42, _pageTitle: "Saved page", _pageUrl: "https://example.test/saved" });
+  assert.deepEqual(tool.args, { query: "inspect", tabRef: "saved" });
+  assert.equal(tool.result._pageTitle, "Saved page");
+  assert.equal(tool.result._pageUrl, "https://example.test/saved");
+  assert.doesNotMatch(JSON.stringify(agent.messages.filter(message => message.role === "tool")), /_pageTitle|_pageUrl/);
   assert.equal(tool.title, "Inspect page");
   assert.equal(recovered.at(-1).spanId, "after-tool");
 });

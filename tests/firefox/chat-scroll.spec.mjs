@@ -18,6 +18,13 @@ test("collapsing a running conversation reveals its first message without a whee
   try {
     await openFromToolbar(session);
     await setSidebarWidth(session, 400);
+    // Match the short 400x600 viewport used by the Chrome collapse fixture.
+    await session.chrome(`
+      const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
+      const panel = win.document.getElementById("sidebar").contentDocument.getElementById("webext-panels-browser");
+      panel.style.height = panel.style.minHeight = panel.style.maxHeight = "600px";
+      return true;
+    `);
     const ready = await session.extension("sidebar", `
       const started = Date.now();
       while (Date.now() - started < 12000) {
@@ -33,6 +40,9 @@ test("collapsing a running conversation reveals its first message without a whee
         const result = await session.extension("sidebar", `
           return (${runToolCollapseProbe.toString()})({ scope: view, toolCount: ${toolCount}, footer: ${footer} });
         `);
+        await testInfo.attach(`collapse-${toolCount}-${footer ? "footer" : "summary"}`, {
+          body: Buffer.from(JSON.stringify({ toolCount, footer, ...result }, null, 2)), contentType: "application/json",
+        });
         expectToolCollapseVisible(expect, result);
       }
     }

@@ -122,6 +122,7 @@ test('input delivery follows submitted forms without replaying input', async ({}
     });
     for (const scenario of cases) await test.step(scenario.name, async () => {
       const start = requests.length;
+      const previousTabs = await worker.evaluate(async () => (await chrome.tabs.query({})).map(tab => tab.id));
       await worker.evaluate(drop => { globalThis.dropPointer = drop; inputCommands.length = 0; }, Boolean(scenario.drop));
       const plan = [{ name: 'open_tab', args: { url: base + scenario.path, tabAlias: 'fixture' } }];
       if (scenario.action === 'press') plan.push({ name: 'act_on_element', args: { tabRef: 'fixture', target: 'css:#q', action: 'fill', value: 'once' } });
@@ -135,7 +136,10 @@ test('input delivery follows submitted forms without replaying input', async ({}
       await delay(450);
       const events = await panel.evaluate(id => inputTest.events.filter(event => event.sessionId === id && event.type === 'tool_execution_end'), sessionId);
       const result = events.filter(event => event.toolName === 'act_on_element').at(-1)?.result;
-      const tabId = events.find(event => event.toolName === 'open_tab')?.result.id;
+      expect(events.find(event => event.toolName === 'open_tab')?.result.tabRef).toBe('fixture');
+      const createdTabs = await worker.evaluate(async previous => (await chrome.tabs.query({})).filter(tab => !previous.includes(tab.id)), previousTabs);
+      expect(createdTabs).toHaveLength(1);
+      const tabId = createdTabs[0].id;
       const page = await worker.evaluate(async tabId => (await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN',
         func: () => ({ url: location.href, out: document.querySelector('#out')?.textContent, value: document.querySelector('#q')?.value }) }))[0].result, tabId);
       const commands = await worker.evaluate(() => inputCommands);
@@ -147,8 +151,8 @@ test('input delivery follows submitted forms without replaying input', async ({}
       expect.soft(result?.code, label).toBe(scenario.missed ? 'INPUT_NOT_DELIVERED' : undefined);
       if (scenario.missed) expect.soft(page.out, label).toBe('none');
       else {
-        expect.soft(result?.navigated, label).toBe(scenario.navigated);
-        if (!scenario.action) expect.soft(result?.submitDispatched, label).toBe(true);
+        expect.soft(result?.navigated === true, label).toBe(scenario.navigated);
+        if (scenario.navigated) expect.soft(result?.url, label).toBe(page.url);
         if (scenario.value) expect.soft(page.value, label).toBe(scenario.value);
       }
       const downs = commands.filter(command => command.method === 'Input.dispatchKeyEvent' && command.params.type === 'keyDown' && command.params.key === 'Enter');

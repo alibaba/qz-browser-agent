@@ -11,9 +11,9 @@ export function settingsPatch(id, value, json = {}) {
     try { parsed = JSON.parse(value); } catch { /* An unquoted CLI value is a string. */ }
     config = { [id]: parsed };
   }
-  if (!record(config) || !Object.keys(config).length) throw new QzError("invalid_arguments", "Settings must be a non-empty JSON object.");
+  if (!record(config) || !Object.keys(config).length) throw new QzError("INVALID_ARGUMENTS", "Settings must be a non-empty JSON object.");
   if (Object.keys(config).some(key => !key.trim() || ["__proto__", "prototype", "constructor"].includes(key))) {
-    throw new QzError("invalid_arguments", "Settings contain an invalid field name.");
+    throw new QzError("INVALID_ARGUMENTS", "Settings contain an invalid field name.");
   }
   return config;
 }

@@ -20,9 +20,8 @@ export default (host => {
         renderErrorResult(parent, tool) {
           // Execution errors belong to the outer envelope; a returned payload may itself contain error-like data.
           const values = [tool.originalResult, tool.result];
-          presentation.appendErrorSection(parent, values.find(isToolResultErrorLike) ?? values.find(value => value != null && value !== "") ?? null);
-          const envelope = presentation.getResultEnvelope(tool.originalResult) || presentation.getResultEnvelope(tool.result);
-          if (Array.isArray(envelope?.trace) && envelope.trace.length) presentation.appendScriptTrace(parent, envelope.trace);
+          const failure = values.find(isToolResultErrorLike) ?? values.find(value => value != null && value !== "") ?? null;
+          presentation.appendErrorSection(parent, failure);
           return true;
         },
       }),

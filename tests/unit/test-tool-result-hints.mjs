@@ -6,6 +6,10 @@ import { registerWaitTools } from "../../src/capabilities/wait/tools.js";
 import { registerTabsNavigationTools } from "../../src/capabilities/tabs/tools.js";
 import { Agent } from "../../src/background/agent/agent.js";
 import { createTestAgentOptions } from "../support/agent-services.mjs";
+import { initializeLanguage } from "../../src/shared/i18n/index.js";
+
+globalThis.chrome = { ...globalThis.chrome, i18n: { getUILanguage: () => "zh-CN" } };
+await initializeLanguage();
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const tools = [
@@ -80,7 +84,7 @@ async function assertToolNotesAreCompact() {
       definitions.set(name, { description, parameters, execute });
     },
     ToolExecutionError,
-    getToolRuntimeDependencies: () => ({}),
+    getToolRuntimeDependencies: () => ({ sessions: { getTabAliases: () => ({}), resolveTargetTab: async () => ({ ok: true, ownedByCurrentTask: true }) } }),
     makeSessionTabTargetError: (code, details) => Object.assign(new Error(code), { code, details }),
     assertTabAllowed: async () => undefined,
     assertUrlAllowed: () => undefined,
@@ -91,21 +95,20 @@ async function assertToolNotesAreCompact() {
   let visibleMutations = 0;
   globalThis.chrome = {
     tabs: {
-      async get(tabId) {
-        return { id: tabId, active: false, title: "Background tab", url: "https://example.test/", windowId: 7 };
+      async query() {
+        return [{ id: 42, active: false, title: "Background tab", url: "https://example.test/", windowId: 7 }];
       },
       async update() {
         visibleMutations += 1;
-        throw new Error("use_tab must not activate or focus the browser tab");
+        throw new Error("discovery must not activate or focus the browser tab");
       },
     },
   };
   try {
-    const result = await definitions.get("use_tab").execute({ tabId: 42 });
-    assert.equal(result.tabId, 42);
-    assert.equal(result.active, false);
-    assert.equal(result.visibleChanged, false);
-    assert.equal(result.focusedWindow, false);
+    const result = await definitions.get("list_tabs").execute({}, undefined, { sessionId: 'hints', runId: 'run' });
+    assert.deepEqual(result, { tabs: [{ tabRef: 42, active: false, title: "Background tab", url: "https://example.test/" }], count: 1, foreign: 0 });
+    assert.equal(definitions.has("use_tab"), false);
+    assert.equal(definitions.has("get_working_tab"), false);
     assert.equal(visibleMutations, 0);
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
@@ -119,6 +122,7 @@ async function assertToolNotesAreCompact() {
 async function assertWaitToolNotesAreCompact() {
   const definitions = new Map();
   let screenshotFails = false;
+  let captures = 0;
   registerWaitTools({
     registerTool: definition => definitions.set(definition.name, definition),
     getToolRuntimeDependencies: () => ({ sessions: {
@@ -126,35 +130,71 @@ async function assertWaitToolNotesAreCompact() {
       resolveUserWait() {}, rejectUserWait() {}, isWaitingForUser() { return false; },
     } }),
     captureTabScreenshot: async () => {
+      captures++;
       if (screenshotFails) throw new Error("Screenshot unavailable");
       return { dataUrl: "data:image/png;base64,AA==" };
     },
     sendToContent: async () => ({}),
   });
   const context = { sessionId: "wait-hints", runId: "wait-run", workingTabId: 42 };
-  const resumed = await definitions.get("wait_for_user").execute({ message: "Continue when ready" }, undefined, context);
+  const resumed = await definitions.get("wait_for_user").execute({ tabId: 42, message: "Continue when ready" }, undefined, context);
   assert.equal(resumed.continued, true);
   assert.ok(resumed._image);
-  assert.match(resumed.note, /用户已继续，这是当前页面状态截图，请确认并继续任务。/, "wait_for_user screenshot note should say user continued");
+  assert.match(resumed.note, /用户已继续，这是 tabRef 指定页面的状态截图，请确认并继续任务。/, "wait_for_user screenshot note should say user continued");
   screenshotFails = true;
-  const fallback = await definitions.get("wait_for_user").execute({ message: "Continue when ready" }, undefined, context);
+  const fallback = await definitions.get("wait_for_user").execute({ tabId: 42, message: "Continue when ready" }, undefined, context);
   assert.equal(fallback.continued, true);
   assert.equal(fallback._image, undefined);
-  assert.match(fallback.note, /用户已继续，请确认当前页面状态后继续任务。/, "wait_for_user fallback note should say user continued");
+  assert.match(fallback.note, /用户已继续，请确认用户操作的结果后继续任务。/, "wait_for_user fallback note should say user continued");
+  const capturesBeforeUnscoped = captures;
+  screenshotFails = false;
+  const unscoped = await definitions.get("wait_for_user").execute({ message: "Continue when ready" }, undefined, context);
+  assert.equal(unscoped.continued, true);
+  assert.equal(unscoped._image, undefined);
+  assert.equal(captures, capturesBeforeUnscoped, "an optional screenshot never infers the recent or visible page");
+
 
   const previousChrome = globalThis.chrome;
   screenshotFails = false;
   try {
-    for (const status of ["complete", "loading"]) {
-      globalThis.chrome = { tabs: {
-        get: async () => ({ id: 42, status, url: "https://example.test", title: "Page" }),
-        onUpdated: { addListener() {}, removeListener() {} },
-      } };
-      const result = await definitions.get("wait_for_navigation").execute({ tabId: 42, screenshot: true, timeout: 0.001 }, undefined, context);
-      assert.ok(result._image);
-      assert.doesNotMatch(result.note, /这是当前(?:状态|页面)截图。如果看到登录\/验证码弹窗，必须调用 wait_for_user/, "navigation screenshot note should not repeat hard wait_for_user rules");
-      assert.match(result.note, status === "complete" ? /页面加载完成，这是当前页面截图。/ : /页面加载超时，这是当前状态截图。/, "navigation screenshot note should describe the actual loading result");
-    }
+    const listeners = new Set();
+    let status = "complete";
+    let documentId = "before";
+    const navigationEvents = Object.fromEntries(["onBeforeNavigate", "onCommitted", "onHistoryStateUpdated", "onReferenceFragmentUpdated", "onErrorOccurred"].map(name => {
+      const registered = new Set();
+      return [name, { addListener: listener => registered.add(listener), removeListener: listener => registered.delete(listener),
+        emit: event => { for (const listener of registered) listener(event); } }];
+    }));
+    globalThis.chrome = { tabs: {
+      get: async () => ({ id: 42, status, url: "https://example.test", title: "Page" }),
+      onUpdated: { addListener: listener => listeners.add(listener), removeListener: listener => listeners.delete(listener) },
+    }, webNavigation: { ...navigationEvents,
+      getFrame: async () => ({ url: "https://example.test", documentId, errorOccurred: false }),
+    } };
+    const pageContext = { ...context, requestedTabRef: "page" };
+    const load = definitions.get("wait_for_load"), navigation = definitions.get("wait_for_navigation");
+    assert.deepEqual(await load.execute({ tabId: 42, timeout: 0.1 }, undefined, pageContext), {
+      status: "complete", url: "https://example.test", title: "Page",
+    }, "a current load-state wait returns concise page state");
+    assert.equal(Object.hasOwn(navigation.parameters.properties, "screenshot"), false);
+    await assert.rejects(navigation.execute({ tabId: 42, timeout: 0.001 }, undefined, pageContext), error =>
+      error.code === "TOOL_TIMEOUT" && error.details.tabRef === "page", "a previously complete page does not satisfy a future-navigation wait");
+    status = "loading";
+    await assert.rejects(load.execute({ tabId: 42, timeout: 0.001 }, undefined, pageContext), error =>
+      error.code === "TOOL_TIMEOUT" && error.details.tabRef === "page", "load timeout is a recoverable ToolError, not a successful screenshot receipt");
+    const pending = navigation.execute({ tabId: 42, timeout: 0.5 }, undefined, pageContext);
+    setTimeout(() => {
+      for (const listener of listeners) listener(42, { status: "loading" }, { id: 42, status: "loading" });
+      status = "complete";
+      documentId = "after";
+      navigationEvents.onCommitted.emit({ tabId: 42, frameId: 0, url: "https://example.test", documentId });
+      for (const listener of listeners) listener(42, { status: "complete" }, {
+        id: 42, status: "complete", url: "https://example.test", title: "Page",
+      });
+    }, 0);
+    assert.deepEqual(await pending, { status: "navigated", url: "https://example.test", title: "Page" });
+    assert.equal(listeners.size, 0, "settled navigation observers remove their listeners");
+    assert.equal(captures, capturesBeforeUnscoped, "state and navigation waits never inject an unsolicited screenshot");
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;

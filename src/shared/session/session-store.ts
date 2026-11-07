@@ -7,6 +7,10 @@ export interface SessionMetadata {
   title?: string;
   titleSource?: string;
   source?: string;
+  /** Client name used to render a direct-drive tab group in the current language. */
+  driveClientName?: string;
+  /** Durable retry marker; tool admission rejects a Session while retention removes its stores. */
+  driveRetentionPending?: boolean;
   automationId?: string;
   automationRunId?: string;
   createdAt?: string;
@@ -21,6 +25,11 @@ export const SESSION_RECORD_PREFIX = "_session_";
 export const ACTIVE_CONVERSATION_PREFIX = "_active_conversation_";
 export const SESSION_TRANSCRIPT_CHECKPOINT_PREFIX = "_session_transcript_checkpoint_";
 export const ROOT_SESSION_ID = "0";
+
+export function normalizeDriveClientName(value: unknown) {
+  const name = String(value ?? "").replace(/\s+/gu, " ").trim();
+  return (name === "qz-cli" ? "CLI" : name || "MCP").slice(0, 40);
+}
 
 export function genSessionId() {
   return crypto.randomUUID().replaceAll("-", "");

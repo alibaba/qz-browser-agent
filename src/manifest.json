@@ -8,6 +8,7 @@
     "activeTab",
     "alarms",
     "tabs",
+    "webNavigation",
     "tabGroups",
     "scripting",
     "sidePanel",

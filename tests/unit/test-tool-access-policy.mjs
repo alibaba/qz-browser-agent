@@ -64,11 +64,15 @@ test("trusted tab roles apply to new names; result fields cannot grant a claim",
   } });
   for (const role of ["created", "claim", "clear", "ordinary"]) {
     tools.defineTool({ name: `__custom_tab_${role}`, description: "test", parameters: { type: "object", properties: { tabId: { type: "number" } } },
-      ...(role === "ordinary" ? {} : { workingTab: role }),
+      ...(role === "ordinary" ? {} : { tabLifecycle: role }),
       execute: () => role === "created" ? { id: 12 } : { tabId: 12, claim: true, createdTab: true },
     });
-    await runtime.execute(`__custom_tab_${role}`, role === "clear" ? { tabId: 12 } : {}, undefined, context);
+    await runtime.execute(`__custom_tab_${role}`, ["claim", "clear"].includes(role) ? { tabId: 12 } : {}, undefined, context);
   }
-  assert.deepEqual(updates.map(({ createdTab, claim, tab }) => [createdTab, claim, tab.id]), [[true, false, 12], [false, true, 12], [false, false, 12]]);
+  assert.deepEqual(updates.map(({ createdTab, claim, tab }) => [createdTab, claim, tab.id]), [[true, false, 12], [false, true, 12]],
+    'an ordinary result cannot select a page by returning tabId, claim or createdTab business keys');
+  await runtime.execute('__custom_tab_ordinary', { tabId: 12 }, undefined, context);
+  assert.deepEqual(updates.map(({ createdTab, claim, tab }) => [createdTab, claim, tab.id]), [[true, false, 12], [false, true, 12], [false, false, 12]],
+    'an explicit page can still be observed without granting a claim');
   assert.deepEqual(cleared.map(({ sessionId, runId, tabId }) => [sessionId, runId, tabId]), [["current", "active", 12]]);
 });

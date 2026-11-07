@@ -6,6 +6,8 @@ export interface ModelMessage {
   content?: unknown;
   tool_calls?: ModelToolCall[];
   tool_call_id?: string;
+  /** Persisted execution status, omitted from provider messages. */
+  _toolIsError?: boolean;
   _origin?: string;
   _kind?: string;
   _usage?: Record<string, unknown>;

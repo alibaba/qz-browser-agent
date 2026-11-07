@@ -7,6 +7,7 @@ import type { TabReference } from '../../shared/tab-utils.js';
 import type { ToolContext } from '../background.js';
 import type { Automation } from '../../shared/automation-store.js';
 import type { SessionGoal } from '../../shared/contracts/session-runtime.js';
+import type { PageObservation } from '../../shared/contracts/page-observation.js';
 
 export type UserWaitTarget = { sessionId: string; waitId: string };
 
@@ -53,13 +54,15 @@ export type GoalUpdateInput = Partial<Pick<SessionGoal, 'objective' | 'criteria'
 
 /** Finite caller-owned port. Session commands retain all persistence and run authority. */
 export interface ToolSessionCommands extends UserWaitRuntime {
+  beginPopupCapture(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; openerTabId: number }): { observed?(): Promise<PageObservation[]>; dispose(): void };
+  observePopup(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; openerTabId: number }): Promise<{ result: Promise<PageObservation>; dispose(): void }>;
   getTabAliases(sessionId: string): Record<string, number>;
   reserveTabAlias(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; alias: string }): Promise<object>;
   commitTabAlias(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; reservation: object; tabId: number }): void;
   discardTabAlias(reservation: object): void;
   isRunCurrent(sessionId: string, runId: string): boolean;
-  listSessions(input: { limit: number; excludeSessionId: string }): Promise<unknown>;
-  createSession(input: { title: string; firstMessage: string; parentSessionId: string }): Promise<object>;
+  listSessions(input: { limit: number; excludeSessionId: string; publicView?: boolean }): Promise<unknown>;
+  createSession(input: { title: string; firstMessage: string; parentSessionId: string; publicView?: boolean }): Promise<object>;
   stopSession(id: string, input: { source: string; requestedBy: string }): Promise<unknown>;
   sendMessage(input: { sessionId: string; text: string; deliveryMode: 'follow_up' | 'steer'; clientMessageId: string; swallowErrors: boolean }): Promise<unknown>;
   deleteSession(id: string, input: { source: string; requestedBy: string }): Promise<unknown>;
@@ -92,6 +95,7 @@ export interface ToolSkillsRuntime {
   publishToGit?(input: { skill: SkillRecord; target: ToolGitPublishTarget; commitMessage: string }, runtime: { signal?: AbortSignal; context: ToolContext }): Promise<unknown>;
 }
 export interface ToolRuntimeDependencies {
+  invokeNestedTool?(parent: ToolContext, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
   requestLocation?(context: ToolContext, signal?: AbortSignal): Promise<Record<string, unknown>>;
   skills?: ToolSkillsRuntime | null;
   skillNetwork?: { registerExecution(requestId: unknown, descriptor?: { plugin?: { id?: string; skillName?: string; network?: { allowedMethods?: readonly string[]; allowedOrigins?: readonly { setting?: string; origin?: string }[]; browserManagedHeaders?: readonly string[]; maxRequestBytes?: number; maxResponseBytes?: number } }; config?: Record<string, unknown>; signal?: AbortSignal | null }): () => void } | null;

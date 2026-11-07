@@ -1,3 +1,4 @@
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
@@ -126,8 +127,8 @@ for (const [coreName, input] of Object.entries(forwardingCases)) {
   assert.equal(calls[0].context.sessionId, loadedContext.sessionId);
   assert.equal(calls[0].context.runId, loadedContext.runId);
   assert.equal(result.coreName, coreName);
-  assert.equal(result._plugin.id, contract.QINGZHOU_MCP_SKILL_ID);
-  assert.equal(result._plugin.runtime, "host");
+  assert.equal(getToolResultPresentation(result)._plugin.id, contract.QINGZHOU_MCP_SKILL_ID);
+  assert.equal(getToolResultPresentation(result)._plugin.runtime, "host");
   assert.equal(Object.prototype.hasOwnProperty.call(result, "trace"), false, `${coreName} should not duplicate its result into host trace`);
 }
 

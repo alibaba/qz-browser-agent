@@ -1,7 +1,7 @@
 {
   "tabs.tabs": "Tabs",
-  "tabs.tab": "Tab {tabId}",
-  "tabs.current": "Aktuell",
+  "tabs.tab": "Tab {tabRef}",
+  "tabs.current": "Für den Nutzer sichtbar",
   "tabs.window": "Fenster {windowId}",
   "tabs.qingzhouTask": "qz-Aufgabe",
   "tabs.organizedInto": "In „{name}“ organisiert",
@@ -38,8 +38,6 @@
   "tabs.usePage": "Arbeitstab festlegen",
   "tabs.navigatePage": "URL aufrufen",
   "tabs.organizeTabsTool": "Tabs organisieren",
-  "tabs.currentSessionWorkingTabIsNotAWebPage": "Der Arbeitstab dieser Aufgabe ist keine reguläre Webseite.",
-  "tabs.tabIsNotAWebPageAndCannotBe": "Tab {tabId} ist keine reguläre Webseite und kann nicht als Arbeitstab verwendet werden.",
   "tabs.openingAnAgentOwnedTabRequiresTheCurrentSession": "Zum Öffnen eines aufgabeneigenen Tabs ist der Tab-Dienst der aktuellen Aufgabe erforderlich.",
   "tabs.viewWorkingPageShort": "Arbeitstab",
   "tabs.usePageShort": "Tab verwenden",

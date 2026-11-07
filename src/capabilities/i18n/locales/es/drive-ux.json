@@ -1,0 +1,23 @@
+{
+  "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label": "Aún no hay alias de página",
+  "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message": "Esta sesión no tiene alias de página. Usa el tabAlias de open_tab o el tabRef devuelto por open_tab/list_tabs.",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.label": "Usa las herramientas de documentos para PDF",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "Este visor PDF no admite operaciones de páginas HTML. Para leer el texto se necesitan la Skill de documentos y la URL original del PDF.",
+  "backend.toolError.PAGE_CONTENT_UNAVAILABLE.label": "El navegador bloquea el acceso al contenido",
+  "backend.toolError.PAGE_CONTENT_UNAVAILABLE.message": "No se pueden insertar scripts en esta página. Usa una página accesible; para PDF, carga qingzhou-documents y lee la URL original con sus herramientas de documentos.",
+  "backend.toolError.SCREENSHOT_TARGET_INVALID.label": "Destino de captura no válido",
+  "backend.toolError.SCREENSHOT_TARGET_INVALID.message": "Omite target para capturar el área visible. Para un elemento, indica un destino uid: o css:.",
+  "backend.toolError.DRIVE_RUN_SCRIPT_TARGET.label": "Solo scripts de página",
+  "backend.toolError.DRIVE_TAB_REF_REQUIRED.label": "Se requiere una referencia de página",
+  "backend.drive.sessionRequired": "Indica el sessionId de qz session create (MCP: qingzhou_create_drive_session). La CLI requiere --session. Esta llamada no crea una sesión.",
+  "backend.drive.sessionEnded": "La sesión ha terminado o se ha cancelado. No hacen falta más llamadas a herramientas ni a close_tab. Para otra tarea, usa qz session create (MCP: qingzhou_create_drive_session).",
+  "backend.drive.sessionNotFound": "No se encontró la sesión. Comprueba sessionId y el navegador seleccionado. Crea una tarea nueva con qz session create (MCP: qingzhou_create_drive_session) y usa el ID devuelto.",
+  "backend.drive.skillRuntimeGuidance": "Los Skills se ejecutan en la extensión, sin Node.js ni shell. Las herramientas de página requieren tabRef explícito; los scripts usan una sola función async () => { ... }. Lee recursos con load_skill_resource({name,path}); para continuar un documento, carga qingzhou-documents y llama a qingzhou_documents__document_read_chunk.",
+  "backend.drive.scriptDescription": "Ejecuta una función async () => { ... } en la página de tabRef. Permite document/window, input/args, tools/tool y trace/log. tabRef es un argumento de llamada, no una variable del script. Indica mutatesPage:true si modificas la página.",
+  "backend.drive.scriptRecovery": "Ejecuta JavaScript del navegador con document/window en la página de tabRef. Pasa explícitamente el tabRef de esta sesión a las herramientas de página; coordina con calls o llamadas separadas a execute_tool.",
+  "backend.drive.collectImagesReference": "Usa urls para recopilar imágenes directamente; los targets de página requieren tabRef.",
+  "backend.drive.readImageReference": "Usa url para leer una imagen directamente; una imagen de página requiere tabRef.",
+  "backend.drive.runScriptPageOnly": "El control directo ejecuta scripts solo en la pestaña de tabRef. Coordina con calls o execute_tool.",
+  "backend.drive.tabRefRequired": "Las herramientas de página requieren tabRef: el tabAlias de open_tab o el tabRef devuelto por open_tab/list_tabs. Ambos pertenecen a esta sesión. Para la misma tarea, usa el mismo --session (MCP: sessionId) en las llamadas posteriores.",
+  "backend.drive.noAlias": "Esta sesión no tiene alias de página. Usa el tabAlias de open_tab o el tabRef devuelto por open_tab/list_tabs. Ambos pertenecen a esta sesión. Para la misma tarea, usa el mismo --session (MCP: sessionId) en las llamadas posteriores."
+}

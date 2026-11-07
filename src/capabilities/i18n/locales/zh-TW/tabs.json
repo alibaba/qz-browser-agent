@@ -1,7 +1,7 @@
 {
   "tabs.tabs": "分頁",
-  "tabs.tab": "分頁 {tabId}",
-  "tabs.current": "目前",
+  "tabs.tab": "分頁 {tabRef}",
+  "tabs.current": "使用者正在查看",
   "tabs.window": "視窗 {windowId}",
   "tabs.qingzhouTask": "輕舟任務",
   "tabs.organizedInto": "已整理至「{name}」",
@@ -38,8 +38,6 @@
   "tabs.usePage": "設定工作分頁",
   "tabs.navigatePage": "前往網址",
   "tabs.organizeTabsTool": "整理分頁",
-  "tabs.currentSessionWorkingTabIsNotAWebPage": "目前任務的工作分頁不是一般網頁。",
-  "tabs.tabIsNotAWebPageAndCannotBe": "分頁 {tabId} 不是一般網頁，無法設為工作分頁。",
   "tabs.openingAnAgentOwnedTabRequiresTheCurrentSession": "開啟任務專屬分頁需要目前任務的分頁服務。",
   "tabs.viewWorkingPageShort": "查看工作分頁",
   "tabs.usePageShort": "設定工作分頁",

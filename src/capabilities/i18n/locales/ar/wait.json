@@ -39,7 +39,7 @@
   "wait.waitNotContinued": "لم تُستأنف المهمة",
   "wait.loginVerificationCompleted": "تم التحقق من تسجيل الدخول",
   "wait.userContinued": "تم استئناف المهمة",
-  "wait.waitForElementSelectorSupportsRawCssOrCss": "يدعم selector في wait_for_element تنسيق CSS العادي أو css:<selector>؛ أما uid:<element_uid> فهو مرجع إلى لقطة ولا يمكنه انتظار حالة DOM مستقبلية.",
+  "wait.waitForElementSelectorSupportsRawCssOrCss": "يدعم target في wait_for_element تنسيق CSS العادي أو css:<target>؛ أما uid:<element_uid> فهو مرجع إلى لقطة ولا يمكنه انتظار حالة DOM مستقبلية.",
   "wait.userWaitRuntimeIsUnavailable": "خدمة إدخال المستخدم غير متاحة.",
   "wait.currentTaskHasNoWorkingTab": "لا توجد علامة تبويب عمل للمهمة الحالية.",
   "wait.waitUntilRequiresAValidAbsoluteTimeWithAn": "يتطلب wait_until وقتًا مطلقًا صالحًا مع تحديد المنطقة الزمنية صراحةً.",

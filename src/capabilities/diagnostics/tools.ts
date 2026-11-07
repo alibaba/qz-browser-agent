@@ -1,9 +1,10 @@
+import { toolError } from "#sdk/background/tools";
 import { toolT } from "./tool-messages.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import type { ToolContext } from "#sdk/background";
 type DiagnosticsHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "makeSessionTabTargetError" | "sendCdp"
-  | "getDebuggerRun" | "secondsToMs" | "assertUrlAllowed">;
+  | "getDebuggerRun" | "retainDebugger" | "onDebuggerDetached" | "secondsToMs" | "assertUrlAllowed">;
 interface RemoteObject { type?: string; subtype?: string; value?: unknown; description?: string; unserializableValue?: string }
 interface CallFrame { functionName?: string; url?: string; lineNumber?: number; columnNumber?: number }
 interface StackTrace { callFrames?: CallFrame[] }
@@ -20,6 +21,7 @@ interface NetworkEvent {
 }
 interface Monitor { tabId: number; enabled: boolean; maxRecords: number; sessionId: string; runId: string }
 interface NetworkRecord {
+  connectionId: number;
   requestId: string; url: string; method: string; resourceType: string; requestHeaders: Record<string, string>;
   timestamp: number; wallTime: number | null; initiatorType: string; status: number | null; statusText: string;
   mimeType: string; responseHeaders: Record<string, string>; fromDiskCache: boolean; fromServiceWorker: boolean;
@@ -27,6 +29,7 @@ interface NetworkRecord {
   canceled: boolean; finished: boolean; remoteIPAddress?: string; responseTime?: number; endTime?: number;
 }
 interface NetworkMonitor extends Monitor {
+  connectionId: number; releaseWatch?: () => void;
   records: Map<string, NetworkRecord>; order: string[]; inFlight: Set<string>; waiters: Set<{ check(): void }>;
 }
 interface RecordFilter {
@@ -35,7 +38,7 @@ interface RecordFilter {
 }
 interface RegexError { error: true; code: string; message: string; pattern: string; flags: string }
 type Filtered<T> = { records: T[]; error?: false } | RegexError;
-import { pageWaitTimeout } from "#sdk/background/tools";
+import { pageWaitTimeout, runWaitWithTrigger, waitTriggerParameter, type WaitTrigger } from "#sdk/background/tools";
 import { getSecurityGuardrails, matchBlockedUrl } from "#sdk/shared/security";
 
 /** Owns per-tab Network/Console monitors and registers diagnostic tools. */
@@ -45,6 +48,8 @@ export function createDiagnosticsTools({
   makeSessionTabTargetError,
   sendCdp,
   getDebuggerRun,
+  retainDebugger,
+  onDebuggerDetached,
   secondsToMs,
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
 }: DiagnosticsHost) {
@@ -53,7 +58,11 @@ interface ConsoleRecord {
   stackTrace: ReturnType<typeof formatStackTrace>; args?: ReturnType<typeof formatRemoteObject>[];
   exception?: ReturnType<typeof formatRemoteObject>; level?: string;
 }
-interface ConsoleMonitor extends Monitor { connectionId: number; records: ConsoleRecord[] }
+interface ConsoleMonitor extends Monitor {
+  connectionId: number; records: ConsoleRecord[];
+  seen: Map<string, { count: number; timestamp: number }>; replay: Map<string, number>;
+  evictedBefore: number; replayBefore: number;
+}
 
 // ---------------------------------------------------------------------------
 // Network monitor: per-tab ring buffer over CDP Network events
@@ -66,12 +75,21 @@ const DEFAULT_BODY_LIMIT = 120000;
 chrome.debugger?.onEvent?.addListener((source, method, params) => {
   if (source.sessionId || source.tabId == null || !method.startsWith("Network.")) return;
   const monitor = networkMonitors.get(source.tabId);
-  if (!monitor?.enabled) return;
+  if (!monitor || (!monitor.enabled && !monitor.waiters.size)) return;
+  const run = getDebuggerRun(source.tabId);
+  if (!run || monitor.sessionId !== run.sessionId || monitor.runId !== run.runId || monitor.connectionId !== run.connectionId) return;
   handleNetworkEvent(monitor, method, params as NetworkEvent);
 });
 
 const consoleMonitors = new Map<number, ConsoleMonitor>();
 const DEFAULT_CONSOLE_LIMIT = 200;
+const CONSOLE_REPLAY_LIMIT = 1000;
+
+chrome.tabs?.onRemoved?.addListener(tabId => {
+  networkMonitors.get(tabId)?.releaseWatch?.();
+  networkMonitors.delete(tabId);
+  consoleMonitors.delete(tabId);
+});
 
 chrome.debugger?.onEvent?.addListener((source, method, params) => {
   if (source.sessionId || source.tabId == null
@@ -83,11 +101,16 @@ chrome.debugger?.onEvent?.addListener((source, method, params) => {
   handleConsoleEvent(monitor, method, params as ConsoleEvent);
 });
 
-chrome.debugger?.onDetach?.addListener((source) => {
-  if (source.tabId == null) return;
-  const networkMonitor = networkMonitors.get(source.tabId);
-  if (networkMonitor) networkMonitor.enabled = false;
-  consoleMonitors.delete(source.tabId);
+onDebuggerDetached((tabId, connectionId) => {
+  const networkMonitor = networkMonitors.get(tabId);
+  if (networkMonitor?.connectionId === connectionId) {
+    networkMonitor.enabled = false;
+    networkMonitor.releaseWatch?.();
+    networkMonitor.releaseWatch = undefined;
+    networkMonitor.inFlight.clear();
+  }
+  const consoleMonitor = consoleMonitors.get(tabId);
+  if (consoleMonitor?.connectionId === connectionId) consoleMonitor.enabled = false;
 });
 
 function getNetworkMonitor(tabId: number) {
@@ -99,6 +122,7 @@ function getNetworkMonitor(tabId: number) {
       maxRecords: DEFAULT_NETWORK_LIMIT,
       sessionId: "",
       runId: "",
+      connectionId: 0,
       records: new Map(),
       order: [],
       inFlight: new Set(),
@@ -113,16 +137,23 @@ function getConsoleMonitor(tabId: number) {
   const run = getDebuggerRun(tabId);
   if (!run) return null;
   let monitor = consoleMonitors.get(tabId);
-  if (!monitor || monitor.sessionId !== run.sessionId || monitor.runId !== run.runId
-    || monitor.connectionId !== run.connectionId) {
+  if (!monitor || monitor.sessionId !== run.sessionId || monitor.runId !== run.runId) {
     monitor = {
       tabId,
       enabled: true,
       maxRecords: DEFAULT_CONSOLE_LIMIT,
       ...run,
       records: [],
+      seen: new Map(), replay: new Map(), evictedBefore: -Infinity, replayBefore: -Infinity,
     };
     consoleMonitors.set(tabId, monitor);
+  } else if (monitor.connectionId !== run.connectionId) {
+    monitor.connectionId = run.connectionId;
+    monitor.enabled = true;
+    // Runtime.enable replays old calls. Keep the bounded local history, including
+    // reset/eviction, while accepting new messages captured during disconnection.
+    monitor.replay = new Map([...monitor.seen].map(([key, entry]) => [key, entry.count]));
+    monitor.replayBefore = monitor.evictedBefore;
   }
   return monitor;
 }
@@ -133,7 +164,7 @@ async function enableConsoleMonitor(tabId: number | undefined, { reset = false, 
   await sendCdp(tabId, "Runtime.enable", {}, context);
   const monitor = getConsoleMonitor(tabId);
   if (!monitor || monitor.sessionId !== context.sessionId || monitor.runId !== context.runId) {
-    throw new ToolExecutionError("CDP_RUN_RELEASED", "The Agent run no longer owns this debugger connection", { tabId });
+    throw new ToolExecutionError("CDP_RUN_RELEASED", "The Agent run no longer owns this debugger connection");
   }
   if (reset) monitor.records = [];
   monitor.maxRecords = clampNumber(maxRecords, 20, 1000, monitor.maxRecords);
@@ -174,6 +205,20 @@ function handleConsoleEvent(monitor: ConsoleMonitor, method: string, params: Con
 }
 
 function pushConsoleRecord(monitor: ConsoleMonitor, record: ConsoleRecord) {
+  const key = JSON.stringify(record);
+  const replayCount = monitor.replay.get(key) || 0;
+  if (replayCount) {
+    if (replayCount === 1) monitor.replay.delete(key);
+    else monitor.replay.set(key, replayCount - 1);
+    return;
+  }
+  if (record.timestamp <= monitor.replayBefore) return;
+  monitor.seen.set(key, { count: (monitor.seen.get(key)?.count || 0) + 1, timestamp: record.timestamp });
+  if (monitor.seen.size > CONSOLE_REPLAY_LIMIT) {
+    const oldest = monitor.seen.entries().next().value!;
+    monitor.evictedBefore = Math.max(monitor.evictedBefore, oldest[1].timestamp);
+    monitor.seen.delete(oldest[0]);
+  }
   monitor.records.push({
     ...record,
     level: normalizeConsoleLevel(record.type),
@@ -252,13 +297,16 @@ function resetNetworkMonitor(monitor: NetworkMonitor, maxRecords = monitor.maxRe
   monitor.inFlight.clear();
 }
 
-async function enableNetworkMonitor(tabId: number | undefined, { reset = false, maxRecords = DEFAULT_NETWORK_LIMIT } = {}, context: ToolContext = {}) {
+async function enableNetworkMonitor(tabId: number | undefined, { reset = false, maxRecords = DEFAULT_NETWORK_LIMIT, persistent = false } = {}, context: ToolContext = {}) {
   if (!tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "network_watch" });
 
   const monitor = getNetworkMonitor(tabId);
   const runChanged = monitor.sessionId !== String(context.sessionId || "")
     || monitor.runId !== String(context.runId || "");
   if (runChanged) {
+    monitor.enabled = false;
+    monitor.releaseWatch?.();
+    monitor.releaseWatch = undefined;
     resetNetworkMonitor(monitor, maxRecords);
     monitor.sessionId = String(context.sessionId || "");
     monitor.runId = String(context.runId || "");
@@ -270,7 +318,18 @@ async function enableNetworkMonitor(tabId: number | undefined, { reset = false, 
     maxTotalBufferSize: 50 * 1024 * 1024,
     maxResourceBufferSize: 10 * 1024 * 1024,
   }, context);
-  monitor.enabled = true;
+  const run = getDebuggerRun(tabId);
+  if (!run || run.sessionId !== context.sessionId || run.runId !== context.runId) {
+    throw new ToolExecutionError("CDP_RUN_RELEASED", "The Agent run no longer owns this debugger connection");
+  }
+  if (monitor.connectionId !== run.connectionId) {
+    monitor.releaseWatch?.();
+    monitor.releaseWatch = undefined;
+    monitor.inFlight.clear();
+    monitor.connectionId = run.connectionId;
+  }
+  if (persistent && !monitor.releaseWatch) monitor.releaseWatch = retainDebugger(tabId, "network", context);
+  if (persistent) monitor.enabled = true;
   return monitor;
 }
 
@@ -281,11 +340,11 @@ async function enablePreNavigationNetworkWatch(tabId: number, {
   const monitor = await enableNetworkMonitor(tabId, {
     reset: resetNetwork !== false,
     maxRecords: networkMaxRecords,
+    persistent: true,
   }, context);
   return {
     watching: true,
     startedBeforeNavigation: true,
-    tabId: monitor.tabId,
     maxRecords: monitor.maxRecords,
     records: monitor.order.length,
     inFlight: monitor.inFlight.size,
@@ -297,6 +356,7 @@ function handleNetworkEvent(monitor: NetworkMonitor, method: string, params: Net
   if (method === "Network.requestWillBeSent") {
     const requestId = params.requestId;
     const record: NetworkRecord = {
+      connectionId: monitor.connectionId,
       requestId,
       url: params.request?.url || "",
       method: params.request?.method || "",
@@ -465,7 +525,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       reset: { type: "boolean", description: toolT("readConsoleMessagesReset") },
       limit: { type: "number", description: toolT("readConsoleMessagesLimit") },
       maxRecords: { type: "number", description: toolT("readConsoleMessagesMaxRecords") },
@@ -475,6 +535,7 @@ registerTool({
       urlPattern: { type: "string", description: toolT("readConsoleMessagesUrlPattern") },
       flags: { type: "string", description: toolT("readConsoleMessagesFlags") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -482,11 +543,9 @@ registerTool({
     const monitor = await enableConsoleMonitor(tabId, { reset, maxRecords }, context);
     const filtered = filterConsoleRecords(monitor, filter);
     if (filtered.error) {
-      return {
-        error: `Invalid regular expression: ${filtered.message}`,
-        code: filtered.code,
-        details: { pattern: filtered.pattern, flags: filtered.flags },
-      };
+      return toolError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
+        hint: "Fix the pattern or flags and retry the call.", details: { pattern: filtered.pattern, flags: filtered.flags },
+      });
     }
     const guardrails = await getSecurityGuardrails();
     const rows = filtered.records
@@ -495,7 +554,6 @@ registerTool({
       .reverse();
     return {
       watching: true,
-      tabId: monitor.tabId,
       records: rows.length,
       totalBuffered: monitor.records.length,
       results: rows,
@@ -509,18 +567,27 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
+      enabled: { type: "boolean", description: toolT("networkWatchEnabled") },
       reset: { type: "boolean", description: toolT("networkWatchReset") },
       maxRecords: { type: "number", description: toolT("networkWatchMaxRecords") },
     },
+    required: ["tabRef"],
   } as const; },
-  page: "owned",
+  page: args => args.enabled === false ? "tab" : "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, reset = true, maxRecords = DEFAULT_NETWORK_LIMIT }, _signal, context = {}) => {
-    const monitor = await enableNetworkMonitor(tabId, { reset, maxRecords }, context);
+  execute: async ({ tabId, enabled = true, reset = true, maxRecords = DEFAULT_NETWORK_LIMIT }, _signal, context = {}) => {
+    if (!enabled) {
+      const monitor = tabId ? networkMonitors.get(tabId) : undefined;
+      if (!monitor || monitor.sessionId !== context.sessionId || monitor.runId !== context.runId) return { watching: false, records: 0, inFlight: 0 };
+      monitor.enabled = false;
+      monitor.releaseWatch?.();
+      monitor.releaseWatch = undefined;
+      return { watching: false, maxRecords: monitor.maxRecords, records: monitor.order.length, inFlight: monitor.inFlight.size };
+    }
+    const monitor = await enableNetworkMonitor(tabId, { reset, maxRecords, persistent: true }, context);
     return {
       watching: true,
-      tabId: monitor.tabId,
       maxRecords: monitor.maxRecords,
       records: monitor.order.length,
       inFlight: monitor.inFlight.size,
@@ -534,7 +601,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       limit: { type: "number", description: toolT("networkRecentLimit") },
       urlPattern: { type: "string", description: toolT("networkRecentUrlPattern") },
       flags: { type: "string", description: toolT("networkRecentFlags") },
@@ -544,18 +611,23 @@ registerTool({
       resourceType: { type: "string", description: toolT("networkRecentResourceType") },
       mimePattern: { type: "string", description: toolT("networkRecentMimePattern") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, limit = 20, ...filter }, _signal, context = {}) => {
-    const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
+    const existing = tabId ? networkMonitors.get(tabId) : undefined;
+    let monitor = existing;
+    if (!monitor || monitor.sessionId !== context.sessionId || monitor.runId !== context.runId) {
+      monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
+      // Preserve first-read capture for this connection without retaining it.
+      monitor.enabled = true;
+    }
     const filtered = filterNetworkRecords(monitor, filter);
     if (filtered.error) {
-      return {
-        error: `Invalid regular expression: ${filtered.message}`,
-        code: filtered.code,
-        details: { pattern: filtered.pattern, flags: filtered.flags },
-      };
+      return toolError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
+        hint: "Fix the pattern or flags and retry the call.", details: { pattern: filtered.pattern, flags: filtered.flags },
+      });
     }
     const guardrails = await getSecurityGuardrails();
     const rows = filtered.records
@@ -564,7 +636,6 @@ registerTool({
       .reverse()
       .map(networkRecordSummary);
     return {
-      tabId: monitor.tabId,
       records: rows.length,
       inFlight: monitor.inFlight.size,
       results: rows,
@@ -578,25 +649,27 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       requestId: { type: "string", description: toolT("networkBodyRequestId") },
       maxBytes: { type: "number", description: toolT("networkBodyMaxBytes") },
     },
-    required: ["requestId"],
+    required: ["requestId", "tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, requestId, maxBytes = DEFAULT_BODY_LIMIT }, _signal, context = {}) => {
-    const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
-    const record = monitor.records.get(requestId);
-    if (!record) {
-      return {
-        error: `Network request not found: ${requestId}`,
-        code: "NETWORK_REQUEST_NOT_FOUND",
-        details: { tabId: monitor.tabId, requestId },
-      };
+    const monitor = tabId ? networkMonitors.get(tabId) : undefined;
+    const record = monitor && monitor.sessionId === context.sessionId && monitor.runId === context.runId ? monitor.records.get(requestId) : undefined;
+    if (!monitor || !record) return toolError("NETWORK_REQUEST_NOT_FOUND", `Network request not found: ${requestId}`, {
+      hint: "Use network_recent to choose a captured requestId, then retry network_body.", details: { requestId },
+    });
+    const run = getDebuggerRun(monitor.tabId);
+    if (!run || run.sessionId !== context.sessionId || run.runId !== context.runId || record.connectionId !== run.connectionId) {
+      return toolError("NETWORK_RESPONSE_EXPIRED", "The response body belongs to a debugger connection that has closed.", {
+        hint: "Start network_watch before triggering the request and read network_body before stopping it, or use wait_for_response with includeBody:true.", details: { requestId },
+      });
     }
-    assertUrlAllowedBySecurityGuardrails(record.url, await getSecurityGuardrails(), { tool: "network_body", source: "request_url", tabId: monitor.tabId });
+    assertUrlAllowedBySecurityGuardrails(record.url, await getSecurityGuardrails(), { tool: "network_body", source: "request_url" });
     const body = await getNetworkBody(monitor.tabId, requestId, clampNumber(maxBytes, 1000, 1000000, DEFAULT_BODY_LIMIT), context);
     return { ...networkRecordSummary(record), ...body };
   },
@@ -604,11 +677,13 @@ registerTool({
 
 registerTool({
   name: "wait_for_response",
+  behavior: { parallelTab: true, delegatesExecution: true, passiveWait: args => !args.trigger },
   get description() { return toolT("waitForResponseDescription"); },
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      trigger: waitTriggerParameter,
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       urlPattern: { type: "string", description: toolT("waitForResponseUrlPattern") },
       flags: { type: "string", description: toolT("networkRecentFlags") },
       method: { type: "string", description: toolT("networkRecentMethod") },
@@ -618,163 +693,107 @@ registerTool({
       includeBody: { type: "boolean", description: toolT("waitForResponseIncludeBody") },
       maxBytes: { type: "number", description: toolT("waitForResponseMaxBytes") },
     },
-    required: ["urlPattern"],
+    required: ["urlPattern", "tabRef"],
   } as const; },
   page: "owned",
   timeout: pageWaitTimeout,
-  execute: async ({ tabId, timeout = 10, timeoutMs, includeBody = false, maxBytes = DEFAULT_BODY_LIMIT, ...filter }, signal, context = {}) => {
-    const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
-    const filtered = filterNetworkRecords(monitor, filter);
-    if (filtered.error) {
-      return {
-        error: `Invalid regular expression: ${filtered.message}`,
-        code: filtered.code,
-        details: { pattern: filtered.pattern, flags: filtered.flags },
-      };
-    }
-
-    const guardrails = await getSecurityGuardrails();
-    const timeoutMsValue = clampNumber(timeoutMs != null ? timeoutMs : secondsToMs(timeout, 10000), 100, 120000, 10000);
-    const bodyLimit = clampNumber(maxBytes, 1000, 1000000, DEFAULT_BODY_LIMIT);
-
-    return new Promise((resolve, reject) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const cleanup = () => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-        monitor.waiters.delete(waiter);
-      };
-      const onAbort = () => {
-        cleanup();
-        reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for network response", filter));
-      };
-      const finish = async (record: NetworkRecord) => {
-        cleanup();
-        const summary = networkRecordSummary(record);
-        if (!includeBody) {
-          resolve({ tabId: monitor.tabId, matched: true, response: summary });
-          return;
-        }
-        try {
-          const body = await getNetworkBody(monitor.tabId, record.requestId, bodyLimit, context);
-          resolve({ tabId: monitor.tabId, matched: true, response: summary, body });
-        } catch (err) {
-          resolve({
-            tabId: monitor.tabId,
-            matched: true,
-            response: summary,
-            bodyError: {
-              error: err instanceof Error ? err.message : String(err),
-              code: err instanceof ToolExecutionError ? err.code : "NETWORK_BODY_UNAVAILABLE",
-              details: err instanceof ToolExecutionError ? err.details : {},
-            },
-          });
-        }
-      };
-      const waiter = {
-        check: () => {
-          const current = filterNetworkRecords(monitor, filter);
-          if (current.error) return;
-          const record = current.records.find(r => r.status != null && (!includeBody || r.finished) && !matchBlockedUrl(r.url, guardrails));
-          if (record) finish(record);
-        },
-      };
-      timer = setTimeout(() => {
-        cleanup();
-        resolve({
-          tabId: monitor.tabId,
-          matched: false,
-          timedOut: true,
-          timeoutSeconds: timeoutMsValue / 1000,
-          inFlight: monitor.inFlight.size,
-        });
-      }, timeoutMsValue);
-      signal?.addEventListener("abort", onAbort, { once: true });
+  execute: async ({ tabId, timeout = 10, timeoutMs, includeBody = false, maxBytes = DEFAULT_BODY_LIMIT, trigger, ...filter }, signal, context = {}) => {
+    const timeoutMsValue = clampNumber(timeoutMs != null ? timeoutMs : secondsToMs(timeout, 10000), 1, 120000, 10000);
+    return runWaitWithTrigger({ tool: "wait_for_response", timeoutMs: timeoutMsValue, signal, context,
+      trigger: trigger as WaitTrigger | undefined,
+      details: context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef },
+    }, async current => {
+      const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
+      current.throwIfAborted();
+      const filtered = filterNetworkRecords(monitor, filter);
+      if (filtered.error) throw Object.assign(new ToolExecutionError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
+        pattern: filtered.pattern, flags: filtered.flags,
+      }), { hint: "Fix the pattern or flags and retry the wait." });
+      const previousResponses = new Set([...monitor.records.values()].filter(record => record.status != null));
+      const guardrails = await getSecurityGuardrails();
+      current.throwIfAborted();
+      const bodyLimit = clampNumber(maxBytes, 1000, 1000000, DEFAULT_BODY_LIMIT);
+      let rejectResult!: (error: unknown) => void;
+      let disposed = false;
+      const cleanup = () => { disposed = true; current.removeEventListener("abort", onAbort); monitor.waiters.delete(waiter); };
+      const onAbort = () => { cleanup(); rejectResult(current.reason); };
+      let finish!: (record: NetworkRecord) => void;
+      const waiter = { check() {
+        if (disposed) return;
+        const current = filterNetworkRecords(monitor, filter);
+        if (current.error) return;
+        const record = current.records.find(record => !previousResponses.has(record) && record.status != null
+          && (!includeBody || record.finished) && !matchBlockedUrl(record.url, guardrails));
+        if (record) finish(record);
+      } };
+      const result = new Promise((resolve, reject) => {
+        rejectResult = reject;
+        finish = record => {
+          cleanup();
+          const response = networkRecordSummary(record);
+          if (!includeBody) { resolve({ matched: true, response }); return; }
+          getNetworkBody(monitor.tabId, record.requestId, bodyLimit, context).then(
+            body => resolve({ matched: true, response, body }),
+            error => reject(error));
+        };
+      });
+      current.addEventListener("abort", onAbort, { once: true });
       monitor.waiters.add(waiter);
       waiter.check();
+      return { result, dispose: cleanup };
     });
   },
 });
 
 registerTool({
   name: "wait_for_network_idle",
+  behavior: { parallelTab: true, passiveWait: true },
   get description() { return toolT("waitForNetworkIdleDescription"); },
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       idleSeconds: { type: "number", description: toolT("waitForNetworkIdleIdleSeconds") },
       timeout: { type: "number", description: toolT("waitForNetworkIdleTimeout") },
       urlPattern: { type: "string", description: toolT("waitForNetworkIdleUrlPattern") },
       flags: { type: "string", description: toolT("networkRecentFlags") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: pageWaitTimeout,
   execute: async (args, signal, context = {}) => {
     const { tabId, idleSeconds = 0.8, idleMs, timeout = 10, timeoutMs, urlPattern, flags = "i" } = args as typeof args & { idleMs?: number };
-    const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
-    const pattern = urlPattern ? safeRegExp(urlPattern, flags) : null;
-    if (pattern?.error) {
-      return {
-        error: `Invalid regular expression: ${pattern.message}`,
-        code: pattern.code,
-        details: { pattern: pattern.pattern, flags: pattern.flags },
-      };
-    }
     const idle = clampNumber(idleMs != null ? idleMs : secondsToMs(idleSeconds, 800), 100, 10000, 800);
-    const timeoutMsValue = clampNumber(timeoutMs != null ? timeoutMs : secondsToMs(timeout, 10000), 100, 120000, 10000);
-
-    const relevantInFlight = () => {
-      const ids = [...monitor.inFlight];
-      if (!pattern) return ids;
-      return ids.filter(id => {
-        const record = monitor.records.get(id);
-        pattern.lastIndex = 0;
-        return record && pattern.test(record.url);
-      });
-    };
-
-    return new Promise((resolve, reject) => {
-      let idleTimer: ReturnType<typeof setTimeout> | undefined;
-      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-      const cleanup = () => {
-        clearTimeout(idleTimer);
-        clearTimeout(timeoutTimer);
-        signal?.removeEventListener("abort", onAbort);
-        monitor.waiters.delete(waiter);
-      };
-      const onAbort = () => {
-        cleanup();
-        reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for network idle"));
-      };
-      const complete = () => {
-        cleanup();
-        resolve({ tabId: monitor.tabId, idle: true, idleSeconds: idle / 1000, inFlight: monitor.inFlight.size });
-      };
-      const scheduleIdle = () => {
-        clearTimeout(idleTimer);
-        idleTimer = setTimeout(complete, idle);
-      };
-      const waiter = {
-        check: () => {
-          if (relevantInFlight().length === 0) scheduleIdle();
-          else clearTimeout(idleTimer);
-        },
-      };
-      timeoutTimer = setTimeout(() => {
-        cleanup();
-        resolve({
-          tabId: monitor.tabId,
-          idle: false,
-          timedOut: true,
-          timeoutSeconds: timeoutMsValue / 1000,
-          inFlight: relevantInFlight(),
+    const timeoutMsValue = clampNumber(timeoutMs != null ? timeoutMs : secondsToMs(timeout, 10000), 1, 120000, 10000);
+    return runWaitWithTrigger({ tool: "wait_for_network_idle", timeoutMs: timeoutMsValue, signal, context,
+      details: context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef },
+    }, async current => {
+      const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
+      current.throwIfAborted();
+      const pattern = urlPattern ? safeRegExp(urlPattern, flags) : null;
+      if (pattern?.error) throw Object.assign(new ToolExecutionError(pattern.code, `Invalid regular expression: ${pattern.message}`, { pattern: pattern.pattern, flags: pattern.flags }), { hint: "Fix the pattern or flags and retry the wait." });
+      let idleTimer: ReturnType<typeof setTimeout> | undefined, rejectResult!: (error: unknown) => void;
+      const cleanup = () => { clearTimeout(idleTimer); current.removeEventListener("abort", onAbort); monitor.waiters.delete(waiter); };
+      const onAbort = () => { cleanup(); rejectResult(current.reason); };
+      let complete!: () => void;
+      const waiter = { check() {
+        const active = [...monitor.inFlight].some(id => {
+          if (!pattern) return true;
+          pattern.lastIndex = 0;
+          return pattern.test(monitor.records.get(id)?.url || "");
         });
-      }, timeoutMsValue);
-      signal?.addEventListener("abort", onAbort, { once: true });
+        clearTimeout(idleTimer);
+        if (!active) idleTimer = setTimeout(complete, idle);
+      } };
+      const result = new Promise((resolve, reject) => {
+        rejectResult = reject;
+        complete = () => { cleanup(); resolve({ idle: true, idleSeconds: idle / 1000, inFlight: monitor.inFlight.size }); };
+      });
+      current.addEventListener("abort", onAbort, { once: true });
       monitor.waiters.add(waiter);
       waiter.check();
+      return { result, dispose: cleanup };
     });
   },
 });
@@ -784,8 +803,18 @@ registerTool({
     defaultNetworkLimit: DEFAULT_NETWORK_LIMIT,
     enablePreNavigationNetworkWatch,
     releaseRun(sessionId: string, runId: string) {
-      for (const monitor of [...networkMonitors.values(), ...consoleMonitors.values()]) {
-        if (monitor.sessionId === sessionId && monitor.runId === runId) monitor.enabled = false;
+      for (const monitor of networkMonitors.values()) {
+        if (monitor.sessionId === sessionId && monitor.runId === runId) {
+          monitor.enabled = false;
+          monitor.releaseWatch?.();
+          networkMonitors.delete(monitor.tabId);
+        }
+      }
+      for (const monitor of consoleMonitors.values()) {
+        if (monitor.sessionId === sessionId && monitor.runId === runId) {
+          monitor.enabled = false;
+          consoleMonitors.delete(monitor.tabId);
+        }
       }
     },
   });

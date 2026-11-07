@@ -39,7 +39,7 @@
   "wait.waitNotContinued": "작업이 재개되지 않음",
   "wait.loginVerificationCompleted": "로그인 확인됨",
   "wait.userContinued": "작업 재개됨",
-  "wait.waitForElementSelectorSupportsRawCssOrCss": "wait_for_element의 selector는 일반 CSS 또는 css:<selector>를 지원합니다. uid:<element_uid>는 스냅샷 참조이므로 이후 DOM 상태를 기다릴 수 없습니다.",
+  "wait.waitForElementSelectorSupportsRawCssOrCss": "wait_for_element의 target는 일반 CSS 또는 css:<target>를 지원합니다. uid:<element_uid>는 스냅샷 참조이므로 이후 DOM 상태를 기다릴 수 없습니다.",
   "wait.userWaitRuntimeIsUnavailable": "사용자 입력 서비스를 사용할 수 없습니다.",
   "wait.currentTaskHasNoWorkingTab": "현재 작업에 작업 탭이 없습니다.",
   "wait.waitUntilRequiresAValidAbsoluteTimeWithAn": "wait_until에는 시간대가 명시된 유효한 절대 시간이 필요합니다.",

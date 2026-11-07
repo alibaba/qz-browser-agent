@@ -36,7 +36,7 @@
   "page.highlightElement": "標示元素",
   "page.injectStyles": "注入樣式",
   "page.modifyDom": "修改 DOM",
-  "page.readArticleRequiresASelectorWhenSourceSelector": "source=selector 時，read_article 需要 selector。",
+  "page.readArticleRequiresASelectorWhenSourceSelector": "source=target 時，read_article 需要 target。",
   "page.searchTerms": "搜尋詞",
   "page.argumentCharacters": "（參數：{count} 個字元）",
   "page.contentScriptReturnedAnInvalidResponse": "內容腳本 {action} 傳回無效回應。",

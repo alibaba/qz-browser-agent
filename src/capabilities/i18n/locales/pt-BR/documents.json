@@ -81,7 +81,7 @@
   "documents.failedToCreateTemporaryPdfRenderTab": "Não foi possível abrir uma aba temporária para criar o PDF.",
   "documents.temporaryPdfRenderingRequiresTheChromeDebuggerRuntime": "Criar o PDF requer acesso ao depurador do Chrome.",
   "documents.chromePagePrinttopdfReturnedEmptyData": "Chrome Page.printToPDF não retornou dados.",
-  "documents.temporaryTabDidNotFinishLoading": "A aba temporária {tabId} não terminou de carregar.",
+  "documents.temporaryTabDidNotFinishLoading": "A aba temporária não terminou de carregar.",
   "documents.documentArtifactHasNoContent": "O documento gerado está vazio.",
   "documents.docxDocumentXmlNotFound": "O arquivo DOCX não contém document.xml.",
   "documents.xlsxWorkbookXmlNotFound": "O arquivo XLSX não contém workbook.xml.",

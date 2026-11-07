@@ -39,7 +39,7 @@
   "wait.waitNotContinued": "Tâche non reprise",
   "wait.loginVerificationCompleted": "Connexion vérifiée",
   "wait.userContinued": "Tâche reprise",
-  "wait.waitForElementSelectorSupportsRawCssOrCss": "Le selector de wait_for_element accepte du CSS brut ou css:<selector> ; uid:<element_uid> référence un instantané et ne permet pas d’attendre un état futur du DOM.",
+  "wait.waitForElementSelectorSupportsRawCssOrCss": "Le target de wait_for_element accepte du CSS brut ou css:<target> ; uid:<element_uid> référence un instantané et ne permet pas d’attendre un état futur du DOM.",
   "wait.userWaitRuntimeIsUnavailable": "Le service de saisie utilisateur est indisponible.",
   "wait.currentTaskHasNoWorkingTab": "La tâche actuelle n’a pas d’onglet de travail.",
   "wait.waitUntilRequiresAValidAbsoluteTimeWithAn": "wait_until nécessite une date et une heure absolues valides avec un fuseau horaire explicite.",

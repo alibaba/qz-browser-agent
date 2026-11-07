@@ -7,6 +7,8 @@ import {
 import { getConnectionConfig, updateConnectionConfig } from "../../src/background/mcp/connection-store.js";
 import { BridgeState } from "../../services/mcp-bridge/src/state.mjs";
 import { createMcpTransport } from "../../src/background/transports/mcp.js";
+import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
+import { toolError } from "../../src/shared/contracts/tool-error.js";
 
 const KEY = "_qingzhou_mcp_bridge";
 const ID = "_qingzhou_mcp_bridge_client_id";
@@ -115,7 +117,7 @@ test("unsupported service pauses after one health request and exposes upgrade gu
   const f = setup(t), r = f.start(); await drain();
   f.setResponder(path => path === "/health" ? Response.json({ service: "qz-browser-agent", protocolVersion: 1, instanceId: "old" }) : undefined);
   const status = await r.connect();
-  assert.equal(status.state, "paused"); assert.equal(status.lastError.code, "MCP_CONNECTION_INCOMPATIBLE"); assert.match(status.lastError.message, /tasks to finish.*latest stop.*ALL browsers.*extension in each browser.*latest connect/);
+  assert.equal(status.state, "paused"); assert.equal(status.lastError.code, "MCP_CONNECTION_INCOMPATIBLE"); assert.match(status.lastError.message, /original command.*latest CLI.*automatically.*reload the extension.*latest connect uri.*printed URL in this browser/);
   assert.equal(f.calls.length, 1); await f.tick(300000); await f.fireAlarm(); assert.equal(f.calls.length, 1); assert.equal(f.alarms.size, 0);
 });
 
@@ -398,7 +400,55 @@ test("result posting carries the exact pairing, instance and worker fence; error
   f.setRequests([{ id: "error-id", method: "get_skill" }]); await r.connect(); await until(() => f.calls.some(c => c.path.endsWith("/result")));
   const result = f.calls.find(c => c.path.endsWith("/result")).body, pair = f.calls.find(c => c.path.endsWith("/pair")).body;
   assert.equal(result.connectionId, pair.connectionId); assert.equal(result.instanceId, "instance-a"); assert.equal(result.pairingToken, pair.pairingToken);
+  assert.equal(result.ok, false); assert.equal(result.error, "missing", "protocol v1 clients read error as a string");
   assert.equal(result.code, "SKILL_NOT_FOUND"); assert.deepEqual(result.details, { name: "fixture" });
+});
+
+test("trusted thrown traces survive the extension and service error channel without reading business keys", async t => {
+  const f = setup(t), state = new BridgeState();
+  t.after(() => state.close());
+  let queued = [];
+  f.setResponder(async (path, body) => {
+    if (path === "/health") return Response.json({ service: "qz-browser-agent", protocolVersion: 1, features: { browserPairing: 1 }, instanceId: state.instanceId });
+    if (path.endsWith("/pair")) return Response.json(await state.pair(body));
+    if (path.endsWith("/poll")) {
+      const requests = queued; queued = [];
+      return Response.json({ requests, ...state.connectionInfo(body.client) });
+    }
+    if (path.endsWith("/result")) {
+      assert.equal(state.complete(body.requestId, body), true);
+      return Response.json({ ok: true });
+    }
+  });
+  const full = Array.from({ length: 8 }, (_, i) => ({ level: "trace", message: `line-${i}` }));
+  const canonical = bindToolResultPresentation(toolError("HOST_FAILURE", "Plain failure after logging.", {
+    hint: "Retry the operation.", details: { target: "css:button", trace: full.slice(-5) },
+  }), { _display: { script: { trace: full } } });
+  const timeout = toolError("TOOL_TIMEOUT", "The operation timed out.", { details: { trace: full.slice(-5) } });
+  const authored = Object.assign(new Error("Authored fields are not diagnostics."), {
+    code: "HOST_FAILURE", trace: ["business"], _display: { script: { trace: ["forged"] } },
+  });
+  const failures = { canonical, timeout, authored };
+  const r = f.start({ dispatch({ params }) { throw failures[params.kind]; } });
+  await drain(); await r.connect();
+  const pair = f.calls.find(call => call.path.endsWith("/pair")).body;
+  for (const kind of Object.keys(failures)) {
+    const pending = state.callExtension("execute_tool", { kind }, { clientId: pair.clientId });
+    const settled = pending.then(() => assert.fail("expected the service to reject"), error => error);
+    await until(() => state.pending.size === 1);
+    queued = await state.poll({ ...pair, pairingVersion: 1 }, { timeoutMs: 100 });
+    await f.tick(750);
+    await until(() => f.calls.filter(call => call.path.endsWith("/result")).length === Object.keys(failures).indexOf(kind) + 1);
+    const error = await settled;
+    assert.equal(error.code, failures[kind].code);
+    assert.equal(error.message, failures[kind].message);
+    if (kind === "canonical") {
+      assert.equal(error.hint, "Retry the operation.");
+      assert.deepEqual(error.details, { target: "css:button", trace: full.map(row => row.message) });
+      assert.deepEqual(canonical.details.trace, full.slice(-5), "wire construction leaves the original ToolError untouched");
+    } else if (kind === "timeout") assert.deepEqual(error.details.trace, full.slice(-5).map(row => row.message));
+    else assert.equal(error.details?.trace, undefined);
+  }
 });
 
 test("ambiguous Skill errors pass candidate identities through the extension bridge", async t => {
@@ -500,6 +550,171 @@ test("slow requests keep polling, duplicate request IDs execute once, and equiva
   pending.resolve({ delivered: true }); await until(() => f.calls.filter(c => c.path.endsWith("/result")).length === 2);
 });
 
+test("request cancellation targets one operation and late controls leave the next operation intact", async t => {
+  const f = setup(t), seen = [], gates = new Map();
+  const r = f.start({ dispatch(request) {
+    seen.push(request);
+    const gate = deferred(); gates.set(request.id, gate);
+    return new Promise((resolve, reject) => {
+      request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+      gate.promise.then(resolve, reject);
+    });
+  } });
+  await drain();
+  f.setRequests([
+    { id: "first", method: "execute_tool", params: { sessionId: "session", name: "run_script" } },
+    { id: "other", method: "execute_tool", params: { sessionId: "other-session", name: "run_script" } },
+  ]);
+  await r.connect(); await until(() => seen.length === 2);
+  f.setRequests([
+    { id: "first", method: "cancel_request" },
+    { id: "first", method: "cancel_request" },
+    { id: "unknown", method: "cancel_request" },
+  ]);
+  await f.tick(0);
+  const results = () => f.calls.filter(c => c.path.endsWith("/result")).map(c => c.body);
+  await until(() => results().length === 1);
+  assert.equal(seen[0].signal.aborted, true);
+  assert.equal(seen[0].signal.reason.code, "INTERRUPTED");
+  assert.equal(seen[1].signal.aborted, false);
+  assert.equal(results()[0].requestId, "first");
+  assert.equal(results()[0].ok, false);
+  assert.equal(results()[0].code, "INTERRUPTED");
+  assert.equal(seen.length, 2, "control messages never reach the tool dispatcher");
+
+  f.setRequests([
+    { id: "next", method: "execute_tool", params: { sessionId: "session", name: "run_script" } },
+    { id: "first", method: "cancel_request" },
+  ]);
+  await f.tick(0); await until(() => seen.length === 3);
+  assert.equal(seen[2].signal.aborted, false, "an old request ID cannot cancel new work in the same session");
+  gates.get("next").resolve({ continued: true });
+  gates.get("other").resolve({ unaffected: true });
+  gates.get("first").resolve({ late: true });
+  await until(() => results().length === 3);
+  assert.deepEqual(Object.fromEntries(results().filter(result => result.ok).map(result => [result.requestId, result.result])), {
+    next: { continued: true }, other: { unaffected: true },
+  });
+  assert.equal((await r.status()).state, "connected");
+});
+
+test("a cancelled dispatcher cannot report a late success even when it ignores its abort signal", async t => {
+  const f = setup(t), pending = deferred(); let request;
+  const r = f.start({ dispatch(value) { request = value; return pending.promise; } }); await drain();
+  f.setRequests([{ id: "slow", method: "execute_tool", params: { sessionId: "session", name: "run_script" } }]);
+  await r.connect(); await until(() => request);
+  f.setRequests([{ id: "slow", method: "cancel_request" }]); await f.tick(0);
+  assert.equal(request.signal.aborted, true);
+  pending.resolve({ late: true });
+  await until(() => f.calls.some(c => c.path.endsWith("/result")));
+  const results = f.calls.filter(c => c.path.endsWith("/result")).map(c => c.body);
+  assert.equal(results.length, 1, "the control message itself has no result acknowledgement");
+  assert.equal(results[0].requestId, "slow");
+  assert.equal(results[0].ok, false);
+  assert.equal(results[0].code, "INTERRUPTED");
+  assert.equal(results[0].result, undefined);
+});
+
+test("same-session continuation waits for cancelled cleanup but not its result upload", async t => {
+  const f = setup(t), cleanup = deferred(), upload = deferred(), seen = [];
+  let cleaned = false;
+  const r = f.start({ async dispatch(request) {
+    seen.push(request);
+    if (request.id === "first") {
+      try {
+        await new Promise((_resolve, reject) => request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true }));
+      } finally {
+        await cleanup.promise;
+        cleaned = true;
+      }
+    }
+    if (request.id === "parallel") throw Object.assign(new Error("Session is busy"), { code: "DRIVE_SESSION_BUSY" });
+    if (request.id === "next") assert.equal(cleaned, true, "the predecessor has released its session lease");
+    return { completed: request.id };
+  } });
+  await drain();
+  f.setResponder((path, body) => path.endsWith("/result") && body.requestId === "first" ? upload.promise : undefined);
+  f.setRequests([
+    { id: "first", method: "execute_tool", params: { sessionId: " session " } },
+    { id: "parallel", method: "execute_tool", params: { sessionId: "session" } },
+  ]);
+  await r.connect(); await until(() => seen.length === 2);
+  const results = () => f.calls.filter(c => c.path.endsWith("/result")).map(c => c.body);
+  await until(() => results().some(result => result.requestId === "parallel"));
+  assert.equal(results()[0].code, "DRIVE_SESSION_BUSY", "ordinary concurrent requests retain their existing dispatch semantics");
+  f.setRequests([
+    { id: "first", method: "cancel_request" },
+    { id: "next", method: "execute_tool", params: { sessionId: "session" } },
+    { id: "other", method: "execute_tool", params: { sessionId: "other-session" } },
+  ]);
+  await f.tick(0); await until(() => results().some(result => result.requestId === "other"));
+  assert.deepEqual(seen.map(request => request.id), ["first", "parallel", "other"]);
+  assert.equal(seen[0].signal.aborted, true);
+  cleanup.resolve();
+  await until(() => results().some(result => result.requestId === "next"));
+  assert.deepEqual(results().find(result => result.requestId === "next").result, { completed: "next" });
+  assert.equal(results().find(result => result.requestId === "first").code, "INTERRUPTED");
+  upload.resolve(Response.json({ ok: true }));
+  await drain();
+});
+
+test("cancelling a continuation during predecessor cleanup prevents its later dispatch", async t => {
+  const f = setup(t), cleanup = deferred(), seen = [];
+  const r = f.start({ async dispatch(request) {
+    seen.push(request.id);
+    if (request.id === "first") {
+      try {
+        await new Promise((_resolve, reject) => request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true }));
+      } finally {
+        await cleanup.promise;
+      }
+    }
+    return { completed: request.id };
+  } });
+  await drain();
+  f.setRequests([{ id: "first", method: "execute_tool", params: { sessionId: "session" } }]);
+  await r.connect(); await until(() => seen.length === 1);
+  f.setRequests([
+    { id: "first", method: "cancel_request" },
+    { id: "waiting", method: "execute_tool", params: { sessionId: "session" } },
+    { id: "waiting", method: "cancel_request" },
+    { id: "next", method: "execute_tool", params: { sessionId: "session" } },
+  ]);
+  await f.tick(0);
+  assert.deepEqual(seen, ["first"]);
+  cleanup.resolve();
+  const results = () => f.calls.filter(c => c.path.endsWith("/result")).map(c => c.body);
+  await until(() => results().length === 3);
+  assert.deepEqual(seen, ["first", "next"]);
+  assert.equal(results().find(result => result.requestId === "waiting").code, "INTERRUPTED");
+  assert.deepEqual(results().find(result => result.requestId === "next").result, { completed: "next" });
+});
+
+for (const interruption of ["timeout", "disconnect"]) {
+  test(`${interruption} while waiting for cancelled cleanup prevents a late dispatch`, async t => {
+    const f = setup(t), cleanup = deferred(), seen = [];
+    const r = f.start({ dispatch(request) { seen.push(request.id); return cleanup.promise; } });
+    await drain();
+    f.setRequests([{ id: "first", method: "execute_tool", params: { sessionId: "session" } }]);
+    await r.connect(); await until(() => seen.length === 1);
+    f.setRequests([
+      { id: "first", method: "cancel_request" },
+      { id: "waiting", method: "execute_tool", params: { sessionId: "session" }, timeoutMs: 1000 },
+    ]);
+    await f.tick(0);
+    if (interruption === "timeout") {
+      await f.tick(1000);
+      await until(() => f.calls.some(c => c.body?.requestId === "waiting"));
+      assert.equal(f.calls.find(c => c.body?.requestId === "waiting").body.ok, false);
+    } else {
+      await r.disconnect();
+    }
+    cleanup.resolve({ late: true }); await drain();
+    assert.deepEqual(seen, ["first"]);
+    if (interruption === "disconnect") assert.equal(f.calls.filter(c => c.path.endsWith("/result")).length, 0);
+  });
+}
+
 test("changing config while a poll is pending revokes the old response before dispatch", async t => {
   const f = setup(t), pending = deferred(); let dispatched = false;
   const r = f.start({ dispatch() { dispatched = true; } }); await drain();
@@ -519,7 +734,7 @@ test("public error details retain download recovery fields and strip arbitrary c
   await until(() => f.calls.filter(c => c.path.endsWith("/result")).length === 2);
   const results = f.calls.filter(c => c.path.endsWith("/result")).map(c => c.body);
   assert.deepEqual(results[0].details, { downloadId: 42, filename: "report.zip", reason: "USER_CANCELED" });
-  assert.deepEqual(results[1].details, {}); assert.equal(JSON.stringify(results).includes("private-key"), false);
+  assert.deepEqual(results[1].details, undefined); assert.equal(JSON.stringify(results).includes("private-key"), false);
 });
 
 

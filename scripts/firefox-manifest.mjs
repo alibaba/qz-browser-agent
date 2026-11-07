@@ -71,10 +71,10 @@ export function firefoxManifest(manifest) {
       if (!next.permissions.includes(permission)) next.permissions.push(permission);
     }
   }
-  if (Array.isArray(next.optional_permissions)) {
-    next.optional_permissions = next.optional_permissions.filter(permission => !droppedPermissions.has(permission));
-    if (!next.optional_permissions.length) delete next.optional_permissions;
-  }
+  next.optional_permissions = [...new Set([
+    ...(next.optional_permissions || []).filter(permission => !droppedPermissions.has(permission)),
+    "userScripts",
+  ])];
   // Firefox starts background.scripts and ignores background.service_worker.
   // Omit the unused key so web-ext does not warn BACKGROUND_SERVICE_WORKER_IGNORED.
   // The boot module patches Firefox APIs, then loads the shared service worker.

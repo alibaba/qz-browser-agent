@@ -14,6 +14,7 @@ let childLoaderId = "child-loader";
 let navigateDuringBind = false;
 let childDocumentAvailable = true;
 let findBindingError = null;
+let bindingTokens = [];
 const scriptCalls = [];
 globalThis.chrome = {
   runtime: { id: "extension-id" },
@@ -111,20 +112,23 @@ const runtime = createElementRuntime({
       }
       if (method === "DOM.describeNode") return { node: params.backendNodeId === 500
         ? { contentDocument: childDocumentAvailable ? { backendNodeId: 51 } : undefined }
-        : { backendNodeId: params.nodeId === 19 ? 144 : 44 } };
+        : { backendNodeId: params.objectId?.startsWith('batch-') ? 1000 + Number(params.objectId.slice(6)) : params.objectId === 'found-shadow-node' ? 45 : params.nodeId === 19 ? 144 : 44 } };
       if (method === "DOM.resolveNode") return { object: { objectId: "uid-node" } };
       if (method === "Runtime.evaluate") {
         const bridge = Number(params.contextId) === 8 ? childBridge : true;
-        return { result: { value: { extensionId: "extension-id", bridge } } };
+        return { result: { value: { extensionId: "extension-id", bridge, elementRefs: true } } };
       }
       if (method === "Runtime.callFunctionOn") {
-        if (params.arguments?.[0]?.value?.action === 'resolveFindElement') {
+        if (params.arguments?.[0]?.value?.action === 'resolveElementRefs') {
           if (findBindingError) throw findBindingError;
-          return { result: params.arguments[0].value.elementRef === 'removed'
-            ? { subtype: 'null', value: null } : { subtype: 'node', objectId: 'found-shadow-node' } };
+          bindingTokens = params.arguments[0].value.elementRefs;
+          return { result: { subtype: 'array', objectId: 'elements' } };
         }
         return { result: { value: { ok: true, action: params.arguments?.[0]?.value?.action || "" } } };
       }
+      if (method === 'Runtime.getProperties') return { result: bindingTokens.map((token, index) => ({ name: String(index),
+        value: token === 'removed' ? { subtype: 'null' } : { subtype: 'node', objectId: token.startsWith('batch-') ? token : token === 'live' ? 'found-shadow-node' : 'found-light-node' },
+      })) };
       if (method === "Runtime.releaseObjectGroup") return {};
       throw new Error(`unexpected CDP method ${method}`);
     };
@@ -148,7 +152,7 @@ const runtime = createElementRuntime({
         return {};
       }
       if (method === "Runtime.evaluate") {
-        return { result: { value: { extensionId: "extension-id", bridge: oopifBridge } } };
+        return { result: { value: { extensionId: "extension-id", bridge: oopifBridge, elementRefs: true } } };
       }
       if (method === "DOM.resolveNode") return { object: { objectId: "oopif-node" } };
       if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true, action: params.arguments?.[0]?.value?.action || "" } } };
@@ -225,36 +229,50 @@ assert.equal(bound.loaderId, "loader-live");
 assert.deepEqual(bound.ids, [0, 44], "a selector that matches two nodes must not bind the first");
 
 {
-  const light = { results: [{ selector: '#only', tag: 'button', actionable: true, line: 2, lineRange: [2, 2] }] };
-  const before = debuggerUses;
-  assert.equal(JSON.stringify(await runtime.addElementTargetsToFindResult(light, 5, context)),
-    '{"results":[{"selector":"#only","tag":"button","actionable":true,"line":2,"lineRange":[2,2],"target":"css:#only"}]}');
-  assert.equal(debuggerUses, before, 'light-DOM finds must not attach the debugger');
+  const light = { results: [{ selector: '#only', tag: 'button', actionable: true, line: 2, lineRange: [2, 2], _elementRef: 'light' }] };
+  const first = await runtime.addElementTargetsToFindResult(light, 5, context);
+  assert.match(first.results[0].target, /^uid:t5\.[0-9a-z]{6}\.\d+$/);
+  assert.equal(Object.hasOwn(first.results[0], '_elementRef'), false);
   const input = { results: [light.results[0], { selector: '', text: 'Shadow', actionable: true, _elementRef: 'live' }] };
   const found = await runtime.addElementTargetsToFindResult(input, 5, context);
-  assert.equal(JSON.stringify(found.results[0]), JSON.stringify({ ...light.results[0], target: 'css:#only' }));
+  assert.match(found.results[0].target, /^uid:t5\.[0-9a-z]{6}\.\d+$/);
+  assert.equal((await runtime.resolveElementReference(5, { target: found.results[0].target }, context)).ref.backendNodeId,
+    (await runtime.resolveElementReference(5, { target: first.results[0].target }, context)).ref.backendNodeId,
+    'both observations bind the same original node without replacing the older snapshot');
   const hit = found.results[1];
   assert.match(hit.target, /^uid:t5\./);
   assert.equal(hit.actionable, true);
   assert.equal(Object.hasOwn(hit, '_elementRef'), false);
   assert.equal(runtime.elementUidTabId([hit.target]), 5);
   const ref = await runtime.resolveElementReference(5, { target: hit.target }, context);
-  assert.equal(ref.ref.backendNodeId, 44);
+  assert.equal(ref.ref.backendNodeId, 45);
   assert.equal(ref.ref.loaderId, 'loader-live');
   assert.equal((await runtime.callElement(5, ref, 'inspectElement', {}, context)).action, 'inspectElement');
   await assert.rejects(runtime.resolveElementReference(5, { target: hit.target }, { sessionId: 'another-session' }), { code: 'ELEMENT_UID_SESSION_MISMATCH' });
   assert.ok(commands.some(command => command.method === 'DOM.describeNode' && command.params.objectId === 'found-shadow-node'));
   assert.ok(commands.some(command => command.method === 'Runtime.releaseObjectGroup' && command.params.objectGroup.startsWith('qz-uid-find-')));
   const removed = await runtime.addElementTargetsToFindResult({ results: [{ selector: '', actionable: true, _elementRef: 'removed' }] }, 5, context);
-  assert.deepEqual(removed, { results: [{ selector: '', actionable: false }] });
+  assert.deepEqual(removed, { results: [{ actionable: false }] });
   try {
     findBindingError = new Error('Debugger unavailable');
     const failed = await runtime.addElementTargetsToFindResult(input, 5, context);
-    assert.deepEqual(failed.results[1], { selector: '', text: 'Shadow', actionable: false });
-    assert.deepEqual(failed.results[0], found.results[0]);
+    assert.deepEqual(failed.results[1], { text: 'Shadow', actionable: false });
+    assert.equal(failed.results[0].target, 'css:#only');
+    assert.equal(failed.results[0].uid, undefined);
     findBindingError = new ToolExecutionError('OPERATION_ABORTED', 'cancelled');
     await assert.rejects(runtime.addElementTargetsToFindResult(input, 5, context), { code: 'OPERATION_ABORTED' });
   } finally { findBindingError = null; }
+}
+
+{
+  const before = commands.length;
+  const result = await runtime.addElementTargetsToFindResult({ results: Array.from({ length: 100 }, (_, index) => ({ selector: `.item-${index}`, _elementRef: `batch-${index}` })) }, 5, context);
+  assert.equal(new Set(result.results.map(item => item.target)).size, 100);
+  const issued = commands.slice(before);
+  assert.equal(issued.filter(item => item.method === 'Runtime.callFunctionOn').length, 1);
+  assert.equal(issued.filter(item => item.method === 'Runtime.getProperties').length, 1);
+  assert.equal(issued.filter(item => item.method === 'DOM.describeNode').length, 100);
+  assert.equal(issued.filter(item => item.method === 'DOM.querySelectorAll').length, 0);
 }
 
 const beforeChildBind = commands.length;
@@ -353,7 +371,7 @@ assert.equal(fresh.selector, "", "a backend node uid keeps its direct node resol
 
 targetResolutions.length = 0;
 await runtime.resolveElementReference(undefined, { target: "uid:t5.000001.1", readOnly: true }, context);
-assert.equal(targetResolutions.at(-1).readOnly, false, "node-backed uids keep the ownership check");
+assert.equal(targetResolutions.at(-1).readOnly, true, "a declared read-only node UID uses the same non-claiming page access as a selector UID");
 
 const debuggerBeforeFallback = debuggerUses;
 runtime.registerElementRef({
@@ -547,10 +565,14 @@ runtime.registerElementRef({
   selector: "main > img.card:nth-of-type(2)",
   backendNodeId: 44,
 });
+const foreignNodeRead = await runtime.resolveElementReference(15, { target: "uid:t15.000006.1", readOnly: true }, context);
+assert.equal(foreignNodeRead.tabId, 15);
+assert.equal(foreignNodeRead.ref.backendNodeId, 44);
+assert.equal(targetResolutions.at(-1).readOnly, true);
 await assert.rejects(
-  runtime.resolveElementReference(15, { target: "uid:t15.000006.1", readOnly: true }, context),
+  runtime.resolveElementReference(15, { target: "uid:t15.000006.1" }, context),
   error => error?.code === "STALE_ELEMENT_UID",
-  "a node-backed uid still has to match a tab this session owns",
+  "a node-backed uid still requires ownership for a mutating operation",
 );
 ownedTabs = [15];
 runtime.registerElementRef({

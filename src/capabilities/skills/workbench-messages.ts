@@ -32,8 +32,8 @@ const messages = defineMessages("skill-workbench", {
     "en": "Description of the resource's purpose."
   },
   "resourceContent": {
-    "zh-CN": "资源内容；script 须为浏览器 JS（推荐单个 async () => { ... } 表达式），先填 path/title 再填长 content。",
-    "en": "Resource content; scripts must be browser JS (prefer a single async () => { ... } expression). Supply path/title before long content."
+    "zh-CN": "资源内容；新建 script 统一使用 runtime:script 外层模式（顶层 await/return，页面内代码通过 tools.evaluate 执行），先填 path/title 再填长 content。",
+    "en": "Resource content; new scripts use runtime:script outside pages (top-level await/return, in-page code via tools.evaluate). Supply path/title before long content."
   },
   "resourceAction": {
     "zh-CN": "资源操作：upsert/set 整体写入；replace/patch/edit 精确替换；rename 重命名；delete/remove 删除（仅传 path+content 时默认 set）。",
@@ -148,8 +148,8 @@ const messages = defineMessages("skill-workbench", {
     "en": "Text to prepend for prepend."
   },
   "setContent": {
-    "zh-CN": "set 时的完整资源内容（文本或可序列化 JSON）。path=plugin.json 时，settings.fields[].type 只支持 text|secret|url|boolean|number|select，width 只支持 full|half，分组用 settings.layout.sections（完整约束见已加载 skill-workbench）；script 资源须为浏览器 JS（推荐单个 async () => { ... } 表达式）。一次调用只改一个资源，先填 path/type/title/description，最后填写本字段。",
-    "en": "Full resource content for set (string or serializable JSON). For path=plugin.json, settings.fields[].type supports text|secret|url|boolean|number|select, width supports full|half, and sections use settings.layout.sections (see the loaded skill-workbench for the full contract); scripts must be browser JS (prefer a single async () => { ... } expression). Edit one resource per call, supplying path/type/title/description first and this field last."
+    "zh-CN": "set 时的完整资源内容（文本或可序列化 JSON）。path=plugin.json 时，settings.fields[].type 只支持 text|secret|url|boolean|number|select，width 只支持 full|half，分组用 settings.layout.sections（完整约束见已加载 skill-workbench）；新 script 资源使用 runtime:script 外层模式（顶层 await/return，页面代码通过 tools.evaluate）。一次调用只改一个资源，先填 path/type/title/description，最后填写本字段。",
+    "en": "Full resource content for set (string or serializable JSON). For path=plugin.json, settings.fields[].type supports text|secret|url|boolean|number|select, width supports full|half, and sections use settings.layout.sections (see the loaded skill-workbench for the full contract); new scripts use runtime:script outside pages (top-level await/return, page code through tools.evaluate). Edit one resource per call, supplying path/type/title/description first and this field last."
   },
   "updateName": {
     "zh-CN": "必填。要更新的 Skill 名称。",
@@ -212,8 +212,12 @@ const messages = defineMessages("skill-workbench", {
     "en": "Skill scope to list (all/global/site/resident). Default: all."
   },
   "zipUrl": {
-    "zh-CN": "必填。当前工作标签页上已确认的 Skill Zip 完整 http(s) 下载地址（复用该页认证态）。",
-    "en": "Required confirmed http(s) Skill ZIP download URL from the current working tab (reuses that tab's authenticated context)."
+    "zh-CN": "必填。来源页面上已确认的 Skill Zip 完整 http(s) 下载地址（复用该页认证态）。",
+    "en": "Required confirmed http(s) Skill ZIP download URL from the source page (reuses that page's authenticated context)."
+  },
+  "zipPage": {
+    "zh-CN": "必填。来源页面的 tabRef：当前任务的标签页别名或 open_tab、list_tabs 返回的引用。",
+    "en": "Required source-page tabRef: a task-owned tab alias or the reference returned by open_tab or list_tabs."
   },
   "zipOverwrite": {
     "zh-CN": "是否覆盖本地同名 Skill，默认 false（仅用户明确确认后传 true）。",
@@ -268,8 +272,8 @@ const messages = defineMessages("skill-workbench", {
     "en": "Import Skill ZIP from page"
   },
   "importZipDescription": {
-    "zh-CN": "使用当前任务工作标签页的认证上下文下载并导入已确认的 Skill Zip URL（不探测或猜测 URL，默认不覆盖同名 Skill）。",
-    "en": "Download and import a confirmed Skill ZIP URL using the current working tab's authenticated context (does not scan or guess URLs; refuses to overwrite by default)."
+    "zh-CN": "使用 tabRef 指定页面的认证上下文下载并导入已确认的 Skill Zip URL（不探测或猜测 URL，默认不覆盖同名 Skill）。",
+    "en": "Download and import a confirmed Skill ZIP URL using the page selected by tabRef and its authenticated context (does not scan or guess URLs; refuses to overwrite by default)."
   },
   "importGit": {
     "zh-CN": "探测并导入 Git 仓库",

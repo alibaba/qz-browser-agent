@@ -254,8 +254,8 @@ const scenarios = [
     description: "错误态时间线自动展开，并选中出错步骤。",
     entries: () => [
       user("点一下保存按钮。", "eu1"),
-      tool("read_dom", { selector: "button" }, sampleDomResult("按钮片段", "button"), "et1"),
-      tool("act_on_element", { target: "uid:btn-save", action: "click" }, { message: "element is detached from DOM", code: "stale-element" }, "et2", { isError: true }),
+      tool("read_dom", { target: "button" }, sampleDomResult("按钮片段", "button"), "et1"),
+      tool("act_on_element", { target: "uid:btn-save", action: "click" }, { code: "STALE_ELEMENT_UID", message: "Element target is stale or unknown.", hint: "Take a fresh get_ax_tree snapshot, then retry.", details: { target: "uid:btn-save" } }, "et2", { isError: true }),
       tool("screenshot", { fullPage: false }, { method: "viewport", width: 1280, height: 720, note: "保存按钮已重新渲染", ...SAMPLE_PAGE_CONTEXT }, "et3"),
       assistant("按钮在点击前重新渲染了，需要重新定位后再操作。", "ea1"),
     ],

@@ -53,7 +53,7 @@ export default defineMessages("page", {
   "highlightElementShort": { "zh-CN": "高亮元素", en: "Highlight" },
   "injectStyles": { "zh-CN": "注入样式", en: "Inject styles" },
   "modifyDom": { "zh-CN": "修改 DOM", en: "Modify DOM" },
-  "readArticleRequiresASelectorWhenSourceSelector": { "zh-CN": "read_article 使用 source=selector 时必须提供 selector。", en: "read_article requires a selector when source=selector." },
+  "readArticleRequiresASelectorWhenSourceSelector": { "zh-CN": "read_article 使用 source=target 时必须提供 target。", en: "read_article requires target when source=target." },
   "searchTerms": { "zh-CN": "搜索词", en: "Search terms" },
   "script": { "zh-CN": "脚本", en: "Script" },
   "argumentCharacters": { "zh-CN": "(参数 {count} 字符)", en: "(Arguments: {count} characters)" },

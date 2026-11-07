@@ -36,7 +36,7 @@
   "page.highlightElement": "Destacar elemento",
   "page.injectStyles": "Injetar estilos",
   "page.modifyDom": "Modificar DOM",
-  "page.readArticleRequiresASelectorWhenSourceSelector": "read_article exige selector quando source=selector.",
+  "page.readArticleRequiresASelectorWhenSourceSelector": "read_article exige target quando source=target.",
   "page.searchTerms": "Termos de pesquisa",
   "page.argumentCharacters": "(Argumentos: {count} caracteres)",
   "page.contentScriptReturnedAnInvalidResponse": "O script de conteúdo {action} retornou uma resposta inválida.",

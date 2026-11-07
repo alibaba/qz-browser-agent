@@ -68,8 +68,10 @@ for (const vision of [true, false]) for (const canManageSessions of [true, false
     "Restricted sessions receive one goal prohibition without root goal instructions");
   assert.ok(system.includes('target = "uid:" <element_uid> | "css:" <css_selector>'));
   assert.ok(system.includes('schedule.type="once"'));
-  assert.ok(system.includes('runtime:"inner"'));
-  assert.ok(system.includes('network.allowedOrigins'));
+  assert.match(system, en ? /Use evaluate\(\{tabRef, code, args\}\) for a self-contained function[\s\S]*Page functions cannot call the qz SDK or capture outer variables/ : /页面内求值使用 evaluate\(\{tabRef, code, args\}\)[\s\S]*页面函数不能调用 qz SDK 或捕获外层变量/);
+  assert.match(system, en ? /Use run_script for multi-step dependencies, branching, loops, and data processing/ : /多步依赖、条件分支、循环与数据处理使用 run_script/);
+  assert.match(system, en ? /it runs outside pages without a DOM, survives page navigation/ : /它在页面外运行（无 DOM，页面导航不中断脚本）/);
+  assert.match(system, en ? /bind an explicit page with qz\.tab\(tabRef\)/ : /qz\.tab\(tabRef\) 绑定明确页面/);
   assert.equal(imageMessages.length, vision ? 2 : 1);
   if (en) assert.doesNotMatch(JSON.stringify(imageMessages), /\p{Script=Han}/u);
   if (vision) assert.equal(imageMessages[1].content[1].image_url.url, image);
@@ -113,7 +115,7 @@ const rendered = [
   prompts.COMPACT_SYSTEM_PROMPT, prompts.COMPACT_USER_PROMPT, titleMessages[0].content,
 ].join("\n");
 if (en) assert.doesNotMatch(rendered, /\p{Script=Han}/u);
-else assert.match(rendered, /当前任务工作标签页/);
+else assert.match(rendered, /当前任务最近访问的标签页/);
 
 assert.ok(context.formatDynamicContext({ tracker: { mode: "pagination", current: 3, total: 5, unit: "pages" } })
   .includes(en ? "Progress: 3/5 pages" : "进度: 3/5pages"));

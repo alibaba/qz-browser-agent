@@ -5,6 +5,8 @@ import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { t } from "../../shared/i18n/backend.js";
 import { ToolExecutionError } from "../tools/arguments.js";
 import { copyToolEffects } from "../tools/effects.js";
+import { getToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { isToolFailure, isToolValue } from "../../shared/contracts/tool-error.js";
 import type { SkillBuiltinExecutor } from "./skill-tool-runtime.js";
 
 type Data = Record<string, unknown>;
@@ -21,11 +23,13 @@ export async function selectSkillResults(renderer: SkillRenderer, result: unknow
   }));
   const invalidItems = () => new ToolExecutionError("SKILL_SELECTION_INVALID_ITEMS", labels.invalidItems);
   const outer = record(result);
-  const wrapped = Object.hasOwn(outer, "result") && ["_plugin", "ok", "hasResult", "resultType", "engine"]
-    .some(key => Object.hasOwn(outer, key));
+  const plugin = record(getToolResultPresentation(result)._plugin);
+  const direct = isToolValue(result);
+  const wrapped = !direct && Object.hasOwn(outer, "result") && (plugin.runtime || ["ok", "hasResult", "resultType", "engine"]
+    .some(key => Object.hasOwn(outer, key)));
   const inner = wrapped ? outer.result : result;
-  if (failed(outer) || failed(record(inner))) return result;
-  const payload = mcpData(inner, record(outer._plugin).runtime === "mcp");
+  if (isToolFailure(result) || !direct && outer.ok !== true && failed(record(inner))) return result;
+  const payload = mcpData(inner, plugin.runtime === "mcp");
   const data = renderer.sourcePath ? atPath(payload, renderer.sourcePath) : payload;
   const candidates = atPath(data, renderer.itemsPath || "items");
   if (!Array.isArray(candidates) || candidates.length > 50) throw invalidItems();
@@ -72,10 +76,8 @@ export async function selectSkillResults(renderer: SkillRenderer, result: unknow
   }
   const selected = { selectedIds, selectedItems: selectedIds.map(id => items.get(id)!), totalItems: items.size };
   // The wait transcript retains the candidate presentation. The model receives only chosen rows.
-  const metadata = record(inner)._plugin || outer._plugin;
-  const compact = { ...selected, ...(metadata ? { _plugin: metadata } : {}) };
-  return copyToolEffects(result, wrapped ? { ...outer, result: compact } : {
-    ...compact, ...(outer.trace ? { trace: outer.trace } : {}),
+  return copyToolEffects(result, wrapped ? { ...outer, result: selected } : {
+    ...selected, ...(!direct && outer.trace ? { trace: outer.trace } : {}),
   });
 }
 

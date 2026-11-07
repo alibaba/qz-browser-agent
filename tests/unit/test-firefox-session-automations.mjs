@@ -155,7 +155,8 @@ test("firefox manage_sessions refuses automation actions and chrome still accept
   assert.equal(disabled.description.includes("create_automation"), false);
   const result = await refused;
   assert.equal(result.code, "AUTOMATION_DISABLED");
-  assert.match(result.error, /Firefox/);
+  assert.match(result.message, /Firefox/);
+  assert.equal(result.error, undefined, 'Session errors use the same ToolError contract as other tools');
   assert.equal(calls.length, 1);
 });
 

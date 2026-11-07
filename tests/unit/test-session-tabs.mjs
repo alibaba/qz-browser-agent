@@ -25,6 +25,11 @@ let guardrails = {};
 let failPersist = false;
 let clock = 0;
 let nextTabId = 6;
+const sessionRecords = {
+  a: { id: "a", parentSessionId: "0" },
+  b: { id: "b", parentSessionId: "0" },
+  child: { id: "child", parentSessionId: "a" },
+};
 
 const supervisor = {
   getRuntime(sessionId) {
@@ -75,11 +80,7 @@ const sessionTabs = createSessionTabs({
   windowTarget: { async resolveForNewTab() { return 7; } },
   storage: createMemoryStorage(),
   ready: async () => {},
-  getSessions: async () => ({
-    a: { id: "a", parentSessionId: "0" },
-    b: { id: "b", parentSessionId: "0" },
-    child: { id: "child", parentSessionId: "a" },
-  }),
+  getSessions: async () => sessionRecords,
   isAutomationSessionFamily: () => false,
   setRuntime(sessionId, patch) {
     const next = { ...(runtimes.get(sessionId) || {}), ...patch };
@@ -224,8 +225,41 @@ const pendingWorking = await sessionTabs.getWorkingTabContext("pending-owner");
 assert.equal(pendingWorking?.id, 13);
 assert.equal(pendingWorking?.url, "https://pending.example/start");
 const implicitPendingTarget = await sessionTabs.resolveTargetTab({ sessionId: "pending-owner" });
-assert.equal(implicitPendingTarget.ok, true, "an omitted tabId must still resolve to the navigating working tab");
-assert.equal(implicitPendingTarget.tabId, 13);
+assert.equal(implicitPendingTarget.ok, false, "an omitted target never selects a recent or active tab");
+assert.equal(implicitPendingTarget.code, "TAB_REF_REQUIRED");
+assert.equal(implicitPendingTarget.tabId, null);
+const explicitPendingTarget = await sessionTabs.resolveTargetTab({ sessionId: "pending-owner", tabId: 13 });
+assert.equal(explicitPendingTarget.ok, true, "an explicitly selected navigating tab remains usable");
+assert.equal(explicitPendingTarget.tabId, 13);
+
+tabs.set(14, {
+  id: 14,
+  url: "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html?https://example.test/file.pdf",
+  title: "file.pdf",
+  windowId: 1,
+  active: false,
+  pinned: false,
+  groupId: -1,
+});
+tabs.set(15, {
+  id: 15,
+  url: "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html",
+  title: "PDF",
+  windowId: 1,
+  active: false,
+  pinned: false,
+  groupId: -1,
+});
+runtimes.get("blank-owner").ownedTabIds.push(14, 15);
+for (const tabId of [14, 15]) {
+  await assert.rejects(sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId, checkOnly: true }),
+    { code: "PDF_PAGE_UNSUPPORTED" });
+  const tabOnly = await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId, tabOnly: true, checkOnly: true });
+  assert.equal(tabOnly.ok, true, "PDF tabs still support navigation and closing");
+}
+const bareForeignPdf = await sessionTabs.resolveTargetTab({ sessionId: "a", tabId: 15, checkOnly: true });
+assert.equal(bareForeignPdf.ok, false);
+assert.equal(bareForeignPdf.code, "SESSION_TAB_NOT_WEB");
 
 runtimes.delete("blank-owner");
 runtimes.delete("pending-owner");
@@ -233,6 +267,8 @@ tabs.delete(10);
 tabs.delete(11);
 tabs.delete(12);
 tabs.delete(13);
+tabs.delete(14);
+tabs.delete(15);
 
 await sessionTabs.handleTabRemoved(4);
 assert.equal(runtimes.get("a").workingTabId, null);
@@ -249,6 +285,14 @@ await sessionTabs.updateWorkingTab({
 });
 assert.equal(sessionTabs.owns("a", 400), true, "screen actions should claim a mutated tab for the current task");
 await sessionTabs.handleTabRemoved(400);
+
+for (const action of ["hover", "double_click", "drag"]) {
+  tabs.set(401, webTab(401, "https://element-action.example/page"));
+  await sessionTabs.updateWorkingTab({ sessionId: "a", tab: tabs.get(401),
+    source: "tool:act_on_element", toolName: "act_on_element", action });
+  assert.equal(sessionTabs.owns("a", 401), true, `${action} should claim the page for its task`);
+  await sessionTabs.handleTabRemoved(401);
+}
 
 tabs.set(5, webTab(5, "https://contended.example/page"));
 const contended = await Promise.all([
@@ -360,6 +404,108 @@ assert.equal(childClose.skipped, false);
 assert.deepEqual(childClose.closed, [3]);
 assert.equal(removed.at(-1), 3);
 assert.deepEqual(getOwnedTabIds(runtimes.get("child")), []);
+
+sessionRecords.drive = { id: "drive", source: "external-drive", parentSessionId: "0" };
+tabs.set(10, webTab(10, "https://created.example/a"));
+tabs.set(11, webTab(11, "https://claimed.example/b"));
+tabs.set(12, webTab(12, "https://handoff.example/c"));
+runtimes.set("drive", {
+  sessionId: "drive",
+  ownedTabIds: [10, 11, 12],
+  createdTabIds: [10, 12],
+  driveHandoffTabIds: [12],
+  workingTabId: 11,
+});
+const driveClose = await sessionTabs.closeOwnedTabs("drive", { source: "test_cleanup" });
+assert.deepEqual(driveClose.closed, [10]);
+assert.equal(tabs.has(11), true);
+assert.equal(tabs.has(12), true);
+assert.deepEqual(getOwnedTabIds(runtimes.get("drive")), []);
+assert.deepEqual(runtimes.get("drive").createdTabIds, []);
+assert.deepEqual(runtimes.get("drive").driveHandoffTabIds, []);
+
+tabs.set(20, webTab(20, "https://kept.example/a"));
+tabs.set(21, webTab(21, "https://kept.example/b"));
+tabs.set(22, webTab(22, "https://next.example/c"));
+runtimes.set("drive-keep", {
+  sessionId: "drive-keep",
+  ownedTabIds: [20, 21, 22],
+  createdTabIds: [20, 21, 22],
+  driveHandoffTabIds: [],
+  workingTabId: 20,
+});
+sessionRecords["drive-keep"] = { id: "drive-keep", source: "external-drive", parentSessionId: "0" };
+const handed = await sessionTabs.settleStoppedDriveTabs("drive-keep", {
+  keepTabs: true,
+  source: "stop_session",
+  ownedTabIds: [20, 21],
+  createdTabIds: [20, 21],
+  driveHandoffTabIds: [],
+  runIds: ["drive-old"],
+});
+assert.deepEqual(handed.closed, []);
+assert.equal(tabs.has(20), true);
+assert.equal(tabs.has(21), true);
+assert.equal(tabs.has(22), true);
+assert.deepEqual(getOwnedTabIds(runtimes.get("drive-keep")), [22]);
+assert.deepEqual(runtimes.get("drive-keep").createdTabIds, [22]);
+assert.equal(runtimes.get("drive-keep").workingTabId, null);
+
+for (const id of [23, 24, 25, 26, 27]) tabs.set(id, webTab(id, `https://selective.example/${id}`));
+runtimes.set("drive-selective", {
+  sessionId: "drive-selective", ownedTabIds: [23, 24, 25, 26, 27], createdTabIds: [23, 24, 25, 27],
+  driveHandoffTabIds: [25], tabAliases: { result: 23, intermediate: 24 }, workingTabId: 23,
+});
+const selective = await sessionTabs.settleStoppedDriveTabs("drive-selective", {
+  keepTabIds: [23], ownedTabIds: [23, 24, 25, 26], createdTabIds: [23, 24, 25], driveHandoffTabIds: [25],
+});
+assert.deepEqual(selective.closed, [24]);
+for (const id of [23, 25, 26, 27]) assert.equal(tabs.has(id), true, "selected, handed-back, user, and later-run tabs remain open");
+assert.deepEqual(getOwnedTabIds(runtimes.get("drive-selective")), [27]);
+assert.deepEqual(runtimes.get("drive-selective").createdTabIds, [27]);
+assert.deepEqual(runtimes.get("drive-selective").tabAliases, {}, "kept pages are released from the ended session");
+
+tabs.set(30, webTab(30, "https://old.example/a"));
+tabs.set(31, webTab(31, "https://new.example/b"));
+runtimes.set("drive-next", {
+  sessionId: "drive-next",
+  ownedTabIds: [30, 31],
+  createdTabIds: [30, 31],
+  workingTabId: 31,
+});
+const closedRound = await sessionTabs.settleStoppedDriveTabs("drive-next", {
+  keepTabs: false,
+  source: "stop_session",
+  ownedTabIds: [30],
+  createdTabIds: [30],
+  driveHandoffTabIds: [],
+  runIds: ["drive-old"],
+});
+assert.deepEqual(closedRound.closed, [30]);
+assert.equal(tabs.has(30), false);
+assert.equal(tabs.has(31), true);
+assert.deepEqual(runtimes.get("drive-next").createdTabIds, [31]);
+
+tabs.set(40, webTab(40, "https://live.example/a"));
+runtimes.set("drive-live", {
+  sessionId: "drive-live",
+  ownedTabIds: [40],
+  createdTabIds: [40],
+  workingTabId: 40,
+});
+const spared = await sessionTabs.settleStoppedDriveTabs("drive-live", {
+  keepTabs: false,
+  source: "stop_session",
+  ownedTabIds: [40],
+  createdTabIds: [40],
+  driveHandoffTabIds: [],
+  runIds: ["drive-old"],
+  blocked: () => true,
+});
+assert.deepEqual(spared, { closed: [], released: false });
+assert.equal(tabs.has(40), true);
+assert.deepEqual(runtimes.get("drive-live").createdTabIds, [40]);
+assert.equal(runtimes.get("drive-live").workingTabId, 40);
 
 assert.equal(normalizeWorkingTab({ id: 0, url: "https://invalid.example" }), null);
 assert.equal(normalizeWorkingTab({ id: 5, url: "chrome://settings" }), null);

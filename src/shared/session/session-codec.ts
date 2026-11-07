@@ -1,3 +1,4 @@
+import { isToolFailure } from "../contracts/tool-error.js";
 import { t } from "../i18n/backend.js";
 import { CURRENT_SESSION_VERSION, CURRENT_SESSION_RECORD_VERSION, SESSION_RECORD_TYPE, assertSessionRecordReadable, assertConversationReadable } from "./session-format.js";
 import { isBeijingDateTime, nowBeijingDateTime } from "../time-utils.js";
@@ -177,7 +178,7 @@ export function transcriptFromConversation(saved: unknown) {
         name: call?.name || "tool",
         args: call?.args || {},
         result,
-        isError: Boolean(result && typeof result === "object" && record(result).error),
+        isError: typeof msg._toolIsError === "boolean" ? msg._toolIsError : isToolFailure(result),
         image: null,
         ...normalizeTranscriptTiming({
           timestamp: call?.timestamp || entry.timestamp,
@@ -1100,7 +1101,7 @@ function normalizeTranscriptEvent(input: unknown): TranscriptEntry | null {
       statusText: typeof event.statusText === "string" ? event.statusText : "",
       rateLimit: event.rateLimit == null ? null : cloneJsonValue(event.rateLimit),
       result: event.result == null ? null : cloneJsonValue(event.result),
-      isError: !!event.isError,
+      ...(typeof event.isError === "boolean" ? { isError: event.isError } : {}),
       isRunning,
       image: typeof event.image === "string" ? event.image : null,
       ...meta,
@@ -1424,6 +1425,7 @@ function normalizeMessage(input: unknown): SessionMessage | null {
       tool_call_id: toolCallId,
       content: truncate(contentToText(msg.content), MAX_TOOL_RESULT_CHARS),
     };
+    if (typeof msg._toolIsError === "boolean") out._toolIsError = msg._toolIsError;
     if (typeof msg.trim === "boolean") out.trim = msg.trim;
     return out;
   }

@@ -1,3 +1,4 @@
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -113,6 +114,7 @@ const storage = {
 };
 
 globalThis.chrome = {
+  i18n: { getUILanguage: () => "zh-CN" },
   storage: {
     local: {
       async get(key) {
@@ -134,6 +136,8 @@ globalThis.chrome = {
     },
   },
 };
+
+await (await import("../../src/shared/i18n/index.js")).initializeLanguage();
 
 const shared = await import("../../src/shared/skills/skill-manifest.js");
 const skills = await import("../../src/background/skills/runtime.js");
@@ -208,7 +212,7 @@ assert.match(
 );
 assert.match(
   mcpRuntimeSource,
-  /async function listTools[\s\S]*tools\.loadedSkillNames\(sessionId,\s*params\.loadedPluginSkillNames \|\| \[\]\)[\s\S]*loadedPluginSkillNames/,
+  /async function toolCatalog[\s\S]*tools\.loadedSkillNames\(sessionId,\s*params\.loadedPluginSkillNames \|\| \[\]\)[\s\S]*async function listTools[\s\S]*toolCatalog\(params, "mcp_list_tools"\)/,
   "MCP bridge list_tools should include tools from skills loaded in the session",
 );
 assert.doesNotMatch(
@@ -223,12 +227,12 @@ assert.match(
 );
 assert.match(
   mcpRuntimeSource,
-  /async function executeTool[\s\S]*tools\.loadedSkillNames\(sessionId,\s*params\.loadedPluginSkillNames \|\| \[\]\)[\s\S]*loadedPluginSkillNames/,
+  /function toolContext[\s\S]*tools\.loadedSkillNames\(sessionId,\s*params\.loadedPluginSkillNames \|\| \[\]\)[\s\S]*async function executeTool[\s\S]*toolContext\(/,
   "MCP bridge execute_tool should allow tools from skills loaded in the session",
 );
 assert.match(
   mcpRuntimeSource,
-  /name === "load_skill"[\s\S]*tools\.recordLoadedSkillNames\(sessionId,\s*\[plainObject\(result\)\.name,\s*plainObject\(result\)\.displayName\]\)/,
+  /function rememberLoadedSkill[\s\S]*name !== "load_skill"[\s\S]*tools\.recordLoadedSkillNames\(sessionId,\s*\[value\.name,\s*value\.displayName\]\)[\s\S]*async function executeTool[\s\S]*rememberLoadedSkill\(/,
   "MCP bridge execute_tool(load_skill) should activate plugin tools for later calls",
 );
 assert.match(
@@ -260,7 +264,7 @@ assert.doesNotMatch(mcpToolsSource, /registerTool\(\{\s*name:\s*"mcp_call_server
 const toolSchemas = tools.getToolSchemas();
 const publicToolNames = toolSchemas.map(schema => schema.function.name);
 assert.equal(publicToolNames.includes("list_tabs"), true);
-assert.equal(publicToolNames.includes("get_working_tab"), true);
+assert.equal(publicToolNames.includes("get_working_tab"), false);
 assert.equal(publicToolNames.includes("get_active_tab"), false);
 assert.equal(publicToolNames.includes("search_tabs"), false);
 assert.equal(publicToolNames.includes("mcp_inspect_server"), false);
@@ -345,7 +349,8 @@ assert.equal(toolModel.getToolDisplayName("mcp_call_tool"), "直调 MCP");
 assert.equal(toolModel.isToolInSet("mcp_call_tool_directly", "mcp"), false);
 assert.equal(toolModel.getToolResultFamily("mcp_call_tool"), "mcp");
 assert.equal(toolModel.getToolTimelineFamilyInfo("mcp_call_tool").id, "mcp");
-assert.equal(toolModel.isPageContextToolName("run_script"), true);
+assert.equal(toolModel.isPageContextToolName("run_script"), false, "outer orchestration has no implicit page context");
+assert.equal(toolModel.isPageContextToolName("evaluate"), true, "page evaluation retains its explicit page presentation");
 assert.equal(toolModel.getToolProfileFamily("list_tabs"), "tabs");
 
 assert.equal(
@@ -376,11 +381,11 @@ assert.equal(activeSchemaNames.includes("qingzhou_skill_author__create_skill"), 
 assert.equal(activeSchemaNames.includes("qingzhou_skill_author__edit_skill_resource"), false);
 const activeXhsToolSchema = activeSchemas.find(schema => schema.function.name === "xhs_booster__collect_notes");
 assert.equal(activeXhsToolSchema.function.parameters.properties.timeout.type, "number");
-assert.deepEqual(activeXhsToolSchema.function.parameters.required, ["timeout"]);
+assert.deepEqual(activeXhsToolSchema.function.parameters.required, ["timeout", "tabRef"]);
 assert.deepEqual(activeXhsToolSchema.function.parameters.properties.tabRef.type, ["integer", "string"]);
 assert.equal(activeXhsToolSchema.function.parameters.properties.tabId, undefined);
 assert.deepEqual(runtime.getSkillToolParameters(manifest.tools[0]), activeXhsToolSchema.function.parameters);
-assert.equal(activeXhsToolSchema.function.parameters.required.includes("tabRef"), false, "plugin page tools should default to the current working tab");
+assert.equal(activeXhsToolSchema.function.parameters.required.includes("tabRef"), true, "plugin page tools require an explicit page reference");
 assert.match(
   toolsSource,
   /resolveToolTimeoutMs\(definition, executionArgs\)/,
@@ -559,9 +564,9 @@ assert.equal(dispatched.args.args.$plugin.id, "xhs-booster");
 assert.deepEqual(dispatched.args.args.$plugin.config, {});
 assert.equal(dispatched.context.source, "plugin_tool");
 assert.equal(result.ok, true);
-assert.equal(result._plugin.id, "xhs-booster");
-assert.equal(result._plugin.displayName, "小红书增强");
-assert.equal(result._plugin.category.label, "采集");
+assert.equal(getToolResultPresentation(result)._plugin.id, "xhs-booster");
+assert.equal(getToolResultPresentation(result)._plugin.displayName, "小红书增强");
+assert.equal(getToolResultPresentation(result)._plugin.category.label, "采集");
 await assert.rejects(
   () => runtime.executeSkillTool(
     "xhs_booster__collect_notes",
@@ -572,12 +577,12 @@ await assert.rejects(
   ),
   err => err?.code === "MISSING_REQUIRED_ARGUMENTS" && err?.details?.missing?.includes("timeout"),
 );
-assert.equal(Object.prototype.hasOwnProperty.call(result._plugin, removedPluginGroupField), false);
-assert.equal(result._plugin.tool, "xhs_booster__collect_notes");
-assert.equal(result._plugin.title, "采集笔记");
-assert.equal(result._plugin.script, "scripts/collect.js");
-assert.equal(result._plugin.renderer.type, "list");
-assert.equal(result._plugin.renderer.itemsPath, "items");
+assert.equal(Object.prototype.hasOwnProperty.call(getToolResultPresentation(result)._plugin, removedPluginGroupField), false);
+assert.equal(getToolResultPresentation(result)._plugin.tool, "xhs_booster__collect_notes");
+assert.equal(getToolResultPresentation(result)._plugin.title, "采集笔记");
+assert.equal(getToolResultPresentation(result)._plugin.script, "scripts/collect.js");
+assert.equal(getToolResultPresentation(result)._plugin.renderer.type, "list");
+assert.equal(getToolResultPresentation(result)._plugin.renderer.itemsPath, "items");
 
 const mcpManifest = {
   format: SKILL_MANIFEST_FORMAT,
@@ -915,9 +920,9 @@ try {
   );
   assert.equal(mcpResult.ok, true);
   assert.equal(mcpResult.text, "resolved:react");
-  assert.equal(mcpResult._plugin.runtime, "mcp");
-  assert.equal(mcpResult._plugin.mcp.tool, "resolve-library-id");
-  assert.equal(mcpResult._plugin.renderer.type, "text");
+  assert.equal(getToolResultPresentation(mcpResult)._plugin.runtime, "mcp");
+  assert.equal(getToolResultPresentation(mcpResult)._plugin.mcp.tool, "resolve-library-id");
+  assert.equal(getToolResultPresentation(mcpResult)._plugin.renderer.type, "text");
   assert.equal(mcpFetchCalls.some(call => call.body.method === "tools/call" && call.body.params.arguments.libraryName === "react"), true);
   assert.equal(mcpFetchCalls.some(call => getHeaderValue(call.headers, "mcp-session-id") === "mock-session"), true);
   const registeredMcpToolResult = await tools.executeTool(
@@ -928,7 +933,7 @@ try {
   );
   assert.equal(registeredMcpToolResult.ok, true);
   assert.equal(registeredMcpToolResult.text, "resolved:solid");
-  assert.equal(registeredMcpToolResult._plugin.runtime, "mcp");
+  assert.equal(getToolResultPresentation(registeredMcpToolResult)._plugin.runtime, "mcp");
 } finally {
   globalThis.fetch = originalFetch;
 }
@@ -976,19 +981,21 @@ assert.equal(frozenIdentity.familyId, "plugin:collector");
 assert.equal(runtime.getSkillToolDefinition("plain_plugin__plain_run", { skillToolRegistrySnapshot: frozenRegistry }), null);
 const plainResult = await runtime.executeSkillTool(
   "plain_plugin__plain_run",
-  { timeout: 0 },
+  { timeout: 0, tabId: 7 },
   null,
-  { workingTabId: 7 },
+  {},
   async () => ({
     ok: true,
     hasResult: true,
     resultType: "object",
-    result: { value: 1 },
+    _plugin: { userData: "outer" },
+    result: { value: 1, _plugin: { userData: "nested" } },
   }),
 );
-assert.equal(plainResult._plugin.renderer, null);
-assert.equal(plainResult._plugin.script, "scripts/plain.js");
-assert.equal(plainResult.result._plugin.script, "scripts/plain.js");
+assert.equal(getToolResultPresentation(plainResult)._plugin.renderer, null);
+assert.equal(getToolResultPresentation(plainResult)._plugin.script, "scripts/plain.js");
+assert.deepEqual(plainResult._plugin, { userData: "outer" }, "presentation does not overwrite a business field");
+assert.deepEqual(plainResult.result, { value: 1, _plugin: { userData: "nested" } }, "presentation does not change the script result");
 
 const collisionManifestA = {
   format: SKILL_MANIFEST_FORMAT,

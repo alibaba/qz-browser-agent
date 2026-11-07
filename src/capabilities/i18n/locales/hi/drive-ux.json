@@ -1,0 +1,23 @@
+{
+  "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label": "पेज का उपनाम नहीं है",
+  "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message": "इस सत्र में पेज का उपनाम नहीं है। open_tab का tabAlias या open_tab/list_tabs से मिला tabRef इस्तेमाल करें।",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.label": "PDF के लिए दस्तावेज़ टूल इस्तेमाल करें",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "यह PDF व्यूअर HTML पेज की कार्रवाइयों का समर्थन नहीं करता। दस्तावेज़ का पाठ पढ़ने के लिए दस्तावेज़ Skill और मूल PDF URL चाहिए।",
+  "backend.toolError.PAGE_CONTENT_UNAVAILABLE.label": "ब्राउज़र ने पेज की पहुँच रोक दी",
+  "backend.toolError.PAGE_CONTENT_UNAVAILABLE.message": "इस पेज में स्क्रिप्ट जोड़ने की अनुमति नहीं है। सुलभ वेब पेज इस्तेमाल करें। PDF के लिए qingzhou-documents लोड करके मूल URL को दस्तावेज़ टूल से पढ़ें।",
+  "backend.toolError.SCREENSHOT_TARGET_INVALID.label": "कैप्चर का लक्ष्य अमान्य है",
+  "backend.toolError.SCREENSHOT_TARGET_INVALID.message": "दृश्य क्षेत्र कैप्चर करने के लिए target छोड़ दें। किसी तत्व के लिए uid: या css: लक्ष्य दें।",
+  "backend.toolError.DRIVE_RUN_SCRIPT_TARGET.label": "केवल पेज स्क्रिप्ट",
+  "backend.toolError.DRIVE_TAB_REF_REQUIRED.label": "पेज संदर्भ आवश्यक है",
+  "backend.drive.sessionRequired": "qz session create (MCP: qingzhou_create_drive_session) से मिला sessionId दें। CLI में --session आवश्यक है। यह कॉल सत्र नहीं बनाती।",
+  "backend.drive.sessionEnded": "सत्र समाप्त या रद्द हो चुका है। अब टूल या close_tab कॉल की ज़रूरत नहीं है। नए कार्य के लिए qz session create (MCP: qingzhou_create_drive_session) इस्तेमाल करें।",
+  "backend.drive.sessionNotFound": "सत्र नहीं मिला। sessionId और चुना गया ब्राउज़र जाँचें। नया कार्य qz session create (MCP: qingzhou_create_drive_session) से बनाएँ और मिला ID दें।",
+  "backend.drive.skillRuntimeGuidance": "Skills ब्राउज़र एक्सटेंशन में चलती हैं; Node.js या shell उपलब्ध नहीं हैं। पेज टूल में tabRef स्पष्ट दें; स्क्रिप्ट में एक async () => { ... } फ़ंक्शन इस्तेमाल करें। संसाधन load_skill_resource({name,path}) से पढ़ें। दस्तावेज़ आगे पढ़ने के लिए qingzhou-documents लोड करके qingzhou_documents__document_read_chunk चलाएँ।",
+  "backend.drive.scriptDescription": "tabRef के पेज में एक async () => { ... } फ़ंक्शन चलाता है। document/window, input/args, tools/tool और trace/log उपलब्ध हैं। tabRef कॉल का तर्क है, स्क्रिप्ट का चर नहीं। पेज बदलते समय mutatesPage:true दें।",
+  "backend.drive.scriptRecovery": "tabRef के पेज में ब्राउज़र JavaScript और document/window इस्तेमाल करें। पेज टूल को इस सत्र का tabRef स्पष्ट दें; calls या अलग execute_tool कॉल से क्रम बनाएँ।",
+  "backend.drive.collectImagesReference": "सीधे चित्र एकत्र करने के लिए urls दें; पेज के targets के लिए tabRef आवश्यक है।",
+  "backend.drive.readImageReference": "सीधे चित्र पढ़ने के लिए url दें; पेज के चित्र के लिए tabRef आवश्यक है।",
+  "backend.drive.runScriptPageOnly": "सीधा नियंत्रण स्क्रिप्ट को केवल tabRef के टैब में चलाता है। calls या execute_tool से क्रम बनाएँ।",
+  "backend.drive.tabRefRequired": "पेज टूल में tabRef आवश्यक है: open_tab का tabAlias या open_tab/list_tabs से मिला tabRef दें। दोनों इस सत्र के हैं। उसी कार्य की अगली कॉल में वही --session (MCP: sessionId) इस्तेमाल करें।",
+  "backend.drive.noAlias": "इस सत्र में पेज का उपनाम नहीं है। open_tab का tabAlias या open_tab/list_tabs से मिला tabRef दें। दोनों इस सत्र के हैं। उसी कार्य की अगली कॉल में वही --session (MCP: sessionId) इस्तेमाल करें।"
+}

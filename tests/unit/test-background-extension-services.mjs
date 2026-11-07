@@ -39,7 +39,8 @@ test("Skill lookup uses the supplied repository without a global storage depende
   const result = await qz.definitions.get("load_skill").execute({ name: "missing" });
   assert.deepEqual(calls, ["missing"]);
   assert.equal(result.code, "SKILL_NOT_FOUND");
-  assert.deepEqual(result.available, ["injected-skill"]);
+  assert.deepEqual(result.details.available, ["injected-skill"]);
+  assert.deepEqual(Object.keys(result).sort(), ["code", "details", "hint", "message"]);
 });
 
 test("settings mutations call the supplied model service and publish its resulting snapshot", async t => {

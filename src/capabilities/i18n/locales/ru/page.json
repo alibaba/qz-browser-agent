@@ -36,7 +36,7 @@
   "page.highlightElement": "Подсветить элемент",
   "page.injectStyles": "Внедрить стили",
   "page.modifyDom": "Изменить DOM",
-  "page.readArticleRequiresASelectorWhenSourceSelector": "При source=selector инструменту read_article нужен selector.",
+  "page.readArticleRequiresASelectorWhenSourceSelector": "При source=target инструменту read_article нужен target.",
   "page.searchTerms": "Поисковые запросы",
   "page.argumentCharacters": "(Аргументы: {count} символов)",
   "page.contentScriptReturnedAnInvalidResponse": "Скрипт содержимого {action} вернул некорректный ответ.",

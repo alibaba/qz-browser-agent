@@ -322,11 +322,16 @@ const deleteSessionBody = extractFunction(sessionCommands, "deleteSessionRuntime
 // Idle no-op, revoke/release/persist ordering and terminal transcript state are exercised
 // by stopPortOrderingAndIdleNoOp in test-session-commands-runtime.mjs.
 
-assert.match(
-  sidepanelTransport,
-  /if \(message\.requestId\)[\s\S]*const runtime = object\(stoppedRecord\.runtime\)[\s\S]*post\(port, "state", message,[\s\S]*status: runtime\.status[\s\S]*runtime,/s,
-  "stop_session request responses should return the canonical terminal runtime state",
-);
+const stopResponseBody = sidepanelTransport.match(/case "stop_session": \{([\s\S]*?)\n\s*case "continue_task"/)?.[1] || "";
+assert.match(stopResponseBody, /call\("sessions\.state", message\.sessionId\)/,
+  "stop_session responses read the authoritative state after stopping");
+assert.doesNotMatch(stopResponseBody, /stoppedRecord|isStreaming:\s*false/,
+  "a public stop receipt must not fabricate a terminal UI state for a newer run");
+const applyStopResponseBody = extractFunction(chatRunController, "applyStopSessionRuntimeStateResponse");
+assert.match(applyStopResponseBody, /\.\.\.event/,
+  "the UI preserves the returned state fields when applying its stop response");
+assert.doesNotMatch(applyStopResponseBody, /isStreaming:\s*false/,
+  "a stop response must not force a resumed run out of its streaming state");
 
 assert.match(
   mcpRuntime,

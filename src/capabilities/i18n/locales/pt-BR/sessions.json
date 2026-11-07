@@ -225,5 +225,12 @@
   "sessions.locationPositionUnavailable": "Não foi possível determinar sua posição. Verifique a rede e os serviços de localização, ou diga uma cidade ou região.",
   "sessions.locationTimeout": "Tempo de localização esgotado. Mantenha a barra lateral aberta e permita a localização do navegador, ou diga uma cidade ou região.",
   "sessions.locationPanelUnavailable": "A barra lateral não está conectada. Abra-a nesta janela e tente de novo, ou diga uma cidade ou região.",
-  "sessions.locationResponseTimeout": "Tempo de localização esgotado. Permita a localização no navegador e ative os serviços de localização do sistema, ou diga uma cidade ou região."
+  "sessions.locationResponseTimeout": "Tempo de localização esgotado. Permita a localização no navegador e ative os serviços de localização do sistema, ou diga uma cidade ou região.",
+  "sessions.externalDrive": "Externo",
+  "sessions.externalDriveReadOnly": "Um cliente externo está controlando esta sessão. Esta visualização é somente leitura.",
+  "sessions.externalDriveWelcomeTitle": "Controlado por um agente externo",
+  "sessions.externalDriveWelcomeBody": "Um agente externo controla esta sessão por MCP ou pela CLI qz. Instale ou atualize o guia com npx skills add alibaba/qz-browser-agent -g. Os comandos CLI se conectam automaticamente; para parear manualmente, execute o comando abaixo e abra a URL exibida neste navegador.",
+  "sessions.externalDriveWelcomeCommandHint": "Abra a URL exibida neste navegador",
+  "sessions.externalDriveWelcomeCopy": "Copiar",
+  "sessions.externalDriveWelcomeCopied": "Copiado"
 }

@@ -78,7 +78,11 @@ const api = createBackgroundApi({
     },
     submitWaitForm: async input => ({ accepted: true, waitId: input.waitId }),
     cancelWait: async input => ({ accepted: true, waitId: input.waitId }),
-    state: async sessionId => ({ sessionId, status: runtimes.get(sessionId)?.status || "idle", runtime: runtimes.get(sessionId) || {} }),
+    state: async sessionId => {
+      const runtime = runtimes.get(sessionId) || {};
+      return { sessionId, status: runtime.status || "idle", isStreaming: runtime.running === true,
+        runtime, runId: runtime.runId || null, hasHistory: true };
+    },
     snapshot: async sessionId => ({ sessionId, transcript: [], runtime: runtimes.get(sessionId) || {} }),
     messages: async (sessionId, options) => {
       calls.push(["messages", sessionId, options]);
@@ -94,7 +98,7 @@ const api = createBackgroundApi({
       calls.push(["stop", sessionId, options]);
       const runtime = { sessionId, status: "aborted", running: false, runId: "run-1" };
       runtimes.set(sessionId, runtime);
-      return { sessionId, stopped: true, runId: "run-1", runtime };
+      return { sessionId, title: "Task", status: "aborted", stopped: true };
     },
     clearGoal: async sessionId => ({ sessionId, cleared: true }),
   },
@@ -199,7 +203,13 @@ assert.deepEqual(
   await mcp.dispatch({ method: "save_config", params: { config: { model: "m1" } } }),
   { model: "m1", saved: true },
 );
-assert.equal((await mcp.dispatch({ method: "stop_session", params: { sessionId: "s1", cascade: false } })).stopped, true);
+assert.deepEqual(await mcp.dispatch({ method: "stop_session", params: { sessionId: "s1", cascade: false } }), {
+  sessionId: "s1", title: "Task", status: "aborted", stopped: true,
+});
+await mcp.dispatch({ method: "stop_session", params: { sessionId: "s1", keepTabRefs: ["result", 12] } });
+assert.deepEqual(calls.pop(), ["stop", "s1", {
+  source: "mcp_bridge", cascade: true, keepTabs: false, keepTabRefs: ["result", 12],
+}], "the bridge preserves public keep references for atomic Session validation");
 assert.equal(mcp.methods.includes("get_user_input"), true);
 assert.equal(mcp.methods.includes("respond_to_user_input"), true);
 for (const [method, params, expected] of [
@@ -440,6 +450,34 @@ assert.deepEqual(responses.pop(), {
   runId: "run-1",
   hasHistory: true,
 });
+{
+  const order = [], replies = [];
+  let enterStop, finishStop;
+  const entered = new Promise(resolve => { enterStop = resolve; });
+  const durableStop = new Promise(resolve => { finishStop = resolve; });
+  const latest = {
+    sessionId: "resumed", status: "running", isStreaming: true, runId: "run-new", hasHistory: true,
+    runtime: { sessionId: "resumed", status: "running", running: true, runId: "run-new",
+      pendingFollowUpMessages: [{ clientMessageId: "follow-preserved", text: "Continue" }],
+      pendingSteeringMessages: [{ clientMessageId: "steer-preserved", text: "Use the new scope" }] },
+  };
+  const stopping = createSidepanelTransport(createBackgroundApi({ system: { ready: async () => {} }, sessions: {
+    stop: async () => {
+      order.push("stop"); enterStop(); await durableStop; order.push("durable");
+      return { sessionId: "resumed", title: "Task", status: "aborted", stopped: true };
+    },
+    state: async sessionId => { assert.equal(sessionId, "resumed"); order.push("state"); return latest; },
+  } })).dispatch({ type: "stop_session", requestId: "stop-resumed", sessionId: "resumed" },
+    { postMessage: message => replies.push(message) });
+  await entered;
+  assert.deepEqual(order, ["stop"]);
+  assert.deepEqual(replies, [], "the stop response waits for durable cancellation");
+  finishStop();
+  await stopping;
+  assert.deepEqual(order, ["stop", "durable", "state"]);
+  assert.deepEqual(replies, [{ type: "state", requestId: "stop-resumed", ...latest }],
+    "a new run and preserved queued message identities come from the latest state, not the stop receipt");
+}
 await sidepanel.dispatch({
   type: "compact_context",
   requestId: "req-compact",
@@ -530,9 +568,9 @@ assert.deepEqual(await invokeRuntimeMessage(runtimeMessages, {
     ok: true,
     result: {
       sessionId: "s1",
+      title: "Task",
+      status: "aborted",
       stopped: true,
-      runId: "run-1",
-      runtime: { sessionId: "s1", status: "aborted", running: false, runId: "run-1" },
     },
   },
 });

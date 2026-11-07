@@ -1,5 +1,5 @@
 import { t } from "./i18n.js";
-import { skillResultData } from "#sdk/sidepanel/components";
+import { skillResultData, skillResultEnvelope } from "#sdk/sidepanel/components";
 import { isSkillResourceRenderer, resolveSkillToolRenderContext } from "#sdk/sidepanel/skills";
 import * as presentation from "#sdk/sidepanel/presentation";
 import { record, type ToolEvent } from "#sdk/sidepanel/presentation";
@@ -24,7 +24,7 @@ export function createSkillToolProfile(helpers: SkillToolProfileHelpers) {
   } = helpers;
 
 function appendSkillToolProfile(parent: HTMLElement, tool: ToolView, result: unknown, originalResult: unknown, options: ProfileOptions = {}) {
-  const context = resolveSkillToolRenderContext(tool.name, tool.args, result, originalResult);
+  const context = resolveSkillToolRenderContext(tool.name, originalResult, result, tool.args);
   const plugin = context.plugin;
   const data = skillResultData(result, originalResult, plugin);
   const renderer = context.renderer || null;
@@ -63,13 +63,14 @@ function appendSkillPreparingRenderer(parent: HTMLElement, renderer: Data, tool:
 }
 
 function appendSkillToolInputRenderers(parent: HTMLElement, tool: ToolEvent = {}) {
-  const context = resolveSkillToolRenderContext(tool.name, tool.args, tool.result);
+  const context = resolveSkillToolRenderContext(tool.name, tool.result, tool.args);
   if (!context.renderer) return false;
   return structuredRenderer.renderInputs(parent, context.renderer, tool.args || {}, context.plugin);
 }
 
 function appendSkillRunScriptProfile(parent: HTMLElement, tool: ToolView, plugin: Data | null, result: unknown, originalResult: unknown) {
-  const scriptResult = stripSkillMetaDeep(result ?? record(originalResult).result ?? originalResult);
+  const value = skillResultEnvelope(result, originalResult);
+  const scriptResult = tool.isError || presentation.unwrapResultValue(value).envelope ? value : { ok: true, result: value };
   return render(parent, { ...tool, rendererId: "plugin-script", args: {
     ...tool.args, skill: plugin?.skillName || "", script: plugin?.script || "",
   }, result: scriptResult, originalResult: scriptResult });
@@ -79,16 +80,5 @@ function appendSkillRunScriptProfile(parent: HTMLElement, tool: ToolView, plugin
     render: appendSkillToolProfile,
     renderInputs: appendSkillToolInputRenderers,
   };
-}
-
-function stripSkillMetaDeep(value: unknown): unknown {
-  if (!value || typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map(item => stripSkillMetaDeep(item));
-  const out: Data = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (key === "_plugin") continue;
-    out[key] = stripSkillMetaDeep(item);
-  }
-  return out;
 }
 

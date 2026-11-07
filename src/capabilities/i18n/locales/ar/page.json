@@ -36,7 +36,7 @@
   "page.highlightElement": "تمييز عنصر",
   "page.injectStyles": "إضافة أنماط",
   "page.modifyDom": "تعديل DOM",
-  "page.readArticleRequiresASelectorWhenSourceSelector": "يتطلب read_article قيمة selector عندما يكون source=selector.",
+  "page.readArticleRequiresASelectorWhenSourceSelector": "يتطلب read_article قيمة target عندما يكون source=target.",
   "page.searchTerms": "عبارات البحث",
   "page.argumentCharacters": "(المعاملات: {count} حرفًا)",
   "page.contentScriptReturnedAnInvalidResponse": "أعاد سكربت المحتوى {action} استجابة غير صالحة.",

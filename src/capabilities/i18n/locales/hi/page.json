@@ -36,7 +36,7 @@
   "page.highlightElement": "एलिमेंट हाइलाइट करें",
   "page.injectStyles": "शैलियाँ जोड़ें",
   "page.modifyDom": "DOM बदलें",
-  "page.readArticleRequiresASelectorWhenSourceSelector": "source=selector होने पर read_article के लिए selector आवश्यक है।",
+  "page.readArticleRequiresASelectorWhenSourceSelector": "source=target होने पर read_article के लिए target आवश्यक है।",
   "page.searchTerms": "खोज शब्द",
   "page.argumentCharacters": "(आर्ग्युमेंट: {count} अक्षर)",
   "page.contentScriptReturnedAnInvalidResponse": "कॉन्टेंट स्क्रिप्ट {action} ने अमान्य जवाब दिया।",

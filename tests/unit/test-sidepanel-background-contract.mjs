@@ -94,7 +94,11 @@ async function loopbackClientPreservesSuccessAndFailureContracts() {
         error.details = { retryable: true };
         throw error;
       }
-      return { sessionId, status: "completed", runtime: { sessionId, status: "completed" } };
+      if (sessionId === "resumed") return { sessionId, status: "running", isStreaming: true, runId: "run-new",
+        runtime: { sessionId, status: "running", running: true, runId: "run-new",
+          pendingFollowUpMessages: [{ clientMessageId: "follow-preserved", text: "Continue" }],
+          pendingSteeringMessages: [{ clientMessageId: "steer-preserved", text: "Use the new scope" }] } };
+      return { sessionId, status: "completed", isStreaming: false, runtime: { sessionId, status: "completed" } };
     },
   });
   const runtime = createRuntimePortLoopback();
@@ -124,6 +128,15 @@ async function loopbackClientPreservesSuccessAndFailureContracts() {
     const timersBeforeUnboundedRequest = scheduledTimeouts;
     await client.request("get_state", { sessionId: "s1" }, null);
     assert.equal(scheduledTimeouts, timersBeforeUnboundedRequest, "a null deadline must not arm a request timeout");
+
+    const resumed = await client.request("stop_session", { sessionId: "resumed" });
+    assert.equal(resumed.type, "state");
+    assert.match(resumed.requestId, /^ui_req_/);
+    assert.equal(resumed.status, "running");
+    assert.equal(resumed.isStreaming, true, "a run started while stop was settling remains live");
+    assert.equal(resumed.runId, "run-new");
+    assert.deepEqual(resumed.runtime.pendingFollowUpMessages.map(item => item.clientMessageId), ["follow-preserved"]);
+    assert.deepEqual(resumed.runtime.pendingSteeringMessages.map(item => item.clientMessageId), ["steer-preserved"]);
 
     await assert.rejects(
       client.request("get_state", { sessionId: "fail" }),
@@ -174,7 +187,7 @@ function createApiFixture(overrides = {}) {
   const resultFor = (path, args) => {
     if (path === "sessions.stop") {
       const sessionId = args[0] || "s1";
-      return { sessionId, status: "aborted", runtime: { sessionId, status: "aborted", running: false } };
+      return { sessionId, title: "Task", status: "aborted", stopped: true };
     }
     if (path === "sessions.state") {
       const sessionId = args[0] || "s1";

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 let currentUrl = "https://example.com/forms/post";
 globalThis.chrome = {
   runtime: { id: "extension-id" },
+  i18n: { getUILanguage: () => "zh-CN" },
   tabs: { async get(tabId) { return { id: tabId, url: currentUrl }; } },
+  scripting: { executeScript: async () => [{ result: true }] },
   debugger: { onEvent: { addListener() {} }, onDetach: { addListener() {} } },
 };
 
@@ -30,25 +32,22 @@ registerAccessibilityTools({
   ToolExecutionError,
   clampLimit: (value, min, max) => Math.max(min, Math.min(max, Math.floor(Number(value)))),
   makeSnapshotId: element.makeSnapshotId,
-  makeElementUid: (...args) => {
-    const uid = element.makeElementUid(...args);
-    generatedUids.push(uid);
-    return uid;
-  },
   elementTargetForUid: element.elementTargetForUid,
-  registerElementRef: ref => {
-    registeredRefs.push(ref);
-    element.registerElementRef(ref);
+  registerElementBinding: ref => {
+    const bound = element.registerElementBinding(ref);
+    if (bound.uid) { generatedUids.push(bound.uid); registeredRefs.push(bound); }
+    return bound;
   },
   resolveElementReference: element.resolveElementReference,
   backendNodeIdForSelector: async () => 0,
-  bindBackendNodes: async () => scenario.bound,
+  bindElementReferences: async (_tabId, refs) => refs.map((ref, index) => ({ ...ref, backendNodeId: scenario.bound.ids[index] || 0, target: ref.selector ? `css:${ref.selector}` : '' })),
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),
   sendToContent: async () => scenario.overview,
   callElement: async () => scenario.overview,
   readMainDocumentId: element.readMainDocumentId,
   withDebugger: async (_id, fn) => fn({}, async (method, params = {}) => {
     if (method === "Accessibility.getFullAXTree") { scenario.fetchParams = params; return { nodes: scenario.nodes }; }
+    if (method === "Page.getFrameTree") return { frameTree: { frame: { id: 'main', loaderId: scenario.bound.loaderId } } };
     if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientHeight: 600 } };
     if (method === "DOMSnapshot.captureSnapshot") return scenario.geometry || {};
     if (method === "DOM.describeNode") return scenario.describe(params);
@@ -118,7 +117,9 @@ for (const text of displayText) {
 }
 assert.equal(displayOnly.returnedNodeCount, 1 + displayText.length + targetRoles.length);
 assert.deepEqual(registeredRefs.map(ref => ref.role), ["RootWebArea", ...targetRoles], "display text must not register element references");
-assert.deepEqual(generatedUids, registeredRefs.map((_ref, index) => `${displayOnly.snapshotId}.${index}`), "display text must not allocate UIDs");
+assert.equal(generatedUids.length, registeredRefs.length, "display text must not allocate UIDs");
+assert.ok(generatedUids.every((uid, index) => uid === `${generatedUids[0].replace(/\.\d+$/, "")}.${index + 1}`), "the registry allocates contiguous identities for actionable and structural nodes");
+assert.equal(Object.hasOwn(displayOnly, "snapshotId"), false, "the registry snapshot identity stays private");
 const roleTargets = targetRoles.map(role => line(displayOnly.snapshot, `"${role} target"`).match(/target=(uid:\S+)/)?.[1]);
 assert.equal(new Set(roleTargets).size, targetRoles.length, "controls and structural nodes keep unique targets");
 for (const [index, target] of roleTargets.entries()) {
@@ -389,11 +390,12 @@ const selectorOnly = await run({
 assert.doesNotMatch(line(selectorOnly.snapshot, "heading"), /\bbutton\b/);
 const selectorButton = line(selectorOnly.snapshot, "button");
 assert.match(selectorButton, /button "Search"/);
-const selectorTarget = selectorButton.match(/target=(uid:\S+)/)?.[1];
+const selectorTarget = 'css:main > button.only';
+assert.ok(selectorButton.includes(`target=${JSON.stringify(selectorTarget)}`));
 const resolvedSelector = await element.resolveElementReference(8, { target: selectorTarget }, context);
 assert.equal(resolvedSelector.selector, "main > button.only", "an unbound action keeps its selector");
 assert.equal(resolvedSelector.index, 0);
-assert.equal(Number(resolvedSelector.ref.backendNodeId || 0), 0);
+assert.equal(resolvedSelector.uid, undefined, 'a CSS fallback is not a node UID');
 
 const indexed = await run({
   overview: {
@@ -403,8 +405,9 @@ const indexed = await run({
   bound: { loaderId: "loader", ids: [0] },
   nodes: [ax({ id: "root", backend: 1, role: "RootWebArea", name: "Page" })],
 });
-const indexedTarget = line(indexed.snapshot, "Second").match(/target=(uid:\S+)/)?.[1];
-const resolvedIndexed = await element.resolveElementReference(8, { target: indexedTarget }, context);
+const indexedTarget = 'css:button.dup';
+assert.ok(line(indexed.snapshot, 'Second').includes(`target=${JSON.stringify(indexedTarget)} index=1`));
+const resolvedIndexed = await element.resolveElementReference(8, { target: indexedTarget, index: 1 }, context);
 assert.equal(resolvedIndexed.selector, "button.dup");
 assert.equal(resolvedIndexed.index, 1);
 
@@ -421,7 +424,8 @@ assert.match(ghost, /button/);
 assert.match(ghost, /"Ghost"/);
 assert.doesNotMatch(ghost, /target=/);
 
-chrome.scripting = { async executeScript() { return [{ documentId: "doc-live" }]; } };
+const scripting = chrome.scripting;
+chrome.scripting = { async executeScript() { return [{ documentId: "doc-live", result: true }]; } };
 const stamped = await run({
   overview: {
     title: "Document", url: "https://example.com/forms/post",
@@ -436,7 +440,7 @@ const stamped = await run({
 const stampedTarget = line(stamped.snapshot, "Save").match(/target=(uid:\S+)/)?.[1];
 const resolvedStamped = await element.resolveElementReference(8, { target: stampedTarget }, context);
 assert.equal(resolvedStamped.ref.documentId, "doc-live");
-delete chrome.scripting;
+chrome.scripting = scripting;
 
 const treeTarget = budget.snapshot.match(/target=(uid:\S+)/)?.[1];
 const resolvedTree = await element.resolveElementReference(8, { target: treeTarget }, context);
@@ -467,8 +471,8 @@ const viewport = await run(viewportScenario);
 assert.equal(viewport.scope, "viewport");
 assert.deepEqual(scenario.fetchParams, {}, "fetch all raw nodes before viewport and depth filtering");
 assert.deepEqual(viewport.viewportOmitted, { above: 1, below: 1, unmeasured: 0 });
-assert.ok(viewport.snapshot.includes('↑ 视口上方省略 1 个 AX 节点；用 scope:"full" 或树中 target 作 root 读取'));
-assert.ok(viewport.snapshot.includes('↓ 视口下方省略 1 个 AX 节点；用 scope:"full" 或树中 target 作 root 读取'));
+assert.ok(viewport.snapshot.includes('↑ 视口上方省略 1 个 AX 节点；保持 tabRef，用 scope:"full" 或树中 target 传给 target 读取'));
+assert.ok(viewport.snapshot.includes('↓ 视口下方省略 1 个 AX 节点；保持 tabRef，用 scope:"full" 或树中 target 传给 target 读取'));
 assert.doesNotMatch(viewport.snapshot, /"Above"|"Below"/);
 assert.match(line(viewport.snapshot, "Off-band ancestor"), /target=/, "retained off-band groups are ordinary subtree entry points");
 assert.equal(registeredRefs.some(ref => ref.backendNodeId === 6), false, "off-screen guaranteed buttons still cannot reappear");
@@ -501,7 +505,8 @@ const rectOnly = await run({
 });
 assert.match(line(rectOnly.snapshot, "Rect inside"), /target=/);
 assert.doesNotMatch(rectOnly.snapshot, /Rect below|Unknown action|↑|↓/);
-assert.equal(registeredRefs.length, 2, "only the root and measured in-band synthetic action get targets");
+assert.equal(registeredRefs.length, 1, "only the root has a backend node UID");
+assert.match(line(rectOnly.snapshot, 'Rect inside'), /target="css:#inside"/, 'an unbound in-band action uses CSS');
 assert.deepEqual(rectOnly.viewportOmitted, { above: 0, below: 0, unmeasured: 0 });
 const foldedNodes = [
   ax({ id: "root", backend: 1, role: "RootWebArea", children: ["region", "about"] }),
@@ -529,26 +534,26 @@ assert.doesNotMatch(folded.snapshot, /Hidden record|Co-authors/);
 const listTarget = line(folded.snapshot, "items=3").match(/target=(uid:\S+)/)?.[1];
 const aboutTarget = `uid:${registeredRefs.find(ref => ref.backendNodeId === 7).uid}`;
 assert.match(line(folded.snapshot, "About this article"), /target=uid:/);
-assert.ok(folded.snapshot.indexOf(`root="${listTarget}"`) > folded.snapshot.indexOf("Visible record"));
-assert.ok(folded.snapshot.indexOf(`root="${listTarget}"`) < folded.snapshot.indexOf("About this article"), "fold marker stays at the list boundary, not a separate outline");
-assert.ok(folded.snapshot.includes(`root="${aboutTarget}"`));
-assert.ok(folded.snapshot.includes(`↓ 此区块下方省略 2 项内容；用 root="${listTarget}" 或 scope:"full" 读取`));
+assert.ok(folded.snapshot.indexOf(`target="${listTarget}"`) > folded.snapshot.indexOf("Visible record"));
+assert.ok(folded.snapshot.indexOf(`target="${listTarget}"`) < folded.snapshot.indexOf("About this article"), "fold marker stays at the list boundary, not a separate outline");
+assert.ok(folded.snapshot.includes(`target="${aboutTarget}"`));
+assert.ok(folded.snapshot.includes(`↓ 此区块下方省略 2 项内容；保持 tabRef，用 target="${listTarget}" 或 scope:"full" 读取`));
 assert.doesNotMatch(folded.snapshot, /depth|limit/);
 assert.equal(folded.outline, undefined, "off-screen structure stays in the existing tree protocol");
-const listSubtree = await definition.execute({ tabId: 8, root: listTarget }, null, context);
+const listSubtree = await definition.execute({ tabId: 8, target: listTarget }, null, context);
 assert.equal(listSubtree.scope, "full");
 assert.match(listSubtree.snapshot, /Hidden record beta/);
-const aboutSubtree = await definition.execute({ tabId: 8, root: aboutTarget }, null, context);
+const aboutSubtree = await definition.execute({ tabId: 8, target: aboutTarget }, null, context);
 assert.match(aboutSubtree.snapshot, /Co-authors: 57/, "a retained generic section UID reads the heading's sibling details");
 const scrolledFolds = await run({ ...scenario, scope: "viewport",
   geometry: { documents: scenario.geometry.documents.map(doc => ({ ...doc, scrollOffsetY: 750 })) },
 });
 const scrolledList = line(scrolledFolds.snapshot, "items=3").match(/target=(uid:\S+)/)?.[1];
-const upperFold = scrolledFolds.snapshot.indexOf(`root="${scrolledList}"`);
+const upperFold = scrolledFolds.snapshot.indexOf(`target="${scrolledList}"`);
 assert.ok(upperFold > scrolledFolds.snapshot.indexOf("items=3"));
 assert.ok(upperFold < scrolledFolds.snapshot.indexOf("Hidden record gamma"), "upper fold stays before the container's remaining items");
 assert.doesNotMatch(scrolledFolds.snapshot, /Visible record|Hidden record beta/);
-assert.ok(scrolledFolds.snapshot.includes(`↑ 此区块上方省略 2 项内容；用 root="${scrolledList}" 或 scope:"full" 读取`));
+assert.ok(scrolledFolds.snapshot.includes(`↑ 此区块上方省略 2 项内容；保持 tabRef，用 target="${scrolledList}" 或 scope:"full" 读取`));
 
 const farIds = Array.from({ length: 300 }, (_, i) => `far${i}`);
 const farNodes = [ax({ id: "root", backend: 1, role: "RootWebArea", children: ["visible", ...farIds] }),

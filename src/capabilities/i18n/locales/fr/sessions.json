@@ -225,5 +225,12 @@
   "sessions.locationPositionUnavailable": "Impossible de déterminer votre position. Vérifiez le réseau et les services de localisation, ou indiquez simplement une ville ou une zone.",
   "sessions.locationTimeout": "Délai de localisation dépassé. Gardez le panneau latéral ouvert et autorisez la localisation du navigateur, ou indiquez simplement une ville ou une zone.",
   "sessions.locationPanelUnavailable": "Le panneau latéral n’est pas connecté. Ouvrez-le dans cette fenêtre et réessayez, ou indiquez simplement une ville ou une zone.",
-  "sessions.locationResponseTimeout": "Délai de localisation dépassé. Autorisez la localisation dans le navigateur et activez les services de localisation du système, ou indiquez simplement une ville ou une zone."
+  "sessions.locationResponseTimeout": "Délai de localisation dépassé. Autorisez la localisation dans le navigateur et activez les services de localisation du système, ou indiquez simplement une ville ou une zone.",
+  "sessions.externalDrive": "Externe",
+  "sessions.externalDriveReadOnly": "Un client externe pilote cette session. Cette vue est en lecture seule.",
+  "sessions.externalDriveWelcomeTitle": "Piloté par un agent externe",
+  "sessions.externalDriveWelcomeBody": "Un agent externe pilote cette session via MCP ou la CLI qz. Installez ou mettez à jour le guide avec npx skills add alibaba/qz-browser-agent -g. Les commandes CLI se connectent automatiquement ; pour un appairage manuel, exécutez la commande ci-dessous et ouvrez l’URL affichée dans ce navigateur.",
+  "sessions.externalDriveWelcomeCommandHint": "Ouvrir l’URL affichée dans ce navigateur",
+  "sessions.externalDriveWelcomeCopy": "Copier",
+  "sessions.externalDriveWelcomeCopied": "Copié"
 }

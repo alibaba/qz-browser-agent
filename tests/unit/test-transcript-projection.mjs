@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createTranscriptProjection } from "../../src/sidepanel/features/chat/transcript/projection.js";
+import { groupConsecutiveToolTranscriptEntries } from "../../src/sidepanel/tools/tool-timeline-renderer.js";
 
 test("protocol transcript keys stay stable while streamed content changes", () => {
   const projection = createTranscriptProjection();
@@ -70,4 +71,29 @@ test("duplicate protocol identities receive deterministic suffixes", () => {
     ],
   );
   assert.deepEqual(second.map(entry => entry._uiKey), first.map(entry => entry._uiKey));
+});
+
+test("direct drive lists each tool call instead of one timeline group", () => {
+  const tools = [
+    { type: "tool", runId: "drive-1", toolCallId: "open", name: "open_tab", timestamp: "2026-11-01 10:00:00" },
+    { type: "tool", runId: "drive-1", toolCallId: "shot", name: "screenshot", timestamp: "2026-11-01 10:00:01" },
+  ];
+  const grouped = groupConsecutiveToolTranscriptEntries(structuredClone(tools));
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].type, "tool-group");
+  assert.equal(grouped[0].entries.length, 2);
+
+  const flat = createTranscriptProjection({
+    groupTools: () => false,
+  }).uiHistory(structuredClone(tools), { sessionId: "drive" });
+  assert.deepEqual(flat.map(entry => [entry.type, entry.name]), [
+    ["tool", "open_tab"],
+    ["tool", "screenshot"],
+  ]);
+  assert.notEqual(flat[0]._toolPresentationAnchor, flat[1]._toolPresentationAnchor);
+  assert.equal(flat.every(entry => entry.type !== "tool-group"), true);
+
+  const ordinary = createTranscriptProjection().uiHistory(structuredClone(tools), { sessionId: "chat" });
+  assert.equal(ordinary.length, 1);
+  assert.equal(ordinary[0].type, "tool-group");
 });

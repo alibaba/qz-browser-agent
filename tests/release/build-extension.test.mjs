@@ -478,7 +478,7 @@ test("build rejects undeclared runtime entries and missing resources before repl
 test("embedded runtime and Worker execute after production host minification", async t => {
   const { sourceDir, outputDir } = await fixture(t);
   await rm(join(sourceDir, "runner-sandbox.js"));
-  for (const path of ["runner-sandbox.ts", "workers/inner-runner.ts", "shared/script-runtime.ts"]) await put(sourceDir, path, await readFile(join(ROOT, "src", path), "utf8"));
+  for (const path of ["runner-sandbox.ts", "workers/inner-runner.ts", "shared/script-runtime.ts", "shared/qz-script-sdk.ts", "shared/contracts/element-locator.ts"]) await put(sourceDir, path, await readFile(join(ROOT, "src", path), "utf8"));
   await put(sourceDir, "capabilities/script/index.ts", "export { default as tools } from './tools.js';\n");
   await put(sourceDir, "capabilities/script/tools.ts", `declare const SCRIPT_RUNTIME_SOURCE: string;
 export default () => {};\nexport function expression() { return SCRIPT_RUNTIME_SOURCE + ';QZ_SCRIPT_RUNTIME.safeValueForMessage(new Uint8Array([4, 5]), "page");'; }`);
@@ -508,7 +508,7 @@ export default () => {};\nexport function expression() { return SCRIPT_RUNTIME_S
 test("embedded debug sidecars retain exact executable fragments without leaking maps into runtime strings", async t => {
   const { sourceDir, outputDir } = await fixture(t);
   await rm(join(sourceDir, "runner-sandbox.js"));
-  for (const path of ["runner-sandbox.ts", "workers/inner-runner.ts", "shared/script-runtime.ts"]) {
+  for (const path of ["runner-sandbox.ts", "workers/inner-runner.ts", "shared/script-runtime.ts", "shared/qz-script-sdk.ts", "shared/contracts/element-locator.ts"]) {
     await put(sourceDir, path, await readFile(join(ROOT, "src", path), "utf8"));
   }
   await put(sourceDir, "content/page-scripts/element.ts", 'export function selector(element: {id: string}) { return "#" + element.id; }');

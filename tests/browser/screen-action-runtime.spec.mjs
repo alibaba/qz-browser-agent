@@ -25,7 +25,8 @@ test.describe("act_on_screen · real Chrome behavior", () => {
       expect(observed.feedbackAvailable).toBe(true);
       expect(observed.coordinateBasisReady).toBe(true);
       expect(observed._image).toMatch(/^data:image\/jpeg;base64,/);
-      expect(observed._display).toMatchObject({ action: "scroll", x: 0.5, y: 0.5, direction: "down" });
+      expect(Object.hasOwn(observed, "_display")).toBe(false);
+      expect(harness.presentation(observed)._display).toMatchObject({ action: "scroll", x: 0.5, y: 0.5, direction: "down" });
       await expect.poll(() => page.evaluate(() => scrollY)).toBe(420);
     } finally {
       await harness.close();
@@ -78,8 +79,8 @@ test.describe("act_on_screen · real Chrome behavior", () => {
         expect(harness.screenshotCount - capturesBefore).toBe(2);
         expect(result.feedbackAvailable).toBe(returnScreenshot);
         expect(result.coordinateBasisReady).toBe(true);
-        expect(result._display?.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
-        expect(result._display?.afterImage).toMatch(/^data:image\/jpeg;base64,/);
+        expect(harness.presentation(result)._display?.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
+        expect(harness.presentation(result)._display?.afterImage).toMatch(/^data:image\/jpeg;base64,/);
         if (!returnScreenshot) expect(result._image).toBeUndefined();
         return result;
       };
@@ -165,13 +166,13 @@ test.describe("act_on_screen · real Chrome behavior", () => {
       expect(dragState.dropped).toBe(true);
       expect(dragged.resolvedEndPoint).toBeTruthy();
       expect(dragged._image).toMatch(/^data:image\/jpeg;base64,/);
-      expect(dragged._display).toMatchObject({
+      expect(harness.presentation(dragged)._display).toMatchObject({
         type: "imageWithAction",
         action: "drag",
         kind: "drag",
       });
-      expect(dragged._display.x).toBeGreaterThan(0);
-      expect(dragged._display.endX).toBeGreaterThan(dragged._display.x);
+      expect(harness.presentation(dragged)._display.x).toBeGreaterThan(0);
+      expect(harness.presentation(dragged)._display.endX).toBeGreaterThan(harness.presentation(dragged)._display.x);
     } finally {
       await harness.close();
     }
@@ -188,15 +189,15 @@ test.describe("act_on_screen · real Chrome behavior", () => {
       let before = harness.screenshotCount;
       const directSilent = await harness.act({ action: "click", returnScreenshot: false, ...point });
       expect(harness.screenshotCount - before).toBe(2);
-      expect(directSilent._display?.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
-      expect(directSilent._display?.afterImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(directSilent)._display?.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(directSilent)._display?.afterImage).toMatch(/^data:image\/jpeg;base64,/);
       expect(directSilent._image).toBeUndefined();
 
       before = harness.screenshotCount;
       const directObserved = await harness.act({ action: "click", returnScreenshot: true, ...point });
       expect(harness.screenshotCount - before).toBe(2);
-      expect(directObserved._display?.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
-      expect(directObserved._display?.afterImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(directObserved)._display?.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(directObserved)._display?.afterImage).toMatch(/^data:image\/jpeg;base64,/);
       expect(directObserved._image).toMatch(/^data:image\/jpeg;base64,/);
 
       before = harness.screenshotCount;
@@ -206,7 +207,7 @@ test.describe("act_on_screen · real Chrome behavior", () => {
         { source: "run_script" },
       );
       expect(harness.screenshotCount - before).toBe(0);
-      expect(scriptedSilent._display).toBeUndefined();
+      expect(harness.presentation(scriptedSilent)._display).toBeUndefined();
       expect(scriptedSilent._image).toBeUndefined();
 
       before = harness.screenshotCount;
@@ -216,7 +217,7 @@ test.describe("act_on_screen · real Chrome behavior", () => {
         { source: "run_script" },
       );
       expect(harness.screenshotCount - before).toBe(1);
-      expect(scriptedObserved._display).toBeUndefined();
+      expect(harness.presentation(scriptedObserved)._display).toBeUndefined();
       expect(scriptedObserved._image).toMatch(/^data:image\/jpeg;base64,/);
     } finally {
       await harness.close();
@@ -239,8 +240,8 @@ test.describe("act_on_screen · real Chrome behavior", () => {
       expect(modelSilentScroll.feedbackAvailable).toBe(false);
       expect(modelSilentScroll.coordinateBasisReady).toBe(true);
       expect(modelSilentScroll.continuationBlockedReason).toBeUndefined();
-      expect(modelSilentScroll._display.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
-      expect(modelSilentScroll._display.afterImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(modelSilentScroll)._display.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(modelSilentScroll)._display.afterImage).toMatch(/^data:image\/jpeg;base64,/);
       expect(modelSilentScroll.viewportChange).toMatchObject({
         observed: true,
         scrolled: true,
@@ -266,13 +267,13 @@ test.describe("act_on_screen · real Chrome behavior", () => {
         deltaY: 180,
       });
       expect(observedScroll._image).toMatch(/^data:image\/jpeg;base64,/);
-      expect(observedScroll._display).toMatchObject({
+      expect(harness.presentation(observedScroll)._display).toMatchObject({
         type: "imageWithAction",
         action: "scroll",
         kind: "point",
         direction: "down",
       });
-      expect(observedScroll._display.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(observedScroll)._display.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
 
       await page.evaluate(() => window.scrollTo(0, 0));
       await expect.poll(async () => (await harness.state()).scrollY).toBe(0);
@@ -286,12 +287,12 @@ test.describe("act_on_screen · real Chrome behavior", () => {
       expect(navigated.urlChanged).toBe(true);
       expect(navigated.observedNavigation?.url).toContain("screen-action-runtime-result.html?count=1");
       expect(navigated.coordinateBasisReady).toBe(true);
-      expect(navigated._display).toMatchObject({
+      expect(harness.presentation(navigated)._display).toMatchObject({
         type: "imageWithAction",
         action: "click",
         kind: "point",
       });
-      expect(navigated._display.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(navigated)._display.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
       expect((await harness.state()).navigationCount).toBe(1);
     } finally {
       await harness.close();
@@ -316,8 +317,8 @@ test.describe("act_on_screen · real Chrome behavior", () => {
       expect(typed.feedbackAvailable).toBe(false);
       expect(typed.coordinateBasisReady).toBe(true);
       expect(typed.sourceScreenshotId).toBe(initial.snapshotId);
-      expect(typed._display.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
-      expect(typed._display.afterImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(typed)._display.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(typed)._display.afterImage).toMatch(/^data:image\/jpeg;base64,/);
       expect((await harness.state()).inputValue).toBe("页面跳转前的输入");
 
       const navigated = await harness.act({
@@ -326,14 +327,14 @@ test.describe("act_on_screen · real Chrome behavior", () => {
         ...navigationPoint,
       });
       expect(navigated.urlChanged).toBe(true);
-      expect(navigated._display).toMatchObject({
+      expect(harness.presentation(navigated)._display).toMatchObject({
         type: "imageWithAction",
         action: "click",
         kind: "point",
       });
-      expect(navigated._display.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(navigated)._display.beforeImage).toMatch(/^data:image\/jpeg;base64,/);
       expect(navigated.sourceScreenshotId).toBe(initial.snapshotId);
-      expect(navigated._display.afterImage).toMatch(/^data:image\/jpeg;base64,/);
+      expect(harness.presentation(navigated)._display.afterImage).toMatch(/^data:image\/jpeg;base64,/);
       expect(navigated.feedbackAvailable).toBe(true);
       expect(navigated.coordinateBasisReady).toBe(true);
     } finally {

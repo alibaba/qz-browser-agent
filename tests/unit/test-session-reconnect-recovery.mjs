@@ -9,6 +9,7 @@ import { installImageAssetsFixture } from "../support/image-assets-fixture.mjs";
 await portReconnectRequestsOnlyTheCurrentSessionState();
 await deliveryTraceFollowsTheLiveDebugSetting();
 await sessionNavigationAlwaysRequestsAuthoritativeState();
+await driveInspectionDoesNotActivateItsPage();
 await sessionCreationKeepsItsSourceDraftIdentity();
 await finishedSessionCreationDoesNotUndoNewerNavigation();
 await currentSessionClickCancelsAnOlderPendingSwitch();
@@ -140,6 +141,25 @@ async function sessionNavigationAlwaysRequestsAuthoritativeState() {
   sent.length = 0;
   await navigation.switchToSession("s1");
   assert.deepEqual(sent, [{ type: "get_state", sessionId: "s1" }]);
+}
+
+async function driveInspectionDoesNotActivateItsPage() {
+  for (const source of ['external-drive', '']) {
+    let current = null, epoch = 0;
+    const sent = [];
+    const navigation = createNavigationFixture({
+      getCurrentSessionId: () => current,
+      setCurrentSessionId: id => { current = id; },
+      getEpoch: () => epoch, incrementEpoch: () => ++epoch,
+      getSessionSource: () => source,
+      prepareSession: async () => null,
+      send: message => sent.push(message),
+    });
+    await navigation.switchToSession('task');
+    assert.equal(sent.some(message => message.type === 'activate_session_working_tab'), source !== 'external-drive',
+      'viewing a drive transcript must not hand its page back to the user');
+    assert.ok(sent.some(message => message.type === 'get_state'));
+  }
 }
 
 async function sessionCreationKeepsItsSourceDraftIdentity() {
@@ -431,6 +451,7 @@ function createNavigationFixture({
   send = () => {},
   hasTranscript = () => true,
   readStorage = () => Promise.resolve({}),
+  getSessionSource = () => '',
   seedTranscript = () => {},
   switchToChatTab = () => {},
 }) {
@@ -438,6 +459,7 @@ function createNavigationFixture({
     chatTab: "chat",
     getCurrentTab: () => "sessions",
     getCurrentSessionId,
+    getSessionSource,
     setCurrentSessionIdValue: setCurrentSessionId,
     getSessionSwitchEpoch: getEpoch,
     incrementSessionSwitchEpoch: incrementEpoch,
@@ -462,6 +484,7 @@ function createNavigationFixture({
     transcriptRenderer: {
       hasTranscript,
       seedFromStorage: seedTranscript,
+      maybeRenderUpdated() {},
       setTranscript() {},
       render() {},
       renderCurrent() {},

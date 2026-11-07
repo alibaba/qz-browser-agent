@@ -3,7 +3,7 @@ import { t } from "./i18n.js";
 import { registerGoalTools } from "./goal-tools.js";
 import { sessionAutomationsEnabled } from "#sdk/shared/session-automations";
 import type { ToolExtension, ToolExtensionAPI, AutomationSaveInput } from "#sdk/background";
-import { requireToolFields } from "#sdk/background/tools";
+import { requireToolFields, toolError } from "#sdk/background/tools";
 import { sessionWaitTimeout } from "#sdk/background/tools";
 import { ROOT_SESSION_ID } from "#sdk/shared/sessions";
 
@@ -123,27 +123,24 @@ registerTool({
   }, signal, context = {}) => {
     const actionName = String(action || "");
     if (AUTOMATION_SESSION_ACTION_SET.has(actionName) && !sessionAutomationsEnabled()) {
-      return {
-        error: modelT("sessionAutomationsDisabled"),
-        code: "AUTOMATION_DISABLED",
-        details: { action: actionName },
-      };
+      return toolError("AUTOMATION_DISABLED", modelT("sessionAutomationsDisabled"), { details: { action: actionName } });
     }
     const commands = getToolRuntimeDependencies(context).sessions;
     if (action === "list") {
       const excludeSessionId = typeof context.sessionId === "string" ? context.sessionId.trim() : "";
       if (typeof commands?.listSessions === "function") {
-        return await commands.listSessions({ limit, excludeSessionId });
+        return await commands.listSessions({ limit, excludeSessionId, publicView: true });
       }
       return runtimeUnavailable("list");
     }
 
     if (action === "create") {
+      requireToolFields("manage_sessions", { title }, ["title"], { action, requiredWhen: "action=create" });
       const parentSessionId = typeof context.sessionId === "string" && context.sessionId.trim()
         ? context.sessionId.trim()
         : ROOT_SESSION_ID;
       if (typeof commands?.createSession === "function") {
-        const result = await commands.createSession({ title, firstMessage, parentSessionId });
+        const result = await commands.createSession({ title: title.trim(), firstMessage, parentSessionId, publicView: true });
         return { created: true, ...result };
       }
       return runtimeUnavailable("create");
@@ -154,13 +151,13 @@ registerTool({
       if (!id) throw new ToolExecutionError("MISSING_SESSION_ID", t("specifyTheTargetTaskSSessionid"), { action });
       if (id === context.sessionId) throw new ToolExecutionError("INVALID_SESSION_ACTION", t("thisOperationCanOnlyTargetAnotherTask"), { action });
       if (action === "stop") {
-        if (!commands?.stopSession) return runtimeUnavailable(action, { sessionId: id });
+        if (!commands?.stopSession) return runtimeUnavailable(action);
         return await commands.stopSession(id, { source: "tool", requestedBy: context.sessionId || "" });
       }
       if (!String(message).trim() || !["follow_up", "steer"].includes(mode)) {
         throw new ToolExecutionError("INVALID_SESSION_ACTION", t("aFollowUpRequiresANonemptyMessageAndMode"), { action });
       }
-      if (!commands?.sendMessage) return runtimeUnavailable(action, { sessionId: id });
+      if (!commands?.sendMessage) return runtimeUnavailable(action);
       const clientMessageId = `session-tool:${context.sessionId || "root"}:${context.runId || ""}:${context.toolCallId || crypto.randomUUID()}`;
       return await commands.sendMessage({ sessionId: id, text: message.trim(), deliveryMode: mode, clientMessageId, swallowErrors: true });
     }
@@ -171,11 +168,9 @@ registerTool({
         throw new ToolExecutionError("MISSING_SESSION_ID", t("manageSessionsDeleteRequiresSessionid"), { action });
       }
       if (context.sessionId && id === context.sessionId) {
-        return {
-          error: "Cannot delete the session currently executing this tool",
-          code: "CANNOT_DELETE_CALLER_SESSION",
-          details: { sessionId: id },
-        };
+        return toolError("CANNOT_DELETE_CALLER_SESSION", "Cannot delete the session currently executing this tool", {
+          hint: "Choose another sessionId to delete.",
+        });
       }
       if (typeof commands?.deleteSession === "function") {
         return await commands.deleteSession(id, {
@@ -183,7 +178,7 @@ registerTool({
           source: "tool",
         });
       }
-      return runtimeUnavailable("delete", { sessionId: id });
+      return runtimeUnavailable("delete");
     }
 
     if (action === "last_messages") {
@@ -194,11 +189,7 @@ registerTool({
       if (typeof commands?.getLastMessages === "function") {
         return await commands.getLastMessages({ sessionId: id, num });
       }
-      return {
-        error: "Session runtime is not available for last_messages",
-        code: "SESSION_RUNTIME_UNAVAILABLE",
-        details: { sessionId: id, num },
-      };
+      return runtimeUnavailable("last_messages");
     }
 
     if (action === "wait") {
@@ -214,31 +205,19 @@ registerTool({
           signal,
         });
       }
-      return {
-        error: "Session runtime is not available for wait",
-        code: "SESSION_RUNTIME_UNAVAILABLE",
-        details: { sessionIds: ids, waitFor },
-      };
+      return runtimeUnavailable("wait");
     }
 
     if (action === "list_automations") {
       if (typeof commands?.listAutomations === "function") {
         return await commands.listAutomations({ limit, runLimit });
       }
-      return {
-        error: "Automation runtime is not available for list_automations",
-        code: "AUTOMATION_RUNTIME_UNAVAILABLE",
-        details: { action },
-      };
+      return runtimeUnavailable("list_automations");
     }
 
     if (action === "create_automation" || action === "update_automation") {
       if (typeof commands?.saveAutomation !== "function") {
-        return {
-          error: `Automation runtime is not available for ${action}`,
-          code: "AUTOMATION_RUNTIME_UNAVAILABLE",
-          details: { action },
-        };
+        return runtimeUnavailable(action);
       }
       const id = typeof automationId === "string" ? automationId.trim() : "";
       if (action === "update_automation" && !id) {
@@ -286,11 +265,7 @@ registerTool({
       if (typeof commands?.deleteAutomation === "function") {
         return await commands.deleteAutomation(id);
       }
-      return {
-        error: "Automation runtime is not available for delete_automation",
-        code: "AUTOMATION_RUNTIME_UNAVAILABLE",
-        details: { action, automationId: id },
-      };
+      return runtimeUnavailable("delete_automation");
     }
 
     if (action === "run_automation") {
@@ -301,11 +276,7 @@ registerTool({
       if (typeof commands?.runAutomation === "function") {
         return await commands.runAutomation(id);
       }
-      return {
-        error: "Automation runtime is not available for run_automation",
-        code: "AUTOMATION_RUNTIME_UNAVAILABLE",
-        details: { action, automationId: id },
-      };
+      return runtimeUnavailable("run_automation");
     }
 
     if (action === "automation_runs") {
@@ -316,11 +287,7 @@ registerTool({
       if (typeof commands?.listAutomationRuns === "function") {
         return await commands.listAutomationRuns({ automationId: id, limit });
       }
-      return {
-        error: "Automation runtime is not available for automation_runs",
-        code: "AUTOMATION_RUNTIME_UNAVAILABLE",
-        details: { action, automationId: id },
-      };
+      return runtimeUnavailable("automation_runs");
     }
 
     throw new ToolExecutionError("INVALID_SESSION_ACTION", t("unsupportedManageSessionsAction", { action: String(action) }), { action });
@@ -328,6 +295,7 @@ registerTool({
   validateArgs: args => {
     const action = String(args.action || "").trim();
     if (AUTOMATION_SESSION_ACTION_SET.has(action) && !sessionAutomationsEnabled()) return;
+    if (action === "create") requireToolFields("manage_sessions", args, ["title"], { action, requiredWhen: "action=create" });
     if (["stop","delete","last_messages"].includes(action)) requireToolFields("manage_sessions", args, ["sessionId"], { action, requiredWhen: `action=${action}` });
     if (["send_message"].includes(action)) requireToolFields("manage_sessions", args, ["sessionId","message"], { action, requiredWhen: `action=${action}` });
     if (["wait"].includes(action)) requireToolFields("manage_sessions", args, [["sessionIds","sessionId"]], { action, requiredWhen: `action=${action}` });
@@ -336,12 +304,12 @@ registerTool({
   },
 });
 
-function runtimeUnavailable(action: string, details: Record<string, unknown> = {}) {
-  return {
-    error: `Session runtime is not available for ${action}`,
-    code: "SESSION_RUNTIME_UNAVAILABLE",
-    details: { action, ...details },
-  };
+function runtimeUnavailable(action: string) {
+  const service = AUTOMATION_SESSION_ACTION_SET.has(action) ? "Automation" : "Session";
+  return toolError(`${service.toUpperCase()}_RUNTIME_UNAVAILABLE`, `${service} runtime is not available for ${action}`, {
+    hint: `Retry after the ${service.toLowerCase()} runtime is available.`,
+    details: { action },
+  });
 }
 
 }

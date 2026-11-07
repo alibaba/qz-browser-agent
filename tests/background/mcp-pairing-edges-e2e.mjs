@@ -90,7 +90,7 @@ async function task(browser, number) {
   assert.ok(fixture.pages.some(page => page.marker === marker), "the task must load the actual fixture page");
   assert.ok(browser.context.pages().some(page => page.url().includes(marker)), "the healthy browser owns the task page");
   assert.ok(browsers.filter(item => item !== browser).every(item => item.context.pages().every(page => !page.url().includes(marker))), "the other profile must not receive the task page");
-  return { sessionId: created.sessionId || created.session?.id, status: created.snapshot.status, marker };
+  return { sessionId: created.sessionId || created.session?.sessionId, status: created.snapshot.status, marker };
 }
 try {
   fixture = await multiBrowserFixture();

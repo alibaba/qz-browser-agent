@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 
 let tabPageUrl = "https://example.test/";
 let mainDocumentId = "";
@@ -79,7 +80,7 @@ const storedImageRows = new Map();
 const imageMetadataWrites = [];
 const imageUpserts = [];
 let imageWriteError = null;
-let bindBackendNodesImpl = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 0) });
+let bindBackendNodesImpl = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 77) });
 let readImageDataUrl = "data:image/png;base64,aW1hZ2U=";
 let readImageFailure = null;
 let listImageResults = [];
@@ -196,14 +197,25 @@ const runtime = registerMediaTools({
     if (stored) return { tabId: stored.tabId, target, selector: stored.selector, index: 0, uid, ref: stored };
     return { tabId, target, selector: String(target || "").replace(/^css:/, "") || "img", index: 0 };
   },
-  makeSnapshotId(tabId) { return `t${tabId}_snapshot`; },
-  registerElementRef(ref) { elementRefs.set(ref.uid, { ...ref }); },
-  elementTargetForUid(uid) { return uid ? `uid:${uid}` : ""; },
+  async bindElementReferences(tabId, refs, context) {
+    let bound;
+    try { bound = await bindBackendNodesImpl(tabId, refs.map(ref => ref.selector)); }
+    catch (error) {
+      if (!['SESSION_TAB_FOREIGN', 'SESSION_TAB_UNOWNED'].includes(error.code)) throw error;
+      return refs.map(ref => ({ ...ref, target: `css:${ref.selector}` }));
+    }
+    return refs.map((ref, index) => {
+      const uid = bound.ids[index] ? `t${tabId}_snapshot.i${index + 1}` : undefined;
+      const next = { ...ref, tabId, sessionId: context.sessionId, pageUrl: tabPageUrl, documentId: mainDocumentId,
+        uid, backendNodeId: bound.ids[index], loaderId: bound.loaderId, target: uid ? `uid:${uid}` : `css:${ref.selector}` };
+      if (uid) elementRefs.set(uid, next);
+      return next;
+    });
+  },
   elementTargetForSelector(selector) { return selector ? `css:${selector}` : ""; },
   elementTargetForRef(ref) { return ref?.target || ""; },
   elementTargetGrammar: "target grammar",
   getElementTargetDescription: () => "target description",
-  bindBackendNodes(tabId, selectors) { return bindBackendNodesImpl(tabId, selectors); },
   async getTabPageState(tabId) { return { tabId, url: tabPageUrl, title: "Example" }; },
   pageStateDelta(before, after) {
     return {
@@ -214,7 +226,7 @@ const runtime = registerMediaTools({
     };
   },
   commitObservedPageNavigation({ pageBefore, pageAfter }) {
-    return pageBefore.url !== pageAfter.url ? { url: pageAfter.url, rateLimitRecorded: false } : null;
+    return pageBefore.url !== pageAfter.url ? { url: pageAfter.url } : null;
   },
   async getSecurityGuardrails() { guardrailReads += 1; return { rules: [] }; },
   async assertTabAllowed() {},
@@ -455,6 +467,11 @@ assert.equal(
   "a focused key press should dispatch without any actionable screenshot in its session/run scope",
 );
 const independentContext = { ...screenContext, sessionId: "scroll-without-screenshot", source: "run_script" };
+assert.throws(() => definitions.get("screenshot").validateArgs({ target: "viewport" }), error =>
+  error.code === "SCREENSHOT_TARGET_INVALID" && /target/.test(error.message));
+assert.doesNotThrow(() => definitions.get("screenshot").validateArgs({ actionable: true }));
+assert.ok(definitions.get("act_on_screen").parameters.properties.tabRef);
+assert.ok(definitions.get("collect_images").parameters.properties.tabRef);
 const screenAction = definitions.get("act_on_screen");
 await assert.rejects(screenAction.execute({ tabId: 3, action: "scroll", x: 500, y: 400, deltaY: 120,
   returnScreenshot: false }, undefined, independentContext), error => error.code === "SCREENSHOT_CONTEXT_STALE"
@@ -572,7 +589,8 @@ assert.equal(clicked.coordinateBasisReady, true);
 assert.equal(clicked._image, "data:image/jpeg;base64,Y2Rw", "model feedback must keep the captured pixels untouched");
 assert.notEqual(clicked.screenshotId, actionable.screenshotId);
 assert.deepEqual(clicked.marker, { kind: "point", action: "click", x: 250, y: 600 });
-assert.deepEqual(clicked._display, {
+assert.equal(Object.hasOwn(clicked, "_display"), false, "host animation metadata stays outside the business result");
+assert.deepEqual(getToolResultPresentation(clicked)._display, {
   type: "imageWithAction",
   action: "click",
   kind: "point",
@@ -649,7 +667,7 @@ assert.equal(held.durationMs, 300);
 assert.equal(held.feedbackAvailable, false);
 assert.equal(held.coordinateBasisReady, true);
 assert.equal(held._image, undefined);
-assert.deepEqual(held._display, {
+assert.deepEqual(getToolResultPresentation(held)._display, {
   type: "imageWithAction",
   action: "long_press",
   kind: "point",
@@ -678,7 +696,7 @@ const scriptedAction = await definitions.get("act_on_screen").execute({
 }, undefined, { ...screenContext, source: "run_script" });
 assert.equal(scriptedAction.coordinateBasisReady, true);
 assert.equal(scriptedAction._image, undefined);
-assert.equal(scriptedAction._display, undefined, "run_script child actions should not create unused Chat UI animation frames");
+assert.equal(getToolResultPresentation(scriptedAction)._display, undefined, "run_script child actions should not create unused Chat UI animation frames");
 const scriptedObservation = await definitions.get("act_on_screen").execute({
   tabId: 3,
   action: "hover",
@@ -687,7 +705,7 @@ const scriptedObservation = await definitions.get("act_on_screen").execute({
   y: 600,
 }, undefined, { ...screenContext, source: "run_script" });
 assert.match(scriptedObservation._image, /^data:image\/jpeg;base64,/, "an explicitly requested script observation should return its image");
-assert.equal(scriptedObservation._display, undefined, "run_script observations should not create action animations");
+assert.equal(getToolResultPresentation(scriptedObservation)._display, undefined, "run_script observations should not create action animations");
 assert.equal(
   cdpCalls.slice(callsBeforeScriptedActions).filter(([, method]) => method === "Page.captureScreenshot").length,
   1,
@@ -705,7 +723,7 @@ const typed = await definitions.get("act_on_screen").execute({
   replace: true,
 }, undefined, screenContext);
 assert.equal(typed.feedbackAvailable, true);
-assert.match(typed._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "a direct action should capture a fresh animation pre-frame");
+assert.match(getToolResultPresentation(typed)._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "a direct action should capture a fresh animation pre-frame");
 const typeCalls = cdpCalls.slice(callsBeforeType);
 assert.equal(typeCalls.some(([, method, params]) => (
   method === "Input.dispatchKeyEvent"
@@ -1035,8 +1053,8 @@ const modelSilentType = await definitions.get("act_on_screen").execute({
 }, undefined, screenContext);
 assert.equal(modelSilentType.coordinateBasisReady, true);
 assert.equal(modelSilentType.feedbackAvailable, false);
-assert.match(modelSilentType._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "model-silent actions should keep their source frame for UI replay");
-assert.match(modelSilentType._display?.afterImage || "", /^data:image\/jpeg;base64,/, "model-silent actions should keep their result frame for UI replay");
+assert.match(getToolResultPresentation(modelSilentType)._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "model-silent actions should keep their source frame for UI replay");
+assert.match(getToolResultPresentation(modelSilentType)._display?.afterImage || "", /^data:image\/jpeg;base64,/, "model-silent actions should keep their result frame for UI replay");
 const callsBeforeModelSilentNavigation = cdpCalls.length;
 const pageUrlBeforeModelSilentNavigation = tabPageUrl;
 const loaderBeforeModelSilentNavigation = frameLoaderId;
@@ -1058,7 +1076,7 @@ const navigatedFromHiddenFeedback = await definitions.get("act_on_screen").execu
 onCdpCall = null;
 assert.equal(navigatedFromHiddenFeedback.urlChanged, true);
 assert.equal(navigatedFromHiddenFeedback.viewportChange.resized, false, "a 2 CSS px navigation jitter should not be reported as a resize");
-assert.match(navigatedFromHiddenFeedback._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "navigation from a model-hidden feedback frame should retain a fresh source preview for Chat UI");
+assert.match(getToolResultPresentation(navigatedFromHiddenFeedback)._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "navigation from a model-hidden feedback frame should retain a fresh source preview for Chat UI");
 assert.equal(
   cdpCalls.slice(callsBeforeModelSilentNavigation).filter(([, method]) => method === "Page.captureScreenshot").length,
   2,
@@ -1096,8 +1114,8 @@ assert.deepEqual(changedNoCapture.viewportChange, {
   resized: false,
 }, "model-silent actions should expose the observed viewport movement independently of image delivery");
 assert.equal(changedNoCapture._image, undefined);
-assert.match(changedNoCapture._display?.beforeImage || "", /^data:image\/jpeg;base64,/);
-assert.match(changedNoCapture._display?.afterImage || "", /^data:image\/jpeg;base64,/);
+assert.match(getToolResultPresentation(changedNoCapture)._display?.beforeImage || "", /^data:image\/jpeg;base64,/);
+assert.match(getToolResultPresentation(changedNoCapture)._display?.afterImage || "", /^data:image\/jpeg;base64,/);
 assert.equal(
   cdpCalls.slice(callsBeforeChangedNoCapture).filter(([, method]) => method === "Page.captureScreenshot").length,
   2,
@@ -1120,7 +1138,7 @@ const observedScroll = await definitions.get("act_on_screen").execute({
 onCdpCall = null;
 assert.equal(observedScroll.repeat, 1, "scroll should preserve one-event behavior when repeat is omitted");
 assert.equal(observedScroll.coordinateBasisReady, true, "a returned screenshot should establish a new basis after viewport movement");
-assert.equal(observedScroll._display?.direction, "down", "scroll feedback should expose its dominant wheel direction to Chat UI");
+assert.equal(getToolResultPresentation(observedScroll)._display?.direction, "down", "scroll feedback should expose its dominant wheel direction to Chat UI");
 assert.deepEqual(observedScroll.viewportChange, {
   observed: true,
   scrolled: true,
@@ -1343,7 +1361,7 @@ const transitioned = await transitionRuntime.act({
   y: 600,
 }, undefined, transitionContext);
 assert.equal(transitioned._image, "data:image/jpeg;base64,YWZ0ZXI=", "the model image must be the clean post-navigation frame");
-assert.deepEqual(transitioned._display, {
+assert.deepEqual(getToolResultPresentation(transitioned)._display, {
   type: "imageWithAction",
   action: "click",
   kind: "point",
@@ -1361,17 +1379,20 @@ const scriptedTransition = await transitionRuntime.act({
   x: 250,
   y: 600,
 }, undefined, { ...transitionContext, source: "run_script" });
-assert.equal(scriptedTransition._display, undefined, "run_script child actions should omit the animation projection");
+assert.equal(getToolResultPresentation(scriptedTransition)._display, undefined, "run_script child actions should omit the animation projection");
+assert.equal(Object.hasOwn(scriptedTransition, "popups"), false, "ordinary actions do not emit an empty popup field");
 assert.equal(transitionPresentationCount, 2, "run_script child actions should not render animation previews");
+const observedPopups = [{ tabRef: 7, title: "New page", url: "https://example.test/popup", active: false }];
 const scriptedTransitionObservation = await transitionRuntime.act({
   tabId: 6,
   action: "hover",
   returnScreenshot: true,
   x: 250,
   y: 600,
-}, undefined, { ...transitionContext, source: "run_script" });
+}, undefined, { ...transitionContext, source: "run_script", observedPopups: () => observedPopups });
 assert.equal(scriptedTransitionObservation._image, "data:image/jpeg;base64,YWZ0ZXI=");
-assert.equal(scriptedTransitionObservation._display, undefined);
+assert.deepEqual(scriptedTransitionObservation.popups, observedPopups, "screen actions include confirmed popup observations at the source");
+assert.equal(getToolResultPresentation(scriptedTransitionObservation)._display, undefined);
 assert.equal(transitionPresentationCount, 2, "run_script observations must not prepare animation previews");
 assert.equal(transitionRuntime.releaseRun("transition-session", "transition-run"), 1, "run teardown should release the retained display frame and coordinate basis");
 await assert.rejects(
@@ -1435,7 +1456,7 @@ assert.deepEqual(
   "image pixels must use the full screenshot CSS extent, including scrollbar space",
 );
 assert.deepEqual(rawAction.marker, { kind: "point", action: "click", x: 500, y: 1200 });
-assert.deepEqual(rawAction._display, {
+assert.deepEqual(getToolResultPresentation(rawAction)._display, {
   type: "imageWithAction",
   action: "click",
   kind: "point",
@@ -1454,7 +1475,7 @@ const rawDrag = await rawCoordinateRuntime.act({
   endX: 1800,
   endY: 1440,
 }, undefined, rawContext);
-assert.deepEqual(rawDrag._display, {
+assert.deepEqual(getToolResultPresentation(rawDrag)._display, {
   type: "imageWithAction",
   action: "drag",
   kind: "drag",
@@ -1517,8 +1538,8 @@ try {
   ], "both animation frames should be derived at the bounded presentation size");
   assert.equal(previewCanvases.every(item => item.options?.type === "image/jpeg"), true);
   assert.equal(previewCanvases.filter(item => item.width === 960).every(item => item.options?.quality === 0.72), true);
-  assert.equal(previewOnlyAction._display.beforeImage, `data:image/jpeg;base64,${Buffer.from('960x639').toString('base64')}`);
-  assert.equal(previewOnlyAction._display.afterImage, `data:image/jpeg;base64,${Buffer.from('960x639').toString('base64')}`);
+  assert.equal(getToolResultPresentation(previewOnlyAction)._display.beforeImage, `data:image/jpeg;base64,${Buffer.from('960x639').toString('base64')}`);
+  assert.equal(getToolResultPresentation(previewOnlyAction)._display.afterImage, `data:image/jpeg;base64,${Buffer.from('960x639').toString('base64')}`);
   assert.deepEqual(previewOnlyAction.coordinateSpace, {
     origin: "top_left",
     width: 2048,
@@ -1558,6 +1579,13 @@ await assert.rejects(definitions.get("screenshot").execute({ tabId: 3, actionabl
 measurementUnavailable = false;
 cdpFailure = true;
 
+listImageResults = [{ code: "INVALID_ELEMENT_TARGET", error: "Invalid target syntax", selector: "[", details: { selector: "[", tabId: 3 } }];
+const invalidImageTarget = await definitions.get("list_images").execute({ tabId: 3, target: "[" }, undefined, { sessionId: "session-a" });
+assert.deepEqual(Object.keys(invalidImageTarget).sort(), ["code", "details", "hint", "message"]);
+assert.deepEqual(invalidImageTarget.details, { target: "css:[" });
+assert.match(invalidImageTarget.hint, /target/);
+assert.doesNotMatch(JSON.stringify(invalidImageTarget), /selector|tabId/);
+
 const validImages = listedImages;
 const writesBeforeInvalidImageReply = imageMetadataWrites.length;
 listedImages = [{ src: { unsafe: "not a URL string" } }];
@@ -1571,9 +1599,15 @@ const listed = await definitions.get("list_images").execute({ tabId: 3 }, undefi
 const listImagesSchema = definitions.get("list_images").parameters;
 const collectImagesSchema = definitions.get("collect_images").parameters;
 const readImageSchema = definitions.get("read_image").parameters;
-assert.equal(listImagesSchema.properties.tabId.type, "number");
-assert.equal((listImagesSchema.required || []).includes("tabId"), false, "list_images should default to the working tab");
+assert.deepEqual(listImagesSchema.properties.tabRef.type, ["integer", "string"]);
+assert.equal(listImagesSchema.properties.tabId, undefined);
+assert.deepEqual(listImagesSchema.required, ["tabRef"], "image discovery requires an explicit page reference");
 assert.deepEqual(collectImagesSchema.required, ["table"]);
+assert.deepEqual(collectImagesSchema.anyOf, [
+  { required: ["urls"], properties: { urls: { minItems: 1 }, targets: { maxItems: 0 } } },
+  { required: ["tabRef", "targets"], properties: { targets: { minItems: 1 } } },
+]);
+assert.deepEqual(readImageSchema.anyOf, [{ required: ["url"] }, { required: ["tabRef", "target"] }]);
 assert.equal(collectImagesSchema.properties.targets.items.type, "string");
 assert.equal(collectImagesSchema.properties.urls.items.type, "string");
 assert.equal(readImageSchema.properties.target.type, "string");
@@ -1605,7 +1639,8 @@ try {
   assert.equal(foreignListed.count, listedImages.length);
   assert.equal(foreignListed.images.length, 1);
   assert.equal(foreignListed.images[0].src, "https://example.test/hero-a.png");
-  assert.equal(elementRefs.get("t3_snapshot.i1").backendNodeId, undefined);
+  assert.equal(foreignListed.images[0].target, 'css:#gallery > img.hero');
+  assert.equal(foreignListed.images[0].uid, undefined);
   bindBackendNodesImpl = async () => { throw new ToolExecutionError("SECURITY_GUARDRAIL_BLOCKED", "blocked"); };
   await assert.rejects(
     definitions.get("list_images").execute({ tabId: 3 }, undefined, { sessionId: "session-a" }),
@@ -1765,7 +1800,7 @@ try {
     ["ready"],
     "failed attempts must stay in the tool diagnostics rather than the gallery table",
   );
-  assert.equal(partial.failures[0].src, "https://images.example/fail.png");
+  assert.equal(partial.failures[0].details.src, "https://images.example/fail.png");
 
   const embeddedCollection = await definitions.get("collect_images").execute({
     table: "embedded-images",
@@ -1805,6 +1840,10 @@ assert.equal(savedScreenshot.saved, true);
 assert.equal(savedScreenshot.totalRows, 1);
 assert.ok(savedScreenshot._image, "saving a screenshot still returns image input to the model");
 assert.equal(savedScreenshot.assetId, storedImageRows.get("saved-screenshots")[0].assetId);
+for (const rows of storedImageRows.values()) for (const row of rows) {
+  assert.equal(Object.hasOwn(row, 'selector'), false, 'managed gallery rows do not reintroduce a second element identity');
+  assert.equal(Object.hasOwn(row, 'tabId'), false, 'managed gallery rows use the public page reference');
+}
 assert.deepEqual(imageUpserts.at(-1), { table: "saved-screenshots", dedupField: "sourceKey" });
 assert.equal(savedScreenshot.artifacts[0].rowCount, 1);
 assert.equal(savedScreenshot.artifacts[0].kind, "image_collection");
@@ -1894,12 +1933,12 @@ try {
       definitions.get("read_image").execute({ target: bound.images[0].target }, undefined, { sessionId: "session-a" }),
       error => error?.code === code
         && (!(failure instanceof Error) || error === failure)
-        && (code !== "CONTENT_SCRIPT_MESSAGE_FAILED" || (error.message === failure.error && error.details.stage === "reply")),
+        && (code !== "CONTENT_SCRIPT_MESSAGE_FAILED" || (error.message === failure.error && error.details.target === bound.images[0].target)),
       "a source-bound image must not return pixels when its current source cannot be verified",
     );
     await assert.rejects(collectBound(), error => error?.code === "IMAGE_COLLECTION_ALL_FAILED"
       && error.details.failures[0].code === code
-      && (!code.startsWith("CONTENT_SCRIPT_") || error.details.failures[0].error === (failure.message || failure.error)));
+      && (!code.startsWith("CONTENT_SCRIPT_") || error.details.failures[0].message === (failure.message || failure.error)));
     assert.equal(cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length, capturesBeforeUnknownSource);
     assert.equal(downloads, 0, "unverified page identity cannot become a successful URL fallback");
   }
@@ -1917,7 +1956,7 @@ try {
     const captures = cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length;
     await assert.rejects(collectBound(), error => error?.code === "IMAGE_COLLECTION_ALL_FAILED"
       && error.details.failures[0].code === code
-      && (!code.startsWith("CONTENT_SCRIPT_") || error.details.failures[0].error === (reply.message || reply.error)));
+      && (!code.startsWith("CONTENT_SCRIPT_") || error.details.failures[0].message === (reply.message || reply.error)));
     assert.equal(listImageResults.length, 0, "collection rechecks the image before capturing fallback pixels");
     assert.equal(cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length, captures);
   }
@@ -2071,9 +2110,7 @@ registerMediaTools({
   sendToContent: fallbackContent,
   resolveSelectorTarget: fallbackElements.resolveSelectorTarget,
   resolveElementReference: fallbackElements.resolveElementReference,
-  makeSnapshotId: fallbackElements.makeSnapshotId,
-  makeElementUid: fallbackElements.makeElementUid,
-  registerElementRef: fallbackElements.registerElementRef,
+  bindElementReferences: fallbackElements.bindElementReferences,
   elementTargetForUid: fallbackElements.elementTargetForUid,
   elementTargetForSelector: fallbackElements.elementTargetForSelector,
   elementTargetForRef: fallbackElements.elementTargetForRef,
@@ -2120,7 +2157,11 @@ registerPageElementTools({
 });
 const unownedListed = await fallbackDefinitions.get("list_images").execute({ tabId: foreignTabId }, undefined, { sessionId: "session-a" });
 assert.equal(unownedListed.images.length, 2);
-assert.match(unownedListed.images[1].target, /^uid:/);
+assert.match(unownedListed.images[1].target, /^css:/);
+assert.equal(unownedListed.images[1].uid, undefined);
+const legacyImageTarget = 'uid:t15.00000e.i2';
+fallbackElements.registerElementRef({ uid: legacyImageTarget.slice(4), tabId: foreignTabId, sessionId: 'session-a',
+  pageUrl: 'https://example.test/', selector: fallbackImages[1].selector, imageSrc: fallbackImages[1].src });
 assert.equal(unownedListed.images[1].tabId, undefined, "image candidates keep the existing target fields");
 const unownedRead = await fallbackDefinitions.get("read_image").execute({
   tabId: foreignTabId,
@@ -2149,7 +2190,7 @@ const contentBeforeMutation = fallbackContentCalls.length;
 await assert.rejects(
   fallbackDefinitions.get("act_on_element").execute({
     tabId: foreignTabId,
-    target: unownedListed.images[1].target,
+    target: legacyImageTarget,
     action: "click",
   }, undefined, { sessionId: "session-a" }),
   error => error?.code === "STALE_ELEMENT_UID",
@@ -2168,12 +2209,12 @@ fallbackElements.registerElementRef({
 });
 await assert.rejects(
   fallbackDefinitions.get("read_image").execute({ tabId: foreignTabId, target: "uid:t15.00000b.i9" }, undefined, { sessionId: "session-a" }),
-  error => error?.code === "STALE_ELEMENT_UID",
-  "a node-backed uid on a tab this session does not own stays rejected",
+  error => error?.code === "SESSION_TAB_UNOWNED",
+  "a read-only node UID is admitted, but this host without a CDP read grant still refuses browser access",
 );
 liveFallbackImages[1] = { ...liveFallbackImages[1], src: "https://example.test/changed.png", currentSrc: "https://example.test/changed.png" };
 await assert.rejects(
-  fallbackDefinitions.get("read_image").execute({ tabId: foreignTabId, target: unownedListed.images[1].target }, undefined, { sessionId: "session-a" }),
+  fallbackDefinitions.get("read_image").execute({ tabId: foreignTabId, target: legacyImageTarget }, undefined, { sessionId: "session-a" }),
   error => error?.code === "STALE_IMAGE_TARGET",
   "selector fallback must reject an image whose source changed after listing",
 );
@@ -2183,7 +2224,7 @@ await assert.rejects(
   fallbackDefinitions.get("collect_images").execute({
     table: "fallback-images",
     tabId: foreignTabId,
-    targets: [unownedListed.images[1].target],
+    targets: [legacyImageTarget],
   }, undefined, { sessionId: "session-a" }),
   error => error?.code === "STALE_IMAGE_TARGET",
   "collection uses the same source check when a uid falls back to its selector",
@@ -2191,13 +2232,17 @@ await assert.rejects(
 mainDocumentId = "doc-live";
 const stamped = await fallbackDefinitions.get("list_images").execute({ tabId: 5 }, undefined, { sessionId: "session-a" });
 assert.equal(stamped.code, undefined, JSON.stringify(stamped));
-const liveImage = await fallbackDefinitions.get("read_image").execute({ target: stamped.images[0].target }, undefined, { sessionId: "session-a" });
+assert.match(stamped.images[0].target, /^css:/);
+const stampedTarget = 'uid:t5.00000f.1';
+fallbackElements.registerElementRef({ uid: stampedTarget.slice(4), tabId: 5, sessionId: 'session-a',
+  pageUrl: tabPageUrl, documentId: mainDocumentId, selector: fallbackImages[0].selector, imageSrc: fallbackImages[0].src });
+const liveImage = await fallbackDefinitions.get("read_image").execute({ target: stampedTarget }, undefined, { sessionId: "session-a" });
 assert.equal(liveImage.code, undefined, JSON.stringify(liveImage));
 mainDocumentId = "doc-next";
 await assert.rejects(
-  fallbackDefinitions.get("read_image").execute({ target: stamped.images[0].target }, undefined, { sessionId: "session-a" }),
+  fallbackDefinitions.get("read_image").execute({ target: stampedTarget }, undefined, { sessionId: "session-a" }),
   error => error?.code === "STALE_ELEMENT_UID",
-  "a list_images uid dies after the same url loads a new document",
+  "a legacy selector UID still dies after the same URL loads a new document",
 );
 mainDocumentId = "";
 

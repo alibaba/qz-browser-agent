@@ -137,7 +137,7 @@ async function createHarness({ reloadFixture = false, secondary = false } = {}) 
         tabId: () => tabId,
         async call(name, args, signal) {
           try { return await runtime.execute(name, { tabId, ...args }, signal, { ...context, workingTabId: tabId, source: "run_script" }); }
-          catch (error) { return { error: error.message, code: error.code, details: error.details }; }
+          catch (error) { return { message: error.message, code: error.code, hint: error.hint, details: error.details }; }
         },
         async detach() {
           try { await chrome.debugger.detach({ tabId }); return { detached: true }; }
@@ -351,22 +351,24 @@ test.describe("uid resolves the original node", () => {
   test.beforeAll(async () => { h = await createHarness(); });
   test.afterAll(async () => { await h?.close(); });
 
-  test("css read and write do not attach the debugger", async () => {
+  test("CSS text reads avoid debugger attachment while element observations bind registry targets", async () => {
     await h.detach();
     const before = await h.attaches();
-    const inspected = await h.call("inspect_element", { target: "css:#save" });
-    expect(inspected.code, JSON.stringify(inspected)).toBeUndefined();
-    expect(JSON.stringify(inspected)).toContain("Save");
     const dom = await h.call("read_dom", { selector: "css:#scope" });
     expect(dom.content, JSON.stringify(dom)).toContain("INSIDE-TOKEN");
     const article = await h.call("read_article", { selector: "css:#scope", source: "selector", limit: 4000 });
     expect(article.text, JSON.stringify(article)).toContain("INSIDE-TOKEN");
+    expect(await h.attaches()).toBe(before);
+    const inspected = await h.call("inspect_element", { target: "css:#save" });
+    expect(inspected.code, JSON.stringify(inspected)).toBeUndefined();
+    expect(JSON.stringify(inspected)).toContain("Save");
+    expect(inspected.target).toMatch(/^uid:/);
     const found = await h.call("find_elements", { selector: "css:#save", pattern: "Save text" });
     expect(found.matches ?? found.results?.length, JSON.stringify(found)).not.toBe(0);
     const selected = await h.call("act_on_element", { target: "css:#pick", action: "select", value: "two" });
     expect(selected.code, JSON.stringify(selected)).toBeUndefined();
     expect((await h.state()).pick).toBe("two");
-    expect(await h.attaches()).toBe(before);
+    expect(selected).toEqual({});
   });
 
   test("the root uid expands the accessibility tree", async () => {
@@ -476,11 +478,11 @@ test.describe("uid resolves the original node", () => {
     const date = await h.call("act_on_element", { target: "css:#when", action: "fill", value: "2026-10-22" });
     expect(date.code, JSON.stringify(date)).not.toBe("NOT_EDITABLE_ELEMENT");
     expect((await h.state()).when).toBe("2026-10-22");
+    const beforeEnter = await h.page.evaluate(() => window.enters);
     const rich = await h.call("act_on_element", { target: "css:#child", action: "fill", value: "replaced rich", submit: true });
     expect(rich.code, JSON.stringify(rich)).not.toBe("INPUT_RESULT_UNKNOWN");
-    expect(rich.filled).toBe(true);
-    expect(rich.submitDispatched).toBe(true);
-    expect(rich.value).toContain("replaced rich");
+    expect(rich).toEqual({});
+    expect(await h.page.evaluate(() => window.enters)).toBe(beforeEnter + 1);
     expect((await h.state()).rich).toContain("replaced rich");
   });
 
@@ -628,7 +630,7 @@ test.describe("uid resolves the original node", () => {
     });
     const replaced = await h.call("act_on_element", { target: swap, action: "click" });
     expect(replaced.code).toBe("STALE_ELEMENT_UID");
-    expect(replaced.error).toMatch(/page structure|页面结构|頁面結構/);
+    expect(replaced.message).toBe("The element target has expired or does not exist.");
     expect((await h.state()).hits.swap || 0).toBe(0);
     const fresh = await tree(h);
     const freshSwap = targets(fresh.snapshot, "button", "Swap")[0];
@@ -657,7 +659,7 @@ test.describe("uid resolves the original node", () => {
     }, { timeout: 20000 }).not.toBe("");
     const clicked = await h.call("act_on_element", { target: inside, action: "click" });
     expect(clicked, JSON.stringify(clicked)).not.toHaveProperty("code");
-    expect(clicked.inputDelivered).toBe(true);
+    expect(clicked).toEqual({});
     expect(await h.page.evaluate(() => document.querySelector("#frame").contentWindow.clicks)).toBe(1);
   });
 

@@ -13,7 +13,7 @@ const FRAME_MISSING_RETRIES = 20;
 /** Confirm the new main document using existing tabs/scripting permissions. */
 export async function navigateTab(tabId: number, url: string, assertTabAllowed: ToolExtensionAPI["assertTabAllowed"], signal?: AbortSignal) {
   let disposed = false;
-  const cancelled = () => new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while navigating", { tabId });
+  const cancelled = () => new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while navigating");
   const check = () => {
     if (disposed || signal?.aborted) throw cancelled();
   };
@@ -27,7 +27,9 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     try { return await wait(chrome.tabs.get(tabId)); }
     catch (error) {
       check();
-      throw new ToolExecutionError("SESSION_TAB_UNAVAILABLE", t("navigationTabClosed"), { tabId, cause: String(error) });
+      const failure = new ToolExecutionError("SESSION_TAB_UNAVAILABLE", t("navigationTabClosed"));
+      failure.hint = "Use list_tabs to choose an available tabRef, then retry.";
+      throw failure;
     }
   };
   const documentId = async () => {
@@ -42,13 +44,18 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     return result.documentId;
   };
   let baselineTimer: ReturnType<typeof setTimeout> | undefined;
-  let listenForCompletion = false, completed = false;
+  let completed = false;
+  let navigationVersion = 0;
   const onUpdated = (id: number, change: chrome.tabs.OnUpdatedInfo) => {
-    if (id === tabId && change.status) completed = change.status === "complete";
+    if (id !== tabId) return;
+    if (change.status || change.url) navigationVersion += 1;
+    if (change.status) completed = change.status === "complete";
   };
   try {
     const destination = new URL(url).href;
     const before = await getTab();
+    // Continue the pending navigation instead of dispatching the same request twice.
+    const joiningNavigation = before.pendingUrl === destination;
     // A busy old renderer must not prevent Chrome from starting navigation.
     const previousId = isPageTabUrl(before.url) ? await wait(Promise.race([
       documentId().catch(() => null),
@@ -60,26 +67,34 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     const sameDocument = (destination.includes("#") || before.url !== destination)
       && withoutFragment(before.url || "") === withoutFragment(destination);
     // Without a baseline, require a load completion observed after navigation starts.
-    listenForCompletion = previousId === null && isPageTabUrl(before.url) && !sameDocument;
-    if (listenForCompletion) chrome.tabs.onUpdated.addListener(onUpdated);
-    await wait(chrome.tabs.update(tabId, { url }));
+    const requireCompletion = previousId === null && isPageTabUrl(before.url) && !sameDocument;
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    try {
+      if (!joiningNavigation) await wait(chrome.tabs.update(tabId, { url }));
+    } catch (error) { await getTab(); throw error; }
     let missingFrames = 0;
     for (;;) {
+      const observedVersion = navigationVersion;
       const tab = await getTab();
       if (!tab.pendingUrl && tab.url && tab.url !== "about:blank") {
         try {
           const currentId = await documentId();
           check();
           missingFrames = 0;
-          if (listenForCompletion ? completed && tab.status === "complete"
-            : currentId !== previousId || (sameDocument && tab.url === destination)) return;
+          if ((joiningNavigation && tab.status === "complete" && (tab.url === destination || tab.url !== before.url))
+            || (requireCompletion ? completed && tab.status === "complete"
+            : currentId !== previousId || (sameDocument && tab.url === destination))) return;
         } catch (error) {
           check();
           if (error instanceof ToolExecutionError) throw error;
+          // An injection failure describes the probed document, which navigation may already have replaced.
+          const latest = await getTab();
+          const changed = navigationVersion !== observedVersion || latest.url !== tab.url
+            || latest.status !== tab.status || Boolean(latest.pendingUrl);
           const frameMissing = String(error).includes(FIREFOX_FRAME_MISSING);
-          if (frameMissing) missingFrames += 1;
-          if (tab.status === "complete" && !(frameMissing && missingFrames <= FRAME_MISSING_RETRIES)) {
-            throw new ToolExecutionError("NAVIGATION_FAILED", t("navigationFailed"), { tabId, url: tab.url, cause: String(error) });
+          missingFrames = !changed && frameMissing ? missingFrames + 1 : 0;
+          if (!changed && latest.status === "complete" && !(frameMissing && missingFrames <= FRAME_MISSING_RETRIES)) {
+            throw new ToolExecutionError("NAVIGATION_FAILED", t("navigationFailed"), { url: latest.url, cause: String(error) });
           }
         }
       }
@@ -90,6 +105,6 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     disposed = true;
     clearTimeout(baselineTimer);
     signal?.removeEventListener("abort", onAbort);
-    if (listenForCompletion) chrome.tabs.onUpdated.removeListener(onUpdated);
+    chrome.tabs.onUpdated.removeListener(onUpdated);
   }
 }

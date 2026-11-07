@@ -393,10 +393,7 @@ function appendReadableResult(parent: HTMLElement, toolName: string, result: unk
 export function appendErrorSection(parent: HTMLElement, value: unknown) {
   const input = value && typeof value === "object" ? value : { error: String(value || t("unknownError")) };
   const error = record(localizeToolFailurePayload(input, { isError: true }));
-  const message = localizeToolFailureText(error.error || error.message || t("toolFailed"), {
-    code: error.code,
-    details: error.details,
-  });
+  const message = String(error.error || error.message || t("toolFailed"));
   const codeLabel = error.codeLabel || localizeToolFailureCode(error.code);
   const rawCode = String(error.code || "").trim();
   const codeText = codeLabel || rawCode;
@@ -407,6 +404,10 @@ export function appendErrorSection(parent: HTMLElement, value: unknown) {
     ${renderDiagnosticHtml(error.diagnostic)}
     ${renderToolErrorDetailsHtml(error.details)}
   `);
+  const source = record(input);
+  const trace = record(record(source._display).script).trace ?? record(source.details).trace ?? source.trace;
+  if (Array.isArray(trace)) appendScriptTrace(parent, trace);
+  if (typeof error.hint === "string" && error.hint.trim()) appendCompactLine(parent, { title: error.hint });
 }
 
 function renderToolErrorDetailsHtml(input: unknown) {
@@ -418,8 +419,7 @@ function renderToolErrorDetailsHtml(input: unknown) {
     [t("tool"), details.tool || details.skillToolName || details.pluginToolName],
     [t("script"), details.script],
   ].filter(([, value]) => value != null && value !== "");
-  const trace = Array.isArray(details.trace) ? details.trace.slice(-3) : [];
-  if (!rows.length && !trace.length) return "";
+  if (!rows.length) return "";
   return `
     <div class="tool-error-diagnostic">
       ${rows.map(([label, value]) => `
@@ -428,12 +428,6 @@ function renderToolErrorDetailsHtml(input: unknown) {
           <b>${escapeHtml(summarizeValue(value, 96))}</b>
         </div>
       `).join("")}
-      ${trace.length ? `
-        <div class="tool-error-diagnostic-row">
-          <span>Trace</span>
-          <b>${escapeHtml(trace.map(item => record(item).message || item).filter(Boolean).map(item => summarizeValue(item, 120)).join(" / "))}</b>
-        </div>
-      ` : ""}
     </div>
   `;
 }
@@ -594,13 +588,14 @@ export function normalizeFriendlyValue(value: unknown) {
 
 export function unwrapResultValue(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { value, envelope: null };
-  const hasEnvelopeShape = Object.prototype.hasOwnProperty.call(value, "ok")
+  const valueOnly = record(record(record(value)._display).script).valueOnly === true;
+  const hasEnvelopeShape = valueOnly || Object.prototype.hasOwnProperty.call(value, "ok")
     && (Object.prototype.hasOwnProperty.call(value, "result")
       || Object.prototype.hasOwnProperty.call(value, "hasResult")
       || Object.prototype.hasOwnProperty.call(value, "resultType"));
   if (!hasEnvelopeShape) return { value, envelope: null };
   return {
-    value: normalizeFriendlyValue(record(value).result),
+    value: valueOnly ? record(value).result : normalizeFriendlyValue(record(value).result),
     envelope: record(value),
   };
 }

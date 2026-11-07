@@ -75,6 +75,7 @@ async function assertCoreMetadataCoverage() {
     const before = registered.size;
     register({
       skills: {}, models: {},
+      onDebuggerDetached() { return () => {}; },
       registerTool({ name }) {
         assert.ok(!registered.has(name), `${name} must not be registered twice`);
         registered.add(name);
@@ -318,45 +319,40 @@ function assertPresentationHasNoRuntimeAliasSpecialCases() {
 }
 
 function assertPageRoleTerminologyContract() {
-  const tabTools = ["list_tabs", "use_tab", "get_working_tab"].map(name => resolveToolDefinition(name).description).join("\n");
+  const tabTools = ["list_tabs", "open_tab", "navigate", "close_tab", "set_page_mode"].map(name => resolveToolDefinition(name).description).join("\n");
+  for (const name of ["use_tab", "get_working_tab"]) assert.equal(resolveToolDefinition(name), null, `${name} is history-only`);
   const accessibilityTools = resolveToolDefinition("get_ax_tree").description;
   const browserContentProfile = ["wait", "tabs", "accessibility", "documents", "media"]
     .map(name => source(`src/capabilities/${name}/browser-content.ts`)).join("\n");
   const pluginRuntime = getSkillToolParameters({ script: "scripts/example.js", runtime: "page" }).properties.tabRef.description;
   assert.match(
     tabTools,
-    /active=true 表示用户可见标签页，isWorkingTab=true 表示当前任务工作标签页/,
-    "list_tabs should expose page roles as result facts",
+    /返回 tabRef、url、title 和 active；active=true 表示用户正在看的标签页/,
+    "list_tabs should describe public page identity and user visibility",
   );
-  assert.match(
-    tabTools,
-    /用户可见标签页保持不变/,
-    "use_tab should state its local visible-tab effect",
-  );
+  for (const name of ["navigate", "close_tab", "set_page_mode"]) {
+    assert.ok(resolveToolDefinition(name).parameters.required.includes("tabRef"), `${name} requires an explicit page reference`);
+  }
+  assert.doesNotMatch(tabTools, /tabId|workingTab|isWorkingTab|工作标签页|working tab/i,
+    "current tab tools share only the public page model");
   assert.doesNotMatch(
     `${tabTools}\n${pluginRuntime}`,
     /用户(?:明确)?说[“「]?当前页面|我现在看的页面/,
     "tool descriptions should rely on the kernel page-language contract",
   );
-  assert.match(
-    pluginRuntime,
-    /标签页别名或正整数标签页 ID.*省略时使用当前任务工作标签页。/,
-    "plugin page tools should describe tabRef and its working-tab default",
-  );
+  assert.match(pluginRuntime, /tabRef/, "Skill page tools describe the same public page reference");
+  assert.doesNotMatch(pluginRuntime, /省略|默认|工作标签页|working tab|defaults to/i,
+    "Skill page tools must not advertise an implicit execution target");
   assert.match(
     accessibilityTools,
-    /获取当前任务所拥有页面的语义快照/,
-    "get_ax_tree should state its owner-only CDP boundary",
+    /获取 tabRef 指定页面的语义快照/,
+    "get_ax_tree reads the explicitly referenced page",
   );
-  assert.match(
-    tabTools,
-    /没有工作标签页时返回 hasWorkingTab=false；存在时返回 hasWorkingTab=true/,
-    "get_working_tab should model absence as a normal getter result",
-  );
+  assert.equal(resolveToolDefinition("get_ax_tree").page, "readOnly", "AX observation permits authorized foreign-page reads");
   assert.match(
     browserContentProfile,
     /data\.hasWorkingTab === false \? t\("noWorkingPage"\) : t\("workingPage"\)/,
-    "the tool profile should render the normal empty state without an error card",
+    "saved getter results retain their historical empty-state presentation",
   );
 }
 

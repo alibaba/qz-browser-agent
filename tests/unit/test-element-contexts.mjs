@@ -49,6 +49,7 @@ function harness(worlds, options = {}) {
           return { result: { value: runInNewContext(params.expression, {
             chrome: { runtime: { id: item.extensionId } },
             __qzInvoke: item.bridge ? () => {} : undefined,
+            __qzElementRefVersion: 1,
           }) } };
         }
         if (method === "DOM.resolveNode") {
@@ -193,7 +194,7 @@ test("detaching a child session drops only that session's isolated contexts", as
       emitContext("", 7, "main");
       return {};
     }
-    if (method === "Runtime.evaluate") return { result: { value: { extensionId: "current-extension", bridge: true } } };
+    if (method === "Runtime.evaluate") return { result: { value: { extensionId: "current-extension", bridge: true, elementRefs: true } } };
     if (method === "DOM.resolveNode") return { object: { objectId: "node" } };
     if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true } } };
     if (method === "Runtime.releaseObjectGroup") return {};
@@ -214,7 +215,7 @@ test("detaching a child session drops only that session's isolated contexts", as
       if (sessionId === "kept") emitContext("kept", 11, "side");
       return {};
     }
-    if (method === "Runtime.evaluate") return { result: { value: { extensionId: "current-extension", bridge: true } } };
+    if (method === "Runtime.evaluate") return { result: { value: { extensionId: "current-extension", bridge: true, elementRefs: true } } };
     if (method === "DOM.resolveNode") return { object: { objectId: `${sessionId}-node` } };
     if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true } } };
     if (method === "Runtime.releaseObjectGroup") return {};

@@ -190,7 +190,7 @@ test("element operations preserve selector errors and recover with the same matc
       expect(result.code, `${action}: ${selector}[${index}]`).toBe(code);
       expect(result.error).toBeTruthy();
       expect(Array.isArray(result.interactable)).toBe(true);
-      expect(result.details.selector).toBe(selector);
+      expect(result.details.target).toBe(selector);
       if (code === "ELEMENT_NOT_FOUND") expect(result.details).toMatchObject({ index, matched: selector === ".target" ? 2 : 0 });
     }
     const result = await callContent(page, action, { selector: ".target", index: 1, elementAction: "scroll" });

@@ -14,18 +14,18 @@ Use this skill when the user wants to create, edit, delete, import, or publish a
 7. Use this skill's create tool for new skills, resource-editing tool for \`plugin.json\`, \`scripts/*.js\`, and \`references/*.md\`, update tool for existing content or metadata, and delete tool for removal. Edit one resource with one action per call.
 8. Scripts should implement reusable, well-defined local operations suitable for tool calls, not entire workflows. The skill itself is the user-selectable entry point; do not add Skill slash commands.
 9. qz refreshes the Skill registry after a write or update. Newly declared tools and result views should become available to the current conversation immediately.
-10. Scripts default to \`runtime:"page"\` on the current task's page. Page tools automatically receive an optional \`tabRef\` parameter: pass a task-owned tab alias or positive integer ID (numeric strings also work), or omit it to use the current task's working tab. If declaring it in \`plugin.json\`, use \`tabRef\` with \`type:["integer","string"]\`. Unknown aliases fail rather than falling back to the working tab. For page-independent scripts using their own settings or network APIs, use \`runtime:"inner"\`: read manifest settings through \`$plugin.config\` and use standard \`fetch\` only for origins declared in \`network.allowedOrigins\`. Do not assign \`runtime:"host"\` to user-created Skills; it is reserved for controlled Background actions explicitly registered by qz core.
-11. Skill script tools automatically receive a required \`timeout\` argument; do not add it to the business schema. Values are in seconds: \`timeout <= 0\` waits indefinitely; \`timeout > 0\` sets the maximum wait. Choose it deliberately for Skill tools, \`run_script\`, and \`run_skill_script\` according to task complexity.
+10. New Skill scripts use \`runtime:"script"\`, the same page-independent outer execution mode as \`run_script\`. Use the \`qz\` SDK: bind \`qz.tab(tabRef)\` for page operations, use \`page.locator(query)\` for element actions and waits, and self-contained \`page.evaluate(code,args?)\` functions for DOM access and page-authenticated requests. If a tool operates on a caller-selected page, declare \`tabRef\` with \`type:["integer","string"]\` in \`required\`; scripts that open their own pages use the reference returned by \`qz.openTab\`. Read settings through \`$plugin.config\` and use outer \`fetch\` only for origins declared in \`network.allowedOrigins\`.
+11. New Skill script tools share \`run_script\` semantics: scripts return plain business JSON; awaited tool calls (including Skill calls) return business values directly and throw on failure. The model receives \`{ok,result,trace}\`, where \`trace\` lists only errors and explicit \`trace()\`/\`console\` output in order (including from nested scripts)—use \`trace()\` at key checkpoints to aid failure recovery. Renderer paths resolve relative to the returned business value. Use \`Promise.all\` for independent tab workflows and \`await\` all calls before returning. The host injects an optional \`timeout\` in seconds (default 120; 0 disables the per-call deadline while preserving parent cancellation and deadlines); do not declare \`timeout\` in the business schema. Legacy scripts retain their declared calling contract.
 12. Tool availability follows the skill's \`scope\`, not an extra manifest setting. \`resident\` is always available; \`site\` is available when the page matches domains/urlPatterns or after the current conversation calls \`load_skill\`; \`global\` is available only after \`load_skill\` in the current conversation. \`builtin\`, \`readOnly\`, and \`source\` describe origin and permissions, not loading policy.
 13. For external MCP, first \`load_skill("qingzhou-mcp")\` and follow its registry search, unregistered-URL inspection, and minimal test-call workflow. Persist selected server/tool bindings only when ongoing reuse is confirmed. Call registered MCP tools by their Skill tool names.
-14. Discover a Skill ZIP URL with the existing page or Network tools. Make its source page the current task's working tab, then pass the URL to the page-ZIP import tool. That tool does not scan or guess download links. It downloads in the page's authenticated context; Background handles extraction, validation, and Skill storage. Do not assemble base64 or parse ZIP files in page scripts.
+14. Discover a Skill ZIP URL with the existing page or Network tools. Pass its source page's tabRef and the URL to the page-ZIP import tool. That tool does not scan or guess download links. It downloads in the page's authenticated context; Background handles extraction, validation, and Skill storage. Do not assemble base64 or parse ZIP files in page scripts.
 15. For supported GitHub or GitLab repository/directory URLs, use the Git inspection/import tool. It opens the repository, waits for sign-in if needed, discovers the branch and ZIP, and records an updatable source. Never pass \`overwrite:true\` for name or local-edit conflicts without user confirmation.
 16. When the user explicitly asks to install a local Skill into a Git repository, use the Git installation tool. The current product's publishing adapter must support the target URL. The directory determines the installation path; the tool creates or updates \`<directory>/<skill-name>/SKILL.md\` and resources in one commit. If no adapter is available, export the Skill for the user to commit.
 17. Skill packages may include DOCX, XLSX, or PDF references. \`load_skill_resource(name,path)\` uses the document pipeline to return the first preview chunk and docModelId. To read more, first \`load_skill("qingzhou-documents")\`, then call \`document_read_chunk\`. Binary resources cannot be edited with text replace/append/set operations.
 
 ## Page-mode prerequisites
 
-- When creating or updating a Skill from a webpage, confirm the target page's mode using the current task's page context or the \`pageMode\` returned by \`list_tabs\`. Do not infer it from the window width or URL. If the mode is missing or changing, observe the page again to confirm it first.
+- When creating or updating a Skill from a webpage, confirm the target page's mode using the current task's page context. Do not infer it from the window width or URL. If the mode is missing or changing, observe the page again to confirm it first.
 - If the workflow was captured or tested with \`pageMode:"mobile"\`, the generated \`SKILL.md\` / content must state “Tested in mobile mode” in its prerequisites and explain how to reproduce that setup: open a new page with \`open_tab\` and \`mode:"mobile"\`, or switch an existing task-owned page with \`set_page_mode\` and \`mode:"mobile"\`. Switching modes reloads the page; read the page or take a new screenshot before interacting, without reusing old element references or coordinates.
 - Record only the modes actually tested. Mobile-only testing does not establish desktop compatibility; document separate workflows if the modes differ. Keep mode requirements in the Skill body, without adding manifest fields or hard-coding the tabRef used during authoring.
 
@@ -33,13 +33,13 @@ Use this skill when the user wants to create, edit, delete, import, or publish a
 
 - \`SKILL.md\` / skill content explains how to complete the task. For a video-search skill, for example, describe opening the site, searching, filtering, visiting details, recognizing success, and handling verification or empty results.
 - \`plugin.json\` is optional. It exposes scripts in the model's tool schema and renders results with qz components.
-- \`scripts/*.js\` is optional. A script becomes a tool only when explicitly declared in \`plugin.json.tools[]\`. Use \`runtime:"page"\` for page actions and \`runtime:"inner"\` for computation, Skill settings, or external APIs. Keep scripts focused on local operations.
+- \`scripts/*.js\` is optional. A script becomes a tool only when explicitly declared in \`plugin.json.tools[]\` with \`runtime:"script"\`. Keep scripts focused on reusable operations; use the same outer execution mode for page actions, computation, Skill settings, and external APIs.
 - If a tool needs multiple prerequisite steps, its description or skill content must say to read the workflow with \`load_skill\` first and then run the script on the appropriate page.
 - Use this skill's exposed Skill tools to create, update, and delete skills, so authoring logic, directory rules, and result views use the same entry point. Do not call bare core tools directly.
 
 ## Package imports and Git distribution
 
-- Page-ZIP import accepts a complete http(s) download URL already discovered by the agent. It uses the current workingTabId's authenticated page context by default; it does not scan the DOM or Network or guess URLs. It can import one or more standard Skills. Existing names are not overwritten unless the user confirms and \`overwrite:true\` is supplied.
+- Page-ZIP import accepts a complete http(s) download URL already discovered by the agent. Pass the source page's tabRef to use its authenticated context; the tool does not scan the DOM or Network or guess URLs. It can import one or more standard Skills. Existing names are not overwritten unless the user confirms and \`overwrite:true\` is supplied.
 - Git inspection/import accepts supported GitHub or GitLab repository-root or directory-page URLs. It reuses the Skills page's Git source integration and preserves repository, branch, directory, and update summary. The source can later be checked for updates or unlinked in the Skills page.
 - Git installation accepts a local Skill name and a supported publishing URL. It creates an external Git commit and therefore requires an explicit installation/commit request. Verify the returned targetPath, fileCount, and commitId.
 - ZIP and Git imports operate on whole packages. Do not replace them with \`create_skill\` followed by repeated resource edits: content, resources, manifest, and source metadata must be validated and written together.
@@ -113,13 +113,14 @@ qz supports remote HTTP MCP only, not local stdio. \`qingzhou-mcp\` handles disc
       "title": "Inspect page",
       "description": "Read the visible page structure and return a summary",
       "script": "scripts/inspect-page.js",
-      "needsPage": true,
+      "runtime": "script",
       "parameters": {
         "type": "object",
         "properties": {
-          "tabRef": { "type": ["integer", "string"], "description": "Task-owned tab alias or positive integer ID; defaults to the working tab" },
+          "tabRef": { "type": ["integer", "string"], "description": "Required task-owned tab alias or reference returned by qz.openTab or qz.listTabs" },
           "limit": { "type": "integer", "description": "Maximum number of links to return" }
-        }
+        },
+        "required": ["tabRef"]
       }
     }
   ],
@@ -139,7 +140,7 @@ qz supports remote HTTP MCP only, not local stdio. \`qingzhou-mcp\` handles disc
 }
 \`\`\`
 
-## Settings DSL and inner-runtime networking
+## Settings DSL and script networking
 
 For endpoints, tokens, or other user configuration, declare top-level settings.fields. Do not add a business-specific settings page or host action. Controls, grouping, and widths use the generic DSL below; custom style, theme, and arbitrary component names are unsupported:
 
@@ -149,7 +150,7 @@ For endpoints, tokens, or other user configuration, declare top-level settings.f
 - number can declare min, max, and step. select requires nonempty options, each \`{ "label": "Display text", "value": "stable-string-value" }\`. boolean values and defaults must be actual JSON booleans, not the strings "true" or "false".
 - Group many fields with settings.layout.sections. Each section supports title, optional description, and a fields array of keys. A field may belong to at most one section; ungrouped fields still appear. layout affects only the generic settings view, not storage or script configuration.
 
-Scripts read settings through \`$plugin.config.<key>\`. Secret values are populated in local password controls but never injected into the page runtime; tools that need secrets must use \`runtime:"inner"\`. A dynamic network origin references a \`type:"url"\` setting. Use ordinary fetch.
+Scripts read settings through \`$plugin.config.<key>\`. Secret values remain outside page functions unless explicitly passed to them; pass only the fields each function needs. A dynamic network origin references a \`type:"url"\` setting. Use ordinary fetch.
 
 \`\`\`json
 {
@@ -178,7 +179,7 @@ Scripts read settings through \`$plugin.config.<key>\`. Secret values are popula
   "tools": [{
     "name": "query_api",
     "title": "Query API",
-    "runtime": "inner",
+    "runtime": "script",
     "script": "scripts/query-api.js",
     "parameters": { "type": "object", "properties": { "query": { "type": "string" } } }
   }]
@@ -187,15 +188,14 @@ Scripts read settings through \`$plugin.config.<key>\`. Secret values are popula
 
 ## Script conventions
 
-Skill scripts use the same source form as run_script.code: normally one \`async () => { ... }\` function expression, which qz invokes. Do not use top-level return, an IIFE, main(), or a result wrapper. \`runtime:"page"\` runs on the current task's working tab or a task-owned page selected with \`tabRef\`. \`runtime:"inner"\` runs in a Worker without a DOM or tab requirement, with standard Web APIs, \`$plugin.config\`, fetch, and tools/tool.
+Skill scripts use the same source form as \`run_script.code\`: top-level \`await\` and \`return\` (existing function expressions remain supported). The script runs outside web pages, survives page navigation, and provides \`args\`, \`$plugin\`, \`qz\`, \`trace()\`, and Web APIs without \`window/document\`. Awaited SDK calls return business values directly and throw on failure. Bind \`const page = qz.tab(args.tabRef)\`; use \`page.goto(url)\`, \`page.read({limit})\`, and \`page.locator(targetOrQuery)\`. Locator queries support \`role/name/text\` or a \`uid:/css:\` target, require a unique match, and wait for readiness before dispatching an action once. Methods include \`click()\`, \`fill(value)\`, \`press(key)\`, \`inspect()\`, \`read({limit})\`, \`wait({state:"visible"})\`, \`count()\`, and \`wait({count:3})\`. Page functions passed to \`page.evaluate(code,args?)\` must be self-contained: inputs arrive as their function argument; they cannot capture outer variables or call the qz SDK. Perform navigation and clicks through the outer SDK before evaluating the resulting page; unloading can interrupt an evaluation without automatic replay. Discover extension tools through \`qz.listTools({names})\` and call them with \`qz.call(name,args)\`.
 
 \`\`\`js
-async () => {
-  const limit = Number(args.limit || 10);
+const page = qz.tab(args.tabRef);
+return await page.evaluate(({ limit }) => {
   const links = Array.from(document.querySelectorAll("a[href]"))
     .slice(0, limit)
     .map(a => ({ text: a.innerText.trim(), href: a.href }));
-
   return {
     title: document.title,
     url: location.href,
@@ -203,10 +203,10 @@ async () => {
     textLength: document.body?.innerText?.length || 0,
     links
   };
-}
+}, { limit: Number(args.limit ?? 10) });
 \`\`\`
 
-Both runtimes provide args/input, $plugin, tools/tool, and Web APIs. page additionally provides window/document and the host-resolved numeric tabId. This runtime value is not an author-declared targeting parameter; use tabRef when calling page tools. inner has no DOM; network origins and methods must be declared in the manifest's network settings. Do not use Node.js, fs/path/process/require, npm packages, local shell commands, or the server filesystem.
+Await dependent steps in order. Use \`Promise.all\` for independent branches; each branch can continue when its own tool completes, while same-page actions remain serialized. Results keep input order. A rejection does not cancel sibling promises; use \`Promise.allSettled\` when every outcome matters. Await all required work before returning: script exit cancels unfinished calls and does not undo completed actions. Outer network origins and methods must be declared in \`network\`; page-authenticated fetch belongs inside \`page.evaluate\`. Do not use Node.js, fs/path/process/require, npm packages, local shell commands, or the server filesystem.
 
 ### Page state and safe return values
 
@@ -250,7 +250,7 @@ Return \`{ summary: {...}, data: { rows:[...], totalRows: 10, truncated: false }
 - To add, replace, or edit plugin.json, scripts/*.js, or references/*.md, use the resource-editing tool. name, path, action, type, title, description, content, oldText, and newText are top-level arguments. One resource and one action per call.
 - Replace a large script/JSON file with \`action:"set"\`. Specify path/type/title/description first and the long content last.
 - For a small edit, use \`action:"replace"\` and top-level oldText/newText. Copy the smallest unique contiguous oldText verbatim from the resource just read; do not recreate it from memory. Use append/prepend for additions, rename to rename, and delete to remove.
-- Before editing an existing resource, inspect the resource list with load_skill, then read the file with load_skill_resource(name,path). Do not pack multiple resources or edits into arrays or nested objects.
+- Before editing an existing resource, inspect the resource list with load_skill, then read the file with load_skill_resource(name,path). Preserve existing runtime declarations and script behavior; migrate the manifest and code together only when changing execution mode. Do not pack multiple resources or edits into arrays or nested objects.
 - Imports preserve original DOCX/XLSX/PDF bytes and route reading through the document pipeline. The resource editor handles text only; do not convert binary files into base64 text arguments.
 
 ## UI and rendering

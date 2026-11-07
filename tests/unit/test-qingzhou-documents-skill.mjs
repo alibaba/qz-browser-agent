@@ -1,3 +1,5 @@
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
+import "../support/default-locale.mjs";
 import { stripTypeScriptTypes } from "node:module";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -111,7 +113,7 @@ assert.deepEqual(
 const documentCreateSchema = loadedSchemas.find(
   item => item.function?.name === contract.getDocumentSkillToolName("document_create"),
 ).function.parameters;
-assert.deepEqual(documentCreateSchema.required, ["timeout", "format"]);
+assert.deepEqual(documentCreateSchema.required, ["format"]);
 const documentCreateFunction = loadedSchemas.find(
   item => item.function?.name === contract.getDocumentSkillToolName("document_create"),
 ).function;
@@ -119,6 +121,8 @@ for (const format of createInput.DOCUMENT_OUTPUT_FORMATS) {
   assert.match(documentCreateFunction.description, new RegExp(`"${format}"`));
   assert.match(documentCreateSchema.properties.format.description, new RegExp(`"${format}"`));
 }
+assert.match(documentCreateFunction.description, /120/);
+assert.doesNotMatch(documentCreateFunction.description, /必须传入 timeout/);
 assert.match(documentCreateFunction.description, /用户明确指定目标格式时必须传对应值并直接生成/);
 assert.match(documentCreateSchema.properties.title.description, /元数据标题[^。]*默认文件名[^。]*不会自动写入正文/);
 assert.match(documentCreateSchema.properties.title.description, /type:'heading', level:1/);
@@ -166,8 +170,8 @@ for (const [coreName, input] of Object.entries(forwardingCases)) {
   assert.equal(calls[0].context.sessionId, loadedContext.sessionId);
   assert.equal(calls[0].context.runId, loadedContext.runId);
   assert.equal(result.coreName, coreName);
-  assert.equal(result._plugin.id, contract.QINGZHOU_DOCUMENTS_SKILL_ID);
-  assert.equal(result._plugin.runtime, "host");
+  assert.equal(getToolResultPresentation(result)._plugin.id, contract.QINGZHOU_DOCUMENTS_SKILL_ID);
+  assert.equal(getToolResultPresentation(result)._plugin.runtime, "host");
   assert.equal(Object.prototype.hasOwnProperty.call(result, "trace"), false, `${coreName} should not duplicate its result into host trace`);
 }
 
@@ -182,8 +186,8 @@ await assert.rejects(
     assert.equal(error?.code, "MISSING_REQUIRED_ARGUMENTS");
     assert.deepEqual(error?.details?.missing, ["format"]);
     assert.deepEqual(error?.details?.expected?.format?.enum, createInput.DOCUMENT_OUTPUT_FORMATS);
-    assert.deepEqual(error?.details?.retry?.requiredFields, ["timeout", "format"]);
-    assert.deepEqual(error?.details?.retry?.preservedArgs, { timeout: 30 });
+    assert.deepEqual(error?.details?.retry?.requiredFields, ["format"]);
+    assert.deepEqual(error?.details?.retry?.preservedArgs, {});
     return true;
   },
   "missing format should return its schema and preserve the plugin timeout for retry",
@@ -211,12 +215,11 @@ await assert.rejects(
     assert.equal(error?.details?.issueCount, 3);
     assert.equal(error?.details?.expectedSchema?.required?.includes("type"), true);
     assert.equal(error?.details?.examples?.heading?.type, "heading");
-    assert.deepEqual(error?.details?.retry?.requiredFields, ["timeout", "format"]);
+    assert.deepEqual(error?.details?.retry?.requiredFields, ["format"]);
     assert.deepEqual(error?.details?.retry?.preservedArgs, {
       format: "pdf",
       filename: "legacy-blocks.pdf",
       download: false,
-      timeout: 30,
     });
     assert.deepEqual(error?.details?.retry?.replacePaths, ["blocks"]);
     return true;
@@ -254,7 +257,7 @@ await assert.rejects(
     assert.equal(error?.details?.expectedSchema?.additionalProperties, false);
     assert.ok(error?.details?.allowedFields?.includes("blocks"));
     assert.equal(error?.details?.retry?.preservedArgs?.format, "txt");
-    assert.equal(error?.details?.retry?.preservedArgs?.timeout, 30);
+    assert.equal(Object.hasOwn(error?.details?.retry?.preservedArgs || {}, "timeout"), false);
     return true;
   },
   "unknown fields should return the top-level contract instead of being ignored",
@@ -277,7 +280,7 @@ await assert.rejects(
     assert.equal(error?.code, "DOCUMENT_FORMAT_UNSUPPORTED");
     assert.equal(Object.hasOwn(error?.details?.retry?.preservedArgs || {}, "format"), false);
     assert.equal(error?.details?.retry?.preservedArgs?.filename, "unsupported.pptx");
-    assert.equal(error?.details?.retry?.preservedArgs?.timeout, 30);
+    assert.equal(Object.hasOwn(error?.details?.retry?.preservedArgs || {}, "timeout"), false);
     return true;
   },
   "retry context should not preserve an unsupported format",

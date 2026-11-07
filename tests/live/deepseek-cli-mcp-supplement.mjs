@@ -73,7 +73,7 @@ async function inputCase(kind, prompt) {
   let finished = false, result, failure, sessionId;
   const pending = mcp("qingzhou_create_session", { title: `Live supplement: ${kind}`, firstMessage: prompt, stream: true, waitTimeoutSeconds: 180 }, { onprogress: progress => {
     const event = progress._meta?.["qz/task-event"];
-    if (event?.type === "created") { sessionId = event.session?.id || event.sessionId; entry.sessionId = sessionId; sessions.add(sessionId); }
+    if (event?.type === "created") { sessionId = event.session?.sessionId || event.sessionId; entry.sessionId = sessionId; sessions.add(sessionId); }
   } }).then(value => result = value, error => failure = error).finally(() => finished = true);
   const deadline = Date.now() + 180_000;
   try {

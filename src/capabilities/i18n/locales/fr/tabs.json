@@ -1,7 +1,7 @@
 {
   "tabs.tabs": "Onglets",
-  "tabs.tab": "Onglet {tabId}",
-  "tabs.current": "Actuel",
+  "tabs.tab": "Onglet {tabRef}",
+  "tabs.current": "Visible par l’utilisateur",
   "tabs.window": "Fenêtre {windowId}",
   "tabs.qingzhouTask": "Tâche qz",
   "tabs.organizedInto": "Regroupés dans « {name} »",
@@ -38,8 +38,6 @@
   "tabs.usePage": "Définir l’onglet de travail",
   "tabs.navigatePage": "Accéder à l’URL",
   "tabs.organizeTabsTool": "Organiser les onglets",
-  "tabs.currentSessionWorkingTabIsNotAWebPage": "L’onglet de travail de cette tâche n’est pas une page web standard.",
-  "tabs.tabIsNotAWebPageAndCannotBe": "L’onglet {tabId} n’est pas une page web standard et ne peut pas servir d’onglet de travail.",
   "tabs.openingAnAgentOwnedTabRequiresTheCurrentSession": "L’ouverture d’un onglet dédié nécessite le service d’onglets de la tâche actuelle.",
   "tabs.viewWorkingPageShort": "Onglet de travail",
   "tabs.usePageShort": "Utiliser l’onglet",

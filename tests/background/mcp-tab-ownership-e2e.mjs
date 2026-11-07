@@ -63,7 +63,7 @@ try {
   assertNoUnexpectedDiagnostics(environment.diagnostics);
   Object.assign(report, {
     ok: true,
-    scenario: "multi-session-subsession-tab-ownership",
+    scenario: "multi-drive-session-tab-ownership",
     bridgePortIsolated: new URL(environment.bridge.endpoint).port !== "18765",
     bridgeClientCount: reconnected.clientCount,
     consentGatedConnectionPage: true,
@@ -98,34 +98,35 @@ async function cliMcpBrowserRoundTrip(environment, baseUrl) {
   const mcp = (name, args) => callTool(environment.bridge.endpoint, name, {
     clientId: environment.bridgeStatus.clients[0].clientId, timeoutSeconds: 30, ...args,
   }, { timeoutMs: 30_000 });
-  const created = await mcp("qingzhou_create_session", { title: "CLI local page" });
-  const sessionId = created.session.id;
+  const created = await mcp("qingzhou_create_drive_session", { title: "CLI local page" });
+  const sessionId = created.sessionId;
   assert.ok(sessionId);
-  assert.equal(created.session.title, "CLI local page");
-  assert.equal(created.started, false, "creating an empty MCP task must not invoke a model");
+  assert.equal(created.title, "CLI local page");
+  assert.equal(created.status, "idle", "creating a drive session must not invoke a model");
   const listed = await command("tasks");
-  assert.ok(listed.sessions.some(session => session.id === sessionId));
+  assert.ok(listed.sessions.some(session => session.sessionId === sessionId));
   const snapshot = await command("show", sessionId);
   assert.equal(snapshot.sessionId, sessionId);
   assert.equal(snapshot.session.title, "CLI local page");
 
   const schema = await mcp("qingzhou_get_tool", { name: "open_tab", sessionId });
   assert.equal(schema.name, "open_tab");
-  assert.equal(schema.parameters.properties.url.type, "string");
-  assert.ok(schema.parameters.required.includes("url"));
+  assert.match(schema.signature, /url:string/);
   const articleSchema = await mcp("qingzhou_get_tool", { name: "read_article", sessionId });
-  assert.deepEqual(articleSchema.parameters.properties.tabRef.type, ["integer", "string"]);
-  assert.equal(Object.hasOwn(articleSchema.parameters.properties, "tabId"), false);
-  assert.ok(articleSchema.parameters.required.includes("limit"));
+  assert.match(articleSchema.signature, /tabRef:integer\|string/);
+  assert.doesNotMatch(articleSchema.signature, /tabId|selector/);
+  assert.match(articleSchema.signature, /limit:number/);
 
   const url = `${baseUrl}/cli-roundtrip`;
   const opened = await mcp("qingzhou_execute_tool", { name: "open_tab", sessionId, args: { url, tabAlias: "cli-page" }, wait: true });
   assert.equal(opened.toolName, "open_tab");
   assert.equal(opened.sessionId, sessionId);
-  const tabId = opened.result.id;
+  const tabRef = opened.result.tabRef;
+  assert.equal(tabRef, "cli-page");
+  const tabId = await environment.page.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url)?.id, url);
   assert.equal(typeof tabId, "number");
   assert.equal(opened.result.url, url);
-  assert.equal(opened.result.tabAlias, "cli-page");
+  assert.equal(Object.hasOwn(opened.result, "tabAlias"), false);
   const article = await mcp("qingzhou_execute_tool", {
     name: "read_article", sessionId, args: { tabRef: "cli-page", source: "body", limit: 4000 }, wait: true,
   });
@@ -134,18 +135,20 @@ async function cliMcpBrowserRoundTrip(environment, baseUrl) {
   assert.equal(article.result.url, url);
   assert.match(article.result.text, /deterministic fixture cli-roundtrip/);
   const active = await command("show", sessionId);
-  assert.ok(active.runtime.ownedTabIds.includes(tabId));
+  assert.equal(Object.hasOwn(active.runtime, "ownedTabIds"), false);
+  const pages = await mcp("qingzhou_execute_tool", { name: "list_tabs", sessionId, args: {}, wait: true });
+  assert.ok(pages.result.tabs.some(tab => tab.tabRef === tabRef && tab.url === url));
 
-  const closed = await mcp("qingzhou_execute_tool", { name: "close_tab", sessionId, args: { tabRef: String(tabId) }, wait: true });
+  const closed = await mcp("qingzhou_execute_tool", { name: "close_tab", sessionId, args: { tabRef }, wait: true });
   assert.equal(closed.toolName, "close_tab");
-  assert.equal(closed.result.closed, tabId);
+  assert.equal(closed.result.closed, true);
   assert.equal(await environment.page.evaluate(async tabId => {
     try { await chrome.tabs.get(tabId); return false; } catch { return true; }
   }, tabId), true);
   const stopped = await command("cancel", sessionId);
   assert.equal(stopped.sessionId, sessionId);
-  return { ok: true, sessionId, tabId, commands: ["tasks", "show", "cancel"],
-    mcpCalls: ["qingzhou_create_session", "qingzhou_get_tool:open_tab", "qingzhou_get_tool:read_article",
+  return { ok: true, sessionId, tabRef, commands: ["tasks", "show", "cancel"],
+    mcpCalls: ["qingzhou_create_drive_session", "qingzhou_get_tool:open_tab", "qingzhou_get_tool:read_article",
       "qingzhou_execute_tool:open_tab", "qingzhou_execute_tool:read_article", "qingzhou_execute_tool:close_tab"],
     readText: article.result.text };
 }
@@ -246,9 +249,9 @@ async function cliModelTasks(environment, fixture) {
   })).result;
   assert.equal(created.length, 1, "the prompt creates exactly one task");
   assert.equal(stream.snapshot.status, "completed");
-  assert.equal(stream.snapshot.sessionId, stream.session.id);
+  assert.equal(stream.snapshot.sessionId, stream.session.sessionId);
   assert.equal(stream.snapshot.session.title, "Chosen CLI title", "an explicit CLI title survives task completion");
-  assert.equal(stream.snapshot.session.titleSource, "manual");
+  assert.deepEqual(Object.keys(stream.snapshot.session).sort(), ["sessionId", "status", "title"]);
   const deltas = updates.filter(update => update.type === "text");
   assert.ok(deltas.length >= 2, "CLI receives live partial snapshots before the final answer");
   assert.equal(deltas.map(update => update.text).join(""), "Streaming from the real extension.");
@@ -281,7 +284,7 @@ async function cliModelTasks(environment, fixture) {
   assert.ok(waitingUpdates.some(update => update.type === "status" && update.status === "waiting_user"));
   await new Promise(resolve => setTimeout(resolve, 1600));
   assert.equal(waitingSettled, false, "--stream keeps waiting for user input");
-  const stopped = (await runCli(["cancel", waitingTask.session.id, "--timeout", "30"], dependencies)).result;
+  const stopped = (await runCli(["cancel", waitingTask.session.sessionId, "--timeout", "30"], dependencies)).result;
   assert.equal(stopped.stopped, true, "the isolated human wait is cleaned up through the normal CLI");
   await waitingRun;
   if (waitingError) throw waitingError;

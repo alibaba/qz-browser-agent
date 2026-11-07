@@ -97,16 +97,17 @@ test("shadow locations cannot borrow identical light markup and references keep 
     root.innerHTML = '<button id="same">Same</button><button>Shadow only</button>';
   });
   const found = await call(page, 'findElements', { roles: ['button'] });
-  const shadows = found.results.filter(hit => hit._elementRef);
+  expect(found.results.every(hit => typeof hit._elementRef === 'string')).toBe(true);
+  const shadows = found.results.filter(hit => !hit.selector);
   expect(shadows).toHaveLength(2);
   for (const hit of shadows) {
     expect(hit.selector).toBe('');
     expect(hit).not.toHaveProperty('line');
     expect(hit).not.toHaveProperty('lineRange');
     const inspected = await page.evaluate(async token => {
-      const node = await window.__qzInvoke(null, { action: 'resolveFindElement', elementRef: token });
+      const [node] = await window.__qzInvoke(null, { action: 'resolveElementRefs', elementRefs: [token] });
       const inspection = await window.__qzInvoke(node, { action: 'inspectElement' });
-      const consumed = await window.__qzInvoke(null, { action: 'resolveFindElement', elementRef: token });
+      const [consumed] = await window.__qzInvoke(null, { action: 'resolveElementRefs', elementRefs: [token] });
       return { inspection, consumed };
     }, hit._elementRef);
     expect(inspected.inspection.text).toBe(hit.text);
@@ -115,15 +116,17 @@ test("shadow locations cannot borrow identical light markup and references keep 
   }
   const fresh = await call(page, 'findElements', { pattern: 'Shadow only', roles: ['button'] });
   await page.evaluate(() => document.querySelector('#host').shadowRoot.lastElementChild.remove());
-  expect(await page.evaluate(token => window.__qzInvoke(null, { action: 'resolveFindElement', elementRef: token }), fresh.results[0]._elementRef)).toBeNull();
+  expect(await page.evaluate(async token => (await window.__qzInvoke(null, { action: 'resolveElementRefs', elementRefs: [token] }))[0], fresh.results[0]._elementRef)).toBeNull();
 });
 
-test("light-DOM find results retain their pre-fix JSON bytes and field order", async ({ page }) => {
+test("light-DOM find results add private references while retaining existing fields and order", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await install(page, '<style>body { margin: 0 } button { display: block; width: 120px; height: 40px; padding: 0; border: 0 }</style><main id="light"><button id="first">First</button><button id="second" disabled>Second</button></main>');
   const found = await call(page, 'findElements', { selector: '#light', roles: ['button'] });
   // Captured from 848edd6 before the fix, with this exact markup and viewport.
-  expect(JSON.stringify(found)).toBe('{"pattern":"","flags":"i","matches":2,"searched":3,"limit":20,"resultTruncated":false,"results":[{"selector":"#first","tag":"button","role":"button","type":"","name":"","text":"First","value":"","placeholder":"","href":"","visible":true,"disabled":false,"editable":false,"rect":{"x":0,"y":0,"w":120,"h":40},"clickablePoint":{"x":60,"y":20},"actionable":true,"inViewport":true,"line":1,"lineRange":[1,1],"match":"","matchKind":"none","score":58,"obscuredAtCenter":false},{"selector":"#second","tag":"button","role":"button","type":"","name":"","text":"Second","value":"","placeholder":"","href":"","visible":true,"disabled":true,"editable":false,"rect":{"x":0,"y":40,"w":120,"h":40},"clickablePoint":{"x":60,"y":60},"actionable":true,"inViewport":true,"line":2,"lineRange":[2,2],"match":"","matchKind":"none","score":13,"obscuredAtCenter":false}]}');
+  expect(found.results.every(hit => typeof hit._elementRef === 'string')).toBe(true);
+  const publicShape = { ...found, results: found.results.map(({ _elementRef, ...item }) => item) };
+  expect(JSON.stringify(publicShape)).toBe('{"pattern":"","flags":"i","matches":2,"searched":3,"limit":20,"resultTruncated":false,"results":[{"selector":"#first","tag":"button","role":"button","type":"","name":"First","text":"First","value":"","placeholder":"","href":"","visible":true,"disabled":false,"editable":false,"rect":{"x":0,"y":0,"w":120,"h":40},"clickablePoint":{"x":60,"y":20},"actionable":true,"inViewport":true,"line":1,"lineRange":[1,1],"match":"","matchKind":"none","score":58,"obscuredAtCenter":false},{"selector":"#second","tag":"button","role":"button","type":"","name":"Second","text":"Second","value":"","placeholder":"","href":"","visible":true,"disabled":true,"editable":false,"rect":{"x":0,"y":40,"w":120,"h":40},"clickablePoint":{"x":60,"y":60},"actionable":true,"inViewport":true,"line":2,"lineRange":[2,2],"match":"","matchKind":"none","score":13,"obscuredAtCenter":false}]}');
 });
 
 for (const source of ['auto', 'selector', 'body']) {

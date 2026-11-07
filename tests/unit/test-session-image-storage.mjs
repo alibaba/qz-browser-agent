@@ -163,6 +163,17 @@ test("five parallel gallery saves deduplicate before publishing asset IDs", asyn
   assert.equal(stored.height, 1920);
 });
 
+test('parallel distinct images share quota admission with deduplication', async t => {
+  fixture(t);
+  const inputs = Array.from({ length: 5 }, (_, index) => ({ blob: new Blob([`image-${index}`], { type: 'image/png' }), sha256: String(index).padStart(64, '0') }));
+  const results = await Promise.allSettled(inputs.map(input => saveImageAsset(input, { thumbnail: false, maxImages: 1 })));
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter(result => result.status === 'rejected' && /image asset limit/.test(result.reason.message)).length, 4);
+  const winner = results.findIndex(result => result.status === 'fulfilled');
+  assert.equal((await saveImageAsset(inputs[winner], { thumbnail: false, maxImages: 1 })).deduped, true);
+  assert.equal((await getImageAssetStats()).count, 1);
+});
+
 test("gallery GC cannot evict history; deleting the last Session reference reclaims it", async t => {
   const f = fixture(t);
   const reference = await saveHistoryImage(image);

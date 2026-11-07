@@ -69,7 +69,7 @@ test("explicit desktop mode wins over an in-flight mobile recovery", async () =>
 
 test("mobile applies coherent UA, client hints, viewport and touch before reload; repeated modes are no-ops", async () => {
   const f = fixture();
-  assert.deepEqual(await f.runtime.change(1, "desktop", undefined, context), { tabId: 1, pageMode: "desktop", changed: false, reloaded: false });
+  assert.deepEqual(await f.runtime.change(1, "desktop", undefined, context), { pageMode: "desktop", changed: false, reloaded: false });
   assert.equal(f.calls.length, 0);
   assert.equal((await f.runtime.change(1, "mobile", undefined, context)).reloaded, true);
   assert.equal(f.physical.mode, "mobile"); assert.equal(f.physical.touch, true);

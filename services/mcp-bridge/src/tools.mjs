@@ -5,6 +5,9 @@ import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv
 import { BridgeError } from "./state.mjs";
 import { waitForTask } from "./task-stream.mjs";
 import { PACKAGE_VERSION } from "./package-info.mjs";
+import { driveGuide } from "./drive-guide.mjs";
+import { driveExtensionTimeoutSeconds } from "./drive-timeout.mjs";
+export { driveExtensionTimeoutSeconds } from "./drive-timeout.mjs";
 
 // Public MCP tools use the extension's version 1 wire protocol.
 export const TOOL_CATALOG = JSON.parse(readFileSync(new URL("./catalog.json", import.meta.url), "utf8"))
@@ -50,7 +53,7 @@ function argumentsWithDefaults(definition, input) {
   }));
 }
 
-export async function executeMcpTool(state, name, input = {}, { signal, onTaskUpdate } = {}) {
+export async function executeMcpTool(state, name, input = {}, { signal, onTaskUpdate, clientName } = {}) {
   const args = validateMcpToolInput(name, input);
   if (name === "qingzhou_bridge_status") return state.status();
   if (name === "qingzhou_forget_browser") return state.forgetBrowser(args.clientId);
@@ -62,12 +65,12 @@ export async function executeMcpTool(state, name, input = {}, { signal, onTaskUp
   const connectionSignal = state.signal(connection.controller.signal);
   const operationSignal = signal ? AbortSignal.any([connectionSignal, signal]) : connectionSignal;
   operationSignal.throwIfAborted();
-  const result = await executeBrowserTool(state, name, args, { signal: operationSignal, connectionSignal, onTaskUpdate });
+  const result = await executeBrowserTool(state, name, args, { signal: operationSignal, connectionSignal, onTaskUpdate, clientName });
   return args.clientId && (observableTools.has(name) || taskInputResults.has(name) || ["qingzhou_list_sessions", "qingzhou_get_user_input", "qingzhou_stop_session", "qingzhou_abort_session"].includes(name)) && result && typeof result === "object" && !Array.isArray(result)
     ? { ...result, clientId: args.clientId } : result;
 }
 
-async function executeBrowserTool(state, name, args, { signal, connectionSignal, onTaskUpdate }) {
+async function executeBrowserTool(state, name, args, { signal, connectionSignal, onTaskUpdate, clientName }) {
   const observe = observableTools.has(name) && (name === "qingzhou_watch_task" || args.wait || args.stream);
   const asyncTool = name === "qingzhou_execute_tool" && args.wait === false;
   const options = { timeoutSeconds: args.timeoutSeconds, clientId: args.clientId, signal };
@@ -88,21 +91,24 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
       });
     } catch (cause) {
       const code = typeof cause.code === "string" ? cause.code
-        : cause.name === "TimeoutError" ? "timeout" : cause.name === "AbortError" ? "interrupted" : "task_wait_failed";
+        : cause.name === "TimeoutError" ? "TIMEOUT" : cause.name === "AbortError" ? "INTERRUPTED" : "TASK_WAIT_FAILED";
       const error = Object.assign(new Error(cause.message, { cause }), { code });
       error.details = { ...cause.details, sessionId, clientId: args.clientId,
-        recovery: code === "task_deleted"
+        recovery: code === "TASK_DELETED"
           ? { tool: "qingzhou_list_sessions", arguments: { clientId: args.clientId } }
-          : { tool: code === "task_changed" ? "qingzhou_get_session_snapshot" : "qingzhou_watch_task",
+          : { tool: code === "TASK_CHANGED" ? "qingzhou_get_session_snapshot" : "qingzhou_watch_task",
             arguments: { sessionId, clientId: args.clientId } } };
       throw error;
     }
   };
   if (name === "qingzhou_watch_task") return { sessionId: args.sessionId, snapshot: await watch(args.sessionId, { allowIdle: true }) };
   if (name === "qingzhou_get_tool") {
-    const listed = await state.callExtension("list_tools", { sessionId: args.sessionId, timeoutSeconds: args.timeoutSeconds }, options);
-    const tool = (Array.isArray(listed) ? listed : listed?.tools || []).find(tool => (tool.name || tool.function?.name) === args.name);
-    if (!tool) throw new BridgeError("tool_not_found", `No browser tool named ${args.name}. Use qingzhou_list_tools to list available tools.`);
+    const tool = await state.callExtension("get_tool", {
+      sessionId: args.sessionId, name: args.name, timeoutSeconds: args.timeoutSeconds,
+    }, options);
+    if (!tool || typeof tool !== "object") {
+      throw new BridgeError("TOOL_NOT_FOUND", `No browser tool named ${args.name}. Use qingzhou_list_tools to list available tools.`);
+    }
     return tool;
   }
   if (name === "qingzhou_call") return state.callExtension(args.method.trim(), args.params || {}, options);
@@ -116,11 +122,35 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
   }
   if (name === "qingzhou_follow_up") params.images ||= [];
   if (name === "qingzhou_submit_wait_form") params.answers ||= {};
+  if (name === "qingzhou_create_drive_session") {
+    const displayName = String(clientName || "").trim();
+    if (displayName) params.clientName = displayName;
+  }
   if (name === "qingzhou_execute_tool") {
+    const scriptApiVersion = params.scriptApiVersion;
+    if (scriptApiVersion != null) {
+      const capabilities = await state.callExtension("capabilities", {}, options);
+      if (capabilities?.scriptApiVersion !== scriptApiVersion) {
+        throw Object.assign(new BridgeError("UPGRADE_REQUIRED", "The connected extension does not support this script API. No script was executed."), {
+          hint: "Update the CLI and extension together, then reconnect before running the script.",
+        });
+      }
+    }
     delete params.wait;
-    params.args ||= {};
-    return asyncTool ? { ...state.startExtensionJob("execute_tool", params, { ...options, connectionSignal }), sessionId: args.sessionId, clientId }
-      : state.callExtension("execute_tool", params, options);
+    if (!Array.isArray(params.calls)) params.args ||= {};
+    const displayName = String(clientName || "").trim();
+    if (displayName) params.clientName = displayName;
+    const requestTimeout = driveExtensionTimeoutSeconds(params, args.timeoutSeconds || state.requestTimeoutSeconds || 180);
+    const callOptions = { ...options, timeoutSeconds: requestTimeout, cancelOnAbort: !asyncTool };
+    const invoke = () => asyncTool
+      ? { ...state.startExtensionJob("execute_tool", params, { ...callOptions, connectionSignal }), sessionId: args.sessionId, clientId }
+      : state.callExtension("execute_tool", params, callOptions);
+    try {
+      return await invoke();
+    } catch (error) {
+      if (error?.code === "DRIVE_SESSION_BUSY") return await invoke();
+      throw error;
+    }
   }
   const method = name === "qingzhou_abort_session" ? "stop_session" : name.slice("qingzhou_".length);
   let result = await state.callExtension(method, params, options);
@@ -133,14 +163,15 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
   }
   result = bindInputClient(name, result, clientId);
   if (observe) {
-    const sessionId = name === "qingzhou_create_session" ? result?.session?.id || result?.sessionId : args.sessionId;
+    const sessionId = name === "qingzhou_create_session"
+      ? result?.session?.sessionId || result?.sessionId || result?.session?.id : args.sessionId;
     if (name === "qingzhou_create_session") {
-      if (!sessionId) throw new BridgeError("invalid_response", "The task was created without an ID. Use qingzhou_list_sessions to find it before retrying.");
+      if (!sessionId) throw new BridgeError("INVALID_RESPONSE", "The task was created without an ID. Use qingzhou_list_sessions to find it before retrying.");
       await onTaskUpdate?.({ type: "created", sessionId, clientId, ...result });
       result = { ...result, snapshot: await watch(sessionId, { allowIdle: !args.firstMessage.trim() }) };
     } else if (name === "qingzhou_send_message" && result?.accepted === true) {
       if (typeof result.clientMessageId !== "string" || !result.clientMessageId.trim()) {
-        throw Object.assign(new BridgeError("invalid_response", "The message was accepted without a tracking ID. Continue watching the same task before sending it again."), {
+        throw Object.assign(new BridgeError("INVALID_RESPONSE", "The message was accepted without a tracking ID. Continue watching the same task before sending it again."), {
           details: { sessionId, clientId, recovery: { tool: "qingzhou_watch_task", arguments: { sessionId, clientId } } },
         });
       }
@@ -156,44 +187,131 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
 /** Validate input against the advertised tool schema and apply its defaults. */
 export function validateMcpToolInput(name, input = {}) {
   const definition = definitions.get(name);
-  if (!definition) throw Object.assign(new Error(`Unknown tool: ${name}. Read the MCP tool list for available names.`), { code: "invalid_arguments" });
+  if (!definition) throw Object.assign(new Error(`Unknown tool: ${name}. Read the MCP tool list for available names.`), { code: "INVALID_ARGUMENTS" });
   try {
     return argumentsWithDefaults(definition, input);
   } catch (error) {
-    error.code = "invalid_arguments";
+    error.code = "INVALID_ARGUMENTS";
     throw error;
   }
 }
 
-export function resultToContent(result) {
-  if (result == null) return [];
-  if (Array.isArray(result)) return result.flatMap(resultToContent);
-  return [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }];
+function imageEntries(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.images)) return [];
+  return value.images.filter(image => image && typeof image.data === "string" && typeof image.mimeType === "string");
 }
 
-export function createMcpServer(state) {
-  const server = new Server({ name: "qz-browser-agent-mcp-bridge", version: PACKAGE_VERSION }, {
-    capabilities: { tools: {} }, instructions: "Control qz tasks and browser tools through the local bridge.",
+function withoutImages(value) {
+  if (!imageEntries(value).length) return value;
+  const { images: _images, ...rest } = value;
+  return rest;
+}
+
+function imageBlock(image, meta) {
+  return {
+    type: "image",
+    data: image.data,
+    mimeType: image.mimeType,
+    ...(meta && Object.keys(meta).length ? { _meta: meta } : {}),
+  };
+}
+
+function peelCallImages(value, callId, sink) {
+  const images = imageEntries(value);
+  if (!images.length) return value;
+  const placeholders = images.map((image, offset) => {
+    const meta = { ...(callId ? { id: callId } : {}), index: offset };
+    sink.push(imageBlock(image, meta));
+    return meta;
   });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_CATALOG }));
+  return { ...withoutImages(value), images: placeholders };
+}
+
+export function resultToContent(result, { toolResult = false } = {}) {
+  if (result == null) return [];
+  if (Array.isArray(result)) return result.flatMap(item => resultToContent(item));
+  if (typeof result !== "object") return [{ type: "text", text: String(result) }];
+  const nested = [];
+  let body = result;
+  if (toolResult && Array.isArray(result.results)) {
+    body = {
+      ...result,
+      results: result.results.map(item => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+        const callId = String(item.id || "");
+        return peelCallImages(item, callId, nested);
+      }),
+    };
+  }
+  const top = toolResult ? imageEntries(body) : [];
+  if (!top.length && !nested.length) {
+    return [{ type: "text", text: JSON.stringify(body) }];
+  }
+  return [
+    { type: "text", text: JSON.stringify(top.length ? withoutImages(body) : body) },
+    ...top.map(image => imageBlock(image)),
+    ...nested,
+  ];
+}
+
+const DRIVE_TOOL_NAMES = ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_list_drive_sessions", "qingzhou_get_drive_session", "qingzhou_stop_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"];
+const GUIDE_TOOL = {
+  name: "qingzhou_guide",
+  description: "Return the qz CLI direct-drive guide as an optional reference.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {},
+  },
+};
+const DRIVE_INSTRUCTIONS = "先用 qingzhou_create_drive_session 或 qz session create --title TITLE 创建带可读标题的会话，后续每次执行工具或脚本都传入该 sessionId（CLI 必传 --session，缺失退出码为 2，不会自动建会话）；list_tools/get_tool 查询基础目录无需会话。页面工具必传 tabRef（open_tab 设置的可选 tabAlias，或 open_tab / list_tabs 返回的 tabRef）。通过 qingzhou_execute_tool（单工具、calls 批次或 run_script 外层编排）执行操作，页面内 DOM 求值使用 evaluate。Create a session with a readable title using qingzhou_create_drive_session or qz session create --title TITLE, then pass that sessionId on every tool or script execution (CLI calls require --session; omitting it exits 2 and does not create a session). list_tools/get_tool can inspect the base catalog without a session. Page tools require tabRef (an optional tabAlias from open_tab, or the tabRef returned by open_tab or list_tabs). Orchestrate with qingzhou_execute_tool (single tool, calls batch, or outer run_script) and use evaluate for in-page DOM execution.";
+
+export function mcpCatalogProfile({ clientName = "", profile = "" } = {}) {
+  const explicit = String(profile || "").trim().toLowerCase();
+  if (explicit === "full" || explicit === "drive") return explicit;
+  return clientName === "qz-cli" ? "full" : "drive";
+}
+
+export function driveToolCatalog() {
+  const byName = new Map(TOOL_CATALOG.map(tool => [tool.name, tool]));
+  return DRIVE_TOOL_NAMES.map(name => name === "qingzhou_guide" ? GUIDE_TOOL : byName.get(name));
+}
+
+export function createMcpServer(state, { clientName = "", profile = "" } = {}) {
+  const catalogProfile = mcpCatalogProfile({ clientName, profile });
+  const server = new Server({ name: "qz-browser-agent-mcp-bridge", version: PACKAGE_VERSION }, {
+    capabilities: { tools: {} },
+    instructions: catalogProfile === "drive" ? DRIVE_INSTRUCTIONS : "Control qz tasks and browser tools through the local bridge.",
+  });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: catalogProfile === "drive" ? driveToolCatalog() : TOOL_CATALOG,
+  }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     try {
       let progress = 0;
       const progressToken = request.params._meta?.progressToken;
-      const result = await executeMcpTool(state, request.params.name, request.params.arguments || {}, { signal: extra.signal,
+      const input = { ...(request.params.arguments || {}) };
+      if (request.params.name === "qingzhou_guide") {
+        return { content: [{ type: "text", text: driveGuide() }] };
+      }
+      if (catalogProfile === "drive" && request.params.name === "qingzhou_list_sessions") {
+        if (!String(input.scope || "").trim()) input.scope = "session";
+      }
+      if (request.params.name === "qingzhou_execute_tool" && !String(input.sessionId || "").trim()) {
+        throw new BridgeError("DRIVE_SESSION_REQUIRED", "Pass sessionId from qz session create (MCP: qingzhou_create_drive_session). CLI calls require --session. This call does not create a session.");
+      }
+      const result = await executeMcpTool(state, request.params.name, input, { signal: extra.signal, clientName,
         onTaskUpdate: progressToken === undefined ? undefined : event => extra.sendNotification({
           method: "notifications/progress", params: { progressToken, progress: ++progress,
             message: ["text", "replace"].includes(event.type) ? event.text : JSON.stringify(event),
             _meta: { "qz/task-event": event } },
         }).catch(() => {}),
       });
-      return { content: resultToContent(result) };
+      return { content: resultToContent(result, { toolResult: request.params.name === "qingzhou_execute_tool" }) };
     } catch (error) {
-      const message = error.message || String(error);
-      const value = typeof error.code === "string" && error.code ? {
-        code: error.code, message,
-        ...(error.details && Object.keys(error.details).length ? { details: error.details } : {}),
-      } : message;
+      const value = { code: String(error.code || "TOOL_EXECUTION_FAILED").toUpperCase(), message: error.message || String(error),
+        ...(error.hint ? { hint: error.hint } : {}),
+        ...(error.details && Object.keys(error.details).length ? { details: error.details } : {}) };
       return { isError: true, content: resultToContent(value) };
     }
   });

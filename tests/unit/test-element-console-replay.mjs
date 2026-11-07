@@ -3,8 +3,11 @@ import { test } from "node:test";
 
 const listeners = [];
 const detachListeners = [];
+const connectionListeners = [];
+const removedListeners = [];
 globalThis.chrome = {
   runtime: { id: "extension-id" },
+  tabs: { onRemoved: { addListener(listener) { removedListeners.push(listener); } } },
   storage: { local: { async get() { return {}; } } },
   debugger: {
     onEvent: { addListener(listener) { listeners.push(listener); } },
@@ -30,6 +33,8 @@ const diagnostics = createDiagnosticsTools({
   ToolExecutionError,
   makeSessionTabTargetError(code, details = {}) { return new ToolExecutionError(code, code, details); },
   getDebuggerRun: tabId => sessions.get(tabId)?.owner ?? null,
+  onDebuggerDetached(listener) { connectionListeners.push(listener); return () => {}; },
+  retainDebugger() { return () => {}; },
   async sendCdp(tabId, method, params = {}) {
     const page = sessions.get(tabId);
     if (!page) throw new Error(`No debugger session for tab ${tabId}`);
@@ -79,7 +84,7 @@ function session(tabId, contexts) {
     if (method === "Runtime.evaluate") {
       const context = contexts.find(item => item.id === params.contextId);
       if (!context) throw new Error("Cannot find context with specified id");
-      return { result: { value: { extensionId: context.extensionId, bridge: context.bridge } } };
+      return { result: { value: { extensionId: context.extensionId, bridge: context.bridge, elementRefs: true } } };
     }
     if (method === "DOM.resolveNode") return { object: { objectId: "node" } };
     if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true } } };
@@ -94,10 +99,13 @@ function session(tabId, contexts) {
     commands, contexts, emit, send, remember, childFrames,
     owner: { ...run, connectionId: tabId },
     enabled: () => runtimeEnabled,
+    clearBrowserHistory() { buffer.length = 0; },
     disconnect() {
       runtimeEnabled = false;
+      const connectionId = this.owner?.connectionId;
       this.owner = null;
       detachListeners.forEach(listener => listener({ tabId }));
+      connectionListeners.forEach(listener => listener(tabId, connectionId));
     },
   };
 }
@@ -202,7 +210,7 @@ test("retained Runtime records the next run before its first read and ignores id
   assert.equal(page.commands.includes("Runtime.disable"), false);
 });
 
-test("reconnect replaces the buffer with one replay and ignores detached events", async () => {
+test("reconnect preserves local history, suppresses replay and captures messages from the idle gap", async () => {
   const tabId = nextTab++;
   const page = session(tabId, [isolated(7, true)]);
   sessions.set(tabId, page);
@@ -212,9 +220,72 @@ test("reconnect replaces the buffer with one replay and ignores detached events"
   await definitions.get("read_console_messages").execute({ tabId }, null, run);
   page.disconnect();
   page.emit("Runtime.consoleAPICalled", { type: "log", args: [{ value: "late detached event" }] });
+  page.remember("Runtime.consoleAPICalled", { type: "log", args: [{ value: "during idle" }], timestamp: 2 });
   page.owner = { ...run, connectionId: tabId + 1000 };
   const result = await definitions.get("read_console_messages").execute({ tabId }, null, run);
-  assert.deepEqual(counts(result), { "log:replayed once": 1 });
+  assert.deepEqual(counts(result), { "log:during idle": 1, "log:replayed once": 1 });
+  page.disconnect();
+  page.clearBrowserHistory();
+  page.owner = { ...run, connectionId: tabId + 2000 };
+  const afterEviction = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  assert.deepEqual(counts(afterEviction), counts(result), "browser history eviction cannot erase records already captured by qz");
+});
+
+test("reconnect replay does not resurrect reset or evicted console records", async () => {
+  const tabId = nextTab++;
+  const page = session(tabId, []);
+  sessions.set(tabId, page);
+  for (let index = 1; index <= 1100; index++) page.remember("Runtime.consoleAPICalled", {
+    type: "log", args: [{ value: String(index) }], timestamp: index,
+  });
+  const first = await definitions.get("read_console_messages").execute({ tabId, maxRecords: 20, limit: 200 }, null, run);
+  assert.equal(first.totalBuffered, 20);
+  page.disconnect();
+  page.owner = { ...run, connectionId: tabId + 1000 };
+  const reconnected = await definitions.get("read_console_messages").execute({ tabId, maxRecords: 20, limit: 200 }, null, run);
+  assert.deepEqual(counts(reconnected), counts(first));
+  await definitions.get("read_console_messages").execute({ tabId, reset: true }, null, run);
+  page.disconnect();
+  page.remember("Runtime.consoleAPICalled", { type: "log", args: [{ value: "after reset" }], timestamp: 1101 });
+  page.owner = { ...run, connectionId: tabId + 2000 };
+  const afterReset = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  assert.deepEqual(counts(afterReset), { "log:after reset": 1 });
+});
+
+test("reconnect deduplicates occurrences without discarding equal or reordered timestamps", async () => {
+  const tabId = nextTab++;
+  const page = session(tabId, []);
+  sessions.set(tabId, page);
+  const remember = (text, timestamp) => page.remember("Runtime.consoleAPICalled", {
+    type: "log", args: [{ value: text }], timestamp,
+  });
+  remember("same", 10);
+  remember("same", 10);
+  remember("newest clock", 100);
+  remember("reordered", 50);
+  await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  page.disconnect();
+  remember("same", 10);
+  remember("distinct at same timestamp", 10);
+  remember("clock moved backward", 25);
+  page.owner = { ...run, connectionId: tabId + 1000 };
+  const result = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  assert.deepEqual(counts(result), {
+    "log:clock moved backward": 1, "log:distinct at same timestamp": 1,
+    "log:newest clock": 1, "log:reordered": 1, "log:same": 3,
+  });
+});
+
+test("closed tabs discard retained console history", async () => {
+  const tabId = nextTab++;
+  const page = session(tabId, []);
+  sessions.set(tabId, page);
+  page.remember("Runtime.consoleAPICalled", { type: "log", args: [{ value: "closed tab record" }], timestamp: 1 });
+  await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  removedListeners.forEach(listener => listener(tabId));
+  page.clearBrowserHistory();
+  const result = await definitions.get("read_console_messages").execute({ tabId }, null, run);
+  assert.equal(result.totalBuffered, 0);
 });
 
 test("passive console history is bounded and honors a smaller first-read limit and reset", async () => {

@@ -24,6 +24,33 @@ export function isPageTabUrl(url: unknown) {
   return isWebTabUrl(url) || isLocalFileUrl(url);
 }
 
+const CHROME_PDF_VIEWER_HOST = "mhjfbmdgcfjbbpaeojofohoefgiehjai";
+
+/** Chrome's built-in PDF viewer. Other extension ids stay non-page URLs. */
+export function isChromePdfViewerUrl(url: unknown) {
+  try {
+    const parsed = new URL(String(url || ""));
+    return parsed.protocol === "chrome-extension:" && parsed.hostname === CHROME_PDF_VIEWER_HOST;
+  } catch {
+    return false;
+  }
+}
+
+/** Recover the http(s) or file document embedded in the Chrome PDF viewer URL. */
+export function chromePdfViewerDocumentUrl(url: unknown) {
+  if (!isChromePdfViewerUrl(url)) return "";
+  let parsed: URL;
+  try { parsed = new URL(String(url || "")); } catch { return ""; }
+  const embedded = parsed.search.length > 1
+    ? parsed.search.slice(1)
+    : (parsed.hash.length > 1 ? parsed.hash.slice(1) : "");
+  if (!embedded) return "";
+  let decoded = embedded;
+  try { decoded = decodeURIComponent(embedded); } catch { decoded = embedded; }
+  if (!isPageTabUrl(decoded)) return "";
+  try { return new URL(decoded).href; } catch { return ""; }
+}
+
 export function isPageTab(tab: TabReference | null | undefined) {
   return isPageTabUrl(getEffectiveTabUrl(tab));
 }
@@ -32,6 +59,8 @@ export function getEffectiveTabUrl(tab: TabReference | null | undefined) {
   if (!tab || typeof tab !== "object") return "";
   const currentUrl = String(tab.url || "").trim();
   const pendingUrl = String(tab.pendingUrl || "").trim();
+  const recovered = chromePdfViewerDocumentUrl(currentUrl) || chromePdfViewerDocumentUrl(pendingUrl);
+  if (recovered) return recovered;
   if (isPageTabUrl(currentUrl)) return currentUrl;
   if (isPageTabUrl(pendingUrl)) return pendingUrl;
   return currentUrl || pendingUrl;

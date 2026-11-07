@@ -82,8 +82,8 @@ test.describe('CLI settings actions', () => {
     await expect(page.locator('#cli-popover-status')).toBeVisible();await expect(page.locator('#cli-status')).toBeHidden();
     await expect(page.locator('#cli-address-details')).toHaveAttribute('open', '');
     await expect(page.locator('#cli-name')).toHaveValue('work');await expect(page.locator('#cli-address')).toHaveValue('http://127.0.0.1:18766');
-    await expect(page.locator('#cli-start-command')).toHaveText('npx --yes qz-browser-agent@latest connect --port 18766');
-    await page.locator('#cli-copy').click();expect(await page.evaluate(() => window.cliFixture.copied)).toBe('npx --yes qz-browser-agent@latest connect --port 18766');
+    await expect(page.locator('#cli-start-command')).toHaveText('npx --yes qz-browser-agent@latest connect uri --port 18766');
+    await page.locator('#cli-copy').click();expect(await page.evaluate(() => window.cliFixture.copied)).toBe('npx --yes qz-browser-agent@latest connect uri --port 18766');
     const commandLayout = await page.evaluate(() => {
       const command = document.querySelector('#cli-start-command').getBoundingClientRect();
       const copy = document.querySelector('#cli-copy').getBoundingClientRect();
@@ -222,7 +222,7 @@ for (const language of locales) for (const colorScheme of ['light', 'dark']) {
       if(language!=='en')expect(await page.locator('#cli-toggle').innerText()).not.toContain('Disconnect:');
       await page.evaluate(() => window.cliFixture.emit({ state: 'paused', lastError: { code: 'MCP_CONNECTION_INCOMPATIBLE' } }));
       await page.locator('#cli-edit').click();await capture('upgrade');
-      await expect(page.locator('#cli-start-command')).toHaveText('npx --yes qz-browser-agent@latest stop\nnpx --yes qz-browser-agent@latest connect');
+      await expect(page.locator('#cli-start-command')).toHaveText('npx --yes qz-browser-agent@latest connect uri');
     });
   });
 }

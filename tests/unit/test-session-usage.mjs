@@ -349,6 +349,11 @@ test("create --wait and show JSON include the cumulative usage summary", async (
   const calls = [];
   const callTool = async (_endpoint, name, args) => {
     calls.push({ name, args });
+    assert.equal(args.clientId, "fixture");
+    if (name === "qingzhou_call") {
+      assert.equal(args.method, "ping");
+      return { pong: true };
+    }
     if (name === "qingzhou_create_session") return { session: { id: "task-1", title: "Usage" }, started: true };
     assert.equal(name, "qingzhou_get_session_snapshot");
     assert.equal(args.sessionId, "task-1");
@@ -375,10 +380,19 @@ test("create --wait and show JSON include the cumulative usage summary", async (
 
   const quiet = cliDeps({
     tty: true,
-    callTool: async () => ({ ...snapshot, usage: {
-      inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0,
-      modelCalls: 0, toolCalls: 0, screenshots: 0, contextCompressions: 0,
-    } }),
+    callTool: async (_endpoint, name, args) => {
+      assert.equal(args.clientId, "fixture");
+      if (name === "qingzhou_call") {
+        assert.equal(args.method, "ping");
+        return { pong: true };
+      }
+      assert.equal(name, "qingzhou_get_session_snapshot");
+      assert.equal(args.sessionId, "task-1");
+      return { ...snapshot, usage: {
+        inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0,
+        modelCalls: 0, toolCalls: 0, screenshots: 0, contextCompressions: 0,
+      } };
+    },
   });
   assert.equal(await main(["show", "task-1"], quiet), 0);
   assert.doesNotMatch(quiet.stdout.text, /^Usage {2}/m);

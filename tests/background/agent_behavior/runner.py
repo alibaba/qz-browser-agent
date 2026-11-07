@@ -180,7 +180,10 @@ async def run_case_with_new_client(
         async with ClientSession(read, write) as session:
             await session.initialize()
             client = QingzhouMcpClient(session)
-            return await run_case(client, case, run_tag, capture)
+            try:
+                return await run_case(client, case, run_tag, capture)
+            finally:
+                await client.aclose()
 
 
 async def run_cases(

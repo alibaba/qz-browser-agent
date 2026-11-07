@@ -1,3 +1,4 @@
+import { isToolFailure } from "../contracts/tool-error.js";
 import { t } from "../i18n/backend.js";
 import {
   createSessionRecord,
@@ -385,7 +386,7 @@ function collectSessionExchangeTranscriptHosts(transcript: readonly TranscriptEn
 function isSuccessfulSessionExchangeToolEntry(entry: TranscriptEntry) {
   if (!entry || entry.type !== "tool" || entry.isError || entry.isRunning) return false;
   if (entry.argsIncomplete || entry.argsGenerating) return false;
-  if (asRecord(entry.result).error) return false;
+  if (isToolFailure(entry.result)) return false;
   return !["aborted", "error", "not_executed", "preparing", "running"].includes(
     String(entry.phase || "").trim().toLowerCase(),
   );

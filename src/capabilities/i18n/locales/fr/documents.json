@@ -81,7 +81,7 @@
   "documents.failedToCreateTemporaryPdfRenderTab": "Impossible d’ouvrir un onglet temporaire pour créer le PDF.",
   "documents.temporaryPdfRenderingRequiresTheChromeDebuggerRuntime": "La création du PDF nécessite l’accès au débogueur Chrome.",
   "documents.chromePagePrinttopdfReturnedEmptyData": "Chrome Page.printToPDF n’a renvoyé aucune donnée.",
-  "documents.temporaryTabDidNotFinishLoading": "Le chargement de l’onglet temporaire {tabId} ne s’est pas terminé.",
+  "documents.temporaryTabDidNotFinishLoading": "Le chargement de l’onglet temporaire ne s’est pas terminé.",
   "documents.documentArtifactHasNoContent": "Le document généré est vide.",
   "documents.docxDocumentXmlNotFound": "Le fichier DOCX ne contient pas document.xml.",
   "documents.xlsxWorkbookXmlNotFound": "Le fichier XLSX ne contient pas workbook.xml.",

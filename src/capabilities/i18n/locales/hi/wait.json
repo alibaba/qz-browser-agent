@@ -39,7 +39,7 @@
   "wait.waitNotContinued": "कार्य फिर से शुरू नहीं हुआ",
   "wait.loginVerificationCompleted": "साइन-इन सत्यापित हुआ",
   "wait.userContinued": "कार्य फिर से शुरू हुआ",
-  "wait.waitForElementSelectorSupportsRawCssOrCss": "wait_for_element का selector सीधे CSS या css:<selector> का समर्थन करता है; uid:<element_uid> एक स्नैपशॉट संदर्भ है और भविष्य की DOM स्थिति का इंतज़ार नहीं कर सकता।",
+  "wait.waitForElementSelectorSupportsRawCssOrCss": "wait_for_element का target सीधे CSS या css:<target> का समर्थन करता है; uid:<element_uid> एक स्नैपशॉट संदर्भ है और भविष्य की DOM स्थिति का इंतज़ार नहीं कर सकता।",
   "wait.userWaitRuntimeIsUnavailable": "उपयोगकर्ता इनपुट सेवा उपलब्ध नहीं है।",
   "wait.currentTaskHasNoWorkingTab": "मौजूदा कार्य का कोई कार्य टैब नहीं है।",
   "wait.waitUntilRequiresAValidAbsoluteTimeWithAn": "wait_until के लिए स्पष्ट समय क्षेत्र वाला मान्य पूर्ण समय आवश्यक है।",

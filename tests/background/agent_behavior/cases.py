@@ -161,6 +161,7 @@ def build_base_cases(base_url: str, run_tag: str) -> list[CaseSpec]:
             prompt=f"""
 打开本地商品页 {base_url}/catalog?page=1。
 目标：高效采集第 1 页和第 2 页全部商品，不要逐行手工复制。
+这是 run_script 的专项回归：请用 run_script 在页面外编排采集，在脚本内通过 tools.evaluate 执行页面 DOM 读取，并返回采集结果。
 每条记录包含 sku、name、price、page、url，写入轻舟 Data 表 {catalog_table}，dedupField 用 sku。
 完成前验证共有 6 条商品记录，然后简短汇报。
 """.strip(),

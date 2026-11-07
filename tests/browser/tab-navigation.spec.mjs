@@ -6,12 +6,20 @@ import { join } from "node:path";
 import { expect, test } from "./fixtures.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
 
+function successfulScriptResult(receipt) {
+  expect(Object.keys(receipt).sort()).toEqual(['ok', 'result', 'trace']);
+  expect(receipt.ok).toBe(true);
+  expect(Array.isArray(receipt.trace)).toBe(true);
+  expect(receipt.trace.every(line => typeof line === 'string')).toBe(true);
+  return receipt.result;
+}
+
 function escapeHtml(value) {
   return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 for (const watchNetwork of [false, true]) test(`tab navigation commits before reading (watchNetwork=${watchNetwork})`, async () => {
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   const held = new Map(), counts = new Map();
   const server = createServer((req, res) => {
     const path = req.url;
@@ -26,6 +34,11 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     if (path.startsWith("/busy-open-")) {
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end("<title>Busy renderer</title><script>fetch('/started'+location.pathname);const until=Date.now()+8000;while(Date.now()<until){}</script>");
+      return;
+    }
+    if (path === '/early-elements') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><body><article>Early body</article><input id="early" class="indexed"><button id="tap" onclick="this.dataset.clicks=String(Number(this.dataset.clicks||0)+1)">Tap</button><script src="/head-block-tail"></script><input class="indexed" value="Parsed tail"></body>');
       return;
     }
     if (path.startsWith('/late-body-')) {
@@ -56,16 +69,18 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     await cp(await ensureTestExtension(), extension, { recursive: true });
     const manifestPath = join(extension, "manifest.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    expect(manifest.permissions).not.toContain("webNavigation");
+    expect(manifest.permissions).toContain("webNavigation");
     // Exercise explicit reader installation before document_idle, independently of manifest injection.
     manifest.content_scripts = manifest.content_scripts.filter(entry => !entry.js?.some(path => path.endsWith('/content-script.js')));
-    await writeFile(join(extension, "navigation-test-worker.js"), `import "./${manifest.background.service_worker}";
-      import { createToolRuntime } from "./background/tools/runtime.js";
+    await writeFile(join(extension, "navigation-test-worker.js"), `import { createToolRuntime, getToolResultPageContext } from "./background/tools/runtime.js";
       import { Agent } from "./background/agent/agent.js";
       import { createSessionTabs } from "./background/session/tabs.js";
+      import { createRunScriptBridge } from "./background/tools/run-script-bridge.js";
+      globalThis.navigationTestBridge = createRunScriptBridge;
       globalThis.navigationTestAgent = Agent;
       globalThis.navigationTestSessionTabs = createSessionTabs;
-      globalThis.navigationTestRuntime = createToolRuntime;`);
+      globalThis.navigationTestRuntime = createToolRuntime;
+      globalThis.navigationTestResultContext = getToolResultPageContext;`);
     manifest.background.service_worker = "navigation-test-worker.js";
     await writeFile(manifestPath, JSON.stringify(manifest));
     browser = await chromium.launchPersistentContext(join(directory, "profile"), {
@@ -84,20 +99,38 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       chrome.debugger.attach = (...args) => { navigationAttachCount++; return attach(...args); };
       const isRunCurrent = (sessionId, runId) => sessionId === 'navigation' && runId === 'run';
       const setRuntime = (_id, patch) => Object.assign(state, patch);
-      const sessions = navigationTestSessionTabs({
-        supervisor: { getRuntime: id => id === 'navigation' ? state : null,
-          runtimeEntries: () => [['navigation', state]], setRuntime, isRunCurrent },
+      const runController = new AbortController();
+      const supervisor = { getRuntime: id => id === 'navigation' ? state : null,
+        runtimeEntries: () => [['navigation', state]], setRuntime, isRunCurrent,
+        hasAgent: () => true, getAbortSignal: () => runController.signal };
+      const sessions = navigationTestSessionTabs({ supervisor,
         tabsApi: chrome.tabs, storage: chrome.storage.local, setRuntime, persistRuntime: async () => {},
       });
       chrome.tabs.onRemoved.addListener(tabId => { void sessions.handleTabRemoved(tabId); });
+      let bridge;
       const runtime = navigationTestRuntime({
+        invokeNestedTool: (parent, name, args, signal) => bridge.invokeTool(parent, name, args, signal),
         windowTarget: { resolveForNewTab: async () => (await chrome.windows.getAll())[0].id },
         sessions: { ...sessions, isRunCurrent },
+      });
+      bridge = navigationTestBridge({ supervisor, getRuntime: () => state, canManageSessions: async () => true,
+        buildRunProfile: async () => ({}), getRunToolContext: async () => ({ toolRegistrySnapshot: runtime.snapshot('en'), language: 'en' }),
+        toolRuntime: runtime, collectArtifacts: () => [],
+        applyNestedToolResult: async ({ toolName, result, isError }) => globalThis.navigationActiveAgent?._applyToolResultEffects(toolName, result, isError) });
+      chrome.runtime.onMessage.addListener((message, sender, respond) => {
+        if (runtime.handleRunScriptInnerRuntimeMessage(message)) return false;
+        if (message.type !== 'run_script_tool_call') return false;
+        bridge.handleToolCall(message, sender).then(respond, () => respond({ ok: false, code: 'FIXTURE_BRIDGE_ERROR' }));
+        return true;
       });
       globalThis.navigationRuntime = runtime;
       globalThis.navigationCall = async (name, args) => {
         globalThis.navigationAbort = new AbortController();
-        try { return await runtime.execute(name, args, navigationAbort.signal, { sessionId: "navigation", runId: "run" }); }
+        try {
+          const result = await runtime.execute(name, args, navigationAbort.signal, { sessionId: "navigation", runId: "run" });
+          globalThis.navigationPresentation = navigationTestResultContext(result);
+          return result;
+        }
         catch (error) { return { code: error.code, error: error.message, details: error.details }; }
       };
     });
@@ -106,7 +139,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     const first = await worker.evaluate(async ({ origin, watchNetwork }) => {
       const before = structuredClone(navigationState);
       const agent = new navigationTestAgent('navigation', { tools: navigationRuntime });
-      agent._currentRunId = 'run';
+      agent._currentRunId = 'run'; globalThis.navigationActiveAgent = agent;
       const events = []; agent.subscribe(event => events.push(event));
       const tc = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
       const messages = await agent._executeToolCalls([
@@ -114,24 +147,28 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
         tc('first-read', 'read_article', { tabRef: 'first', limit: 1200 }),
       ], new AbortController().signal);
       return { before, state: navigationState, ends: events.filter(event => event.type === 'tool_execution_end'),
-        ids: messages.filter(message => message.role === 'tool').map(message => message.tool_call_id) };
+        ids: messages.filter(message => message.role === 'tool').map(message => message.tool_call_id),
+        outputs: messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content)) };
     }, { origin, watchNetwork });
     expect(first.before.ownedTabIds).toEqual([]);
     expect(first.before.workingTabId).toBeNull();
     expect(first.ends.map(event => event.result), 'first open and alias read must succeed').toEqual([
-      expect.objectContaining({ id: expect.any(Number) }), expect.objectContaining({ text: expect.stringContaining('Document /first-open generation 1') }),
+      expect.objectContaining({ tabRef: 'first' }), expect.objectContaining({ text: expect.stringContaining('Document /first-open generation 1') }),
     ]);
     expect(first.ends.every(event => !event.isError)).toBe(true);
     expect(first.ids).toEqual(['first-open', 'first-read']);
-    expect(first.state.ownedTabIds).toEqual([first.ends[0].result.id]);
-    expect(first.state.workingTabId).toBe(first.ends[0].result.id);
+    expect(Object.keys(first.outputs[0]).sort()).toEqual(['active', 'tabRef', 'title', 'url']);
+    const firstTabId = await worker.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url)?.id, `${origin}/first-open`);
+    expect(firstTabId).toEqual(expect.any(Number));
+    expect(first.state.ownedTabIds).toEqual([firstTabId]);
+    expect(first.state.workingTabId).toBe(firstTabId);
     if (watchNetwork) {
-      expect(first.ends[0].result.networkWatch.startedBeforeNavigation).toBe(true);
-      expect(JSON.stringify(await call('network_recent', { tabId: first.ends[0].result.id }))).toContain('/first-open');
+      const watched = await call('network_recent', { tabRef: 'first' });
+      expect(watched.results.some(record => record.url.endsWith('/first-open')), 'the initial request proves monitoring started before navigation').toBe(true);
     }
-    expect(first.state.tabAliases).toEqual({ first: first.ends[0].result.id });
+    expect(first.state.tabAliases).toEqual({ first: firstTabId });
     expect((await call('read_article', { tabRef: 'first', limit: 1200 })).text).toContain('Document /first-open');
-    expect((await call('read_article', { tabRef: String(first.ends[0].result.id), limit: 1200 })).text).toContain('Document /first-open');
+    expect((await call('read_article', { tabRef: String(firstTabId), limit: 1200 })).text).toContain('Document /first-open');
     const countBeforeDuplicate = await worker.evaluate(async () => (await chrome.tabs.query({})).length);
     expect(await call('open_tab', { url: `${origin}/duplicate`, tabAlias: 'first' })).toHaveProperty('code', 'BATCH_TAB_REFERENCE_ERROR');
     expect(await worker.evaluate(async () => (await chrome.tabs.query({})).length)).toBe(countBeforeDuplicate);
@@ -149,34 +186,37 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       return result;
     };
     const opened = await slow("open_tab", { url: `${origin}/article` }, "/article");
-    const tabId = opened.id;
-    const article = () => call("read_article", { tabId, limit: 1200 });
+    const tabId = opened.tabRef;
+    const article = () => call("read_article", { tabRef: tabId, limit: 1200 });
     expect((await article()).text).toContain("Document /article generation 1");
     if (!watchNetwork) {
       expect(await worker.evaluate(() => navigationAttachCount), "ordinary navigation must not attach a debugger just to wait").toBe(0);
-    } else expect(JSON.stringify(await call("network_recent", { tabId }))).toContain("/article");
-    await slow("navigate", { tabId, url: `${origin}/next` }, "/next");
+    } else expect(JSON.stringify(await call("network_recent", { tabRef: tabId }))).toContain("/article");
+    await slow("navigate", { tabRef: tabId, url: `${origin}/next` }, "/next");
     expect((await article()).text).toContain("Document /next generation 1");
-    await slow("navigate", { tabId, url: `${origin}/next` }, "/next");
+    await slow("navigate", { tabRef: tabId, url: `${origin}/next` }, "/next");
     expect((await article()).text).toContain("Document /next generation 2");
-    const redirected = await slow("navigate", { tabId, url: `${origin}/redirect` }, "/landed");
-    expect(redirected._pageUrl).toBe(`http://localhost:${server.address().port}/landed`);
+    const redirected = await slow("navigate", { tabRef: tabId, url: `${origin}/redirect` }, "/landed");
+    expect(redirected).not.toHaveProperty('_pageUrl');
+    const redirectedUrl = await worker.evaluate(() => navigationPresentation._pageUrl);
+    expect(redirectedUrl).toBe(`http://localhost:${server.address().port}/landed`);
     expect((await article()).text).toContain("Document /landed generation 1");
     for (let i = 0; i < 2; i++) {
-      const fragment = await call("navigate", { tabId, url: `${redirected._pageUrl}#section`, timeout: 2 });
+      const fragment = await call("navigate", { tabRef: tabId, url: `${redirectedUrl}#section`, timeout: 2 });
       expect(fragment, `fragment attempt ${i}: ${JSON.stringify(fragment)}`).not.toHaveProperty("error");
-      expect(fragment._pageUrl).toBe(`${redirected._pageUrl}#section`);
+      expect(fragment).not.toHaveProperty('_pageUrl');
+      expect(await worker.evaluate(() => navigationPresentation._pageUrl)).toBe(`${redirectedUrl}#section`);
     }
 
     // A held image must not prevent the navigation tool from returning at commit.
     held.set("/image", []);
     held.set("/slow-child", []);
-    expect(await call("navigate", { tabId, url: `${origin}/stream` })).not.toHaveProperty("error");
+    expect(await call("navigate", { tabRef: tabId, url: `${origin}/stream` })).not.toHaveProperty("error");
     expect((await worker.evaluate(tabId => chrome.tabs.get(tabId), tabId)).status).toBe("loading");
     await expect.poll(() => held.get("/image").length).toBeGreaterThan(0);
     await expect.poll(() => held.get("/slow-child").length).toBeGreaterThan(0);
-    expect((await call("read_article", { tabId, limit: 1200, timeout: 1 })).text).toContain("New document");
-    const found = await call("find_elements", { tabId, pattern: "Continue", timeout: 1 });
+    expect((await call("read_article", { tabRef: tabId, limit: 1200, timeout: 1 })).text).toContain("New document");
+    const found = await call("find_elements", { tabRef: tabId, pattern: "Continue", timeout: 1 });
     expect(found).not.toHaveProperty("incomplete");
     expect(JSON.stringify(found)).toContain("Continue");
     expect((await worker.evaluate(tabId => chrome.tabs.get(tabId), tabId)).status).toBe("loading");
@@ -184,6 +224,44 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     release("/slow-child");
 
     if (!watchNetwork) {
+      held.set('/head-block-evaluate', []);
+      const early = await call('open_tab', { url: `${origin}/late-body-evaluate` });
+      const earlyArgs = { tabRef: early.tabRef, code: '() => ({body:!!document.body, text:document.body?.innerText})' };
+      expect(await call('evaluate', { ...earlyArgs, waitUntil: 'commit' })).toMatchObject({ body: false });
+      const notStarted = await call('evaluate', { ...earlyArgs, timeout: 0.2, code: '() => {globalThis.__lateExecution = true;}' });
+      expect(notStarted.details, JSON.stringify(notStarted)).toMatchObject({ executed: false, mayHaveTakenEffect: false });
+      let evaluated = false;
+      const prepared = call('evaluate', earlyArgs).then(value => { evaluated = true; return value; });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(evaluated).toBe(false);
+      release('/head-block-evaluate');
+      expect(await prepared).toMatchObject({ body: true, text: expect.stringContaining('Late complete article') });
+      expect(await call('evaluate', { tabRef: early.tabRef, code: '() => globalThis.__lateExecution === true' })).toBe(false);
+
+      held.set('/head-block-tail', []);
+      const partial = await call('open_tab', { url: `${origin}/early-elements` });
+      for (const state of ['attached', 'visible']) {
+        const found = await call('wait_for_element', { tabRef: partial.tabRef, target: 'css:#early', state, timeout: 1 });
+        expect(found, JSON.stringify(found)).toMatchObject({ found: true });
+        expect(await call('inspect_element', { tabRef: partial.tabRef, target: found.target })).toMatchObject({ tag: 'input' });
+        expect(await call('act_on_element', { tabRef: partial.tabRef, target: found.target, action: 'fill', value: state })).toEqual({});
+      }
+      expect(await call('wait_for_function', { tabRef: partial.tabRef, code: '() => !!document.querySelector("#early")', timeout: 1 })).toBe(true);
+      expect(await call('act_on_element', { tabRef: partial.tabRef, target: 'css:#tap', action: 'click' })).toEqual({});
+      expect(await call('evaluate', { tabRef: partial.tabRef, waitUntil: 'commit', code: '() => ({clicks:document.querySelector("#tap").dataset.clicks,state:document.readyState})' })).toEqual({ clicks: '1', state: 'loading' });
+      const probes = await worker.evaluate(tabId => Promise.all([0, 1].map(index => chrome.tabs.sendMessage(tabId,
+        { action: 'elementPresence', selector: '.indexed', index, queryOnly: true }, { frameId: 0 }))), partial.tabRef);
+      expect(probes).toEqual([{ found: true }, { found: false }]);
+      let indexedSettled = false;
+      const indexed = call('inspect_element', { tabRef: partial.tabRef, target: 'css:.indexed', index: 1, timeout: 5 })
+        .then(result => { indexedSettled = true; return result; });
+      void indexed.catch(() => {});
+      const invalid = await call('inspect_element', { tabRef: partial.tabRef, target: 'css:[', timeout: 1 });
+      expect(invalid, JSON.stringify(invalid)).toMatchObject({ code: 'INVALID_SELECTOR' });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(indexedSettled, 'the first match must not satisfy a later index before the parser reaches it').toBe(false);
+      release('/head-block-tail');
+      expect(await indexed).toMatchObject({ tag: 'input', value: 'Parsed tail' });
       for (const name of ['read_article', 'get_ax_tree', 'screenshot']) for (const outcome of ['ready', 'timeout']) {
         const suffix = `${name}-${outcome}`, head = `/head-block-${suffix}`;
         held.set(head, []); held.set('/late-image', []);
@@ -191,17 +269,20 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
         expect(opened).not.toHaveProperty('error');
         await expect.poll(() => held.get(head).length).toBeGreaterThan(0);
         const before = await worker.evaluate(async tabId => (await chrome.scripting.executeScript({ target: { tabId }, injectImmediately: true,
-          func: () => ({ body: !!document.body, state: document.readyState }) }))[0].result, opened.id);
+          func: () => ({ body: !!document.body, state: document.readyState }) }))[0].result, opened.tabRef);
         expect(before).toEqual({ body: false, state: 'loading' });
         let done = false;
-        const pending = call(name, { tabId: opened.id, timeout: outcome === 'timeout' ? 1 : 5,
+        const pending = call(name, { tabRef: opened.tabRef, timeout: outcome === 'timeout' ? 1 : 5,
           ...(name === 'read_article' ? { limit: 3000 } : name === 'screenshot' ? { format: 'png' } : {}) }).then(result => { done = true; return result; });
         await new Promise(resolve => setTimeout(resolve, 150));
         expect(done, `${name} must wait for the late body`).toBe(false);
         if (outcome === 'ready') release(head);
         const result = await pending;
         if (outcome === 'timeout') {
-          expect(result.incomplete?.reason).toBe('timeout');
+          expect(result, JSON.stringify(result)).toMatchObject({ code: 'TOOL_TIMEOUT', details: {
+            pageState: { url: `${origin}/late-body-${suffix}`, status: 'loading', loading: true },
+          } });
+          expect(result).not.toHaveProperty('incomplete');
           expect(result).not.toHaveProperty('_image'); expect(result).not.toHaveProperty('snapshot'); expect(result).not.toHaveProperty('text');
           release(head);
         } else {
@@ -216,9 +297,9 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
             }, result._image);
             expect(pixel).toEqual([20, 120, 60, 255]);
           }
-          expect((await worker.evaluate(id => chrome.tabs.get(id), opened.id)).status).toBe('loading');
+          expect((await worker.evaluate(id => chrome.tabs.get(id), opened.tabRef)).status).toBe('loading');
         }
-        release('/late-image'); await call('close_tab', { tabId: opened.id });
+        release('/late-image'); await call('close_tab', { tabRef: opened.tabRef });
       }
       // Exercise the production Agent dependency planner against two independently blocked heads.
       held.set('/head-block-batch-a', []); held.set('/batch-open-b', []); held.set('/late-image', []);
@@ -230,7 +311,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
             navigationCompleted.push(context.toolCallId); return result;
           },
         } });
-        agent._currentRunId = 'run';
+        agent._currentRunId = 'run'; globalThis.navigationActiveAgent = agent;
         const events = []; agent.subscribe(event => { events.push(event); });
         const tc = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
         const messages = await agent._executeToolCalls([
@@ -238,10 +319,11 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
           tc('open-b', 'open_tab', { url: `${origin}/batch-open-b`, tabAlias: 'b', watchNetwork }),
           tc('read-a', 'read_article', { tabRef: 'a', limit: 3000 }),
           tc('read-b', 'read_article', { tabRef: 'b', limit: 3000 }),
-          tc('script-ref', 'run_script', { tabRef: 'b', target: 'page', timeout: 10, code: '() => location.href' }),
+          tc('script-ref', 'evaluate', { tabRef: 'b', timeout: 10, code: '() => location.href' }),
         ], new AbortController().signal);
         return { ids: messages.filter(message => message.role === 'tool').map(message => message.tool_call_id),
-          ends: events.filter(event => event.type === 'tool_execution_end') };
+          ends: events.filter(event => event.type === 'tool_execution_end'),
+          outputs: messages.filter(message => message.role === 'tool').map(message => ({ id: message.tool_call_id, content: message.content })) };
       }, { origin, watchNetwork });
       await expect.poll(() => held.get('/batch-open-b').length).toBeGreaterThan(0);
       await expect.poll(() => held.get('/head-block-batch-a').length).toBeGreaterThan(0);
@@ -255,47 +337,60 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       const left = batchResult.ends.find(event => event.toolCallId === 'read-a').result;
       const right = batchResult.ends.find(event => event.toolCallId === 'read-b').result;
       expect(left.text).toContain('/late-body-batch-a'); expect(right.text).toContain('/batch-open-b');
-      expect(left._tabId).not.toBe(right._tabId);
-      expect(batchResult.ends.find(event => event.toolCallId === 'script-ref').result.result).toBe(`${origin}/batch-open-b`);
+      expect(left.url).not.toBe(right.url);
+      const batchTabIds = await worker.evaluate(async urls => {
+        const tabs = await chrome.tabs.query({}); return urls.map(url => tabs.find(tab => tab.url === url)?.id);
+      }, [left.url, right.url]);
+      expect(batchTabIds.every(id => Number.isInteger(id))).toBe(true);
+      expect(successfulScriptResult(JSON.parse(batchResult.outputs.find(message => message.id === 'script-ref').content)))
+        .toBe(`${origin}/batch-open-b`);
       release('/late-image');
 
-      // A tool-using script blocks later no-tools scripts and reads, including other tabs.
+      // A waiting page function leaves other tabs available; each page still runs its tools in order.
       const scriptRun = worker.evaluate(async ids => {
-        globalThis.scriptBatchStarted = [];
+        globalThis.scriptBatchEvents = [];
         let active = 0, peak = 0;
         const agent = new navigationTestAgent('navigation', { tools: { ...navigationRuntime,
           async execute(name, args, signal, context) {
-            scriptBatchStarted.push(context.toolCallId);
+            scriptBatchEvents.push(`start:${context.toolCallId}`);
             if (name === 'run_script') peak = Math.max(peak, ++active);
             try { return await navigationRuntime.execute(name, args, signal, context); }
-            finally { if (name === 'run_script') active--; }
+            finally {
+              scriptBatchEvents.push(`end:${context.toolCallId}`);
+              if (name === 'run_script') active--;
+            }
           },
         } });
-        agent._currentRunId = 'run';
+        agent._currentRunId = 'run'; globalThis.navigationActiveAgent = agent;
         const ends = []; agent.subscribe(event => { if (event.type === 'tool_execution_end') ends.push(event); });
         const tc = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
         const messages = await agent._executeToolCalls([
-          tc('script-a', 'run_script', { target: 'page', tabId: ids[0], mutatesPage: true, timeout: 10,
-            code: 'async () => { void tools.$list; globalThis.__scriptStarted = true; while (!globalThis.__scriptRelease) await new Promise(r => setTimeout(r, 20)); document.body.dataset.scriptChecked = "yes"; return "script a"; }' }),
-          tc('script-b', 'run_script', { tabId: ids[1], mutatesPage: false, timeout: 10, code: '() => "script b"' }),
-          tc('after-script', 'read_article', { tabId: ids[1], limit: 3000 }),
+          tc('script-a', 'run_script', { args: { tabRef: ids[0] }, timeout: 10,
+            code: 'return await tools.evaluate({tabRef:input.tabRef,code:async () => { globalThis.__scriptStarted = true; while (!globalThis.__scriptRelease) await new Promise(r => setTimeout(r, 20)); document.body.dataset.scriptChecked = "yes"; return "script a"; }});' }),
+          tc('script-b', 'evaluate', { tabRef: ids[1], timeout: 10, code: '() => "script b"' }),
+          tc('after-script', 'read_article', { tabRef: ids[1], limit: 3000 }),
         ], new AbortController().signal);
-        return { peak, ends, ids: messages.filter(m => m.role === 'tool').map(m => m.tool_call_id) };
-      }, [left._tabId, right._tabId]);
+        return { peak, ends, ids: messages.filter(m => m.role === 'tool').map(m => m.tool_call_id),
+          outputs: messages.filter(m => m.role === 'tool').map(m => m.content) };
+      }, batchTabIds);
       await expect.poll(() => worker.evaluate(async id => (await chrome.scripting.executeScript({ target: { tabId: id },
-        world: 'MAIN', func: () => Boolean(globalThis.__scriptStarted) }))[0]?.result, left._tabId)).toBe(true);
-      expect(await worker.evaluate(() => scriptBatchStarted)).toEqual(['script-a']);
+        world: 'MAIN', func: () => Boolean(globalThis.__scriptStarted) }))[0]?.result, batchTabIds[0])).toBe(true);
+      await expect.poll(() => worker.evaluate(() => scriptBatchEvents.filter(event => !event.endsWith(':script-a'))))
+        .toEqual(['start:script-b', 'end:script-b', 'start:after-script', 'end:after-script']);
+      expect(await worker.evaluate(() => scriptBatchEvents.filter(event => event.endsWith(':script-a'))))
+        .toEqual(['start:script-a']);
       await worker.evaluate(id => chrome.scripting.executeScript({ target: { tabId: id }, world: 'MAIN',
-        func: () => { globalThis.__scriptRelease = true; } }), left._tabId);
+        func: () => { globalThis.__scriptRelease = true; } }), batchTabIds[0]);
       const scripts = await scriptRun;
       expect(scripts.peak).toBe(1);
       expect(scripts.ids).toEqual(['script-a', 'script-b', 'after-script']);
       expect(scripts.ends.every(event => !event.isError)).toBe(true);
-      expect(scripts.ends.slice(0, 2).map(event => event.result.result)).toEqual(['script a', 'script b']);
-      for (const event of batchResult.ends.filter(event => event.toolName === 'open_tab')) await call('close_tab', { tabId: event.result.id });
+      expect(scripts.outputs.slice(0, 2).map(content => successfulScriptResult(JSON.parse(content))))
+        .toEqual(['script a', 'script b']);
+      for (const event of batchResult.ends.filter(event => event.toolName === 'open_tab')) await call('close_tab', { tabRef: event.result.tabRef });
 
       const observations = [];
-      for (let index = 0; index < 3; index++) observations.push((await call('open_tab', { url: `${origin}/observation-${index}` })).id);
+      for (let index = 0; index < 3; index++) observations.push((await call('open_tab', { url: `${origin}/observation-${index}` })).tabRef);
       const observed = await worker.evaluate(async tabIds => {
         const activeBefore = (await chrome.tabs.query({ active: true })).map(tab => tab.id);
         for (const tabId of tabIds) {
@@ -323,7 +418,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
             const names = ['read_article', 'find_elements', 'get_ax_tree'];
             rounds.push(await Promise.all(names.map((name, index) => {
               const args = { tabId: tabIds[index], ...(name === 'read_article' ? { limit: 1200 } : {}),
-                ...(scoped ? name === 'get_ax_tree' ? { root: 'css:#story' } : { selector: '#story', ...(name === 'read_article' ? { source: 'selector' } : {}) } : {}) };
+                ...(scoped ? name === 'get_ax_tree' ? { target: 'css:#story' } : { target: '#story', ...(name === 'read_article' ? { source: 'target' } : {}) } : {}) };
               if (navigationRuntime.getParallelReadTab(name, args) !== args.tabId) throw new Error('fixture must exercise eligible parallel reads');
               return navigationRuntime.execute(name, args, new AbortController().signal,
                 { sessionId: 'navigation', runId: 'run', toolCallId: `observe-${scoped}-${index}`, preserveWorkingTab: true });
@@ -344,36 +439,38 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
         expect(JSON.stringify(elements)).toContain('Observe target');
         expect(ax.snapshot).toContain('Observe target');
       }
-      for (const tabId of observations) await call('close_tab', { tabId });
+      for (const tabId of observations) await call('close_tab', { tabRef: tabId });
     }
 
-    expect((await call("navigate", { tabId, url: `${origin}/fail` })).code).toBe("NAVIGATION_FAILED");
-    expect(await call("navigate", { tabId, url: `${origin}/recovered` })).not.toHaveProperty("error");
+    expect((await call("navigate", { tabRef: tabId, url: `${origin}/fail` })).code).toBe("NAVIGATION_FAILED");
+    expect(await call("navigate", { tabRef: tabId, url: `${origin}/recovered` })).not.toHaveProperty("error");
     await worker.evaluate(() => chrome.storage.local.set({ securityGuardrails: { blockedDomains: ["localhost"] } }));
-    expect((await call("navigate", { tabId, url: `${origin}/redirect` })).code).toBe("SECURITY_GUARDRAIL_BLOCKED");
+    expect((await call("navigate", { tabRef: tabId, url: `${origin}/redirect` })).code).toBe("SECURITY_GUARDRAIL_BLOCKED");
     await worker.evaluate(() => chrome.storage.local.set({ securityGuardrails: {} }));
-    expect(await call("navigate", { tabId, url: `${origin}/recovered` })).not.toHaveProperty("error");
+    expect(await call("navigate", { tabRef: tabId, url: `${origin}/recovered` })).not.toHaveProperty("error");
     for (const outcome of ["cancel", "timeout", "close"]) {
       const path = `/${outcome}`;
       held.set(path, []);
-      const pending = call("navigate", { tabId, url: `${origin}${path}`, timeout: outcome === "timeout" ? 1 : 5 });
+      const pending = call("navigate", { tabRef: tabId, url: `${origin}${path}`, timeout: outcome === "timeout" ? 1 : 5 });
       await expect.poll(() => held.get(path).length).toBeGreaterThan(0);
       if (outcome === "cancel") await worker.evaluate(() => navigationAbort.abort());
       if (outcome === "close") await worker.evaluate(tabId => chrome.tabs.remove(tabId), tabId);
       const result = await pending;
-      if (outcome === "timeout") expect(result).toMatchObject({ tabId, loading: true, incomplete: { reason: "timeout" } });
+      if (outcome === "timeout") expect(result).toMatchObject({ loading: true, incomplete: { reason: "timeout" } });
       else expect(result.code).toBe({ cancel: "OPERATION_ABORTED", close: "SESSION_TAB_UNAVAILABLE" }[outcome]);
       release(path);
-      if (outcome !== "close") expect(await call("navigate", { tabId, url: `${origin}/recovered` })).not.toHaveProperty("error");
+      if (outcome !== "close") expect(await call("navigate", { tabRef: tabId, url: `${origin}/recovered` })).not.toHaveProperty("error");
     }
     const before = await worker.evaluate(async () => (await chrome.tabs.query({})).length);
     held.set("/open-timeout", []);
     const incompleteOpen = await call("open_tab", { url: `${origin}/open-timeout`, tabAlias: "loading", watchNetwork, timeout: 1 });
     expect(incompleteOpen).toMatchObject({ loading: true, incomplete: { reason: "timeout" } });
     expect(await worker.evaluate(async () => (await chrome.tabs.query({})).length)).toBe(before + 1);
-    expect(incompleteOpen.tabAlias).toBe('loading');
+    expect(incompleteOpen.tabRef).toBe('loading');
+    const loadingTabId = await worker.evaluate(() => navigationRuntime.getTabAliases('navigation').loading);
+    expect(loadingTabId).toEqual(expect.any(Number));
     const readers = [
-      ['read_article', { limit: 1200 }], ['read_dom', {}], ['find_elements', { selector: 'button' }],
+      ['read_article', { limit: 1200 }], ['read_dom', {}], ['find_elements', { target: 'button' }],
       ['inspect_element', { target: 'css:article' }], ['list_images', {}],
       ['read_image', { target: 'css:#sample' }], ['get_ax_tree', {}], ['screenshot', {}],
     ];
@@ -381,9 +478,12 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     // waiting, and neither the open timeout nor a read timeout may close the tab.
     for (const [name, args] of readers) {
       const result = await call(name, { ...args, tabRef: 'loading', timeout: 0.1 });
-      if (['list_images', 'read_image'].includes(name)) expect(result.code, JSON.stringify(result)).toBe('TOOL_TIMEOUT');
-      else expect(result, JSON.stringify(result)).toMatchObject({ tabId: incompleteOpen.tabId, incomplete: { reason: 'timeout' } });
-      expect(await worker.evaluate(tabId => chrome.tabs.get(tabId).then(tab => tab.status), incompleteOpen.tabId)).toBe('loading');
+      expect(result.code, `${name}: ${JSON.stringify(result)}`).toBe('TOOL_TIMEOUT');
+      expect(result).not.toHaveProperty('incomplete');
+      if (!['list_images', 'read_image'].includes(name)) {
+        expect(result.details?.pageState, JSON.stringify(result)).toMatchObject({ status: 'loading', loading: true });
+      }
+      expect(await worker.evaluate(tabId => chrome.tabs.get(tabId).then(tab => tab.status), loadingTabId)).toBe('loading');
     }
     release("/open-timeout");
     const loadingRead = await call('read_article', { tabRef: 'loading', limit: 1200 });
@@ -401,7 +501,10 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     expect(await call('close_tab', { tabRef: 'loading' })).not.toHaveProperty('error');
     expect(await call('read_article', { tabRef: 'loading', limit: 1200 })).toHaveProperty('code', 'BATCH_TAB_REFERENCE_ERROR');
     const reopened = await call('open_tab', { url: `${origin}/alias-reused`, tabAlias: 'loading' });
-    expect(reopened).not.toHaveProperty('error'); expect(reopened.id).not.toBe(incompleteOpen.tabId);
+    expect(reopened).not.toHaveProperty('error'); expect(reopened.tabRef).toBe('loading');
+    const reopenedId = await worker.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url)?.id, `${origin}/alias-reused`);
+    expect(reopenedId).toEqual(expect.any(Number));
+    expect(reopenedId).not.toBe(loadingTabId);
     expect((await call('read_article', { tabRef: 'loading', limit: 1200 })).text).toContain('Document /alias-reused');
     expect(await call('close_tab', { tabRef: 'loading' })).not.toHaveProperty('error');
 
@@ -414,7 +517,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       const result = await pending;
       if (outcome === "timeout") {
         expect(result).toMatchObject({ incomplete: { reason: "timeout" } });
-        expect(await call("close_tab", { tabId: result.tabId })).not.toHaveProperty("error");
+        expect(await call("close_tab", { tabRef: result.tabRef })).not.toHaveProperty("error");
       } else expect(result.code).toBe("OPERATION_ABORTED");
       await expect.poll(() => worker.evaluate(async () => (await chrome.tabs.query({})).length), { timeout: 1500 }).toBe(before);
     }
@@ -424,15 +527,15 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     for (let generation = 1; generation <= 2; generation++) {
       await worker.evaluate(tabId => chrome.scripting.executeScript({ target: { tabId }, func: () => {
         setTimeout(() => { fetch("/old-busy-start"); const until = Date.now() + 4000; while (Date.now() < until) {} }, 300);
-      } }), busyTab.id);
+      } }), busyTab.tabRef);
       await expect.poll(() => counts.get("/old-busy-start") || 0).toBe(generation);
       held.set("/busy-target", []);
-      const pending = call("navigate", { tabId: busyTab.id, url: `${origin}/busy-target`, timeout: 10 });
+      const pending = call("navigate", { tabRef: busyTab.tabRef, url: `${origin}/busy-target`, timeout: 10 });
       // The request must start while the old renderer is still busy, including same-URL reload.
       await expect.poll(() => held.get("/busy-target").length, { timeout: 1500 }).toBeGreaterThan(0);
       release("/busy-target");
       expect(await pending).not.toHaveProperty("error");
-      expect((await call("read_article", { tabId: busyTab.id, limit: 1200 })).text).toContain(`Document /busy-target generation ${generation}`);
+      expect((await call("read_article", { tabRef: busyTab.tabRef, limit: 1200 })).text).toContain(`Document /busy-target generation ${generation}`);
     }
   } finally {
     await browser?.close();

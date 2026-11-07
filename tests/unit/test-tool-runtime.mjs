@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 
 globalThis.chrome = {
   storage: {
@@ -19,14 +20,16 @@ const tools = await import("../../src/background/tools/runtime.js");
 
 tools.defineTool({
   name: "__observed_page_metadata", description: "Test-only observed page metadata.",
-  parameters: { type: "object", properties: {} },
-  execute: async () => ({ tabId: 7, pageAfter: { url: "https://example.test/observed", title: "" },
-    _pageUrl: "https://example.test/observed", _pageTitle: "" }),
+  parameters: { type: "object", properties: { tabId: { type: "number" } } },
+  execute: async () => bindToolResultPresentation({ pageAfter: { url: "https://example.test/observed", title: "" } },
+    { _pageUrl: "https://example.test/observed", _pageTitle: "" }),
 });
 chrome.tabs = { async get() { return { id: 7, url: "https://example.test/later", title: "Later title" }; } };
-const observedMetadata = await tools.createToolRuntime().execute("__observed_page_metadata", {});
-assert.equal(observedMetadata._pageUrl, observedMetadata.pageAfter.url);
-assert.equal(observedMetadata._pageTitle, observedMetadata.pageAfter.title, "an observed empty title must not be replaced by a later title");
+const observedMetadata = await tools.createToolRuntime().execute("__observed_page_metadata", { tabId: 7 });
+assert.deepEqual(observedMetadata, { pageAfter: { url: "https://example.test/observed", title: "" } });
+const pagePresentation = tools.getToolResultPageContext(observedMetadata);
+assert.equal(pagePresentation._pageUrl, observedMetadata.pageAfter.url);
+assert.equal(pagePresentation._pageTitle, observedMetadata.pageAfter.title, "an observed empty title must not be replaced by a later title");
 delete chrome.tabs;
 
 const pending = new Map();
@@ -84,7 +87,7 @@ assert.ok(providerFacingSchemas.some(schema => schema.function?.name === "act_on
 const screenActionSchema = providerFacingSchemas.find(schema => schema.function?.name === "act_on_screen");
 assert.deepEqual(
   screenActionSchema?.function?.parameters?.required,
-  ["action", "returnScreenshot"],
+  ["action", "returnScreenshot", "tabRef"],
   "screen actions must force the model to choose whether post-action capture is worth its cost",
 );
 assert.equal(
@@ -118,8 +121,8 @@ for (const schema of providerFacingSchemas) {
   assert.equal(parameters.type, "object", `${name} must expose an object parameter schema`);
   assert.deepEqual(
     schemaKeywordPaths(parameters, "anyOf"),
-    [],
-    `${name} must not expose provider-fragile anyOf schemas`,
+    ['read_image', 'collect_images'].includes(name) ? ['$.anyOf'] : [],
+    `${name} publishes compound variants only for URL or explicit-page image input`,
   );
 }
 

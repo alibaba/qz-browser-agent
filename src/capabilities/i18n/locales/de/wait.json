@@ -39,7 +39,7 @@
   "wait.waitNotContinued": "Aufgabe nicht fortgesetzt",
   "wait.loginVerificationCompleted": "Anmeldung bestätigt",
   "wait.userContinued": "Aufgabe fortgesetzt",
-  "wait.waitForElementSelectorSupportsRawCssOrCss": "Der selector von wait_for_element unterstützt CSS oder css:<selector>; uid:<element_uid> verweist auf einen Snapshot und kann nicht auf einen zukünftigen DOM-Zustand warten.",
+  "wait.waitForElementSelectorSupportsRawCssOrCss": "Der target von wait_for_element unterstützt CSS oder css:<target>; uid:<element_uid> verweist auf einen Snapshot und kann nicht auf einen zukünftigen DOM-Zustand warten.",
   "wait.userWaitRuntimeIsUnavailable": "Der Dienst für Benutzereingaben ist nicht verfügbar.",
   "wait.currentTaskHasNoWorkingTab": "Die aktuelle Aufgabe hat keinen Arbeitstab.",
   "wait.waitUntilRequiresAValidAbsoluteTimeWithAn": "wait_until benötigt einen gültigen absoluten Zeitpunkt mit expliziter Zeitzone.",

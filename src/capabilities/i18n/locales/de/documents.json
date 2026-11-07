@@ -81,7 +81,7 @@
   "documents.failedToCreateTemporaryPdfRenderTab": "Temporärer Tab zur PDF-Erstellung konnte nicht geöffnet werden.",
   "documents.temporaryPdfRenderingRequiresTheChromeDebuggerRuntime": "Für die PDF-Erstellung ist Zugriff auf den Chrome-Debugger erforderlich.",
   "documents.chromePagePrinttopdfReturnedEmptyData": "Chrome Page.printToPDF hat keine Daten zurückgegeben.",
-  "documents.temporaryTabDidNotFinishLoading": "Der temporäre Tab {tabId} wurde nicht vollständig geladen.",
+  "documents.temporaryTabDidNotFinishLoading": "Der temporäre Tab wurde nicht vollständig geladen.",
   "documents.documentArtifactHasNoContent": "Das erstellte Dokument ist leer.",
   "documents.docxDocumentXmlNotFound": "In der DOCX-Datei fehlt document.xml.",
   "documents.xlsxWorkbookXmlNotFound": "In der XLSX-Datei fehlt workbook.xml.",

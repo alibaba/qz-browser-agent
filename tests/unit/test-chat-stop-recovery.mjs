@@ -53,3 +53,22 @@ test("a failed stop preserves the existing full transcript reconciliation path",
   assert.deepEqual(f.reconciles, [["session-1", { delay: 250, force: true }]]);
   assert.equal(f.controller.getStatus(), "idle");
 });
+
+test("a stop acknowledgement preserves a queued run that resumed before the state read", async t => {
+  const f = fixture(t);
+  assert.equal(f.controller.stop(), true);
+  const resumed = { status: 'running', running: true, runId: 'run-2',
+    pendingFollowUps: [{ clientMessageId: 'queued-2', text: 'Next task' }] };
+  Object.assign(f.runtime, resumed);
+  f.controller.makeLive({ sessionId: 'session-1', runId: resumed.runId });
+  f.resolve({ sessionId: 'session-1', runId: resumed.runId, status: resumed.status, isStreaming: true, runtime: resumed });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.controller.getStatus(), 'running');
+  assert.equal(f.controller.getActiveRunId(), 'run-2');
+  assert.equal(f.controller.isStreaming(), true);
+  assert.equal(f.controller.isBlocked('run-1'), true, 'late deltas from the stopped run remain blocked');
+  assert.equal(f.controller.isBlocked('run-2'), false);
+  assert.equal(f.tracked.at(-1).isStreaming, true);
+  assert.deepEqual(f.runtime.pendingFollowUps, resumed.pendingFollowUps);
+  assert.deepEqual(f.reconciles, []);
+});

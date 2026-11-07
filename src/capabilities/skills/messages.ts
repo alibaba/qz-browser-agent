@@ -374,7 +374,7 @@ export default defineMessages("skills", {
   registryMutationUnavailable: { "zh-CN": "技能注册表修改能力不可用", en: "Skill editing is unavailable" },
   distributionInternalOnly: { "zh-CN": "{capability} 仅供轻舟技能工作台内部使用。", en: "{capability} is internal to the qz skill workbench." },
 }, { historicalLabels: [
-  "manageSkillConfiguration", "loadSkill", "readSkillResource", "createSkill",
+  "manageSkillConfiguration", "skills", "loadSkill", "readSkillResource", "createSkill",
   "editSkillResource", "updateSkill", "deleteSkill", "manageSkills",
   "importSkillFromPage", "importGitSkillRepository", "installSkillToGit", "runSkillScript",
 ] });
