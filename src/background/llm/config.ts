@@ -79,7 +79,7 @@ export async function getConfig(): Promise<SettingsConfig> {
   ]);
   const provider = normalizeProvider(raw.provider);
   const providerDef = getProviderDef({ ...raw, provider });
-  const fallbackApiKey = providerRequiresApiKey(providerDef) ? providerApiKeys[provider] || "" : "";
+  const fallbackApiKey = !providerDef.auth && !providerDef.editableEndpoint ? providerApiKeys[provider] || "" : "";
   const config = {
     ...normalizeConfig({ ...DEFAULT_CONFIG, ...raw, apiKey: raw.apiKey || fallbackApiKey }),
     activePresetId,
@@ -115,7 +115,11 @@ async function saveConfiguration(config: ConfigInput, preserveRuntime: boolean, 
   const previousModel = modelIdentityOf({ ...DEFAULT_CONFIG, ...raw });
   validateProvidedContextWindow(config);
   validateProvidedModelParameters(config);
-  const candidate = { ...DEFAULT_CONFIG, ...raw, ...config };
+  const candidate: ConfigInput = { ...DEFAULT_CONFIG, ...raw, ...config };
+  const connectionChanged = !modelConnectionSnapshotsEqual(getModelConnectionSnapshot(candidate), getModelConnectionSnapshot(raw));
+  if (connectionChanged && !Object.hasOwn(config, "maxOutputTokens")) candidate.maxOutputTokens = undefined;
+  const endpointChanged = getProviderEndpoint(getProviderDef(candidate)) !== getProviderEndpoint(getProviderDef(raw));
+  if (endpointChanged && getProviderDef(candidate).editableEndpoint && !Object.hasOwn(config, "apiKey")) candidate.apiKey = "";
   if (
     Object.prototype.hasOwnProperty.call(config || {}, "model")
     && !Object.prototype.hasOwnProperty.call(config || {}, "modelLabel")
@@ -190,10 +194,11 @@ export async function deleteModelPreset(presetId: unknown, signal?: AbortSignal)
 export async function listModels(options: ConfigInput = {}) {
   const baseConfig = await getConfig();
   const provider = normalizeProvider(options.provider || baseConfig.provider);
-  const providerDef = getProviderDef({ ...baseConfig, ...options, provider });
-  const apiKey = providerRequiresApiKey(providerDef)
-    ? sanitizeApiKey(options.apiKey ?? baseConfig.apiKey ?? "")
-    : "";
+  const providerDef = getProviderDef({ ...(provider === baseConfig.provider ? baseConfig : {}), ...options, provider,
+    customEndpoint: options.customEndpoint ?? options.endpoint ?? (provider === baseConfig.provider ? baseConfig.customEndpoint : undefined),
+  });
+  const sameEndpoint = provider === baseConfig.provider && getProviderEndpoint(providerDef) === baseConfig.endpoint;
+  const apiKey = providerDef.auth ? "" : sanitizeApiKey(options.apiKey ?? (sameEndpoint ? baseConfig.apiKey : ""));
 
   return listProviderModels(provider, providerDef, apiKey, options.signal instanceof AbortSignal ? options.signal : undefined);
 }
@@ -235,15 +240,17 @@ export function normalizeConfig(config: ConfigInput = {}) {
     provider,
     providerLabel: providerDef.label,
     endpoint: getProviderEndpoint(providerDef),
-    apiKey: !providerRequiresApiKey(providerDef) || hasLegacyBuiltinKey ? "" : rawApiKey,
+    apiKey: providerDef.auth || hasLegacyBuiltinKey ? "" : rawApiKey,
     model: hasLegacyBuiltinKey && rawModel === LEGACY_BUILTIN_MODEL ? "" : rawModel,
     modelLabel: String(config.modelLabel || "").trim(),
     modelParameters: normalizeModelParameters(config.modelParameters),
     ...normalizeModelOptions(config, providerDef),
     customProtocol: customProvider ? normalizeCustomProtocol(config.customProtocol) : "",
-    customEndpoint: customProvider
-      ? normalizeCustomEndpoint(config.customEndpoint || config.endpoint, config.customProtocol)
+    customEndpoint: customProvider || providerDef.editableEndpoint
+      ? getProviderEndpoint(providerDef)
       : "",
+    ...(typeof config.maxOutputTokens === "number" && Number.isSafeInteger(config.maxOutputTokens) && config.maxOutputTokens > 0
+      ? { maxOutputTokens: config.maxOutputTokens } : {}),
     customPresetName: customProvider ? normalizeCustomPresetName(config.customPresetName) : "",
     contextWindow: parseContextWindow(config.contextWindow, providerDef.defaultContextWindow),
     trimOldToolResults: config.trimOldToolResults !== false,
@@ -268,7 +275,7 @@ function sanitizeApiKey(value: unknown) {
 function normalizeStoredConfigForConnection(raw: ConfigInput = {}, providerApiKeys = getStoredProviderApiKeys(raw)) {
   const provider = normalizeProvider(raw.provider);
   const providerDef = getProviderDef({ ...raw, provider });
-  const fallbackApiKey = providerRequiresApiKey(providerDef) ? providerApiKeys[provider] || "" : "";
+  const fallbackApiKey = !providerDef.auth && !providerDef.editableEndpoint ? providerApiKeys[provider] || "" : "";
   return normalizeConfig({ ...DEFAULT_CONFIG, ...raw, apiKey: raw.apiKey || fallbackApiKey });
 }
 
@@ -279,8 +286,8 @@ function getModelConnectionSnapshot(config: ConfigInput = {}) {
     apiKey: sanitizeApiKey(config.apiKey),
     model: String(config.model || "").trim(),
     customProtocol: isCustomProvider(provider) ? normalizeCustomProtocol(config.customProtocol) : "",
-    customEndpoint: isCustomProvider(provider)
-      ? normalizeCustomEndpoint(config.customEndpoint, config.customProtocol)
+    customEndpoint: isCustomProvider(provider) || getProviderDef(config).editableEndpoint
+      ? getProviderEndpoint(getProviderDef(config))
       : "",
   };
 }
@@ -295,8 +302,8 @@ function modelConnectionSnapshotsEqual(a: ConnectionSnapshot, b: ConnectionSnaps
 
 async function validateConfigBeforeSave(config: ReturnType<typeof normalizeConfig>, { validateConnection = true, signal }: { validateConnection?: boolean; signal?: AbortSignal } = {}) {
   const providerDef = getProviderDef(config);
-  if (providerDef.custom) {
-    const endpoint = normalizeCustomEndpoint(config.customEndpoint, config.customProtocol);
+  if (providerDef.custom || providerDef.editableEndpoint) {
+    const endpoint = getProviderEndpoint(providerDef);
     if (!endpoint) {
       throw new Error(t("settings.endpointRequired"));
     }
@@ -327,7 +334,7 @@ function getStoredProviderApiKeys(raw: ConfigInput = {}) {
   const provider = normalizeProvider(raw.provider);
   const providerDef = getProviderDef({ ...raw, provider });
   const apiKey = sanitizeApiKey(raw.apiKey);
-  if (apiKey && !providerApiKeys[provider] && providerRequiresApiKey(providerDef)) {
+  if (apiKey && !providerApiKeys[provider] && !providerDef.auth && !providerDef.editableEndpoint) {
     providerApiKeys[provider] = apiKey;
   }
   return providerApiKeys;
@@ -339,7 +346,8 @@ function normalizeProviderApiKeys(value: unknown = {}) {
   Object.entries(raw).forEach(([providerValue, apiKeyValue]) => {
     const provider = String(providerValue || "").trim().toLowerCase();
     if (!Object.prototype.hasOwnProperty.call(PROVIDERS, provider)) return;
-    if (!providerRequiresApiKey(getProviderDef({ provider }))) return;
+    const definition = getProviderDef({ provider });
+    if (definition.auth || definition.editableEndpoint) return;
     const apiKey = sanitizeApiKey(apiKeyValue);
     if (apiKey) keys[provider] = apiKey;
   });
@@ -349,7 +357,7 @@ function normalizeProviderApiKeys(value: unknown = {}) {
 function rememberProviderApiKey(providerApiKeys: unknown, config: RuntimeConfig) {
   const next = normalizeProviderApiKeys(providerApiKeys);
   const providerDef = getProviderDef(config);
-  if (!providerRequiresApiKey(providerDef)) return next;
+  if (providerDef.auth || providerDef.editableEndpoint) return next;
   const apiKey = sanitizeApiKey(config.apiKey);
   if (apiKey) next[normalizeProvider(config.provider)] = apiKey;
   return next;
@@ -379,7 +387,8 @@ function upsertPresetForConfig(presets: ModelPreset[], config: RuntimeConfig) {
 function getPresetApiKeyForApply(preset: ModelPreset, raw: ConfigInput) {
   const provider = normalizeProvider(preset.provider);
   const providerDef = getProviderDef(preset);
-  if (!providerRequiresApiKey(providerDef)) return "";
+  if (providerDef.auth) return "";
+  if (providerDef.editableEndpoint) return sanitizeApiKey(preset.apiKey);
   if (providerDef.custom) return sanitizeApiKey(preset.apiKey) || getStoredProviderApiKeys(raw)[provider] || "";
   return getStoredProviderApiKeys(raw)[provider] || sanitizeApiKey(preset.apiKey);
 }
@@ -388,9 +397,10 @@ function presetConfigKey(config: ConfigInput | ModelPreset = {}) {
   const model = String(config.model || "").trim().toLowerCase();
   if (!model) return "";
   const provider = normalizeProvider(config.provider);
-  if (isCustomProvider(provider)) {
-    const protocol = normalizeCustomProtocol(config.customProtocol);
-    const endpoint = normalizeCustomEndpoint(config.customEndpoint, protocol).toLowerCase();
+  const definition = getProviderDef(config);
+  if (isCustomProvider(provider) || definition.editableEndpoint) {
+    const protocol = definition.protocol;
+    const endpoint = getProviderEndpoint(definition).toLowerCase();
     return `${provider}::${protocol}::${endpoint}::${model}`;
   }
   return `${provider}::${model}`;

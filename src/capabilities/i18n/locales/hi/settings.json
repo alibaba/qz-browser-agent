@@ -297,5 +297,7 @@
   "settings.cliNameConflict": "पहचानकर्ता पहले से उपयोग में है। दूसरा चुनें।",
   "settings.cliClientInUse": "यह ब्राउज़र पहले से कनेक्ट है। दूसरा कनेक्शन बंद करके दोबारा कोशिश करें।",
   "settings.cliFailure": "कनेक्शन विफल रहा। दोबारा कोशिश करें।",
-  "settings.cliReadFailure": "कनेक्शन की स्थिति नहीं पढ़ सके। दोबारा कोशिश करें।"
+  "settings.cliReadFailure": "कनेक्शन की स्थिति नहीं पढ़ सके। दोबारा कोशिश करें।",
+  "settings.optionalApiKey": "API कुंजी (वैकल्पिक)",
+  "settings.optionalGatewayKeyHint": "सीधे स्थानीय कनेक्शन के लिए खाली छोड़ें। LAN या दूरस्थ कनेक्शन के लिए गेटवे कुंजी का उपयोग करें।"
 }

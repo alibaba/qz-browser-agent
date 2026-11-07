@@ -297,5 +297,7 @@
   "settings.cliNameConflict": "この識別子は使用中です。別の識別子を選んでください。",
   "settings.cliClientInUse": "このブラウザーは接続済みです。他の接続を切断して再試行してください。",
   "settings.cliFailure": "接続に失敗しました。再試行してください。",
-  "settings.cliReadFailure": "接続状態を取得できません。再試行してください。"
+  "settings.cliReadFailure": "接続状態を取得できません。再試行してください。",
+  "settings.optionalApiKey": "API キー（任意）",
+  "settings.optionalGatewayKeyHint": "ローカル接続では空欄にできます。LAN またはリモート接続ではゲートウェイのキーを入力してください。"
 }

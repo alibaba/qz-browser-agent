@@ -8,7 +8,7 @@ import { PRODUCT_PROVIDERS, getProductDefaultProvider } from "../product/provide
 
 import type { ProviderDefinition } from './provider-types.js';
 export type { ProviderDefinition } from './provider-types.js';
-type ProviderInput = { provider?: unknown; customProtocol?: unknown; customEndpoint?: unknown; endpoint?: unknown };
+type ProviderInput = { provider?: unknown; customProtocol?: unknown; customEndpoint?: unknown; endpoint?: unknown; maxOutputTokens?: unknown };
 const PROVIDER_BASE_HEADERS = { "x-app": "cli" };
 const CUSTOM_PROVIDER_ID = "custom";
 // Explicit policy patches preserve live labels and executable handler identity.
@@ -27,6 +27,8 @@ export function listProviderSummaries() {
       protocol: providerDef.protocol || "",
       endpoint: getProviderEndpoint(providerDef),
       ...(providerDef.hideEndpoint ? { hideEndpoint: true } : {}),
+      ...(providerDef.editableEndpoint ? { editableEndpoint: providerDef.editableEndpoint } : {}),
+      ...(providerDef.modelsIncludeCapabilities ? { modelsIncludeCapabilities: true } : {}),
       custom: providerDef.custom === true,
       ...(providerDef.auth ? { auth: { label: providerDef.auth.label, hint: providerDef.auth.hint } } : {}),
       modelOptions: providerDef.modelOptions || [],
@@ -77,6 +79,15 @@ export function getProviderDef(configOrProvider: ProviderInput | string = {}): P
     : { provider: configOrProvider };
   const provider = normalizeProvider(config.provider);
   const providerDef = PROVIDERS[provider] || PROVIDERS.fireworks;
+  if (providerDef.editableEndpoint || providerDef.modelsIncludeCapabilities) return {
+    ...providerDef,
+    ...(providerDef.editableEndpoint ? {
+      endpoint: normalizeCustomEndpoint((Object.hasOwn(config, "customEndpoint") ? config.customEndpoint : config.endpoint) || providerDef.editableEndpoint, providerDef.protocol),
+    } : {}),
+    // A local model with unknown output metadata keeps its gateway's default.
+    ...(providerDef.modelsIncludeCapabilities && !(typeof config.maxOutputTokens === "number" && Number.isSafeInteger(config.maxOutputTokens) && config.maxOutputTokens > 0)
+      ? { outputTokenParam: undefined } : {}),
+  };
   if (!isCustomProvider(provider)) return providerDef;
   const protocol = normalizeCustomProtocol(config.customProtocol);
   return {

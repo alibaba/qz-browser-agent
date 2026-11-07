@@ -52,6 +52,8 @@ export default defineMessages("settings", {
   removed: { "zh-CN": "移除 {count}", en: "Removed: {count}" },
   showingFirst: { "zh-CN": "显示前 {count}", en: "Showing the first {count}" },
   apiKeySaved: { "zh-CN": "AK 已保存", en: "API key saved" },
+  optionalApiKey: { "zh-CN": "API 密钥（可选）", en: "API key (optional)" },
+  optionalGatewayKeyHint: { "zh-CN": "本机直连可留空；连接局域网或远程网关时填写网关密钥。", en: "Leave blank for a direct local connection. Use the gateway key for a LAN or remote connection." },
   updatedFields: { "zh-CN": "更新 {count} 项", en: "Fields updated: {count}" },
   orderedPolicies: { "zh-CN": "{count} 条顺序", en: "Rules in order: {count}" },
   accessRules: { "zh-CN": "{count} 条访问规则", en: "Access rules: {count}" },

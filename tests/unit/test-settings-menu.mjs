@@ -502,10 +502,12 @@ test("settings require a context window when automatic capability matching has n
   const source = readSettingsFeature();
   const validation = extractFunction(source, "validateSettingsConfigFields");
   const clearModelFields = extractFunction(source, "clearModelScopedSettings");
+  const clearCapabilities = extractFunction(source, "clearConfiguredModelCapabilities");
 
   assert.match(validation, /if \(!contextWindow\)[\s\S]*t\("selectAContextLength"\)/u);
-  assert.match(clearModelFields, /\$\("#cfg-context-window"\)\.value = ""/u);
-  assert.match(clearModelFields, /\$\("#cfg-vision"\)\.value = "false"/u);
+  assert.match(clearModelFields, /clearConfiguredModelCapabilities\(\)/u);
+  assert.match(clearCapabilities, /\$\("#cfg-context-window"\)\.value = ""/u);
+  assert.match(clearCapabilities, /\$\("#cfg-vision"\)\.value = "false"/u);
   assert.doesNotMatch(validation, /请选择是否支持图片/u);
 });
 

@@ -297,5 +297,7 @@
   "settings.cliNameConflict": "Identifiant déjà utilisé. Choisissez-en un autre.",
   "settings.cliClientInUse": "Ce navigateur est déjà connecté. Fermez son autre connexion et réessayez.",
   "settings.cliFailure": "Échec de connexion. Réessayez.",
-  "settings.cliReadFailure": "Impossible de lire l’état de connexion. Réessayez."
+  "settings.cliReadFailure": "Impossible de lire l’état de connexion. Réessayez.",
+  "settings.optionalApiKey": "Clé API (facultative)",
+  "settings.optionalGatewayKeyHint": "Laissez ce champ vide pour une connexion locale directe. Utilisez la clé de la passerelle pour une connexion LAN ou distante."
 }

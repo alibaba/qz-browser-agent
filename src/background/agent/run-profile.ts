@@ -15,9 +15,10 @@ export async function buildRunProfile({
 }: { sessionId?: string; canManageSessions?: boolean; externalDrive?: boolean; config: RuntimeConfig; platformInfo?: { os?: string } }) {
   const llmConfig = config;
   const detectedPlatformInfo = platformInfo;
-  const maxOutputTokens = resolveRunProfileMaxOutputTokens(
-    await getBundledModelMaxOutputTokens(llmConfig),
-  );
+  const provider = getProviderDef(llmConfig);
+  const maxOutputTokens = Math.min(resolveRunProfileMaxOutputTokens(
+    llmConfig.maxOutputTokens ?? (provider.modelsIncludeCapabilities ? null : await getBundledModelMaxOutputTokens(llmConfig)),
+  ), llmConfig.maxOutputTokens || Infinity);
   const configuredVision = llmConfig.vision === true;
   // An external client decides whether it can read images. Qingzhou's own model setting does not hide them.
   const imageTools = externalDrive || configuredVision;
@@ -44,7 +45,7 @@ export async function buildRunProfile({
       contextWindow: Number(llmConfig.contextWindow) || null,
       trimOldToolResults: llmConfig.trimOldToolResults !== false,
       maxOutputTokens,
-      outputReserveTokens: resolveOutputReserveTokens(llmConfig, getProviderDef(llmConfig), maxOutputTokens),
+      outputReserveTokens: resolveOutputReserveTokens(llmConfig, provider, maxOutputTokens),
     },
     features: {
       imageInput: imageTools,

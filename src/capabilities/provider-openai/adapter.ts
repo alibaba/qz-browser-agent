@@ -860,7 +860,7 @@ function buildHeaders(config: RuntimeConfig, options: ModelOptions = {}) {
   const headers: Record<string, string> = {
     ...options.baseHeaders,
     "Content-Type": "application/json",
-    "Authorization": `Bearer ${config.apiKey}`,
+    ...(config.apiKey ? { "Authorization": `Bearer ${config.apiKey}` } : {}),
   };
   // An injected W3C traceparent continues the same trace across the gateway.
   const traceparent = String(options.traceparent || "").trim();
@@ -895,7 +895,7 @@ function buildRequestBody(config: RuntimeConfig, messages: ModelMessage[], tools
   };
   // Chat Completions limits are optional. Only an explicit provider policy supplies a default.
   if (outputTokenParam && ![outputTokenParam, "max_tokens", "max_completion_tokens"].some(key => Object.hasOwn(body, key))) {
-    body[outputTokenParam] = resolveRequestMaxOutputTokens(options);
+    body[outputTokenParam] = Math.min(resolveRequestMaxOutputTokens(options), config.maxOutputTokens || Infinity);
   }
   if (stream) {
     body.stream_options = { include_usage: true };

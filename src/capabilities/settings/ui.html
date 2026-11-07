@@ -53,7 +53,8 @@
             <div class="settings-field-label-row qz:flex qz:items-center qz:justify-between qz:gap-2">
               <label class="qz-field-label" data-i18n="settings.apiKey">API 密钥</label>
             </div>
-            <input id="cfg-apikey" type="password" class="qz-field" placeholder="sk-...">
+            <input id="cfg-apikey" type="password" class="qz-field" placeholder="sk-..." aria-describedby="cfg-apikey-hint">
+            <div id="cfg-apikey-hint" class="qz-field-hint hidden"></div>
           </div>
           <div id="product-model-settings" style="display:contents"></div>
           <div id="provider-auth-box" class="provider-auth-box hidden qz:grid qz:gap-1.5">

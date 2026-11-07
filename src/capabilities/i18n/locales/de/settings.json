@@ -297,5 +297,7 @@
   "settings.cliNameConflict": "Kennung bereits vergeben. Wählen Sie eine andere.",
   "settings.cliClientInUse": "Dieser Browser ist bereits verbunden. Trennen Sie die andere Verbindung und versuchen Sie es erneut.",
   "settings.cliFailure": "Verbindung fehlgeschlagen. Versuchen Sie es erneut.",
-  "settings.cliReadFailure": "Verbindungsstatus konnte nicht gelesen werden. Versuchen Sie es erneut."
+  "settings.cliReadFailure": "Verbindungsstatus konnte nicht gelesen werden. Versuchen Sie es erneut.",
+  "settings.optionalApiKey": "API-Schlüssel (optional)",
+  "settings.optionalGatewayKeyHint": "Bei einer direkten lokalen Verbindung leer lassen. Für eine LAN- oder Remoteverbindung den Gateway-Schlüssel verwenden."
 }

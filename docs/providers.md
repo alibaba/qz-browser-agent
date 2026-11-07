@@ -54,6 +54,23 @@ Complete unknown capabilities through the provider's discovery implementation. S
 uses saved configuration. Save validates those settings locally. Unknown context windows require
 explicit configuration; unknown image support is treated as unavailable.
 
+Local gateways can declare `editableEndpoint` with their default API URL and reuse
+`customEndpoint` for persistence. Their protocol stays fixed; presets and model-list caches include
+the configured endpoint. Gateway credentials stay with that preset, rather than the provider-wide
+remembered key. `requiresApiKey` controls required-field validation; `auth` controls managed login.
+
+A preset with `modelsIncludeCapabilities` returns `contextWindow`, `maxOutputTokens` and `vision`
+from `listModels`. Missing values remain unknown. Settings discovers these capabilities at model
+selection and saves the output limit with the preset; requests and compaction use the saved limit
+without fetching a model list. Local model IDs are matched exactly and never inferred from an
+unrelated public model directory.
+
+[Magpie](https://github.com/yetone/magpie) uses OpenAI Chat Completions at
+`http://127.0.0.1:3425/v1`; the address accepts a different port or LAN host. Its `/v1/models`
+provides `context_window`, `max_output_tokens`, and `modalities.input`. Local loopback requests need
+no key; other computers use a gateway key with Magpie network sharing enabled. Image messages and
+streamed tool calls use the existing OpenAI adapter.
+
 Service labels and authentication hints may use getters to resolve the current language when a
 summary is read. Keep model IDs, user names and parameter values unchanged. Declare menu grouping in
 the preset; settings renders the shared catalog. See [localization](localization.md).

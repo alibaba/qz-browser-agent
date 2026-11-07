@@ -68,16 +68,16 @@ const messages = defineMessages("settings-model", {
     en: "Custom endpoint protocol (openai/anthropic, used when provider=custom).",
   },
   settingsCustomEndpoint: {
-    "zh-CN": "自定义接口 HTTP(S) 地址（仅 provider=custom 使用）。",
-    en: "Custom HTTP(S) API endpoint URL (used when provider=custom).",
+    "zh-CN": "HTTP(S) 接口地址，适用于自定义接口或允许修改地址的网关服务商。",
+    en: "HTTP(S) API endpoint URL for a custom endpoint or a provider with an editable gateway address.",
   },
   settingsCustomPresetName: {
     "zh-CN": "自定义接口预设显示名称。",
     en: "Display name for the custom endpoint preset.",
   },
   settingsEndpointAlias: {
-    "zh-CN": "customEndpoint 的兼容别名（仅 provider=custom 使用）。",
-    en: "Compatibility alias for customEndpoint (only when provider=custom).",
+    "zh-CN": "customEndpoint 的兼容别名，适用于自定义接口或允许修改地址的网关服务商。",
+    en: "Compatibility alias for customEndpoint, for custom endpoints or providers with editable gateway addresses.",
   },
   settingsContextWindow: {
     "zh-CN": "上下文窗口 tokens（切换模型时省略以采用自动匹配的默认值；仅用户要求覆盖或返回 MODEL_CAPABILITIES_REQUIRED 时明确传入）。",

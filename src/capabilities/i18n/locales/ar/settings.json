@@ -297,5 +297,7 @@
   "settings.cliNameConflict": "المعرّف مستخدم بالفعل. اختر معرّفًا آخر.",
   "settings.cliClientInUse": "هذا المتصفح متصل بالفعل. اقطع اتصاله الآخر وأعد المحاولة.",
   "settings.cliFailure": "تعذر الاتصال. أعد المحاولة.",
-  "settings.cliReadFailure": "تعذرت قراءة حالة الاتصال. أعد المحاولة."
+  "settings.cliReadFailure": "تعذرت قراءة حالة الاتصال. أعد المحاولة.",
+  "settings.optionalApiKey": "مفتاح API (اختياري)",
+  "settings.optionalGatewayKeyHint": "اتركه فارغًا للاتصال المحلي المباشر. استخدم مفتاح البوابة للاتصال عبر الشبكة المحلية أو عن بُعد."
 }

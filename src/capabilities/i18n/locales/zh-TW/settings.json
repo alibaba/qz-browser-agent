@@ -297,5 +297,7 @@
   "settings.cliNameConflict": "識別名稱已被使用，請換一個。",
   "settings.cliClientInUse": "此瀏覽器已有連線，請中斷另一個連線後重試。",
   "settings.cliFailure": "連線失敗，請重試。",
-  "settings.cliReadFailure": "無法讀取連線狀態，請重試。"
+  "settings.cliReadFailure": "無法讀取連線狀態，請重試。",
+  "settings.optionalApiKey": "API 金鑰（選填）",
+  "settings.optionalGatewayKeyHint": "直接連線本機時可留空；連線區域網路或遠端閘道時，請填寫閘道金鑰。"
 }
