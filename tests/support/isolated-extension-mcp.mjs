@@ -17,10 +17,12 @@ export async function launchIsolatedExtensionMcp({
   headless = true,
   requestTimeoutSeconds = 300,
   downloadDirectory,
+  extensionDir = EXTENSION_PATH,
 } = {}) {
   const bridge = await startIsolatedMcpBridge({ requestTimeoutSeconds });
   const diagnostics = [];
   const profile = mkdtempSync(join(tmpdir(), profilePrefix));
+  const rejectDefaultBridge = route => route.abort();
   let context = null;
   let page = null;
   const pollRequests = [];
@@ -37,12 +39,12 @@ export async function launchIsolatedExtensionMcp({
       viewport: { width: 980, height: 860 },
       args: [
         "--lang=zh-CN",
-        `--disable-extensions-except=${EXTENSION_PATH}`,
-        `--load-extension=${EXTENSION_PATH}`,
+        `--disable-extensions-except=${extensionDir}`,
+        `--load-extension=${extensionDir}`,
       ],
     });
     // Keep the compatibility probe away from a developer's bridge on the default port.
-    await context.route("http://127.0.0.1:18765/**", route => route.abort());
+    await context.route("http://127.0.0.1:18765/**", rejectDefaultBridge);
     attachWorkerDiagnostics(context, diagnostics);
     context.on("request", request => {
       if (new URL(request.url()).pathname === "/v1/qingzhou/poll") {
@@ -73,7 +75,11 @@ export async function launchIsolatedExtensionMcp({
     const connect = async () => {
       await connectionPage.goto(bridge.connectUrl);
       await connectionPage.locator('[data-qz-connection-state="connected"]').waitFor();
-      return waitForBridgeClient(bridge.healthUrl, 20_000);
+      const status = await waitForBridgeClient(bridge.healthUrl, 20_000);
+      // Request interception is only needed before the private endpoint is paired.
+      // Leave browser-created task tabs on the browser's native network path.
+      await context.unroute("http://127.0.0.1:18765/**", rejectDefaultBridge);
+      return status;
     };
     const status = await connect();
     return {

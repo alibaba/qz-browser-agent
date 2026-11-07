@@ -58,7 +58,7 @@ export function createSuiteCatalog({ root: ROOT, match, unitConcurrency }) {
       command("node", "tests/sidepanel-rendering/run.mjs"),
     ],
     services: [
-      command("node", "--test", ...serviceNodeTests.map(name => pathFromRoot("tests/unit", name))),
+      command("node", "--test", `--test-concurrency=${unitConcurrency}`, ...serviceNodeTests.map(name => pathFromRoot("tests/unit", name))),
       command(
         "uv",
         "run",

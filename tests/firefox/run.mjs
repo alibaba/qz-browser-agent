@@ -5,10 +5,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildExtension, extensionOutputDirectory } from "../../scripts/build-extension.mjs";
 import { FIREFOX_GECKO_ID } from "../../scripts/firefox-manifest.mjs";
+import { clampNumber } from "../runner/cli.mjs";
 import { assertFirefoxPackage, resolveFirefoxExecutable } from "../support/browser-package.mjs";
 import "../support/typescript-loader.mjs";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const unitConcurrency = clampNumber(process.env.QINGZHOU_TEST_CONCURRENCY, 1, 16, 4);
 const reportPath = join(root, "tests/results/firefox-suite.json");
 const supplied = process.env.QINGZHOU_FIREFOX_EXTENSION_DIR;
 const packageDir = supplied || extensionOutputDirectory("firefox");
@@ -45,7 +47,7 @@ try {
   if (!unitFiles.length) throw new Error("Firefox unit tests were not found in tests/unit/test-firefox-*.mjs");
   console.log(`browser=firefox package=${report.package} step=unit files=${unitFiles.length}`);
   const unitCode = await run(process.execPath, [
-    "--test", "--test-reporter=spec", "--test-concurrency=4",
+    "--test", "--test-reporter=spec", `--test-concurrency=${unitConcurrency}`,
     "--require=./tests/support/unit-bootstrap.cjs",
     ...unitFiles,
   ]);
