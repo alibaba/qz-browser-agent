@@ -345,7 +345,7 @@ license hash. Review the supplement again when upgrading.
 Connect a local MCP client or use qz from the terminal:
 
 ```bash
-npm run qz -- connect
+npm run qz -- connect uri
 npm run qz -- status
 npm run qz -- browsers
 npm run qz -- mcp
@@ -368,36 +368,39 @@ npm run qz -- skills export NAME
 npm run qz -- settings get model
 npm run qz -- settings set vision true
 npm run qz -- automations
-npm run qz -- stop
+npm run qz -- session cancel SESSION_ID
 ```
 
 `npm run qz` starts the same daemon as the published `qz` command. Firefox load steps are
 [above](#load-temporarily-in-firefox). Pairing detail is in
 [Load qz in Firefox](cli.md#load-qz-in-firefox).
 
-`connect` starts the local service and opens its connection page for first pairing. The first
-browser is named `default`; repeating the command reuses an online connection. `status` shows the
-actual service address and `mcp` prints its MCP URL. The default port is 18765, with a free-port
-fallback when occupied; `connect --port PORT` requests another port. A running service keeps its
-existing address. Use the reported address when connecting another profile.
+Browser commands start the local service and connect when needed, reusing a compatible connection
+or opening the connection page once in the system default browser when it uses Chromium or Firefox.
+Use `qz connect uri` to pair a supported browser if the system default is unsupported.
+An incompatible service can be upgraded once before execution. The first browser is named `default`.
+`status` shows the actual service address and `mcp` prints its MCP URL. The default port is 18765,
+with a free-port fallback when occupied; `connect uri --port PORT` requests another port. A running
+service keeps its existing address. Use the reported address when connecting another profile.
 
 To pair a chosen browser Profile from the shell:
 
 ```bash
-npm run qz -- connect --no-open --name work --json
+npm run qz -- connect uri --name work
 ```
 
-Open `result.url` in that Profile and verify its online UUID with `browsers --json`.
-`--no-open` returns the URL immediately. `--name` sets or updates the identifier of the Profile
+Open the printed URL in that Profile and verify its online UUID with `browsers --json`.
+`connect uri` prints the URL without opening a browser. `--name` sets or updates the identifier of the Profile
 opening it; omit it to preserve an existing name or allocate `default`, `browser-2`, and so on.
-`connect --name work` opens the URL and also returns without waiting for pairing. Neither mode
-accepts `--client`. See [platform launch commands](cli.md#pair-a-selected-browser-from-the-shell).
+Use `--client NAME|UUID` instead of `--name` to print the URL for a registered profile.
+See [platform launch commands](cli.md#pair-a-selected-browser-from-the-shell).
 Pairing is also available in **qz Settings → Advanced → CLI**.
 
-`--client NAME|UUID` selects a browser for task and resource commands. With one online browser,
-selection is automatic; with several, it is required. Unknown or offline selections fail without
-falling back. Names are persistent and case-sensitive. Disconnect one profile in its qz Settings;
-`stop` stops the service and disconnects all browsers. To release an offline name, run
+`--client NAME|UUID` selects a browser for task and resource commands. New tasks use the first
+responsive browser; existing sessions use read-only lookup, with a selection required for ambiguous
+ownership. Unknown selections fail immediately; offline selections wait for the same UUID within
+the connection deadline without falling back. Names are persistent and case-sensitive. End a direct-drive task with
+`session cancel SESSION_ID`; disconnect one profile in its qz Settings. To release an offline name, run
 `npm run qz -- browsers forget NAME`. Each command and its suggested next steps remain bound to
 the resolved profile UUID.
 

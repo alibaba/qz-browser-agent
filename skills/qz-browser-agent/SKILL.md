@@ -3,14 +3,14 @@ name: qz-browser-agent
 description: Drive the connected browser through qz (轻舟) scripts. Create one titled session per task, pass its sessionId to every script, and bind each page with qz.tab(tabRef). Read qz skill for the installed CLI's guide. Read references/create-task.md only when the built-in agent should plan the task.
 ---
 
-Read `qz skill` once at the start of a task to use the guide shipped with the installed CLI. `qz --version` prints its version.
+Use the installed `qz` command. If unavailable, use `npx -y qz-browser-agent@latest` in place of `qz` in the commands below. Run `qz skill` once at the start of a task for the matching guide. `qz --version` prints its version.
 
 <!-- qz-drive-guide:en -->
 The external agent plans the work and drives the connected browser through qz (轻舟). Do not configure a qz model or call `qz create`. Read references/create-task.md only when the built-in agent should plan and execute the task.
 
 ## Connect
 
-Use the installed `qz` command (Node.js 22+) on the machine running the browser extension:
+Run commands with Node.js 22+ on the machine running the browser extension:
 
 ```sh
 qz status --json

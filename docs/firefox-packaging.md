@@ -75,6 +75,11 @@ and pointer delivery return to the owning frame. Plain CSS selectors remain docu
 Unmodified Enter on a single-line form input follows implicit submission rules. Page key events
 remain synthetic, so sites that require trusted keyboard events can still reject them.
 
+Page scripts use `userScripts.execute` in the target frame's `MAIN` world. The Firefox manifest
+declares `userScripts` as optional; the tool host obtains it through the existing permission card
+before the tool deadline starts. Browser-native compilation supports strict page CSP without
+changing page headers. Static DOM commands and the Content bridge keep their isolated execution path.
+
 Firefox API stand-ins install from the boot modules, which run before the shared graph:
 
 - [background/firefox-boot.ts](../src/background/firefox-boot.ts) imports `background/firefox/host.ts`, then `background/service-worker.ts`.

@@ -12,6 +12,27 @@ source of the shared code.
 For a new tool, page, renderer, provider, or embedded Skill, start with the [capability
 guide](../src/capabilities/README.md). Development rules are in [AGENTS.md](../AGENTS.md).
 
+Page tools prepare only the state they consume. Navigation returns after document commit;
+page-wide readers and `evaluate` wait for DOMContentLoaded, while explicit element observations
+read their current nodes. Element actions poll lightweight readiness state, geometry, and hit tests
+within the call deadline; full inspection supplies presentation and navigation metadata once.
+Legacy target preparation defaults to at most 5 seconds inside the 20-second call budget; an explicit
+`timeout` sets the shared preparation and execution limit. Locator queries share the whole call budget
+for resolution, readiness, and dispatch.
+Mouse presses recheck the target after moving the pointer, within the whole-call deadline. A stale UID requires a new observation.
+`evaluate({waitUntil:"commit"})` supports early observation and
+predicate waits. Content messaging does not wait for parsing. Preparation and navigation confirmation
+share the host's absolute call deadline and cancellation signal. Unfinished navigation returns
+`navigationPending` within that budget. Document replacement can retry preparation, never dispatched
+user code or input. Event waits arm before their trigger; triggered waits retain same-page ordering
+while their child tools acquire execution locks.
+Actions keep call-local execution evidence: preparation has not dispatched input, dispatch may
+have taken effect, and acknowledgement confirms execution. Triggered waits explicitly share that
+evidence with their action; ordinary nested calls remain independent. Errors retain these facts
+and authored traces across timeout, cancellation, and observation failure. Nested deadlines use
+the remaining parent budget; deadline errors report milliseconds in `details.timeoutMs` and describe
+whether execution never started, remains unconfirmed, or completed before the subsequent wait expired.
+
 ## Runtime map
 
 ```text
@@ -40,6 +61,12 @@ sets the stream's starting point. Failure, stopping, timeout, and cancellation e
 Observation only reads snapshots and never resubmits work. Task execution and persistence remain
 in the extension.
 
+A closed extension polling transport expires its connection lease while preserving issued-operation
+results until a replacement connection takes ownership. Other active polls and successful renewals
+protect their lease from stale cleanup. Authenticated replacement attempts expose a bounded recovery
+window so CLI preparation can await the same browser within its command deadline. The connection page
+observes status through its validated read-only route after starting a connection once.
+
 | Context | Entry and responsibility |
 | --- | --- |
 | Background | [service-worker.ts](../src/background/service-worker.ts) composes state owners, capabilities, transports, and Chrome listeners. |
@@ -59,6 +86,8 @@ manifest](../src/products/manifest.json) selects adapters for the public build.
 [Side Panel startup](../src/sidepanel/features/app/data-consent.ts) defers workspace initialization
 until acceptance. The Background API gate covers transports, while Session commands guard internal
 run admission. Scheduler and MCP startup wait for consent.
+Connection-page requests await the stored consent record before the connection owner checks it,
+so a cold worker does not treat hydration as missing acceptance.
 
 Location is collected by the `get_location` tool when a task needs local information. The
 [location service](../src/background/services/location.ts) requests a separate first-use approval
@@ -183,11 +212,22 @@ tombstone that rejects late writes. Stop preserves accepted steering and follow-
 delete clear them. A new run receives a new epoch.
 Reset completes after the empty model conversation, display history, and reset runtime are persisted.
 
+[Drive retention](../src/background/session/drive-retention.ts) keeps the 200 most recently active
+external-drive records. Older running or admitted Sessions remain protected until work settles.
+Creation, tool settlement, stop and startup request coalesced background cleanup. A guarded removal
+rechecks activity inside the Session command queue before revoking admission. The optional metadata
+flag `driveRetentionPending` keeps interrupted cleanup retryable; a missing flag means no pending cleanup.
+Strict removal deletes Session-owned documents, artifacts, resource links, transcript/checkpoint/runtime
+keys and unreferenced history images before removing metadata. Failures retry after 30 seconds and on
+startup. Global Data tables, gallery assets and downloaded files remain independent user resources.
+
 [Session codecs](../src/shared/session/session-codec.ts) normalize historical records when reading.
 The repository validates record and conversation versions before selecting or replacing a copy. The
 [format contract](../src/shared/session/session-format.ts) defines supported versions and errors.
 List summaries and [artifact projections](../src/background/session/artifacts.ts) derive from
-records, transcripts, and resource stores.
+records, transcripts, and resource stores. Public Session tails (`last_messages` and `wait`) read
+committed model messages, preserving tool values and script receipts. UI transcripts contribute
+running-tool status and active user questions; historical tools without model messages expose status only.
 
 The transcript owner keeps completed history (H) separate from the current operation (C).
 Agent events update C; explicit `finish` moves it into H. Ordinary UI saves checkpoint state
@@ -220,12 +260,18 @@ reads and writes. Use the [Data](../src/sdk/shared/data.ts) and
 
 ## Pages, debugger connections, and scripts
 
-[Session tabs](../src/background/session/tabs.ts) owns the working tab and claimed tabs. Page tools
-resolve targets through it. Parent and child Sessions have separate runs and tabs; creating,
+[Session tabs](../src/background/session/tabs.ts) owns claimed tabs and validates explicit page references.
+Active tabs describe user visibility; recent-page state supports presentation, never default targeting.
+Parent and child Sessions have separate runs and tabs; creating,
 claiming, and updating a tab requires the current run's authority.
 
 [CDP runtime](../src/background/tools/cdp-runtime.ts) manages debugger connections and operation
-leases. A run normally releases its connections on completion. Dismissing Chrome's debugging bar
+leases. CLI and Agent tools keep connections while executing, including outer-script waits and
+concurrent descendants. Connections with no execution or persistent feature using them detach after
+two idle seconds. The Session, tab ownership, aliases and element registrations survive; subsequent
+tools reconnect on demand. Cancellation releases execution holds and revokes further commands.
+An idle detach failure preserves the live connection and retries once; new activity resets that budget.
+Dismissing Chrome's debugging bar
 marks the tab as user-detached; before the run's next tool call, outside the tool timeout, a
 confirmation asks to continue (re-attach) or stop (ending the run), while other detach reasons
 keep the silent reconnection. Capabilities can retain a connection across runs; completion or
@@ -237,8 +283,12 @@ reattachment approval.
 Closing a tab releases its debugger state and removes it from pending reattachment checks.
 
 Diagnostics captures bounded console history as soon as a run-owned connection enables Runtime,
-including replay triggered by UID tools. Buffers follow Session/run/connection identity; idle
-retained connections collect no events, and reconnecting replaces the buffer before accepting replay.
+including replay triggered by UID tools. Same-run history survives idle reconnects with replay
+deduplication; terminal cleanup removes the buffers. Explicit `network_watch` and navigation with
+`watchNetwork:true` keep the connection between scripts. `network_watch({tabRef,enabled:false})`
+stops capture and releases that hold while preserving summaries. Read response bodies before stopping,
+or use `wait_for_response({tabRef,includeBody:true,...})`; bodies belong to their original connection.
+Temporary response/network-idle waits hold only their execution scope.
 
 [Page mode](../src/capabilities/tabs/page-mode.ts) applies mobile UA, viewport, and touch settings
 before initial navigation. Mobile mode retains its connection between runs. Mode changes refresh the
@@ -266,6 +316,8 @@ an owned blank tab still marked `loading` when Chrome has dropped `pendingUrl`. 
 the target and security policy before page preparation, even if navigation finished between admission
 and the wait. A web `pendingUrl` also gates reads of an existing document during replacement or
 same-URL reload, so a navigation timeout cannot turn into a successful read of the old page.
+Reader timeouts fail with `TOOL_TIMEOUT`; available recovery diagnostics (public page state,
+pending phase, and trace) live in error details. Incomplete observations never replace a reader's successful value.
 Committed documents remain readable while subresources load. Firefox's host supplies its missing
 `pendingUrl` field from main-frame request and commit events; request IDs isolate cancelled and
 replaced requests. A commit delivered before its request does not re-arm `pendingUrl` when the
@@ -431,27 +483,28 @@ a parallel role. `behavior.uidTargets` extends the singular target fields; mixed
 target sets retain commit barriers, as do implicit targets and undeclared/global operations.
 Capability definitions can set `behavior.barrier` to a boolean or synchronous argument predicate.
 The runtime evaluates it once per call during planning; true or a thrown predicate overrides
-`parallelOpen`, `parallelTab` and `parallelRead`. The Agent reuses this decision for execution.
+`parallelOpen`, `parallelTab`, `parallelRead`, `orchestration` and `delegatesExecution`. The Agent reuses this decision for execution.
 Projection preserves target metadata for `tabRef`, and the same graph builder adds preceding-commit
 and following-execution dependencies. No tool-name branch in the scheduler selects this behavior.
 
-`run_script` declares `parallelTab: true` with a barrier predicate for inner mode or potential tool
-API use. An omitted target means page. The capability's [classifier](../src/capabilities/script/tool-access.ts)
-uses the pinned JavaScript parser to distinguish comments, quoted strings and ordinary member
-properties from tool references, template expressions and dynamic access. Parse failures, tool
-references and dynamic constructs remain barriers. This is conservative scheduling analysis, not a
-JavaScript sandbox or proof that arbitrary page functions have no external side effects.
+`run_script` runs orchestration outside pages. Native batches and nested calls schedule it as a
+container; its tools proxy invokes the catalog through the same Session authority, page lanes and
+shared concurrency budget. New Skill tools with `runtime: "script"` delegate to this runner and inherit
+its optional 120-second timeout. Their arguments remain business data until
+a descendant invokes a page tool. Legacy Skill runtimes keep their original contracts and barriers.
+`evaluate` declares tab-local parallel execution: independent pages can advance together while
+calls on one page share its execution lane. Each call supplies tabRef; `mutatesPage` controls
+state effects rather than selecting a page or execution environment.
 
-No-tools page scripts use tab lanes regardless of `mutatesPage`, which continues to control effects.
-Input/args bindings are injected without a bridge. A tab-local execution cannot install the tool
-bridge, even if a later classification disagrees. Missing tool access returns
-`RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE`, with inspection/recovery guidance and no automatic replay.
-Only a native return-shape syntax error without an execution stack can use the existing no-bridge
-shape recovery; runtime error envelopes never trigger it. Tool-using page scripts retain their existing nested-tool scope and are barriers.
-`run_skill_script`, inner execution, and all Skill/plugin tools remain barriers; plugin resolution
-overrides host predicates with literal true. Permission, ownership, deadlines and run checks still apply.
-Tool start and progress events publish during execution, including flow-control waits. A separate
-cursor publishes tool-owned Session state, effects, alias bindings, final tool events and model
+CLI stdout and Agent tool messages share the script receipt `{ok, result, trace}`. Success carries the script return value; failure carries a ToolError. Trace is a string array collected by the host, including nested Skill calls and progress before failure or cancellation. Script-authored fields never select execution status or diagnostic metadata. Inside `run_script` and `runtime:"script"` Skills, awaited tool calls return business values directly, including calls to script Skills; failures reject. Legacy page/inner callers retain their original return contracts. Renderer paths stay relative to business data.
+
+Page functions passed to `evaluate` receive data through args and return their business value.
+They have document/window access, while the outer script uses tools for browser operations.
+Navigation can interrupt a page evaluation without destroying the outer script. Context loss,
+runtime errors and cancellation never replay code. `run_skill_script` and installed Skill/plugin
+execution retain their permission, ownership, deadline and run checks.
+Tool start and progress events publish during execution, including flow-control waits. For native
+model batches, a cursor publishes tool-owned Session state, effects, alias bindings, final tool events and model
 messages in the original call order. Completed execution frees a slot immediately, even while its
 result awaits publication. Progress stops when execution settles or cancellation revokes the call.
 The Background runtime tracks overlapping calls and projects the most recently active tool; ending
@@ -483,6 +536,14 @@ security again, then publishes ownership and selection together. Failed or cance
 creations are closed; terminal cleanup also retries outstanding permits. A navigation timeout retains
 its loading tab only if its ordered commit is still authorized, and retains its alias for dependent and later calls.
 
+Scripts submit dynamic descendants to the same execution gate. Independent branches settle as soon
+as their own execution and state commit finish; an unrelated slow sibling does not delay their
+Promises. Ready commits share one writer with native batch commits. Same-page dependencies and
+global barriers retain their order, and pending aliases resolve their physical lane before execution.
+Parent containers yield execution slots to their descendants. Script exit revokes unfinished calls;
+catching a rejected Promise does not cancel siblings. Transcript cards update by call identity,
+while native model messages retain their batch order.
+
 Only trusted core registrations declare scheduling authority. Page-tool model schemas expose `tabRef`
 (integer or string); numeric strings also select browser IDs. Internal handlers retain numeric `tabId`,
 and legacy `tabId` input remains compatible. `open_tab.tabAlias` names a page within its Session until
@@ -496,6 +557,41 @@ effect-failed producers yield `BATCH_TAB_DEPENDENCY_FAILED` for their consumers,
 that executed speculatively before the producer's commit failed. Independent pages continue. Browser
 operations already issued may still finish after cancellation; closed provisional tabs and revoked
 run authority prevent their late publication.
+
+Element observations use one registry and public handle, `target: "uid:…"` (or `css:…` when binding fails).
+Content supplies short-lived references to the observed nodes. Background resolves batches of at most
+100 references in the owning frame, bounds concurrent node descriptions to eight, and registers backend
+node identities with document and Session scope. AX nodes use the same registration helper. Firefox
+keeps separate remote-object handles per object group and uses weak node indexing.
+
+[Element observations](../src/shared/contracts/element-observation.ts) are constructed by the binding
+owner from business fields and registered targets. AX, images and screenshots share the Rect contract;
+[ToolError](../src/shared/contracts/tool-error.ts) carries code, message, optional hint and public details.
+Protocol v1 extension-to-service errors retain a string `error` and top-level `code`, `hint` and `details`
+for older CLI services. The current service accepts both wire shapes and normalizes them to ToolError.
+Page presentation metadata and numeric creation receipts stay in private maps. Arbitrary script return
+values, page content and user-owned Data rows remain intact. Element and range parameters expose
+`target`; retired argument names and the old `read_article.source` value normalize before validation.
+New image-collection rows store `target` and `tabRef`.
+
+Direct-drive catalogs omit implicit task-page selection tools. Every page operation requires an explicit
+`tabRef`; `list_tabs.active` still identifies the tab visible to the user and never selects a tool target.
+
+The shared [script SDK](../src/shared/qz-script-sdk.ts) binds a Page to an explicit `tabRef` and a
+Locator to a repeatable query. SDK methods lower into the existing tool invocation path, preserving
+Session permissions, scheduling, cancellation, deadlines, and result contracts. The outer Worker and
+legacy page bridge inject the same SDK; `evaluate` remains a self-contained DOM function. Legacy
+`tools` and `tool` bindings remain compatible, while new CLI and Skill scripts use `qz`.
+
+[Locator queries](../src/shared/contracts/element-locator.ts) distinguish precise role/name/text filters
+from exploratory `find_elements.pattern` matching. Element actions resolve one matching node and bind
+it through the existing registry before readiness checks and dispatch. Queries may re-resolve before
+input delivery; explicit UID targets retain their original identity. Ambiguous queries require
+narrowing or an explicit index. Scoped queries retain their frame and document authority.
+Element waits re-evaluate queries for the requested state or attached match count; reads preserve
+their observation semantics. An action is never replayed to confirm its outcome.
+MCP cancellation returns a control receipt rather than the private runtime snapshot. Public Session
+metadata drops implicit page-selection state and names page references with `tabRef`/`TabRefs`.
 
 [Effect tickets](../src/background/tools/effects.ts)
 come from trusted registrations. Shared [security

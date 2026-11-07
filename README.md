@@ -125,7 +125,7 @@ Use qz to find this week's hottest AI agent projects on GitHub and send me a wee
    ```text
    Find this year's Nobel Prize winners in every category and put them in a table with source links.
    ```
-4. **(Optional) Connect external agents**: Run `npx --yes qz-browser-agent@latest connect` in your terminal to let other agents trigger qz. See [Make your agents actually good at browsing](#make-your-agents-actually-good-at-browsing) for details.
+4. **(Optional) Connect external agents**: CLI commands start the local service and connect the browser when needed. See [Make your agents actually good at browsing](#make-your-agents-actually-good-at-browsing) for the agent guide.
 
 <details id="manual-installation">
 <summary>Can't access the Chrome Web Store? Install manually</summary>
@@ -139,15 +139,15 @@ Use qz to find this week's hottest AI agent projects on GitHub and send me a wee
 
 ## Make your agents actually good at browsing
 
-Agents like Grok Bot, Claude Code, Codex, and pi can hand web tasks to qz. qz runs them in your browser's side panel, where you can watch every step, then returns the results so your agent can keep going.
+Agents like Grok Bot, Claude Code, Codex, and pi can drive your connected browser directly. This one Skill is the direct-drive guide: open a tab, read the page, and act with `qz script` or MCP. When you want qz's built-in agent to plan the task, that same Skill points at `references/create-task.md`.
 
-1. **Install the Skill** so your agent knows how to use qz.
+1. **Install this Skill.** It is the direct-drive guide.
    ```bash
    npx skills add alibaba/qz-browser-agent -g
    ```
-2. **Pair once.** Requires Node.js 22 or later. The command pairs automatically with your default browser.
+2. **Choose a browser (optional).** Requires Node.js 22 or later. CLI commands connect automatically. To pair a particular browser profile, run this command and open the printed URL in that profile:
    ```bash
-   npx qz-browser-agent@latest connect
+   npx qz-browser-agent@latest connect uri
    ```
 3. **Just ask.** Tell your agent: "Use qz to compare open-weight LLMs released in the last 6 months and put them in a table with sources."
 
@@ -159,9 +159,10 @@ npx qz-browser-agent@latest create "your task" --stream
 ```
 
 - `--stream` shows progress, any questions qz needs you to answer, and the final result.
-- For MCP clients, run `npx qz-browser-agent@latest mcp` after pairing and use the HTTP URL it returns.
+- For MCP clients, run `npx qz-browser-agent@latest mcp` and use the HTTP URL it returns.
 - For regular use, install globally with `npm install --global qz-browser-agent`, then use `qz` in place of `npx qz-browser-agent@latest`.
 - See the [CLI and MCP reference](docs/cli.md) for multi-browser pairing, follow-ups, and exports.
+- For DeepSeek Harness, see the [Qingzhou dsh plugin](services/dsh-plugin/README.md).
 
 </details>
 
