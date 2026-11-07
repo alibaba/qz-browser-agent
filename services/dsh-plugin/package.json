@@ -1,0 +1,81 @@
+{
+  "name": "dsh-browser-qz",
+  "version": "0.1.0-rc.2",
+  "description": "Drive your browser through Qingzhou (轻舟) in DeepSeek Harness",
+  "type": "module",
+  "main": "src/index.mjs",
+  "icon": "./src/logo-day.png",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "src/*.mjs",
+    "dist/client.js",
+    "cordis.patch.yml",
+    "src/logo-day.png",
+    "locale/*.json",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check:package": "node scripts/check-package.mjs",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=24.9.0",
+    "dsh": "0.2.2-rc.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-storage-domain": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.1"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.19.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-tool",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "dsh",
+    "deepseek",
+    "qingzhou",
+    "browser",
+    "automation"
+  ],
+  "homepage": "https://alibaba.github.io/qz-browser-agent/",
+  "bugs": {
+    "url": "https://github.com/alibaba/qz-browser-agent/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alibaba/qz-browser-agent.git",
+    "directory": "services/dsh-plugin"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
