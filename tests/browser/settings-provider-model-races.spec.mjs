@@ -5,7 +5,7 @@ import { chooseProvider } from "./provider-picker-fixture.mjs";
 const providers = [
   { id: "fixture-a", label: "Fixture Alpha", requiresApiKey: true, endpoint: "https://alpha.invalid/v1/chat/completions" },
   { id: "fixture-b", label: "Fixture Beta", requiresApiKey: true, endpoint: "https://beta.invalid/v1/chat/completions" },
-  { id: "custom", label: "Custom endpoint", requiresApiKey: true, customEndpoint: true },
+  { id: "custom", label: "Custom endpoint", requiresApiKey: false, customEndpoint: true },
 ];
 const config = {
   provider: "fixture-a", apiKey: "fixture-key-a", model: "", contextWindow: 128_000, vision: false,
@@ -225,6 +225,26 @@ test("editing credentials invalidates an old pending list before the new request
   // The old account must not resolve the typed alias or clear its explicit context length.
   await expect(page.locator("#cfg-model")).not.toHaveAttribute("data-model-id");
   await expect(page.locator("#cfg-context-preset")).toHaveValue("256K");
+});
+
+test("editing a custom endpoint never sends its saved key to the new model directory", async ({ page }) => {
+  await settleInitialList(page);
+  await page.evaluate(config => window.__qzEmitPortMessage({ type: "config", config }), {
+    ...config, provider: "custom", apiKey: "saved-private-key", customProtocol: "openai",
+    customEndpoint: "https://saved.invalid/v1/chat/completions",
+  });
+  await expect(page.locator("#cfg-apikey")).toHaveValue("saved-private-key");
+  const saved = await request(page, "list_models", { provider: "custom" });
+  expect(saved.apiKey).toBe("saved-private-key");
+  await models(page, saved, alphaModels);
+
+  await page.locator("#cfg-custom-endpoint").fill("https://new.invalid/v1/chat/completions");
+  await expect(page.locator("#cfg-apikey")).toHaveValue("");
+  const changed = await request(page, "list_models", { provider: "custom", after: saved.requestId });
+  expect(changed.customEndpoint).toBe("https://new.invalid/v1/chat/completions");
+  expect(changed.apiKey).toBe("");
+  await models(page, changed, betaModels);
+  await expectModels(page, betaModels);
 });
 
 test("search selection keeps canonical model identity through reopen, filtering and save", async ({ page }) => {

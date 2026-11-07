@@ -513,7 +513,7 @@ async function executeManageSettingsAction(input: SettingsInput = {}, context: T
       provider: input.provider,
       apiKey: input.apiKey,
       customProtocol: input.customProtocol,
-      customEndpoint: input.customEndpoint || input.endpoint,
+      customEndpoint: input.customEndpoint ?? input.endpoint,
       signal,
     });
     const models = Array.isArray(result.models) ? result.models : [];
@@ -792,7 +792,7 @@ async function settingsCompleteConfigForUpdate(input: SettingsInput = {}, signal
 function settingsApiKeyForProvider({ input, rawPatch, current, targetProvider, codexProvider, sameProvider }: { input: SettingsInput; rawPatch: Record<string, unknown>; current: SettingsConfig; targetProvider: string; codexProvider: boolean; sameProvider: boolean }) {
   if (codexProvider) return "";
   if (Object.prototype.hasOwnProperty.call(input, "apiKey")) return rawPatch.apiKey;
-  if (settingsProviderSummary(targetProvider)?.editableEndpoint) {
+  if (targetProvider === "custom" || settingsProviderSummary(targetProvider)?.editableEndpoint) {
     const endpointChanged = Object.hasOwn(rawPatch, "customEndpoint") && rawPatch.customEndpoint !== current.customEndpoint;
     return sameProvider && !endpointChanged ? current.apiKey || "" : "";
   }

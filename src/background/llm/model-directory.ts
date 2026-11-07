@@ -1,5 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
-import { buildProviderBaseHeaders, getProviderDef, type ProviderDefinition } from './provider-catalog.js';
+import { buildProviderBaseHeaders, getProviderDef, providerRequiresApiKey, type ProviderDefinition } from './provider-catalog.js';
 import { matchConfiguredModelCapabilities } from '../../shared/models/model-capabilities.js';
 import type { ModelCapabilityMatch } from '../../shared/contracts/model-capabilities.js';
 import type { ProviderModelOptionEntry } from './provider-types.js';
@@ -26,9 +26,6 @@ export async function listProviderModels(provider: string, providerDef: Provider
       manualInputOnly: true,
     };
   }
-  if (providerDef.custom) {
-    return { provider, providerLabel: providerDef.label, models: [] };
-  }
   if (Array.isArray(providerDef.staticModels) && providerDef.staticModels.length > 0) {
     return {
       provider,
@@ -36,7 +33,7 @@ export async function listProviderModels(provider: string, providerDef: Provider
       models: normalizeModelList(providerDef.staticModels, providerDef),
     };
   }
-  if (providerDef.modelsAuth !== false && !apiKey) {
+  if (providerDef.modelsAuth !== false && providerRequiresApiKey(providerDef) && !apiKey) {
     throw new Error(t("settings.providerKeyForModels", { provider: String(providerDef.label) }));
   }
   if (!providerDef.modelsEndpoint) {
@@ -124,7 +121,7 @@ function normalizeModelList(input: unknown, providerDef: Partial<ProviderDefinit
       ? String(item.owned_by || item.ownedBy || item.owner || "").trim()
       : "";
     const label = typeof item === "object" && item
-      ? String(item.label || item.name || id).trim()
+      ? String(item.label || item.name || item.display_name || id).trim()
       : id;
     const priority = typeof item === "object" && item && typeof item.priority === "number"
       ? item.priority
@@ -167,10 +164,10 @@ function buildModelListHeaders(providerDef: ProviderDefinition, apiKey: string) 
   const headers: Record<string, string> = buildProviderBaseHeaders(providerDef);
   if (providerDef.modelsAuth === false) return headers;
   if (providerDef.modelsAuthHeader === "x-api-key") {
-    headers["x-api-key"] = apiKey;
+    if (apiKey) headers["x-api-key"] = apiKey;
     headers["anthropic-version"] = providerDef.anthropicVersion || "2023-06-01";
     headers["anthropic-dangerous-direct-browser-access"] = "true";
-  } else {
+  } else if (apiKey) {
     headers.Authorization = `Bearer ${apiKey}`;
   }
   return headers;

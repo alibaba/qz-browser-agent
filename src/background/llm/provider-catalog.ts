@@ -2,7 +2,7 @@ import { getProviderEndpoint } from "./provider-endpoint.js";
 export { getProviderEndpoint } from "./provider-endpoint.js";
 import contributions from "#capabilities/presets";
 import { resolveProviderPresets } from "./provider-presets.js";
-import { completeCustomProviderEndpoint, normalizeCustomProtocol } from "../../shared/models/custom-provider-endpoint.js";
+import { completeCustomProviderEndpoint, customProviderModelsEndpoint, normalizeCustomProtocol } from "../../shared/models/custom-provider-endpoint.js";
 export { normalizeCustomProtocol } from "../../shared/models/custom-provider-endpoint.js";
 import { PRODUCT_PROVIDERS, getProductDefaultProvider } from "../product/providers.js";
 
@@ -90,14 +90,15 @@ export function getProviderDef(configOrProvider: ProviderInput | string = {}): P
   };
   if (!isCustomProvider(provider)) return providerDef;
   const protocol = normalizeCustomProtocol(config.customProtocol);
+  const endpoint = normalizeCustomEndpoint(config.customEndpoint || config.endpoint, protocol);
   return {
     ...providerDef,
     api: ({ anthropic: "anthropic-messages", openai: "openai-chat-completions" } as Record<string, string>)[protocol] || protocol,
     protocol,
-    endpoint: normalizeCustomEndpoint(config.customEndpoint || config.endpoint, protocol),
+    endpoint,
     baseUrl: "",
-    modelsEndpoint: "",
-    modelsAuth: false,
+    modelsEndpoint: customProviderModelsEndpoint(endpoint, protocol),
+    modelsAuth: true,
     modelsAuthHeader: protocol === "anthropic" ? "x-api-key" : "",
   };
 }

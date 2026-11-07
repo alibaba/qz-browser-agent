@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   completeCustomProviderEndpoint,
+  customProviderModelsEndpoint,
   normalizeCustomProtocol,
   suggestCustomProviderEndpoint,
 } from "../../src/shared/models/custom-provider-endpoint.js";
@@ -49,4 +50,18 @@ test("leaves complete, invalid and nonstandard endpoints untouched", () => {
     value: "https://asdfasdf.com/v1/messages",
     addition: "/messages",
   });
+});
+
+
+test('model discovery derives only known same-origin sibling routes', () => {
+  for (const [endpoint, protocol, expected] of [
+    ['http://localhost:3425/v1', 'openai', 'http://localhost:3425/v1/models'],
+    ['https://router.example/proxy/v1/chat/completions?api-version=2026', 'openai', 'https://router.example/proxy/v1/models?api-version=2026'],
+    ['https://router.example/proxy/v1/messages/', 'anthropic', 'https://router.example/proxy/v1/models'],
+    ['https://router.example/custom/generate', 'openai', ''],
+    ['https://router.example/v1/models', 'openai', ''],
+    ['https://router.example/v1/messages', 'vendor-native', ''],
+    ['ftp://router.example/v1/chat/completions', 'openai', ''],
+    ['not a url', 'openai', ''],
+  ]) assert.equal(customProviderModelsEndpoint(endpoint, protocol), expected);
 });

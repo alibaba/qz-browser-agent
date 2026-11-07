@@ -60,7 +60,6 @@ import { createModelOptionsController } from "./model-options.js";
 import { createModelPresetSwitcher } from "./model-preset-switcher.js";
 import { createProviderPicker } from "./provider-picker.js";
 
-const MODEL_SUGGESTION_LIMIT = 8;
 const CONTEXT_WINDOW_CUSTOM_VALUE = "__custom";
 const SKILL_SETTINGS_SEARCH_THRESHOLD = 6;
 const SHORTCUT_BINDINGS_REFRESH_MS = 1000;
@@ -226,7 +225,7 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
   const providerPicker = createProviderPicker({ root, signal: options.signal });
   const modelOptionsController = createModelOptionsController({
     cacheLimit: 24,
-    loadModels: ({ provider, apiKey, customEndpoint }) => request("list_models", { provider, apiKey, customEndpoint }, 30000),
+    loadModels: ({ provider, apiKey, customEndpoint, customProtocol }) => request("list_models", { provider, apiKey, customEndpoint, customProtocol }, 30000),
   });
   const modelPresetSwitcher = createModelPresetSwitcher({
     root, signal: options.signal,
@@ -1437,13 +1436,14 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
   $<HTMLSelectElement>("#cfg-custom-protocol")!.addEventListener("change", () => {
     updateCustomEndpointPlaceholder();
     applyCustomEndpointCompletion();
+    scheduleProviderModelsLoad();
   }, { signal: options.signal });
 
   setModelParameterRows({});
 
   $<HTMLInputElement>("#cfg-apikey")!.addEventListener("input", () => {
     syncProviderAuthUi();
-    if (!sectionActive || hasProviderAuth() || isCustomProvider()) return;
+    if (!sectionActive || hasProviderAuth()) return;
     if (providerSummary()?.modelsIncludeCapabilities) {
       clearConfiguredModelCapabilities();
       markSettingsPresetDirtyIfNeeded();
@@ -1452,7 +1452,7 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
   }, { signal: options.signal });
   $<HTMLInputElement>("#cfg-apikey")!.addEventListener("change", () => {
     syncProviderAuthUi();
-    if (!sectionActive || hasProviderAuth() || isCustomProvider()) return;
+    if (!sectionActive || hasProviderAuth()) return;
     if (providerSummary()?.modelsIncludeCapabilities) {
       clearConfiguredModelCapabilities();
       markSettingsPresetDirtyIfNeeded();
@@ -2050,8 +2050,8 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
     if (providerPresentation(snapshot.provider).managedAuth) {
       return providerPresentation(snapshot.provider).authenticated === true;
     }
+    if (providerHasEditableEndpoint(snapshot.provider) && !snapshot.customEndpoint) return false;
     if (!providerNeedsApiKey(snapshot.provider)) return true;
-    if (isCustomProvider(snapshot.provider)) return Boolean(snapshot.apiKey && snapshot.customEndpoint);
     return Boolean(snapshot.apiKey);
   }
 
@@ -2262,6 +2262,7 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
       provider,
       apiKey: providerUsesApiKey(provider) ? $<HTMLInputElement>("#cfg-apikey")!.value.trim() : "",
       customEndpoint: providerHasEditableEndpoint(provider) ? $<HTMLInputElement>("#cfg-custom-endpoint")!.value.trim() : "",
+      customProtocol: isCustomProvider(provider) ? $<HTMLSelectElement>("#cfg-custom-protocol")!.value : "",
     };
   }
 
@@ -2299,7 +2300,7 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
   }
 
   function getRememberedProviderApiKey(provider: string) {
-    if (!providerUsesApiKey(provider) || providerSummary(provider)?.editableEndpoint) return "";
+    if (!providerUsesApiKey(provider) || providerHasEditableEndpoint(provider)) return "";
     const keyMap = lastSettingsConfig?.providerApiKeys;
     if (!keyMap || typeof keyMap !== "object" || Array.isArray(keyMap)) return "";
     return String(keyMap[String(provider || "").trim().toLowerCase()] || "").trim();
@@ -2308,8 +2309,7 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
   function getPresetApiKeyForSettings(preset: Partial<ModelPreset> = {}) {
     const provider = preset.provider || "fireworks";
     if (!providerUsesApiKey(provider)) return "";
-    if (providerSummary(provider)?.editableEndpoint) return String(preset.apiKey || "").trim();
-    if (isCustomProvider(provider)) return String(preset.apiKey || "").trim() || getRememberedProviderApiKey(provider);
+    if (providerHasEditableEndpoint(provider)) return String(preset.apiKey || "").trim();
     return getRememberedProviderApiKey(provider) || String(preset.apiKey || "").trim();
   }
 
@@ -2371,10 +2371,12 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
   }
 
   function handleEditableEndpointChange() {
-    if (!providerSummary()?.editableEndpoint) return;
+    if (!providerHasEditableEndpoint()) return;
     // An edited address is a new credential destination; presets restore their own key.
     $<HTMLInputElement>("#cfg-apikey")!.value = "";
-    clearConfiguredModelCapabilities();
+    if (providerSummary()?.editableEndpoint) {
+      clearConfiguredModelCapabilities();
+    }
     scheduleProviderModelsLoad();
     markSettingsPresetDirtyIfNeeded();
   }
@@ -2434,6 +2436,7 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
     }
     input.value = suggestion.value;
     syncCustomEndpointCompletion();
+    scheduleProviderModelsLoad();
     if (animate) {
       input.classList.remove("is-auto-completed");
       void input.offsetWidth;
@@ -2859,11 +2862,11 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
       modelInput.setAttribute("title", providerPresentation(provider).modelHint || "");
       return;
     }
-    if (isCustomProvider(provider)) {
+    if (isCustomProvider(provider) && !isValidHttpEndpointText(completeCustomProviderEndpoint(connection.customEndpoint, connection.customProtocol))) {
       modelListLoading = false;
-      modelListError = t("enterModelNamesManuallyForCustomEndpoints");
+      modelListError = "";
       applyModelOptions([]);
-      modelInput.setAttribute("title", t("enterModelNamesManuallyForCustomEndpoints"));
+      modelInput.removeAttribute("title");
       return;
     }
     if (providerPresentation(provider).managedAuth && providerPresentation().authenticated !== true) {
@@ -2907,7 +2910,9 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
       return normalizedModels;
     } catch (err) {
       modelListLoading = false;
-      modelListError = product.modelError(provider, err) || errorMessage(err);
+      modelListError = isCustomProvider(provider)
+        ? t("noModelListAvailableYouCanEnterANameManually")
+        : product.modelError(provider, err);
       applyModelOptions([]);
       modelInput.removeAttribute("title");
       console.warn("[轻舟] list models failed", err);
@@ -3038,7 +3043,6 @@ export function createSettingsFeature(options: SettingsFeatureOptions) {
     const suggestionState = computeModelSuggestionState({
       query,
       options: currentModelOptions,
-      limit: MODEL_SUGGESTION_LIMIT,
       showAllOnExactMatch: modelSuggestionsShowAll,
     });
     if (suggestionState.hidden) {

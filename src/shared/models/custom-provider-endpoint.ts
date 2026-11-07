@@ -47,3 +47,18 @@ export function completeCustomProviderEndpoint(value: unknown = "", protocol: un
   const raw = String(value || "").trim();
   return suggestCustomProviderEndpoint(raw, protocol)?.value || raw;
 }
+
+/** Discover only the standard sibling route; retain the configured origin, prefix and query. */
+export function customProviderModelsEndpoint(value: unknown = "", protocol: unknown = "openai") {
+  const paths = ENDPOINT_PATHS[normalizeCustomProtocol(protocol)];
+  if (!paths) return "";
+  let url;
+  try { url = new URL(completeCustomProviderEndpoint(value, protocol)); }
+  catch { return ""; }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+  const path = url.pathname.replace(/\/+$/, "");
+  if (!path.endsWith(paths.suffix)) return "";
+  url.pathname = `${path.slice(0, -paths.suffix.length)}/models`;
+  url.hash = "";
+  return url.toString();
+}

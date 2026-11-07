@@ -528,7 +528,7 @@ function buildAnthropicHeaders(config: RuntimeConfig, options: ModelOptions = {}
   return {
     ...options.baseHeaders,
     "Content-Type": "application/json",
-    "x-api-key": config.apiKey || "",
+    ...(config.apiKey ? { "x-api-key": config.apiKey } : {}),
     "anthropic-version": providerDef.anthropicVersion || "2023-06-01",
     "anthropic-dangerous-direct-browser-access": "true",
     ...(options.headers || {}),

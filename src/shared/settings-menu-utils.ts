@@ -76,9 +76,8 @@ function positiveTokenLimit(value: unknown): value is number {
 export function computeModelSuggestionState({
   query = "",
   options = [],
-  limit = 8,
   showAllOnExactMatch = false,
-}: { query?: string; options?: readonly ModelOption[]; limit?: number; showAllOnExactMatch?: boolean } = {}) {
+}: { query?: string; options?: readonly ModelOption[]; showAllOnExactMatch?: boolean } = {}) {
   const normalizedOptions = Array.isArray(options) ? options : [];
   const matchedOptions = filterModelOptions(query, normalizedOptions);
   const exactMatch = shouldHideUniqueExactModelSuggestion(query, matchedOptions);
@@ -86,7 +85,7 @@ export function computeModelSuggestionState({
   const hidden = !useAllOptions && exactMatch;
   const visibleOptions = hidden
     ? []
-    : (useAllOptions ? normalizedOptions : matchedOptions).slice(0, limit);
+    : useAllOptions ? normalizedOptions : matchedOptions;
   return {
     hidden,
     exactMatch,
