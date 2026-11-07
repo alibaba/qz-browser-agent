@@ -120,7 +120,7 @@ export const COMMANDS = {
     help: ["qz status", "Show the local service and browser connection status."],
   },
   session: { options: request, summary: "Create, inspect, or cancel a browser session",
-    help: ["qz session create --title TITLE", "Create a session with a readable title and print sessionId on stdout.",
+    help: ["qz session create --title TITLE", "Create a session with a readable title and print sessionId on stdout. --json also returns the session's available qz_skills.",
       "qz session list", "List sessions and their current status.",
       "qz session show ID", "Read one session's title and status.",
       "qz session cancel ID [--keep TAB_REF ...]", "End the session and clean up its created tabs, including while a script is running. Repeat --keep to return selected tabs to the user.",

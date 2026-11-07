@@ -6,7 +6,7 @@ import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
 import { parseBeijingDateTime } from "../../shared/time-utils.js";
 import { driveToolText } from "./tool-messages.js";
-import { publicSessionObservation, type SessionRuntimeObservation } from "../../shared/contracts/session-observation.js";
+import { publicSessionObservation, type DriveSessionCreation, type SessionRuntimeObservation } from "../../shared/contracts/session-observation.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import {
@@ -229,16 +229,21 @@ export function createMcpRuntime({
     };
   }
 
+  async function discoverSessionSkills(sessionId: string) {
+    const installed = await skills.list();
+    const runtime = readRuntime(sessionId);
+    const urls = (Array.isArray(runtime.visitedTaskSites) ? runtime.visitedTaskSites : [])
+      .map(tab => plainObject(tab)).filter(tab => !tab.securityGuardrailBlocked && tab.contentAccess !== "blocked")
+      .map(tab => String(tab.url || "")).filter(Boolean);
+    return discoverUserSkills(installed, urls);
+  }
+
   async function scriptContext(sessionId: string, runId: string, signal?: AbortSignal) {
     if (signal?.aborted) return;
     try {
-      const installed = await skills.list();
-      const runtime = readRuntime(sessionId);
-      const urls = (Array.isArray(runtime.visitedTaskSites) ? runtime.visitedTaskSites : [])
-        .map(tab => plainObject(tab)).filter(tab => !tab.securityGuardrailBlocked && tab.contentAccess !== "blocked")
-        .map(tab => String(tab.url || "")).filter(Boolean);
+      const discovered = await discoverSessionSkills(sessionId);
       if (signal?.aborted || !drive.hasActiveLease(sessionId) || !sessions.supervisor.isRunCurrent(sessionId, runId)) return;
-      return { qz_skills: discoverUserSkills(installed, urls).map(({ summary }) => summary) };
+      return { qz_skills: discovered.map(({ summary }) => summary) };
     } catch (error) {
       // Optional discovery must not turn an already executed script into a failure.
       console.warn("[qz] Skill discovery unavailable:", error);
@@ -481,7 +486,19 @@ export function createMcpRuntime({
     return { sessionId, metadata };
   }
 
-  async function createDriveSession(params: Fields = {}) {
+  async function activateGlobalSkills(sessionId: string) {
+    try {
+      const discovered = await discoverSessionSkills(sessionId);
+      tools.recordLoadedSkillNames(sessionId, discovered.filter(({ skill }) => skill.scope === "global").map(({ skill }) => skill.name));
+      return discovered.map(({ summary }) => summary);
+    } catch (error) {
+      // load_skill still activates a workflow when the installed list is unavailable.
+      console.warn("[qz] Global Skill activation unavailable:", error);
+      return undefined;
+    }
+  }
+
+  async function createDriveSession(params: Fields = {}): Promise<DriveSessionCreation> {
     const title = typeof params.title === "string" ? params.title.replace(/\s+/gu, " ").trim() : "";
     if (!title) throw Object.assign(new Error(t("session.titleRequired")), {
       code: "SESSION_TITLE_REQUIRED", hint: 'Run qz session create --title "Task title".',
@@ -495,9 +512,11 @@ export function createMcpRuntime({
         throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
       }
       sessions.setRuntime(sessionId, { driveLastActivityAt: Date.now() });
+      const available = await activateGlobalSkills(sessionId);
       drive.restore(sessionId, Date.now());
       const created = (await sessions.listMetadata())[sessionId];
-      return publicSessionObservation(sessionId, String(created?.title || title), String(readRuntime(sessionId).status || "idle"));
+      const observation = publicSessionObservation(sessionId, String(created?.title || title), String(readRuntime(sessionId).status || "idle"));
+      return available ? { ...observation, qz_skills: available } : observation;
     } finally { release(); void onDriveSettled(); }
   }
 

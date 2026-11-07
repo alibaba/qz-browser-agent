@@ -1,3 +1,5 @@
+import type { SkillSummary } from "../skills/skill-discovery.js";
+
 /** Session identity shared by task creation, listing and progress observations. */
 export interface SessionObservation {
   sessionId: string;
@@ -7,6 +9,11 @@ export interface SessionObservation {
 
 export function publicSessionObservation(sessionId: string, title: string, status: string): SessionObservation {
   return { sessionId, title, status };
+}
+
+/** Direct-drive creation receipt; `qz_skills` is omitted when user workflow discovery is unavailable. */
+export interface DriveSessionCreation extends SessionObservation {
+  qz_skills?: SkillSummary[];
 }
 
 /** Lifecycle receipt; execution authority and private runtime state are not wire data. */

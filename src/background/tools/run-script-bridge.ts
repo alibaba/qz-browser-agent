@@ -22,6 +22,7 @@ interface BridgeHost {
   normalizeSessionId?(value: unknown): string;
   supervisor: { isRunCurrent(sessionId: string, runId: string): boolean; hasAgent(sessionId: string): boolean; getAbortSignal(sessionId: string, runId: string): AbortSignal | null | undefined };
   getRuntime(sessionId: string): Fields | null | undefined;
+  loadedSkillNames?(sessionId: string): readonly string[];
   isTerminalRuntimeForRun?(runtime: Fields | null | undefined, runId: string): boolean;
   canManageSessions(sessionId: string): Promise<boolean>;
   buildRunProfile(input: { sessionId: string; canManageSessions: boolean | undefined; externalDrive: boolean }): Promise<NonNullable<ToolContext["runProfile"]>>;
@@ -60,6 +61,7 @@ export function createRunScriptBridge({
   normalizeSessionId = value => String(value || "").trim(),
   supervisor,
   getRuntime,
+  loadedSkillNames = () => [],
   isTerminalRuntimeForRun,
   canManageSessions,
   buildRunProfile,
@@ -294,9 +296,10 @@ export function createRunScriptBridge({
       externalDrive,
       sourceWindowId: positiveNumber(snapshotContext.sourceWindowId) || null,
       dynamicContext,
+      // Read per call: a nested load_skill records its names before its result reaches the script.
       loadedPluginSkillNames: mergeStringLists(
         runContext.loadedPluginSkillNames,
-        runtime.loadedPluginSkillNames,
+        loadedSkillNames(sessionId),
       ),
       runProfile: runContext.runProfile || await buildRunProfile({ sessionId, canManageSessions: canManage, externalDrive }),
       skillToolRegistrySnapshot: runContext.skillToolRegistrySnapshot || null,

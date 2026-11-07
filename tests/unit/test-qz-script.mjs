@@ -332,8 +332,9 @@ test("browser selection is explicit and offline selections never fall back", asy
 });
 
 test("session lifecycle uses dedicated read routes and authoritative cancellation", async () => {
+  const qz_skills = [{ name: "research", displayName: "Research", description: "Verify sources.", scope: "global" }];
   for (const [argv, method, result] of [
-    [["create", "--title", "Inspect page"], "qingzhou_create_drive_session", { sessionId: "s", title: "Inspect page", status: "idle" }],
+    [["create", "--title", "Inspect page"], "qingzhou_create_drive_session", { sessionId: "s", title: "Inspect page", status: "idle", qz_skills }],
     [["list"], "qingzhou_list_drive_sessions", { sessions: [] }],
     [["show", "s"], "qingzhou_get_drive_session", { sessionId: "s", title: "Inspect page", status: "idle" }],
     [["cancel", "s"], "qingzhou_stop_session", { sessionId: "s", status: "ended" }],
@@ -348,9 +349,9 @@ test("session lifecycle uses dedicated read routes and authoritative cancellatio
     assert.equal(count, 1);
     assert.deepEqual(JSON.parse(deps.stdout.text).result, result);
   }
-  const deps = setup({ callTool: async () => ({ sessionId: "s" }) });
+  const deps = setup({ callTool: async () => ({ sessionId: "s", qz_skills }) });
   assert.equal(await main(["session", "create", "--title", "Inspect page"], deps), 0);
-  assert.equal(deps.stdout.text, "sessionId s\n");
+  assert.equal(deps.stdout.text, "sessionId s\n", "plain output stays one parseable line");
 });
 
 test("MCP image transport leaves business images and results intact", () => {

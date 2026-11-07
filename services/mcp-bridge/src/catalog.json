@@ -367,7 +367,7 @@
   },
   {
     "name": "qingzhou_create_drive_session",
-    "description": "Create one direct-drive session with a readable title and return sessionId, title, and status. Pass that id on every tool execution. This does not start a model.",
+    "description": "Create one direct-drive session with a readable title and return sessionId, title, status, and qz_skills (summaries of the user workflows available to the session). Pass that id on every tool execution. This does not start a model.",
     "inputSchema": {
       "required": ["title"],
       "properties": {

@@ -430,7 +430,11 @@ an unknown ID returns `DRIVE_SESSION_NOT_FOUND`. Neither case creates a session.
 or create a new task session with `qz session create --title "Task title"` / `qingzhou_create_drive_session({title:"Task title"})`.
 
 `qz session create --title "Task title"` creates a fresh session and requires a readable title.
-It prints `sessionId <id>`; with `--json`, read `result.sessionId`. Use the installed `qz` command
+It prints `sessionId <id>`; with `--json`, read `result.sessionId`. The new session activates the
+tools of enabled user Global Skills; Resident Skills are always active, and Site Skills activate on
+matching task sites. `result.qz_skills` lists the summaries of the Skills available to the new
+session, in the same form as a script receipt's `context.qz_skills`, and is omitted when Skill
+discovery is unavailable. `qz skills tools --session ID` shows each Skill's state. Use the installed `qz` command
 and read `qz skill` for its guide. `qz session list` lists direct-drive sessions, and
 `qz session show ID` reads `{sessionId,title,status}`. Finish with `qz session cancel ID` to end
 the session and clean up its created tabs, including while a script is running. User tabs are
@@ -443,8 +447,10 @@ file or stdin; `--args` supplies the script's `args` value. Use the `qz` SDK: `q
 returns a Tab, `qz.tab(tabRef)` binds a Page, and `page.locator(targetOrQuery)` creates an element query.
 Locator actions resolve a unique match and wait for it to become usable within one call budget.
 Awaited SDK calls return business values directly and throw on failure.
-For additional capabilities and loaded Skills, discover compact signatures with `qz.listTools()`
+For additional capabilities and active Skill tools, discover compact signatures with `qz.listTools()`
 and selected full schemas with `qz.listTools({names:["list_images"]})`, then use `qz.call(name,args)`.
+`qz.call("load_skill",{name})` activates that Skill's tools for the session immediately, including
+later calls in the same script.
 `page.evaluate(code,args?,options?)` runs a self-contained page function with DOM and login-state
 access; pass its inputs explicitly and return JSON. Outer scripts survive page navigation;
 an evaluation that unloads its own page can be interrupted. The

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createMcpRuntime } from '../../src/background/mcp/mcp-runtime.js';
+import { createRunScriptBridge } from '../../src/background/tools/run-script-bridge.js';
 import { normalizeSkill } from '../../src/shared/skills/skill-utils.js';
 import { toolError } from '../../src/shared/contracts/tool-error.js';
 
@@ -39,7 +40,8 @@ function harness() {
   };
   const create = () => createMcpRuntime(options);
   let runtime = create();
-  return { states, runs, options, writes, restart: () => { runtime = create(); }, abort: id => runtime.drive.abort(id),
+  return { states, runs, options, writes, get runtime() { return runtime; },
+    restart: () => { runtime = create(); }, abort: id => runtime.drive.abort(id),
     async execute(id = 'a', signal) {
       return (await runtime.executeTool({ sessionId: id, name: 'run_script',
         scriptApiVersion: 2, args: { code: 'return 7;' } }, signal)).result;
@@ -122,4 +124,60 @@ test('legacy multi-script batches share one discovery context outside business r
   assert.deepEqual(names(result), ['research']);
   assert.deepEqual(result.results[0].result, { ok: true, result: { answer: 7 }, trace: [] });
   assert.deepEqual(names(await h.execute()), ['research']);
+});
+
+test('session creation activates enabled user Global Skills and returns the first receipt catalog; creation survives unavailable discovery', async t => {
+  const h = harness(), recorded = [];
+  h.options.tools.recordLoadedSkillNames = (id, loaded) => recorded.push([id, loaded]);
+  h.options.skills.list = async () => [skill('research'), skill('catalog', 'site', { domains: ['shop.test'] }),
+    skill('rules', 'resident'), skill('disabled', 'global', { status: 'disabled' }), skill('built-in', 'global', { builtin: true })];
+  const { qz_skills, ...created } = await h.runtime.createDriveSession({ title: 'Inspect', sessionId: 'a' });
+  assert.deepEqual(created, { sessionId: 'a', title: 'Inspect', status: 'idle' });
+  assert.deepEqual(names({ context: { qz_skills } }), ['research', 'rules']);
+  assert.deepEqual(qz_skills, (await h.execute('a')).context.qz_skills, 'creation and the first script receipt show one catalog');
+  assert.equal(JSON.stringify(qz_skills).includes('Private full instructions'), false);
+  assert.deepEqual(recorded, [['a', ['research']]], 'Site Skills wait for a matching site; Resident Skills are always active');
+  h.options.skills.list = async () => { throw new Error('Storage unavailable'); };
+  const warn = t.mock.method(console, 'warn', () => {});
+  assert.deepEqual(await h.runtime.createDriveSession({ title: 'Inspect', sessionId: 'b' }),
+    { sessionId: 'b', title: 'Inspect', status: 'idle' }, 'an unavailable catalog is omitted, never reported as empty');
+  assert.equal(warn.mock.callCount(), 1);
+  assert.deepEqual(recorded, [['a', ['research']]]);
+});
+
+test('load_skill activates its tools for later calls in the same drive script', async () => {
+  const h = harness(), loaded = new Map();
+  h.options.sessions.recordToolEvent = () => {};
+  h.options.tools.loadedSkillNames = (id, extra = []) => [...new Set([...loaded.get(id) || [], ...extra])];
+  h.options.tools.recordLoadedSkillNames = (id, names) => loaded.set(id,
+    h.options.tools.loadedSkillNames(id, names.filter(Boolean).map(name => name.toLowerCase())));
+  const bridge = createRunScriptBridge({
+    supervisor: { isRunCurrent: (id, run) => h.runs.get(id) === run, hasAgent: () => false, getAbortSignal: () => undefined },
+    getRuntime: id => h.states.get(id), loadedSkillNames: id => h.options.tools.loadedSkillNames(id),
+    canManageSessions: async () => false, buildRunProfile: async () => ({}),
+    getRunToolContext: async () => ({ externalDrive: true }),
+    recordNestedTool: observation => h.runtime.recordNestedTool(observation),
+    toolRuntime: {
+      resolveDefinition: () => ({}),
+      async execute(name, args, _signal, context) {
+        const active = context.loadedPluginSkillNames.includes('weather');
+        if (name === 'list_tools') return { tools: active ? [{ name: 'weather__forecast' }] : [] };
+        if (name === 'load_skill') return { name: 'weather', displayName: 'Weather', tools: [{ name: 'weather__forecast' }] };
+        if (name === 'weather__forecast' && active) return { city: args.city, high: 21 };
+        throw toolError('UNKNOWN_TOOL', `Unknown tool: ${name}`);
+      },
+    },
+    collectArtifacts: () => [],
+  });
+  h.options.tools.runtime.execute = async (_name, _args, _signal, { sessionId, runId }) => {
+    const call = (toolName, args = {}) => bridge.handleToolCall({ toolName, args, sessionId, runId });
+    const before = await call('list_tools'), early = await call('weather__forecast', { city: 'Paris' });
+    await call('load_skill', { name: 'weather' });
+    return { before: before.result.tools, early: early.result.code,
+      after: (await call('list_tools')).result.tools, forecast: (await call('weather__forecast', { city: 'Paris' })).result };
+  };
+  assert.deepEqual((await h.execute('a')).result, { before: [], early: 'UNKNOWN_TOOL',
+    after: [{ name: 'weather__forecast' }], forecast: { city: 'Paris', high: 21 } });
+  assert.deepEqual(loaded.get('a'), ['weather']);
+  assert.equal(loaded.has('b'), false, 'activation stays within its session');
 });

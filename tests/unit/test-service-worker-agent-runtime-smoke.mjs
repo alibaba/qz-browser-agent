@@ -749,6 +749,13 @@ try {
       return reply.result;
     };
     const drive = await driveCall("create_drive_session", { title: "Debugger handoff" });
+    assert.ok(drive.qz_skills?.some(skill => skill.name === COVERAGE_PLUGIN_SKILL_NAME && skill.scope === "global"),
+      "session creation returns the Global Skill summary");
+    assert.ok((await driveCall("list_tools", { sessionId: drive.sessionId })).tools.some(tool => tool.name === COVERAGE_PLUGIN_TOOL_NAME),
+      "a new drive session lists user Global Skill tools without load_skill");
+    assert.equal((await driveCall("list_plugins", { sessionId: drive.sessionId })).plugins
+      .find(plugin => plugin.skillName === COVERAGE_PLUGIN_SKILL_NAME)?.active, true,
+    "Skill contributions report the Global Skill as active in the new drive session");
     const handoffTabs = {};
     for (const name of ["idle", "canceled", "activated"]) {
       const url = `https://smoke.example/handoff-${name}`;

@@ -25,9 +25,11 @@ export async function exerciseCliSkillDiscovery({ endpoint, page, expect, step, 
     expect(receipt.ok, JSON.stringify(entry)).toBe(success);
     return receipt;
   };
+  const globals = ['cli-global', 'cli-resident'];
   const createSession = async () => {
     const receipt = await cli(['session', 'create', '--title', 'CLI Skill discovery', '--json']);
     sessions.push(receipt.result.sessionId);
+    summaries({ context: { qz_skills: receipt.result.qz_skills } }, globals);
     return receipt.result.sessionId;
   };
   const script = (sessionId, code, args = {}, success = true) => cli([
@@ -116,7 +118,6 @@ export async function exerciseCliSkillDiscovery({ endpoint, page, expect, step, 
     }), installedSkills);
     expect(installed.registryReady, JSON.stringify(installed)).toBe(true);
     const sessionId = await createSession();
-    const globals = ['cli-global', 'cli-resident'];
     const visited = [...globals, 'cli-catalog', 'cli-checkout'];
 
     await step('every receipt exposes the available user summaries', async () => {

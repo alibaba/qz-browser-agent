@@ -765,6 +765,7 @@ const runScriptBridge = createRunScriptBridge({
   normalizeSessionId,
   supervisor: sessionSupervisor,
   getRuntime: sessionCommands.getSessionRuntimeState,
+  loadedSkillNames: sessionRuntimeState.loadedSkillNames,
   isTerminalRuntimeForRun: sessionRuntimeState.isTerminalForRun,
   canManageSessions: sessionCommands.canManageSessionTools,
   buildRunProfile,

@@ -263,6 +263,7 @@ await assert.rejects(
 await assert.rejects(runtime.createDriveSession({ sessionId: "missing-title" }), { code: "SESSION_TITLE_REQUIRED" });
 assert.deepEqual(await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-s" }), {
   sessionId: "drive-s", title: "Inspect example page", status: "completed",
+  qz_skills: [{ name: "research", displayName: "Research", description: "Web research workflow", scope: "global" }],
 });
 assert.deepEqual(await runtime.getDriveSession({ sessionId: "drive-s" }), {
   sessionId: "drive-s", title: "Inspect example page", status: "completed",

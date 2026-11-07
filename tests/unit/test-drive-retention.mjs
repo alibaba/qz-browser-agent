@@ -120,7 +120,7 @@ test('concurrent explicit creation automatically converges to the cap after admi
     sessions: { supervisor, listMetadata: repository.listMetadata, createMetadata: repository.createMetadata,
       getRuntime: id => supervisor.getRuntime(id) || {},
       setRuntime: (id, patch) => supervisor.setRuntime(id, { ...supervisor.getRuntime(id), ...patch }) },
-    tools: {}, skills: {}, artifacts: {}, trace: {}, userInputPermissions: {}, async dispatchSidepanel() {},
+    tools: { recordLoadedSkillNames() {} }, skills: { list: async () => [] }, artifacts: {}, trace: {}, userInputPermissions: {}, async dispatchSidepanel() {},
     onDriveSettled: () => retention.request(),
   });
   retention = createDriveSessionRetention({

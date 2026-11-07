@@ -94,8 +94,8 @@ const bridge = createRunScriptBridge({
     workingUrl: "https://example.test/current",
     workingTab: { id: 31, url: "https://example.test/current" },
     visitedTaskSites: [{ id: 31, url: "https://example.test/current" }],
-    loadedPluginSkillNames: ["runtime-skill"],
   }),
+  loadedSkillNames: () => ["runtime-skill"],
   isTerminalRuntimeForRun: runtime => runtime.status === "aborted",
   canManageSessions: async () => true,
   buildRunProfile: async input => ({ session: input }),
@@ -287,7 +287,7 @@ assert.deepEqual(collector("document_download", {}, {}), []);
 const activatedSkills = [];
 const activationBridge = createRunScriptBridge({
   supervisor,
-  getRuntime: () => ({ status: "running", loadedPluginSkillNames: activatedSkills }),
+  getRuntime: () => ({ status: "running" }),
   isTerminalRuntimeForRun: () => false,
   canManageSessions: async () => true,
   buildRunProfile: async () => ({}),
@@ -332,6 +332,31 @@ assert.equal((await activationBridge.handleToolCall({
   sessionId: "s1",
   runId: "run-current",
 })).ok, true);
+
+const sessionSkills = [];
+const sessionRecordBridge = createRunScriptBridge({
+  supervisor,
+  getRuntime: () => ({ status: "running" }),
+  loadedSkillNames: () => sessionSkills,
+  canManageSessions: async () => true,
+  buildRunProfile: async () => ({}),
+  getRunToolContext: async () => ({ externalDrive: true }),
+  recordNestedTool: async ({ name, phase, result }) => {
+    if (name === "load_skill" && phase === "end") sessionSkills.push(result.name);
+  },
+  toolRuntime: {
+    resolveDefinition: () => null,
+    getSchemas: () => [],
+    async execute(name, _args, _signal, context) {
+      return name === "load_skill" ? { name: "fresh-skill" } : { loaded: context.loadedPluginSkillNames };
+    },
+  },
+  collectArtifacts: () => [],
+});
+const callSessionRecord = toolName => sessionRecordBridge.handleToolCall({ toolName, sessionId: "s1", runId: "run-current" });
+await callSessionRecord("load_skill");
+assert.deepEqual((await callSessionRecord("read_loaded")).result.loaded, ["fresh-skill"],
+  "a run without a live Agent reads the Session's loaded Skills on its next nested call");
 
 const driveExecutions = [];
 const driveBridge = createRunScriptBridge({

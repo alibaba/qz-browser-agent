@@ -24,7 +24,7 @@ function fixture({ ready = Promise.resolve(), idleMs = 60_000, stored = {} } = {
         execute: async (...args) => { calls.push(args); return { ok: true }; },
       },
     },
-    skills: {}, artifacts: {}, trace: {}, userInputPermissions: {}, async dispatchSidepanel() {},
+    skills: { list: async () => [] }, artifacts: {}, trace: {}, userInputPermissions: {}, async dispatchSidepanel() {},
   };
   return { options, runtime: createMcpRuntime(options), metadata, stored, calls, stops, profiles };
 }
