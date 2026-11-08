@@ -860,7 +860,7 @@ test("npm package includes the runtime catalog and excludes development runtimes
   const npmEntry = process.env.npm_execpath || (process.platform === "win32"
     ? join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js") : null);
   const [packed] = JSON.parse(execFileSync(npmEntry ? process.execPath : "npm",
-    [...(npmEntry ? [npmEntry] : []), "pack", directory, "--dry-run", "--json"], { encoding: "utf8" }));
+    [...(npmEntry ? [npmEntry] : []), "pack", directory, "--dry-run", "--ignore-scripts", "--json"], { encoding: "utf8" }));
   const files = packed.files.map(file => file.path);
   for (const path of ["src/cli.mjs", "src/daemon.mjs", "src/server.mjs", "src/catalog.json", "LICENSE"]) assert.ok(files.includes(path), path);
   assert.ok(files.every(path => !/\.py$|node_modules|\.env|uv\.lock/.test(path)));

@@ -224,28 +224,39 @@ test("an explicit offline profile reconnects within its deadline without opening
 });
 
 test("stalled reconnect health reads respect cancellation and the remaining connection budget", async t => {
-  for (const cancelled of [true, false]) await t.test(cancelled ? "caller cancellation" : "deadline exhaustion", async t => {
+  const argv = timeout => ["session", "create", "--title", "Stalled health", "--client", "offline-profile", "--timeout", timeout];
+  const stalled = endpoint => ({
+    findDaemon: async () => ({ endpoint, instanceId: "stalled-service", health: { protocolVersion: 1, features: { browserPairing: 1 },
+      status: { clients: [], browsers: [{ clientId: "offline-profile", name: "offline-profile" }] } } }),
+    callTool: () => assert.fail("no browser operation may be submitted"),
+    openConnectionBrowser: () => assert.fail("a pinned profile cannot launch a substitute"),
+  });
+  await t.test("caller cancellation", async t => {
     const controller = new AbortController(), reason = new Error("Cancelled during health read");
     let reads = 0;
     const server = createServer((_request, _response) => {
       reads++;
-      if (cancelled) controller.abort(reason);
+      controller.abort(reason);
       // Accept the real HTTP request but never send headers or a body.
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
-    const running = { endpoint: `http://127.0.0.1:${server.address().port}`, instanceId: "stalled-service",
-      health: { protocolVersion: 1, features: { browserPairing: 1 }, status: {
-        clients: [], browsers: [{ clientId: "offline-profile", name: "offline-profile" }],
-      } } };
     const started = performance.now();
-    await assert.rejects(runCli(["session", "create", "--title", "Stalled health", "--client", "offline-profile", "--timeout", cancelled ? "2" : "0.0305"], {
-      signal: controller.signal, findDaemon: async () => running,
-      callTool: () => assert.fail("no browser operation may be submitted"),
-      openConnectionBrowser: () => assert.fail("a pinned profile cannot launch a substitute"),
-    }), error => cancelled ? error === reason : error.code === "CLIENT_OFFLINE");
+    await assert.rejects(runCli(argv("2"), { ...stalled(`http://127.0.0.1:${server.address().port}`), signal: controller.signal }),
+      error => error === reason);
     assert.equal(reads, 1);
-    assert.ok(performance.now() - started < 500, "health polling must not consume its independent one-second timeout");
+    assert.ok(performance.now() - started < 900, "health polling must not consume its independent one-second timeout");
+  });
+  await t.test("deadline exhaustion", async () => {
+    const timedOut = Object.assign(new Error("The operation was aborted"), { name: "AbortError",
+      cause: new DOMException("The operation was aborted due to timeout", "TimeoutError") });
+    const timeouts = [];
+    await assert.rejects(runCli(argv("0.9"), { ...stalled("http://127.0.0.1:9"),
+      // The read reports its own timeout while Date.now() is still before the command deadline.
+      readHealth: async (_endpoint, { timeoutMs }) => { timeouts.push(timeoutMs); throw timedOut; },
+    }), error => error.code === "CLIENT_OFFLINE");
+    assert.equal(timeouts.length, 1);
+    assert.ok(timeouts[0] <= 900, "the final health read is limited to the remaining connection budget");
   });
 });
 

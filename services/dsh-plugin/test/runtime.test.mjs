@@ -185,6 +185,8 @@ test("Windows npm shims resolve to Node without shell; early IPC cancellation wa
     read: async () => JSON.stringify({name:"qz-browser-agent",bin:{qz:"src/bin.mjs"}}),
   });
   assert.equal(command.command, process.execPath); assert.deepEqual(command.prefix,[entry]);
+  await assert.rejects(cliCommand(root + "\\missing-command", {platform:"win32",cwd:root,env:{Path:root},exists:async () => false}),
+    {code:"QZ_CLI_NOT_FOUND"});
   const child = spawn(process.execPath,["--import",new URL("../src/cli-cancel.mjs",import.meta.url).href,"--input-type=module","-"],{stdio:["pipe","pipe","pipe","ipc"]});
   t.after(() => { if(child.exitCode === null) child.kill("SIGKILL"); });
   let stdout=""; child.stdout.on("data",data=>stdout+=data);

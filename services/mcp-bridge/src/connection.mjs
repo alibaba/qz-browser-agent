@@ -112,14 +112,17 @@ export async function prepareConnection({ options = {}, timeoutSeconds = 30, ses
       opened = true;
     }
     if (Date.now() >= deadline) break;
+    const remainingMs = deadline - Date.now();
     let health;
     try {
       health = await (dependencies.readHealth || readHealth)(running.endpoint, {
-        timeoutMs: Math.max(1, Math.ceil(Math.min(1000, deadline - Date.now()))), signal,
+        timeoutMs: Math.max(1, Math.ceil(Math.min(1000, remainingMs))), signal,
       });
     } catch (error) {
       signal?.throwIfAborted();
-      if (Date.now() >= deadline) break;
+      // The read timer can fire just before Date.now() reaches the deadline it was sized to.
+      const budgetExpired = remainingMs <= 1000 && [error?.name, error?.cause?.name].includes("TimeoutError");
+      if (budgetExpired || Date.now() >= deadline) break;
       throw error;
     }
     signal?.throwIfAborted();

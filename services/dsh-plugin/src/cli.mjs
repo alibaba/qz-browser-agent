@@ -13,8 +13,10 @@ export async function cliCommand(cliPath = "qz", {
   if (/\.[cm]?js$/i.test(cliPath)) return { command: process.execPath, prefix: [paths.resolve(cwd, cliPath)], node: true };
   if (platform !== "win32") return { command: cliPath, prefix: [] };
   let executable;
-  if (paths.isAbsolute(cliPath) || /[\\/]/.test(cliPath)) executable = paths.resolve(cwd, cliPath);
-  else {
+  if (paths.isAbsolute(cliPath) || /[\\/]/.test(cliPath)) {
+    const candidate = paths.resolve(cwd, cliPath);
+    if (await exists(candidate)) executable = candidate;
+  } else {
     const search = Object.entries(env).find(([name]) => name.toUpperCase() === "PATH")?.[1] || "";
     for (const directory of search.split(";").filter(Boolean)) {
       for (const suffix of paths.extname(cliPath) ? [""] : [".exe", ".cmd", ".bat", ""]) {
