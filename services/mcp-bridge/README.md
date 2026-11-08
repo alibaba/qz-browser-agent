@@ -2,11 +2,11 @@
 
 An open-source browser agent for humans and coding agents.
 
-qz is a local-first extension for Chrome and Edge.
-People use it from the side panel; agents such as Claude Code, Codex, and pi drive the browser or
-hand it whole web tasks through this CLI or MCP. qz works in your own browser, with your existing
-logins, and returns tables, files, or reports with sources. Everything runs locally, and your data
-goes only to the model you choose.
+qz is a local-first extension for Chrome and Edge. This CLI and its MCP endpoint let coding agents
+such as Claude Code, Codex, and pi drive your own browser, with your existing logins, or hand qz a
+whole web task. Driving the browser needs no model configured in qz: your agent writes a short
+script, and qz returns a compact result and trace that keep its token use low. People can watch
+and step in from the side panel. Everything runs locally.
 
 [Website](https://alibaba.github.io/qz-browser-agent/) ·
 [GitHub](https://github.com/alibaba/qz-browser-agent) ·
@@ -18,41 +18,41 @@ goes only to the model you choose.
 Requires Node.js 22 or later.
 
 1. **Install the extension.** Click **Add to Chrome** on the
-   [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm),
-   open the qz side panel, and choose a provider and model in **Settings**.
-2. **Run your first task.** The CLI prepares the browser connection automatically. Complete the
-   extension’s connection prompt when needed.
+   [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm).
+2. **Install the CLI.** Or use `npx qz-browser-agent@latest` in place of `qz`.
 
    ```bash
-   npx qz-browser-agent@latest create "Find this year's Nobel Prize winners in every category and put them in a table with source links." --stream
+   npm install --global qz-browser-agent@latest
+   ```
+3. **Drive the browser.** No model setup is needed in qz.
+
+   ```bash
+   qz session create --title "Read example page"
+   qz script --session SESSION_ID - <<'JS'
+   const page = qz.tab(await qz.openTab({ url: "https://example.com" }));
+   return await page.read({ limit: 2000 });
+   JS
+   ```
+
+   The first command connects the browser automatically. To teach your agent the full workflow,
+   install the qz Skill with `npx skills add alibaba/qz-browser-agent -g`, or have it read `qz skill`.
+4. **Or hand qz the whole task.** Choose a provider and model in the side panel's **Settings**, then:
+
+   ```bash
+   qz create "Find this year's Nobel Prize winners in every category and put them in a table with source links." --stream
    ```
 
    `--stream` shows progress, any questions qz needs you to answer, and the final result.
 
-For regular use, install the `qz` command globally and use it in place of
-`npx qz-browser-agent@latest`:
-
-```bash
-npm install --global qz-browser-agent@latest
-qz --version
-```
-
-For direct browser control, read the guide shipped with your installed CLI:
+## Drive the browser
 
 ```bash
 qz skill
-qz session create --title "Read example page"
+qz session create --title "Read example page" --json
 qz script --session SESSION_ID task.js --args '{"query":"example"}'
 qz session show SESSION_ID
 qz session cancel SESSION_ID
 ```
-
-Browser operations prepare their connection automatically: they reuse the first responding
-online browser, or open the connection page once in the system default browser. When qz does not respond
-there, the page links to the Chrome Web Store and shows its URL with a copy button for a browser that has qz.
-Select an existing profile with --client NAME|UUID; it never falls back to another profile. An incompatible
-local service is restarted once before browser operations. Complete the extension’s connection
-prompt when needed.
 
 `session create` starts no model. With `--json`, `result.qz_skills` lists the Skills the new session
 can use right away, and `qz.call("load_skill",{name})` makes another Skill's tools callable at once.
@@ -62,8 +62,14 @@ use `page.locator(query)` for element actions and waits, and `page.evaluate(code
 Discover additional capabilities with `qz.listTools()` or `qz.listTools({names:["list_images"]})`,
 then invoke them through `qz.call(name,args)`. stdout is JSON `{ok,result,trace}`: execution status, the returned business value,
 and ordered error and `trace()`/`console` messages without levels. Failures put `ToolError` in `result`; `undefined`
-returns become `null`. The built-in agent delegation commands above remain available when
-qz should plan and execute the task.
+returns become `null`.
+
+Browser operations prepare their connection automatically: they reuse the first responding
+online browser, or open the connection page once in the system default browser. When qz does not respond
+there, the page links to the Chrome Web Store and shows its URL with a copy button for a browser that has qz.
+Select an existing profile with --client NAME|UUID; it never falls back to another profile. An incompatible
+local service is restarted once before browser operations. Complete the extension’s connection
+prompt when needed.
 
 ## Connect an MCP client
 
@@ -98,7 +104,8 @@ claude mcp add --transport http qz http://127.0.0.1:18765/mcp
 }
 ```
 
-CLI and MCP share the same browser connection. The MCP tool list is in the
+CLI and MCP share the same browser connection. The default MCP catalog is the direct-drive set;
+`qz mcp --profile full` prints the URL for the task and diagnostic catalog. The MCP tool list is in the
 [reference](https://github.com/alibaba/qz-browser-agent/blob/main/docs/cli.md#task-and-resource-operations).
 
 ## Common commands
