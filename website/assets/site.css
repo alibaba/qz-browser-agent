@@ -120,11 +120,27 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .agent-access { border-top: 1px solid var(--line); }
 .agent-access .section-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 20px 40px; }
 .agent-access .section-heading > p { text-wrap: balance; }
-.agent-demo { margin-top: 38px; padding: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+.agent-demo { display: grid; grid-template-columns: minmax(0, 1fr); margin-top: 38px; padding: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+.agent-mode-tabs { display: inline-flex; justify-self: start; gap: 2px; margin-bottom: 24px; padding: 3px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.agent-mode-tabs[hidden] { display: none; }
+.agent-mode-tabs button { min-height: 34px; padding: 6px 16px; border: 0; border-radius: 4px; background: transparent; color: var(--secondary); font-size: 13px; font-weight: 500; transition: background-color 180ms var(--ease), color 180ms var(--ease); }
+.agent-mode-tabs button:hover, .agent-mode-tabs button[aria-selected="true"] { color: var(--ink); }
+.agent-mode-tabs button[aria-selected="true"] { background: var(--soft); }
+.agent-mode-tabs button:focus-visible { outline-offset: 2px; }
+.agent-mode { display: flex; flex-direction: column; min-width: 0; }
+.agent-mode[hidden] { display: none; }
+.agent-mode > .agent-demo-grid { flex: 1; }
+.agent-mode-tabs[hidden] ~ .agent-mode + .agent-mode { margin-top: 40px; }
+.agent-mode-summary { max-width: 720px; margin-bottom: 28px; font-size: 14px; line-height: 1.75; color: var(--secondary); }
+/* Side by side, both modes share one cell so switching tabs keeps the page height. */
+@media (min-width: 961px) {
+  .agent-mode-tabs:not([hidden]) ~ .agent-mode { grid-area: 2 / 1; }
+  .agent-mode-tabs:not([hidden]) ~ .agent-mode[hidden] { display: flex; visibility: hidden; }
+}
 .agent-demo-grid { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, 360px); gap: 22px; align-items: stretch; }
 .agent-console-column, .agent-panel-column { display: grid; grid-template-rows: auto 1fr; min-width: 0; }
 .agent-surface-label { margin-bottom: 16px; font-size: 10px; font-weight: 550; line-height: 1.5; letter-spacing: 1px; color: var(--secondary); }
-.agent-console { overflow: hidden; min-width: 0; border: 1px solid #353535; border-radius: 6px; background: #191919; color: #f2f2f0; font-family: 'SF Mono', Consolas, monospace; }
+.agent-console { container-type: inline-size; overflow: hidden; min-width: 0; border: 1px solid #353535; border-radius: 6px; background: #191919; color: #f2f2f0; font-family: 'SF Mono', Consolas, monospace; }
 .console-titlebar { display: flex; align-items: center; gap: 15px; min-height: 42px; padding: 10px 18px; border-bottom: 1px solid #333; font-size: 11px; color: #b9b9b6; }
 .console-titlebar > span:last-child { margin-left: auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 10px; }
 .console-dots { display: flex; gap: 5px; }
@@ -132,6 +148,16 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .console-body { display: flex; flex-direction: column; gap: 18px; padding: 25px 24px; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
 .console-command { display: flex; gap: 12px; align-items: baseline; }
 .console-command code { font: inherit; }
+.console-heredoc { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.console-script { margin: 0; padding-left: calc(1ch + 12px); overflow-x: auto; font: inherit; font-size: clamp(10.5px, calc((100cqi - 62px) / 43), .93em); line-height: 1.6; color: #e4e4e1; white-space: pre; scrollbar-width: thin; scrollbar-color: #444 transparent; }
+.console-script code { font: inherit; }
+.tok-comment { color: #7f848e; font-style: italic; }
+.tok-keyword { color: #c792ea; }
+.tok-string { color: #a5d391; }
+.tok-function { color: #82aaff; }
+.tok-builtin { color: #e5c07b; }
+.tok-property { color: #f0a17a; }
+.tok-heredoc { color: #6fc6d1; }
 .console-dollar { flex: none; color: #8b8b87; user-select: none; }
 .console-response, .console-tools { display: flex; flex-direction: column; gap: 2px; }
 .console-response strong { font-weight: 550; }
@@ -289,12 +315,12 @@ video { display: block; width: 100%; max-height: 70dvh; aspect-ratio: 16 / 9; ba
 }
 
 
-@media (max-width: 1000px) {
+@media (max-width: 1100px) {
   .agent-demo { padding: 22px; }
   .agent-demo-grid { grid-template-columns: minmax(0, 1fr) 20px minmax(0, 310px); gap: 16px; }
   .console-body { padding: 20px; gap: 17px; font-size: 12px; }
 }
-@media (max-width: 800px) {
+@media (max-width: 960px) {
   .agent-demo-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .agent-panel-column { width: min(100%, 420px); justify-self: center; }
   .agent-connector { justify-self: center; transform: rotate(90deg); }
@@ -302,10 +328,14 @@ video { display: block; width: 100%; max-height: 70dvh; aspect-ratio: 16 / 9; ba
 }
 @media (max-width: 700px) {
   .agent-demo { margin-top: 28px; padding: 14px; }
+  .agent-mode-tabs { display: flex; justify-self: stretch; margin-bottom: 18px; }
+  .agent-mode-tabs button { flex: 1; padding-inline: 10px; }
+  .agent-mode-summary { margin-bottom: 22px; font-size: 13px; }
   .agent-surface-label { font-size: 9px; margin-bottom: 12px; letter-spacing: .7px; }
   .console-titlebar { padding-inline: 14px; }
   .console-body { padding: 20px 15px; font-size: 12px; gap: 18px; }
   .console-command { gap: 8px; }
+  .console-script { padding-left: calc(1ch + 8px); }
   .agent-setup-note { display: block; margin-top: 26px; }
 }
 

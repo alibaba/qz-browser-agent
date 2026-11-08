@@ -116,6 +116,34 @@ for (const copyButton of document.querySelectorAll('[data-copy-prompt], [data-co
   });
 }
 
+// Without JavaScript, both agent modes stay visible one after the other.
+const modeTabs = [...document.querySelectorAll('.agent-mode-tabs [role="tab"]')];
+function selectMode(selected, { focus = false } = {}) {
+  for (const tab of modeTabs) {
+    const active = tab === selected;
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+    document.getElementById(tab.getAttribute('aria-controls')).hidden = !active;
+  }
+  if (focus) selected.focus();
+}
+if (modeTabs.length) {
+  modeTabs.forEach((tab, index) => {
+    tab.addEventListener('click', () => selectMode(tab));
+    tab.addEventListener('keydown', (event) => {
+      const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+      const next = event.key === 'Home' ? modeTabs[0]
+        : event.key === 'End' ? modeTabs.at(-1)
+          : step ? modeTabs[(index + step + modeTabs.length) % modeTabs.length] : null;
+      if (!next) return;
+      event.preventDefault();
+      selectMode(next, { focus: true });
+    });
+  });
+  selectMode(modeTabs[0]);
+  modeTabs[0].parentElement.hidden = false;
+}
+
 // The source links work without JavaScript; the dialog keeps visitors on the page.
 const imageDialog = document.querySelector('#image-dialog');
 const expandedImage = document.querySelector('#expanded-image');

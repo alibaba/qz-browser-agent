@@ -3,17 +3,15 @@
 An open-source browser agent for humans and coding agents.
 
 qz is a local-first extension for Chrome and Edge.
-People use it from the side panel; agents such as Claude Code, Codex, and pi hand it web tasks
-through this CLI or MCP. qz works in your own browser, with your existing logins, and returns
-tables, files, or reports with sources. Everything runs locally, and your data goes only to the
-model you choose.
+People use it from the side panel; agents such as Claude Code, Codex, and pi drive the browser or
+hand it whole web tasks through this CLI or MCP. qz works in your own browser, with your existing
+logins, and returns tables, files, or reports with sources. Everything runs locally, and your data
+goes only to the model you choose.
 
 [Website](https://alibaba.github.io/qz-browser-agent/) ·
 [GitHub](https://github.com/alibaba/qz-browser-agent) ·
 [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm) ·
 [Full CLI and MCP reference](https://github.com/alibaba/qz-browser-agent/blob/main/docs/cli.md)
-
-![A coding agent handing a GitHub research task to qz](https://raw.githubusercontent.com/alibaba/qz-browser-agent/main/docs/images/examples/en/pi-delegate-en.gif)
 
 ## Quick start
 
@@ -55,6 +53,9 @@ there, the page links to the Chrome Web Store and shows its URL with a copy butt
 Select an existing profile with --client NAME|UUID; it never falls back to another profile. An incompatible
 local service is restarted once before browser operations. Complete the extension’s connection
 prompt when needed.
+
+`session create` starts no model. With `--json`, `result.qz_skills` lists the Skills the new session
+can use right away, and `qz.call("load_skill",{name})` makes another Skill's tools callable at once.
 
 Scripts run outside pages and use the `qz` SDK. Bind `qz.tab(tabRef)` for page operations,
 use `page.locator(query)` for element actions and waits, and `page.evaluate(code,args?)` for DOM access.

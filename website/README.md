@@ -19,14 +19,20 @@ path `/qz-browser-agent/`.
 
 ## Content and assets
 
-- Use the product's default black, white, and gray design tokens at website sizes. The website
-  follows the system color scheme and reduced-motion preference.
+- Use the product's default black, white, and gray design tokens at website sizes. The only
+  colors are the `tok-*` syntax highlights in the always-dark Drive terminal. The website follows
+  the system color scheme and reduced-motion preference.
 - Primary installation links point to the [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm).
   The installation section also links to the latest GitHub release for manual installation.
-- The Agent-friendly section pairs an illustrative terminal session with actual narrow Side Panel
-  screenshots from the documentation-research task. The console is authored HTML, not a recording.
-  `assets/screens/agent-en.png` and `agent-zh.png` show the same original English conversation in
-  each interface language; see [screenshot sources](assets/screens/SOURCES.md) for capture details.
+- The Agent-friendly section has two tabs, **Drive the browser** and **Hand qz a task**; without
+  JavaScript, both appear in order. Each tab pairs an authored terminal with a native narrow Side
+  Panel screenshot of the documentation-research task. The Drive terminal repeats the commands,
+  session IDs, full scripts, and receipts of the real CLI runs captured in
+  `assets/screens/drive-en.png` and `drive-zh.png`. The Task terminal is an illustrative command example beside `agent-en.png`
+  and `agent-zh.png`, which show the same original English conversation in each interface language.
+  See [screenshot sources](assets/screens/SOURCES.md) for capture details. The root READMEs show
+  this Drive demo as `docs/images/agent-drive-en.png` and `agent-drive-zh-CN.png`; recapture them
+  when the Drive terminal or screenshots change.
 - The CLI and Skill installation commands use the published `qz-browser-agent` npm package and
   `skills/qz-browser-agent/SKILL.md`. Both languages use `npx skills add alibaba/qz-browser-agent -g`
   to install the Skill. See the [CLI guide](../services/mcp-bridge/README.md) for CLI usage.
