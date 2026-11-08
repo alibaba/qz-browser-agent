@@ -27,9 +27,11 @@ export async function startElementReferencePage() {
       <section id="region"><p>Scoped region only</p><button id="alpha" onclick="this.dataset.clicked='yes'">Alpha</button></section>
       <p>Outside scope marker</p><button onclick="document.body.dataset.imageClicked='yes'"><img id="photo" alt="Main picture" src="/pixel.png" width="48" height="48"></button>
       <div id="shadow"></div><iframe id="same" src="/frame?kind=same"></iframe>
-      <iframe id="cross" src="http://127.0.0.2:${port}/frame?kind=cross"></iframe>
+      <iframe id="cross" src="http://localhost:${port}/frame?kind=cross"></iframe>
       <script>document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<button id="shadow-action">Shadow action</button><img id="shadow-photo" alt="Shadow picture" src="/pixel.png" width="48" height="48">';</script>`);
   });
+  // 0.0.0.0 accepts both names. localhost and 127.0.0.1 are different origins
+  // without requiring a second loopback address such as 127.0.0.2.
   await new Promise(resolve => server.listen(0, '0.0.0.0', resolve));
   return { url: `http://127.0.0.1:${server.address().port}/`, close: () => {
     server.closeAllConnections(); return new Promise(resolve => server.close(resolve));

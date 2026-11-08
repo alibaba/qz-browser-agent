@@ -61,7 +61,7 @@ async function startPage() {
 }
 
 /** Both packages execute the installed SDK through the real CLI, bridge and outer Worker. */
-export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo }) {
+export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo, isolatedSkills = true }) {
   const fixture = await startPage(), transcript = [];
   let sessionId, userPage;
   const cli = async (argv, source = '') => {
@@ -80,7 +80,10 @@ export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo 
         ? ['context', 'ok', 'result', 'trace'] : ['ok', 'result', 'trace']);
       expect(value.ok, JSON.stringify(entry)).toBe(exitCode === 0);
       if (value.ok) expect(hasContext, JSON.stringify(entry)).toBe(true);
-      if (hasContext) expect(value.context, JSON.stringify(entry)).toEqual({ qz_skills: [] });
+      // A worker-scoped profile keeps Skills installed by an earlier test. An isolated
+      // profile owns an empty catalog, so its receipt must stay empty.
+      if (hasContext) expect(value.context, JSON.stringify(entry)).toEqual(isolatedSkills
+        ? { qz_skills: [] } : { qz_skills: expect.any(Array) });
     }
     return value;
   };
