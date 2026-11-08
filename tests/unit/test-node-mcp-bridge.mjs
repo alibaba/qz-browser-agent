@@ -1,10 +1,11 @@
 import { pairBrowser, browserId, pollBrowser, completeBrowser, resultPayload } from "../support/paired-bridge.mjs";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { request as httpRequest } from "node:http";
 import { readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
+import { runInNewContext } from "node:vm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { isExtensionBridgeOrigin, startBridge } from "../../services/mcp-bridge/src/server.mjs";
@@ -94,6 +95,43 @@ test("Node bridge exposes the existing catalog through a real MCP SDK client", a
   const page = await (await fetch(`${bridge.endpoint}/qz-connect`)).text();
   assert.match(page, /data-qz-connection-status/);
   assert.match(page, /https:\/\/chromewebstore\.google\.com\/detail\/dknbdgkgoinlgjpfebapkklbmjjgdblm/);
+});
+
+test("the connection page offers the store and a copyable link when no extension claims it", async t => {
+  const bridge = await withBridge(t), href = `${bridge.endpoint}/qz-connect?name=work`;
+  const response = await fetch(href), page = await response.text();
+  const script = page.match(/<script>([\s\S]*?)<\/script>/)[1];
+  assert.equal(response.headers.get("content-security-policy").match(/script-src '([^']+)'/)[1],
+    `sha256-${createHash("sha256").update(script).digest("base64")}`, "only the page's own script may run");
+  assert.match(page, /<footer data-qz-connection-help hidden>/);
+  assert.match(page, /\[data-qz-connection-status\]:is\(\[data-qz-extension\], :not\(\[data-qz-connection-state="connecting"\]\)\) ~ footer \{ display: none; \}/);
+  const node = () => ({ dataset: {}, attributes: {}, listeners: {}, textContent: "",
+    setAttribute(name, value) { this.attributes[name] = value; }, addEventListener(type, listener) { this.listeners[type] = listener; } });
+  const help = Object.assign(node(), { hidden: true }), link = node(), copy = node();
+  help.querySelector = selector => ({ "[data-qz-connection-link]": link, "[data-qz-copy-link]": copy })[selector];
+  const timers = [], copied = [], selected = [];
+  let writeText = async text => { copied.push(text); };
+  runInNewContext(script, {
+    document: { querySelector: selector => selector === "[data-qz-connection-help]" ? help : null },
+    location: { href }, navigator: { clipboard: { writeText: text => writeText(text) } },
+    getSelection: () => ({ selectAllChildren: target => selected.push(target) }),
+    setTimeout: (callback, ms) => timers.push({ callback, ms }),
+  });
+  assert.equal(link.textContent, href);
+  assert.equal(help.hidden, true, "a browser with qz claims the page before the help appears");
+  assert.deepEqual(timers.map(({ ms }) => ms), [3000]);
+  timers.shift().callback();
+  assert.equal(help.hidden, false);
+  await copy.listeners.click();
+  assert.deepEqual(copied, [href]);
+  assert.equal(copy.dataset.copied, "");
+  assert.equal(copy.attributes["aria-label"], "Copied");
+  timers.shift().callback();
+  assert.equal(copy.dataset.copied, undefined);
+  assert.equal(copy.attributes["aria-label"], "Copy link");
+  writeText = async () => { throw new Error("Clipboard access denied"); };
+  await copy.listeners.click();
+  assert.deepEqual(selected, [link], "a blocked clipboard leaves the link selected for manual copy");
 });
 
 test("token-free routes reject remote Host, browser Origin, and non-JSON requests", async t => {

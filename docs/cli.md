@@ -29,9 +29,10 @@ installation, download the [latest GitHub release](https://github.com/alibaba/qz
 and follow the [manual installation steps](https://github.com/alibaba/qz-browser-agent/blob/main/README.md#manual-installation).
 
 Browser operations prepare their connection automatically. They reuse a responding online browser,
-or open the connection page once in the system default browser when it uses Chromium or Firefox,
-then wait for its extension to respond. For an unsupported default browser, use `qz connect uri`
-to pair a supported browser.
+or open the connection page once in the system default browser, then wait for its extension to
+respond. When qz does not respond there, the page links to the Chrome Web Store and shows its URL
+with a copy button for a browser profile that already has qz. A pending connection error includes
+the same URL; open it in that profile and retry, or use `qz connect uri` to pair a specific profile.
 Complete the first-use notice and connection prompt when needed. Use `qz connect uri` to print a URL
 for a specific profile without opening it.
 The first new profile is named `default`; an existing profile retains its name.
@@ -116,7 +117,7 @@ do not restart compatible services. No submitted browser operation is replayed d
 Without an explicit selection, a new task uses the first responding browser. An existing session
 is located through read-only queries when several browsers are online; ambiguous ownership requires
 `--client NAME|UUID`. An explicit selection never falls back to another browser. With no online
-connection, the CLI opens the connection page once in the supported system default browser and waits there.
+connection, the CLI opens the connection page once in the system default browser and waits there.
 When the service confirms a browser is reconnecting, the CLI first waits for its lease recovery within
 the command's timeout. If connection remains pending, check that page or use `qz connect uri` to pair
 a chosen browser profile. Pairing requires the extension’s first-use notice and connection prompt.

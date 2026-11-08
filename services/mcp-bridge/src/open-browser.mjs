@@ -1,41 +1,12 @@
-import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import { QzError } from "./client.mjs";
 
-const executeFile = promisify(execFile);
-const connectionHint = "Run qz connect uri and open its URL in a Chromium browser or Firefox with qz installed.";
-const browserIds = {
-  darwin: /^(?:com\.google\.chrome(?:\..+)?|org\.chromium\.chromium|com\.microsoft\.edgemac(?:\..+)?|org\.mozilla\.(?:firefox(?:developeredition)?|nightly)(?:\..+)?|com\.brave\.browser(?:\..+)?|com\.vivaldi\.vivaldi|com\.operasoftware\.opera(?:\..+)?|company\.thebrowser\.browser)$/i,
-  win32: /^(?:Chrome(?:B|D|S)?HTML|ChromiumHTM(?:L)?|MSEdgeHTM|FirefoxURL|BraveHTML|VivaldiHTM|OperaStable|OperaGX|ArcHTML)(?:[.-].+)?$/i,
-  linux: /^(?:google-chrome(?:-(?:stable|beta|unstable))?|chromium(?:-browser|_chromium)?|org\.chromium\.Chromium|microsoft-edge(?:-(?:stable|beta|dev))?|com\.microsoft\.Edge|firefox(?:-esr|_firefox)?|org\.mozilla\.firefox|brave-browser(?:-(?:beta|nightly))?|com\.brave\.Browser|vivaldi(?:-stable|-snapshot)?|com\.vivaldi\.Vivaldi|opera(?:-beta|-developer)?|com\.opera\.Opera)\.desktop$/i,
-};
+const connectionHint = "Open the connection URL in the browser profile where qz is installed, then retry.";
 
-/** Open the supported system URL handler once, preserving the user's default browser and profile. */
-export async function openConnectionBrowser(url, {
-  platform = process.platform, execFileProcess = executeFile, spawnProcess = spawn, signal, timeoutMs = 10000,
-} = {}) {
-  const target = webUrl(url), deadline = Date.now() + timeoutMs;
-  signal?.throwIfAborted();
-  const scheme = target.protocol.slice(0, -1);
-  const [command, args] = platform === "darwin"
-    ? ["osascript", ["-e", `id of application (path to default application for URL "${scheme}://localhost/")`]]
-    : platform === "win32"
-      ? ["reg.exe", ["query", `HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\${scheme}\\UserChoice`, "/v", "ProgId"]]
-      : ["xdg-mime", ["query", "default", `x-scheme-handler/${scheme}`]];
-  let handler;
+/** Open the connection page once with the system URL opener; the page guides browsers without qz. */
+export async function openConnectionBrowser(url, { platform = process.platform, spawnProcess = spawn, signal, timeoutMs = 10000 } = {}) {
   try {
-    const { stdout } = await execFileProcess(command, args, { encoding: "utf8", timeout: Math.max(1, Math.min(3000, timeoutMs)), maxBuffer: 65536, signal });
-    handler = platform === "win32" ? stdout.match(/\bProgId\s+REG_SZ\s+([^\r\n]+)/i)?.[1]?.trim() : stdout.trim();
-    if (!handler) throw new Error("No default URL handler is registered.");
-  } catch {
-    signal?.throwIfAborted();
-    throw new QzError("DEFAULT_BROWSER_UNAVAILABLE", "Could not determine the system default browser.", { url, hint: connectionHint });
-  }
-  signal?.throwIfAborted();
-  if (!browserIds[platform]?.test(handler)) throw new QzError("DEFAULT_BROWSER_UNSUPPORTED", `The system default browser (${handler}) was not recognized as a supported browser.`, { url, hint: connectionHint });
-  if (Date.now() >= deadline) throw new QzError("BROWSER_OPEN_FAILED", "Timed out before opening the system default browser.", { url, hint: connectionHint });
-  try {
-    return { ...await openBrowser(url, { platform, spawnProcess, signal, waitForExit: false, timeoutMs: deadline - Date.now() }), browser: "System default browser" };
+    return { ...await openBrowser(url, { platform, spawnProcess, signal, waitForExit: false, timeoutMs }), browser: "System default browser" };
   } catch (error) {
     signal?.throwIfAborted();
     throw new QzError("BROWSER_OPEN_FAILED", error.message, { url, hint: connectionHint });

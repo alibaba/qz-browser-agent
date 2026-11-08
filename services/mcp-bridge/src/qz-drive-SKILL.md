@@ -16,7 +16,7 @@ Run commands with Node.js 22+ on the machine running the browser extension:
 qz status --json
 ```
 
-Session and script commands prepare the connection automatically: they reuse a responding online browser, or open the connection page once in your supported system default browser (Chromium or Firefox) and wait for its extension to respond. Complete the extension's first-use notice and connection prompt when shown. If the extension is missing, `qz install` opens the store; ask the user to install it.
+Session and script commands prepare the connection automatically: they reuse a responding online browser, or open the connection page once in the system default browser and wait for its extension to respond. Complete the extension's first-use notice and connection prompt when shown. If the extension is missing, `qz install` opens the store; ask the user to install it. When qz does not respond in that browser, the page offers the store and a copyable connection link, and a pending connection error carries the same link in `details.url`: ask the user which browser has qz installed, open the link there, and retry. Do not search browser profiles for the extension.
 
 When multiple browsers are registered, run `qz browsers --json` and pass `--client CLIENT_UUID` to select a profile explicitly. Existing sessions are located via read-only queries before execution; ambiguous or unavailable ownership requires explicit selection. To pair a specific profile without launching a browser, run `qz connect uri --name work --json` and open `result.url` in that profile. An incompatible local service is restarted once before browser operations; an incompatible extension requires updating the CLI and extension together.
 

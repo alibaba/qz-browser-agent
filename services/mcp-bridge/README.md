@@ -50,8 +50,8 @@ qz session cancel SESSION_ID
 ```
 
 Browser operations prepare their connection automatically: they reuse the first responding
-online browser, or open the connection page once in the system default browser when it uses Chromium or Firefox.
-For another default browser, use `qz connect uri` to pair a supported browser.
+online browser, or open the connection page once in the system default browser. When qz does not respond
+there, the page links to the Chrome Web Store and shows its URL with a copy button for a browser that has qz.
 Select an existing profile with --client NAME|UUID; it never falls back to another profile. An incompatible
 local service is restarted once before browser operations. Complete the extension’s connection
 prompt when needed.

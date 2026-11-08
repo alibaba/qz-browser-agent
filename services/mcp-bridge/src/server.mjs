@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest, isJSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
 import { BridgeState, PROTOCOL_VERSION } from "./state.mjs";
-import { CONNECT_PAGE, CONNECT_LOGOS } from "./connect-page.mjs";
+import { CONNECT_PAGE, CONNECT_PAGE_CSP, CONNECT_LOGOS } from "./connect-page.mjs";
 import { createMcpServer } from "./tools.mjs";
 import { BrowserRegistry } from "./browser-registry.mjs";
 
@@ -115,7 +115,7 @@ export async function startBridge({ host = "127.0.0.1", port = 18765, instanceId
       if (request.method === "GET" && path === "/qz-connect") {
         response.writeHead(200, {
           "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
-          "content-security-policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+          "content-security-policy": CONNECT_PAGE_CSP,
           "x-content-type-options": "nosniff",
         });
         return response.end(CONNECT_PAGE);

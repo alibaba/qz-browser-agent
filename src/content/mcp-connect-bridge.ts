@@ -6,6 +6,8 @@ if (window === window.top && location.protocol === "http:"
   && ["127.0.0.1", "localhost"].includes(location.hostname) && location.pathname === "/qz-connect") {
   const status = document.querySelector<HTMLElement>("[data-qz-connection-status]");
   if (status) {
+    // The page keeps its install help hidden once the extension claims it.
+    status.dataset.qzExtension = "active";
     const message = status.querySelector<HTMLElement>("[data-qz-connection-message]") || status;
     const controller = new AbortController();
     const stop = () => controller.abort();

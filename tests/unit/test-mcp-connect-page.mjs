@@ -224,6 +224,7 @@ test("the connection page counts down only after success and stops when navigati
         requestRuntimeMessage: async message => { calls.push(message.type); return responses.shift(); },
       },
     });
+    assert.equal(element.dataset.qzExtension, "active", "the extension claims the page before its first response");
     const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
     await settle();
     assert.equal(element.dataset.qzConnectionState, "reconnecting");
