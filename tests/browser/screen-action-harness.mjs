@@ -1,4 +1,5 @@
 import { createScreenActionRuntime } from "../../src/capabilities/media/screen-action-runtime.js";
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 
 const TAB_ID = 1;
 
@@ -75,6 +76,7 @@ export async function createScreenActionHarness(page, browserContext, scope, { m
   });
 
   return Object.freeze({
+    presentation: getToolResultPresentation,
     primaryModifier: os === "mac" ? "Meta" : "Control",
     get coordinateSpace() { return latestCoordinateSpace; },
     get screenshotCount() { return screenshotCount; },

@@ -9,6 +9,7 @@ import vm from "node:vm";
 import { getCoreToolMetadata } from "../../src/shared/tools/tool-metadata.js";
 import { resolveFamilyTimelineTarget } from "../../src/sidepanel/tools/timeline-navigation.js";
 import { record } from "../../src/sidepanel/tools/renderer-input.js";
+import { skillResultData, skillResultEnvelope } from "../../src/sidepanel/tools/primitives/skill-result-data.js";
 import { formatLiveElapsedMs } from "../../src/sidepanel/features/sessions/session-format.js";
 import { capabilityUiAssets, discoverCapabilities } from "../../scripts/capability-catalog.mjs";
 import {
@@ -72,6 +73,7 @@ const css = [join(root, "src/sidepanel/sidepanel.css"), ...[...skinAssets.resour
 const visualTest = readFileSync(join(root, "tests/tool-timeline/visual-test.js"), "utf8");
 
 testRunScriptRendererStaysQuiet();
+testSkillBusinessMetadataBoundary();
 testReadImagePreviewKeepsTransparentImagesReadable();
 testStreamingDiffBlocksDoNotStretchSparseRows();
 testToolDetailsStayLazyWhenCollapsed();
@@ -111,11 +113,48 @@ console.log("tool renderer contract tests passed");
 function testRunScriptRendererStaysQuiet() {
   const body = extractFunctionFromSource(scriptProfile, "render");
 
-  assert.match(body, /presentation\.appendScriptTrace\(parent,\s*envelope\.trace\)/, "run_script should keep trace rendering");
+  assert.match(body, /appendScriptFeedback\(parent,\s*valueOnly \? source : envelope\)/, "run_script should read trace from its trusted host envelope");
+  const feedback = [];
+  const appendFeedback = vm.runInNewContext(`(${extractFunctionFromSource(scriptProfile, "appendScriptFeedback")})`, {
+    presentation: {
+      getResultEnvelope: value => value,
+      record,
+      appendScriptTrace: (_parent, trace) => feedback.push(["trace", trace]),
+      appendCompactLine: (_parent, { title }) => feedback.push(["hint", title]),
+    },
+  });
+  appendFeedback({}, { ok: true, result: 7, trace: ["complete"] });
+  appendFeedback({}, { code: "SCRIPT_EVALUATION_FAILED", message: "Failed", details: { trace: ["failed"] }, hint: "Inspect the page." });
+  appendFeedback({}, { error: "Historical error", trace: ["historical"] });
+  appendFeedback({}, { result: { hint: "Business hint", trace: ["business"] }, _display: { script: { valueOnly: true, trace: ["host"] } } });
+  assert.deepEqual(feedback, [["trace", ["complete"]], ["trace", ["failed"]], ["hint", "Inspect the page."], ["trace", ["historical"]], ["trace", ["host"]]]);
   assert.match(body, /genericRenderer\.appendJsonCodeBlock\(parent,\s*"result",\s*value\)/, "run_script should keep result rendering");
   assert.doesNotMatch(body, /appendScriptMeta|buildScriptResultMeta|tool-script-meta/, "run_script should not render low-value meta pills");
   assert.doesNotMatch(toolSources, /function appendScriptMeta|function buildScriptResultMeta/, "obsolete script meta helpers should be removed");
   assert.doesNotMatch(css, /\.tool-script-meta\b/, "obsolete script meta pill styles should be removed");
+}
+
+function testSkillBusinessMetadataBoundary() {
+  const data = { _plugin: { title: "Business title" }, nested: { _plugin: "nested data" }, rows: [{ _plugin: 7 }] };
+  const host = { ok: true, result: data, trace: [{ message: "Finished" }], _plugin: { title: "Host title", runtime: "inner" } };
+  const before = structuredClone(host);
+  for (const original of [host, { result: host }]) {
+    assert.equal(skillResultData(data, original), data, "business data is not traversed or copied");
+    assert.deepEqual(skillResultEnvelope(data, original), { ok: true, result: data, trace: host.trace });
+  }
+  assert.deepEqual(host, before, "presentation reads never mutate the stored transcript");
+  for (const noEnvelope of [{ result: { _plugin: { value: "ordinary business data" } } }, { code: "business", result: 42 },
+    { _plugin: { value: "raw business metadata" }, rows: data.rows }, { engine: "diesel", result: 7 }]) {
+    assert.deepEqual(skillResultData(noEnvelope, noEnvelope), noEnvelope, "ordinary result/code fields do not create a host envelope");
+    assert.deepEqual(skillResultEnvelope(noEnvelope, noEnvelope), noEnvelope);
+  }
+  assert.equal(skillResultData(0, { ok: true, result: 0, _plugin: host._plugin }), 0);
+  const jsonText = '{"_plugin":"business","count":1}';
+  assert.equal(skillResultData(JSON.parse(jsonText), { ok: true, result: jsonText, _plugin: host._plugin }), jsonText,
+    "declarative data preserves the type of the script's returned string");
+  const failure = { code: "SKILL_FAILED", message: "Could not read data", hint: "Try again", details: { line: 2 } };
+  assert.equal(skillResultData(failure, failure), failure, "canonical failures remain failures");
+  assert.equal(skillResultEnvelope(failure, failure), failure);
 }
 
 function testReadImagePreviewKeepsTransparentImagesReadable() {
@@ -337,6 +376,7 @@ function testToolStatusUsesSharedSemanticState() {
   assert.equal(resolveToolState({ result: { ok: true, code: "OK" } }), "success");
   assert.equal(isToolResultErrorLike({ code: "SUCCESS", message: "done" }), false);
   assert.equal(isToolResultErrorLike({ code: "INVALID_ARGUMENTS", message: "bad input" }), true);
+  assert.equal(resolveToolState({ result: { code: "BUSINESS_CONFLICT", message: "Retry with fresh data" } }), "error");
 
   assert.match(
     renderer,
@@ -782,8 +822,8 @@ function testChatOpeningAvoidsIntermediateLayoutJumps() {
   const transitionBody = extractFunctionFromSource(sessionNavigationFeature, "transitionToSession");
   assert.match(
     transitionBody,
-    /await\s+options\.composer\?\.prepareSession\(next\)[\s\S]*setCurrentSessionId\(next,\s*\{\s*composerDraft\s*\}\)/,
-    "a Session transition should hydrate its Composer before committing the visible identity",
+    /await\s+Promise\.all\([\s\S]*options\.composer\?\.prepareSession\(next\)[\s\S]*mergeSessionRecord\?\.\(session\)[\s\S]*setCurrentSessionId\(next,\s*\{\s*composerDraft\s*\}\)/,
+    "a Session transition should hydrate its Composer and source metadata before committing the visible identity",
   );
   const switchSessionBody = extractFunctionFromSource(sessionNavigationFeature, "switchToSession");
   assert.match(

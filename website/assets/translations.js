@@ -63,27 +63,35 @@ export const translations = {
       "imageOpen": "Open original",
       "navAgents": "For agents",
       "agentsTitle": "Agent-friendly.",
-      "agentsDescription": "Let your agent delegate browser tasks to qz.",
+      "agentsDescription": "Let your agent drive your browser, or hand qz the whole task.",
       "cliTitle": "Install the CLI",
-      "cliDescription": "Connect once. Start tasks from your terminal.",
+      "cliDescription": "Drive your browser from the terminal, or hand qz a whole task.",
       "commandCopy": "Copy commands",
-      "cliCommands": "npm install --global qz-browser-agent\nqz connect",
-      "cliMcp": "Also available via <code>npx --yes qz-browser-agent@latest</code>. For MCP, run <code>qz mcp</code> after connecting to get the connection URL.",
+      "cliCommands": "npm install --global qz-browser-agent\nqz session create --title \"Try qz\"",
+      "cliMcp": "The first browser command opens a connection page and connects automatically. Also available via <code>npx --yes qz-browser-agent@latest</code>. For MCP, run <code>qz mcp</code> to get the server URL.",
       "cliGuide": "CLI &amp; MCP guide",
       "agentTitle": "Install the Skill",
-      "agentDescription": "Let your coding agent delegate browser tasks to qz.",
+      "agentDescription": "Teach your coding agent to drive the browser with qz.",
       "agentTargets": "Then ask your agent: “Use qz to compare these three product pages and save a sourced table.”",
       "agentGuide": "Read the Skill",
       "agentTerminalLabel": "YOUR TERMINAL / CODING AGENT",
       "agentPanelLabel": "qz / CHROME SIDE PANEL",
       "agentExampleLabel": "Example session",
+      "agentDriveTab": "Drive the browser",
+      "agentTaskTab": "Hand qz a task",
+      "agentDriveSummary": "No model to configure in qz: the agent you already use gets the same browser abilities as qz. One script runs every step in your browser and returns only the result, so it stays token-efficient.",
+      "agentDriveCreate": "qz session create --title \"Compare browser automation docs\"",
+      "agentDriveSession": "sessionId 53d24037c61a42ed812910577cc7578c",
+      "agentDriveScript": "qz script --session 53d24037c61a42ed812910577cc7578c - <span class=\"tok-heredoc\">&lt;&lt;'JS'</span>",
+      "agentDriveCode": "<span class=\"tok-comment\">// Read three docs in parallel; save a sourced table in qz.</span>\n<span class=\"tok-keyword\">const</span> docs = {\n  <span class=\"tok-property\">Playwright</span>: <span class=\"tok-string\">\"https://playwright.dev/docs/intro\"</span>,\n  <span class=\"tok-property\">Puppeteer</span>: <span class=\"tok-string\">\"https://pptr.dev/guides/what-is-puppeteer\"</span>,\n  <span class=\"tok-property\">Selenium</span>: <span class=\"tok-string\">\"https://www.selenium.dev/documentation/webdriver/\"</span>,\n};\n<span class=\"tok-keyword\">const</span> rows = <span class=\"tok-keyword\">await</span> <span class=\"tok-builtin\">Promise</span>.<span class=\"tok-function\">all</span>(\n  <span class=\"tok-builtin\">Object</span>.<span class=\"tok-function\">entries</span>(docs).<span class=\"tok-function\">map</span>(<span class=\"tok-keyword\">async</span> ([Tool, Source]) <span class=\"tok-keyword\">=&gt;</span> {\n    <span class=\"tok-keyword\">const</span> page = <span class=\"tok-builtin\">qz</span>.<span class=\"tok-function\">tab</span>(<span class=\"tok-keyword\">await</span> <span class=\"tok-builtin\">qz</span>.<span class=\"tok-function\">openTab</span>({ <span class=\"tok-property\">url</span>: Source }));\n    <span class=\"tok-keyword\">const</span> { text } = <span class=\"tok-keyword\">await</span> page.<span class=\"tok-function\">read</span>();\n    <span class=\"tok-keyword\">const</span> Summary = text.<span class=\"tok-function\">split</span>(<span class=\"tok-string\">\"\\n\\n\"</span>).<span class=\"tok-function\">find</span>(p <span class=\"tok-keyword\">=&gt;</span> !p.<span class=\"tok-function\">startsWith</span>(<span class=\"tok-string\">\"#\"</span>));\n    <span class=\"tok-keyword\">return</span> { Tool, Summary, Source };\n  }),\n);\n<span class=\"tok-keyword\">const</span> table = <span class=\"tok-string\">\"browser_automation_docs\"</span>;\n<span class=\"tok-keyword\">await</span> <span class=\"tok-builtin\">qz</span>.<span class=\"tok-function\">call</span>(<span class=\"tok-string\">\"data_store\"</span>, { <span class=\"tok-property\">action</span>: <span class=\"tok-string\">\"insert\"</span>, table, rows });\n<span class=\"tok-keyword\">return</span> { table, <span class=\"tok-property\">rows</span>: rows.length };\n<span class=\"tok-heredoc\">JS</span>",
+      "agentTaskSummary": "qz plans and runs the whole task with the model configured in qz. Your terminal or agent follows the progress and collects the saved data.",
       "agentTerminalPrompt": "qz create \"Compare Playwright, Puppeteer and Selenium. Save a sourced table.\" --stream",
       "agentTerminalQueued": "Task queued",
       "agentTerminalReading": "I’ll read their official documentation and compare the tools.",
       "agentTerminalResult": "Saved 6 comparison rows with source links.",
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
-      "agentRequirements": "Requires Node.js 22+ and Chrome on the same machine, with the qz extension and a model configured.",
+      "agentRequirements": "Requires Node.js 22+ and Chrome with the qz extension on the same machine.",
       /* example-html:en:start */
       "examplesTitle": "Real tasks, start to finish.",
       "examplesLede": "Each example is a real qz session. The frame on the left is from that session. Follow every step on the right, then import it into qz and pick up the conversation.",
@@ -205,6 +213,17 @@ export const translations = {
       "copyCommand": {
         "data-copied": "Copied",
         "data-failed": "Select and copy the commands below."
+      },
+      "agentModeTabs": {
+        "aria-label": "How your agent uses qz"
+      },
+      "agentDriveImage": {
+        "src": "./assets/screens/drive-en.png",
+        "alt": "qz side panel listing each browser call from an external agent's script and the saved table"
+      },
+      "agentDriveLink": {
+        "href": "./assets/screens/drive-en.png",
+        "aria-label": "Enlarge the qz side panel"
       },
       "agentPanelImage": {
         "src": "./assets/screens/agent-en.png",
@@ -347,27 +366,35 @@ export const translations = {
       "imageOpen": "查看原图",
       "navAgents": "Agent 接入",
       "agentsTitle": "Agent 友好性。",
-      "agentsDescription": "让你的 Agent 把浏览器任务交给轻舟。",
+      "agentsDescription": "让你的 Agent 直接操作浏览器，或把整个任务交给轻舟。",
       "cliTitle": "安装 CLI",
-      "cliDescription": "连接轻舟，在终端下达任务。",
+      "cliDescription": "在终端直接操作浏览器，或把整个任务交给轻舟。",
       "commandCopy": "复制命令",
-      "cliCommands": "npm install --global qz-browser-agent\nqz connect",
-      "cliMcp": "也可直接使用 <code>npx --yes qz-browser-agent@latest</code>。MCP 客户端可在连接后运行 <code>qz mcp</code> 获取连接地址。",
+      "cliCommands": "npm install --global qz-browser-agent\nqz session create --title \"试用轻舟\"",
+      "cliMcp": "首个浏览器命令会打开连接页并自动连接。也可直接使用 <code>npx --yes qz-browser-agent@latest</code>。MCP 客户端运行 <code>qz mcp</code> 获取服务地址。",
       "cliGuide": "CLI 与 MCP 指南",
       "agentTitle": "安装 Skill",
-      "agentDescription": "让编程 Agent 学会把浏览器任务交给轻舟。",
+      "agentDescription": "让编程 Agent 学会用轻舟操作浏览器。",
       "agentTargets": "然后告诉你的 Agent：“用 qz 对比这三个商品页面，保存带来源链接的表格。”",
       "agentGuide": "查看 Skill",
       "agentTerminalLabel": "你的终端 / 编程 AGENT",
       "agentPanelLabel": "轻舟 / CHROME 侧边栏",
       "agentExampleLabel": "命令示例",
+      "agentDriveTab": "直接操作浏览器",
+      "agentTaskTab": "把任务交给轻舟",
+      "agentDriveSummary": "无需在轻舟配置模型接口，你熟悉的 Agent 就能拥有和轻舟一样的浏览器操作能力。一段脚本在浏览器里跑完所有步骤，只把结果交回 Agent，省 token。",
+      "agentDriveCreate": "qz session create --title \"对比浏览器自动化文档\"",
+      "agentDriveSession": "sessionId e86f426dccdd476c9ffaebd8dbad4438",
+      "agentDriveScript": "qz script --session e86f426dccdd476c9ffaebd8dbad4438 - <span class=\"tok-heredoc\">&lt;&lt;'JS'</span>",
+      "agentDriveCode": "<span class=\"tok-comment\">// 并行读取三个官方文档，在轻舟中保存带来源的表格。</span>\n<span class=\"tok-keyword\">const</span> docs = {\n  <span class=\"tok-property\">Playwright</span>: <span class=\"tok-string\">\"https://playwright.dev/docs/intro\"</span>,\n  <span class=\"tok-property\">Puppeteer</span>: <span class=\"tok-string\">\"https://pptr.dev/guides/what-is-puppeteer\"</span>,\n  <span class=\"tok-property\">Selenium</span>: <span class=\"tok-string\">\"https://www.selenium.dev/documentation/webdriver/\"</span>,\n};\n<span class=\"tok-keyword\">const</span> rows = <span class=\"tok-keyword\">await</span> <span class=\"tok-builtin\">Promise</span>.<span class=\"tok-function\">all</span>(\n  <span class=\"tok-builtin\">Object</span>.<span class=\"tok-function\">entries</span>(docs).<span class=\"tok-function\">map</span>(<span class=\"tok-keyword\">async</span> ([Tool, Source]) <span class=\"tok-keyword\">=&gt;</span> {\n    <span class=\"tok-keyword\">const</span> page = <span class=\"tok-builtin\">qz</span>.<span class=\"tok-function\">tab</span>(<span class=\"tok-keyword\">await</span> <span class=\"tok-builtin\">qz</span>.<span class=\"tok-function\">openTab</span>({ <span class=\"tok-property\">url</span>: Source }));\n    <span class=\"tok-keyword\">const</span> { text } = <span class=\"tok-keyword\">await</span> page.<span class=\"tok-function\">read</span>();\n    <span class=\"tok-keyword\">const</span> Summary = text.<span class=\"tok-function\">split</span>(<span class=\"tok-string\">\"\\n\\n\"</span>).<span class=\"tok-function\">find</span>(p <span class=\"tok-keyword\">=&gt;</span> !p.<span class=\"tok-function\">startsWith</span>(<span class=\"tok-string\">\"#\"</span>));\n    <span class=\"tok-keyword\">return</span> { Tool, Summary, Source };\n  }),\n);\n<span class=\"tok-keyword\">const</span> table = <span class=\"tok-string\">\"browser_automation_docs\"</span>;\n<span class=\"tok-keyword\">await</span> <span class=\"tok-builtin\">qz</span>.<span class=\"tok-function\">call</span>(<span class=\"tok-string\">\"data_store\"</span>, { <span class=\"tok-property\">action</span>: <span class=\"tok-string\">\"insert\"</span>, table, rows });\n<span class=\"tok-keyword\">return</span> { table, <span class=\"tok-property\">rows</span>: rows.length };\n<span class=\"tok-heredoc\">JS</span>",
+      "agentTaskSummary": "由轻舟用已配置的模型规划并完成整个任务，终端或 Agent 只需跟进进度、取回保存的数据。",
       "agentTerminalPrompt": "qz create \"对比 Playwright、Puppeteer 和 Selenium，保存带来源的表格。\" --stream",
       "agentTerminalQueued": "Task queued",
       "agentTerminalReading": "我会查阅官方文档，整理三个工具的差异。",
       "agentTerminalResult": "已保存 6 行对比数据，附有来源链接。",
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
-      "agentRequirements": "需要 Node.js 22+，以及同一台电脑上的 Chrome、轻舟扩展和已配置的模型。",
+      "agentRequirements": "需要 Node.js 22+，以及同一台电脑上装有轻舟扩展的 Chrome。",
       /* example-html:zh:start */
       "examplesTitle": "真实任务，完整过程。",
       "examplesLede": "每个例子都是轻舟的一次真实会话。左边是这次会话自己的画面，右边是它每一步怎么想、怎么做；导入轻舟，就能接着这段对话继续问。",
@@ -489,6 +516,17 @@ export const translations = {
       "copyCommand": {
         "data-copied": "已复制",
         "data-failed": "请选中下方命令并复制。"
+      },
+      "agentModeTabs": {
+        "aria-label": "Agent 使用轻舟的方式"
+      },
+      "agentDriveImage": {
+        "src": "./assets/screens/drive-zh.png",
+        "alt": "轻舟侧边栏逐条列出外部 Agent 脚本的浏览器调用和保存的数据表"
+      },
+      "agentDriveLink": {
+        "href": "./assets/screens/drive-zh.png",
+        "aria-label": "放大查看轻舟侧边栏"
       },
       "agentPanelImage": {
         "src": "./assets/screens/agent-zh.png",

@@ -1,3 +1,4 @@
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import assert from "node:assert/strict";
 import { SKILL_MANIFEST_FORMAT, SKILL_MANIFEST_SCHEMA_VERSION } from "../../src/shared/skills/skill-manifest.js";
 import { QINGZHOU_SKILL_FORMAT, QINGZHOU_SKILL_SCHEMA_VERSION } from "../../src/shared/skills/skill-utils.js";
@@ -39,12 +40,12 @@ for (const declaration of declarations) {
     assert.equal(context.skillToolName, tool.name);
     return { result: { rows: [] } };
   });
-  assert.equal(result._plugin.rendererId, expected);
-  assert.equal(result.result._plugin.rendererId, expected, "nested inner-script results keep the same identity");
-  assert.equal(enrichSkillToolIdentity({ name: tool.name, result }).rendererId, expected || "");
+  assert.equal(getToolResultPresentation(result)._plugin.rendererId, expected);
+  assert.deepEqual(result, { result: { rows: [] } }, "renderer identity stays outside script data");
+  assert.equal(enrichSkillToolIdentity({ name: tool.name, result: { ...result, ...getToolResultPresentation(result) } }).rendererId, expected || "");
   const fields = toolIdentityEventFields(tool);
   assert.equal(normalizeToolIdentitySnapshot({}, fields).rendererId, expected, "event persistence keeps the same trusted registry reference");
-  if (!expected) assert.equal(Object.hasOwn(result._plugin, "rendererId"), false, "old or malformed declarations do not gain an empty field");
+  if (!expected) assert.equal(Object.hasOwn(getToolResultPresentation(result)._plugin, "rendererId"), false, "old or malformed declarations do not gain an empty field");
 }
 assert.equal(candidate.plugins[0].tools.find(tool => tool.localName === "legacy").renderer.type, "table");
 assert.equal(candidate.plugins[0].tools.find(tool => tool.localName === "legacy").renderer.sourcePath, "rows");

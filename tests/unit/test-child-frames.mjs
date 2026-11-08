@@ -4,6 +4,7 @@ const debuggerListeners = { event: [], detach: [] };
 globalThis.chrome = {
   runtime: { id: "extension-id" },
   tabs: { async get(tabId) { return { id: tabId, url: "https://example.com/forms/post" }; } },
+  scripting: { executeScript: async () => [{ result: true }] },
   debugger: {
     onEvent: { addListener(listener) { debuggerListeners.event.push(listener); } },
     onDetach: { addListener(listener) { debuggerListeners.detach.push(listener); } },
@@ -127,14 +128,13 @@ registerAccessibilityTools({
   ToolExecutionError,
   clampLimit: (value, min, max) => Math.max(min, Math.min(max, Math.floor(Number(value)))),
   makeSnapshotId: element.makeSnapshotId,
-  makeElementUid: element.makeElementUid,
   elementTargetForUid: element.elementTargetForUid,
-  registerElementRef: element.registerElementRef,
+  registerElementBinding: element.registerElementBinding,
   resolveElementReference: element.resolveElementReference,
   backendNodeIdForSelector: async () => 0,
-  bindBackendNodes: async (_tabId, selectors, _context, scope) => {
-    bindings.push({ selectors, scope });
-    return { loaderId: scope?.loaderId || "main-loader", ids: boundIds };
+  bindElementReferences: async (_tabId, refs, _context, scope) => {
+    bindings.push({ selectors: refs.map(ref => ref.selector), scope });
+    return refs.map((ref, index) => ({ ...ref, backendNodeId: boundIds[index], target: ref.selector ? `css:${ref.selector}` : '' }));
   },
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),
   sendToContent: async () => ({ title: "Page", url: "https://example.com/forms/post", viewport: { height: 600 }, actions: overviewActions }),
@@ -224,7 +224,7 @@ overviewActions = [{ selector: "#parent", role: "button", text: "Parent", rect: 
 scopedActions = [{ selector: "#parent", role: "button", text: "Child-only" }];
 boundIds = [77];
 ancestorNodes = {};
-const scoped = await definition.execute({ tabId: 8, root: crossTarget, limit: 80 }, null, context);
+const scoped = await definition.execute({ tabId: 8, target: crossTarget, limit: 80 }, null, context);
 assert.equal(bindings.at(-1).scope?.frameId, "oopif");
 assert.equal(bindings.at(-1).scope?.loaderId, "oopif-loader");
 synthetic = await element.resolveElementReference(8, { target: targetFor(scoped.snapshot, 'button "Child-only"') }, context);
@@ -235,10 +235,10 @@ assert.equal(synthetic.ref.pageUrl, "https://example.com/forms/post", "child ref
 assert.doesNotMatch(scoped.snapshot, /Parent|Inside|Child frame|Cross frame/);
 
 boundIds = [0];
-const unbound = await definition.execute({ tabId: 8, root: crossTarget, limit: 80 }, null, context);
+const unbound = await definition.execute({ tabId: 8, target: crossTarget, limit: 80 }, null, context);
 assert.equal(targetFor(unbound.snapshot, 'button "Child-only"'), "", "an unresolved child selector cannot fall back to the parent document");
 const removedRoot = oopifNodes.pop();
-const missing = await definition.execute({ tabId: 8, root: crossTarget, limit: 80 }, null, context);
+const missing = await definition.execute({ tabId: 8, target: crossTarget, limit: 80 }, null, context);
 assert.equal(missing.rootFound, false);
 assert.equal(missing.snapshot, "", "a removed root cannot publish synthetic controls from an earlier overview");
 oopifNodes.push(removedRoot);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Agent } from '../../src/background/agent/agent.js';
-import { collectDynamicContext, collectSiteSkillPreviewContext, collectToolRuntimeContext,
+import { collectDynamicContext, collectSiteSkillPreviewContext,
   normalizeDynamicContext, formatDynamicContext, buildContextCapsuleMessage } from '../../src/background/agent/context.js';
 import { createTestAgentOptions } from '../support/agent-services.mjs';
 import { withLanguage } from '../../src/shared/i18n/index.js';
@@ -40,14 +40,27 @@ test('disabled file access avoids selection reads and page access suggestions', 
   assert.doesNotMatch(withLanguage('en', () => formatDynamicContext(context)), /Read with read_article|Use use_tab/);
 });
 
-test('local and missing target tabs never inherit another page URL', async () => {
+test('tool arguments never inherit a target or page metadata from visible or previous pages', async () => {
+  const executed = [], events = [];
   const agent = new Agent('session', createTestAgentOptions({
-    tools: { getModelPolicy: () => ({ pageContext: 'working' }) },
-    browserContext: { getTab: async id => id === 7 ? { id, url: 'file:///tmp/report.html' } : null },
+    tools: { getSchemas: () => [], getIdentity: () => ({}), async execute(name, args, _signal, context) {
+      executed.push({ name, args, context });
+      return { text: 'page data' };
+    } },
+    browserContext: { getTab: async () => assert.fail('tool arguments must not probe an implicit page') },
   }));
-  const context = { workingTab: { id: 1, url: 'https://old.test/' } };
-  assert.equal((await agent._enrichToolCallArgsWithPageContext('read_article', { tabId: 7 }, context))._pageUrl, 'file:///tmp/report.html');
-  assert.equal((await agent._enrichToolCallArgsWithPageContext('read_article', { tabId: 8 }, context))._pageUrl, '');
+  agent._dynamicContextSnapshot = { workingTab: { id: 1, url: 'https://previous.test/' },
+    userVisibleTab: { id: 2, active: true, url: 'https://visible.test/' }, sourceWindowId: 4 };
+  agent._emit = event => events.push(event);
+  const inputs = [{ tabRef: 7 }, {}, { target: 'uid:t7.000001.1' }];
+  for (let i = 0; i < inputs.length; i++) {
+    await agent._executeToolCalls([{ id: String(i), function: {
+      name: 'read_article', arguments: JSON.stringify(inputs[i]),
+    } }], new AbortController().signal);
+  }
+  assert.deepEqual(executed.map(call => call.args), inputs);
+  assert.ok(executed.every(call => !Object.hasOwn(call.context, 'workingTabId') && !Object.hasOwn(call.context, 'workingTab')));
+  assert.deepEqual(events.filter(event => event.type === 'tool_execution_start').map(event => event.args), inputs);
 });
 
 test('unknown context fields stay opaque while malformed known structures are excluded', () => {
@@ -78,33 +91,30 @@ test('collection uses only task sites and the owned working page, preserving sou
     matchSiteSkillsForUrls: async value => { urls = value; return [{ name: 'reading', metadata: { displayName: '阅读' }, description: 'Read' }]; },
   }));
   assert.deepEqual(urls, ['https://owned.test/page']);
-  assert.equal(context.selectionText, 'selection-7');
+  assert.equal(context.selectionText, 'selection-9', 'selection belongs to the page the user is viewing');
   assert.match(formatDynamicContext(context), /reading（阅读）/);
   assert.deepEqual(input, before);
   assert.equal(buildContextCapsuleMessage(context)._origin, 'context_capsule');
 });
 
-test('blocked working pages never read a selection or activate a site skill', async () => {
+test('blocked visible pages never read a selection or activate a site skill', async () => {
   let selections = 0;
   let matches = 0;
-  const context = await collectDynamicContext(async () => ({ workingTab: { id: 7, url: 'https://blocked.test/' }, selectionText: 'old' }), request(), services({
+  const context = await collectDynamicContext(async () => ({ userVisibleTab: { id: 7, url: 'https://blocked.test/' }, selectionText: 'old' }), request(), services({
     getSecurityGuardrails: async () => ({ blockedDomains: ['blocked.test'], blockedPatterns: [] }),
     readSelectedText: async () => { selections++; return 'secret'; },
     matchSiteSkillsForUrls: async () => { matches++; return []; },
   }));
-  assert.equal(context.workingTab.securityGuardrailBlocked, true);
+  assert.equal(context.userVisibleTab.securityGuardrailBlocked, true);
   assert.equal(context.selectionText, undefined);
   assert.equal(selections, 0);
   assert.equal(matches, 0);
 });
 
-test('optional source failure falls back only to this run’s working tab; required sources fail', async () => {
+test('optional context failures remain optional and required sources fail', async () => {
   const failure = async () => { throw new Error('optional offline'); };
-  const fallback = { id: 6, url: 'https://owned.test/' };
   assert.equal((await collectDynamicContext(failure, request(), services())).workingTab, undefined);
   assert.equal(await collectSiteSkillPreviewContext(failure, request(undefined, 'run', 'site-skills')), null);
-  assert.deepEqual(await collectToolRuntimeContext(failure, request(undefined, 'run', 'tool'), fallback), { workingTab: fallback, workingTabId: 6 });
-  assert.equal((await collectToolRuntimeContext(async () => ({ userVisibleTab: { id: 99 } }), request(), null)).workingTabId, null);
   const required = Object.assign(new Error('required offline'), { code: 'CONTEXT_SOURCE_REQUIRED' });
   await assert.rejects(collectDynamicContext(async () => { throw required; }, request(), services()), error => error === required);
   assert.equal((await collectDynamicContext(async () => ({ workingTab: { id: 8 } }), request(), services())).workingTab.id, 8);
@@ -117,7 +127,7 @@ for (const stage of ['provider', 'guardrails', 'selection', 'skills']) test(`can
   await assert.rejects(collectDynamicContext(async received => {
     assert.equal(received.signal, controller.signal);
     assert.equal(received.runId, 'run-1');
-    return at('provider', { workingTab: { id: 7, url: 'https://owned.test/' } });
+    return at('provider', { workingTab: { id: 7, url: 'https://owned.test/' }, userVisibleTab: { id: 7, url: 'https://owned.test/' } });
   }, request(controller.signal), services({
     getSecurityGuardrails: async () => at('guardrails', { blockedDomains: [], blockedPatterns: [] }),
     readSelectedText: async () => at('selection', 'selected'),
@@ -128,8 +138,8 @@ for (const stage of ['provider', 'guardrails', 'selection', 'skills']) test(`can
 
 test('independent collectors do not share working pages or partially completed requests', async () => {
   const gate = deferred();
-  const left = collectDynamicContext(async () => { await gate.promise; return { workingTab: { id: 1 } }; }, request(undefined, 'left'), services());
-  const right = await collectDynamicContext(async () => ({ workingTab: { id: 2 } }), request(undefined, 'right'), services());
+  const left = collectDynamicContext(async () => { await gate.promise; return { userVisibleTab: { id: 1 } }; }, request(undefined, 'left'), services());
+  const right = await collectDynamicContext(async () => ({ userVisibleTab: { id: 2 } }), request(undefined, 'right'), services());
   gate.resolve();
   assert.equal((await left).selectionText, 'selection-1');
   assert.equal(right.selectionText, 'selection-2');

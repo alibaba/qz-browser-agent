@@ -1,3 +1,4 @@
+import { isToolFailure } from "../contracts/tool-error.js";
 import contributions from "#capabilities/artifacts";
 import { mergeCapabilityRecords } from "../capabilities.js";
 import { explicitArtifactCandidates, type ToolArtifactAdapter } from "./artifact-projection.js";
@@ -21,7 +22,7 @@ export function createToolArtifactProjector(entries: Readonly<Record<string, Too
     isIntermediate,
     project(name: string, args: unknown, result: unknown, consumer: "resource" | "context" | "display" = "context"): Fields[] {
       const output = record(result);
-      if (output.error || output.ok === false || output.isError === true) return [];
+      if (isToolFailure(output)) return [];
       const explicit = explicitArtifactCandidates(output, { includeSingle: consumer === "context" })
         .map(item => {
           try { return { ...item, ...registry[name]?.normalize?.({ ...item }) }; }

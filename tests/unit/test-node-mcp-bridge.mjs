@@ -1,15 +1,17 @@
 import { pairBrowser, browserId, pollBrowser, completeBrowser, resultPayload } from "../support/paired-bridge.mjs";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { request as httpRequest } from "node:http";
 import { readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
+import { runInNewContext } from "node:vm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { isExtensionBridgeOrigin, startBridge } from "../../services/mcp-bridge/src/server.mjs";
 import { BridgeState } from "../../services/mcp-bridge/src/state.mjs";
-import { TOOL_CATALOG, executeMcpTool, resultToContent } from "../../services/mcp-bridge/src/tools.mjs";
+import { TOOL_CATALOG, driveToolCatalog, executeMcpTool, mcpCatalogProfile, resultToContent } from "../../services/mcp-bridge/src/tools.mjs";
+import { resultValue } from "../../services/mcp-bridge/src/client.mjs";
 
 const extensionOrigin = `chrome-extension://${"a".repeat(32)}`;
 const routingStub = { resolveClient: async id => ({ id, controller: new AbortController() }), signal: signal => signal || new AbortController().signal };
@@ -33,9 +35,9 @@ async function withBridge(t, options = {}) {
   t.after(() => bridge.close());
   return bridge;
 }
-async function withClient(t, bridge) {
+async function withClient(t, bridge, path = "/mcp?profile=full") {
   const client = new Client({ name: "bridge-test", version: "1" });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`)));
+  await client.connect(new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}${path}`)));
   t.after(() => client.close());
   return client;
 }
@@ -46,6 +48,23 @@ async function waitUntil(predicate) {
   }
   assert.fail("condition timed out");
 }
+
+test("drive MCP lists the guide and the drive tools; qz-cli keeps the full catalog", () => {
+  assert.equal(mcpCatalogProfile({ clientName: "qz-cli" }), "full");
+  assert.equal(mcpCatalogProfile({ clientName: "bridge-test" }), "drive");
+  assert.equal(mcpCatalogProfile({ profile: "full", clientName: "bridge-test" }), "full");
+  const names = driveToolCatalog().map(tool => tool.name);
+  assert.deepEqual(names, ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_list_drive_sessions", "qingzhou_get_drive_session", "qingzhou_stop_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"]);
+  assert.match(driveToolCatalog()[0].description, /qz CLI.*optional reference/);
+  const execute = driveToolCatalog().find(tool => tool.name === "qingzhou_execute_tool");
+  assert.doesNotMatch(execute.description, /先读说明书/);
+  assert.match(execute.description, /在已连接的浏览器里执行现有工具/);
+  assert.match(driveToolCatalog()[1].description, /sessionId/);
+  for (const name of ["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]) {
+    assert.equal(TOOL_CATALOG.find(tool => tool.name === name).inputSchema.required?.includes("sessionId") || false,
+      name === "qingzhou_execute_tool", name);
+  }
+});
 
 test("Node bridge exposes the existing catalog through a real MCP SDK client", async t => {
   const bridge = await withBridge(t, { instanceId: "instance-test", scopeId: "checkout-test", buildId: "build-test" });
@@ -76,6 +95,43 @@ test("Node bridge exposes the existing catalog through a real MCP SDK client", a
   const page = await (await fetch(`${bridge.endpoint}/qz-connect`)).text();
   assert.match(page, /data-qz-connection-status/);
   assert.match(page, /https:\/\/chromewebstore\.google\.com\/detail\/dknbdgkgoinlgjpfebapkklbmjjgdblm/);
+});
+
+test("the connection page offers the store and a copyable link when no extension claims it", async t => {
+  const bridge = await withBridge(t), href = `${bridge.endpoint}/qz-connect?name=work`;
+  const response = await fetch(href), page = await response.text();
+  const script = page.match(/<script>([\s\S]*?)<\/script>/)[1];
+  assert.equal(response.headers.get("content-security-policy").match(/script-src '([^']+)'/)[1],
+    `sha256-${createHash("sha256").update(script).digest("base64")}`, "only the page's own script may run");
+  assert.match(page, /<footer data-qz-connection-help hidden>/);
+  assert.match(page, /\[data-qz-connection-status\]:is\(\[data-qz-extension\], :not\(\[data-qz-connection-state="connecting"\]\)\) ~ footer \{ display: none; \}/);
+  const node = () => ({ dataset: {}, attributes: {}, listeners: {}, textContent: "",
+    setAttribute(name, value) { this.attributes[name] = value; }, addEventListener(type, listener) { this.listeners[type] = listener; } });
+  const help = Object.assign(node(), { hidden: true }), link = node(), copy = node();
+  help.querySelector = selector => ({ "[data-qz-connection-link]": link, "[data-qz-copy-link]": copy })[selector];
+  const timers = [], copied = [], selected = [];
+  let writeText = async text => { copied.push(text); };
+  runInNewContext(script, {
+    document: { querySelector: selector => selector === "[data-qz-connection-help]" ? help : null },
+    location: { href }, navigator: { clipboard: { writeText: text => writeText(text) } },
+    getSelection: () => ({ selectAllChildren: target => selected.push(target) }),
+    setTimeout: (callback, ms) => timers.push({ callback, ms }),
+  });
+  assert.equal(link.textContent, href);
+  assert.equal(help.hidden, true, "a browser with qz claims the page before the help appears");
+  assert.deepEqual(timers.map(({ ms }) => ms), [3000]);
+  timers.shift().callback();
+  assert.equal(help.hidden, false);
+  await copy.listeners.click();
+  assert.deepEqual(copied, [href]);
+  assert.equal(copy.dataset.copied, "");
+  assert.equal(copy.attributes["aria-label"], "Copied");
+  timers.shift().callback();
+  assert.equal(copy.dataset.copied, undefined);
+  assert.equal(copy.attributes["aria-label"], "Copy link");
+  writeText = async () => { throw new Error("Clipboard access denied"); };
+  await copy.listeners.click();
+  assert.deepEqual(selected, [link], "a blocked clipboard leaves the link selected for manual copy");
 });
 
 test("token-free routes reject remote Host, browser Origin, and non-JSON requests", async t => {
@@ -183,13 +239,14 @@ test("MCP tools dispatch the original wire messages and preserve run/session ide
   const bridge = await withBridge(t);
   const client = await withClient(t, bridge);
   const running = client.callTool({ name: "qingzhou_execute_tool", arguments: {
-    name: "inspect_page", args: { tabId: 7 }, sessionId: "session-1", runId: "run-1", timeoutSeconds: 3,
+    name: "inspect_page", args: { tabId: 7 }, sessionId: "session-1", timeoutSeconds: 3,
   } });
   const poll = await post(bridge, "/v1/qingzhou/poll", { client: { id: "browser", pollTimeoutMs: 1000 } });
   const [request] = (await poll.json()).requests;
   assert.equal(request.method, "execute_tool");
   assert.deepEqual(request.params, {
-    name: "inspect_page", args: { tabId: 7 }, sessionId: "session-1", runId: "run-1", timeoutSeconds: 3,
+    name: "inspect_page", args: { tabId: 7 }, sessionId: "session-1", timeoutSeconds: 3,
+    clientName: "bridge-test",
   });
   assert.equal(request.timeoutMs, 3000);
   const wrongProfile = await post(bridge, "/v1/qingzhou/result", {
@@ -225,8 +282,8 @@ test("live-client leases include the advertised idle interval and require explic
   state.clients.get(browserId(state, "browser-a")).lastSeenAt -= 40;
   assert.equal(state.status().clientCount, 1);
   await pairBrowser(state, { id: "browser-b" });
-  await assert.rejects(state.callExtension("create_session"), /BRIDGE_CLIENT_REQUIRED/);
-  await assert.rejects(state.callExtension("create_session", {}, { clientId: "missing" }), /BRIDGE_CLIENT_NOT_FOUND/);
+  await assert.rejects(state.callExtension("create_session"), { code: "BRIDGE_CLIENT_REQUIRED" });
+  await assert.rejects(state.callExtension("create_session", {}, { clientId: "missing" }), { code: "BRIDGE_CLIENT_NOT_FOUND" });
   const result = state.callExtension("ping", {}, { clientId: "browser-b" });
   assert.deepEqual(await pollBrowser(state, { id: "browser-a" }, { timeoutMs: 1 }), []);
   const [request] = await pollBrowser(state, { id: "browser-b" }, { timeoutMs: 1 });
@@ -260,17 +317,69 @@ test("cancelled queued and in-flight requests cannot be replayed or completed la
   state.close();
 });
 
+test("synchronous tool cancellation targets only issued work and precedes the next request", async t => {
+  for (const phase of ["queued", "inflight"]) await t.test(phase, async () => {
+    const state = new BridgeState({ connectWaitMs: 0 });
+    try {
+      const browser = await pairBrowser(state, { id: "browser" });
+      const controller = new AbortController();
+      const args = { sessionId: "same-session", name: "run_script", args: { code: "return 1;" }, clientId: browser.id };
+      const running = executeMcpTool(state, "qingzhou_execute_tool", args, { signal: controller.signal });
+      const rejected = assert.rejects(running, /interrupt script/);
+      await waitUntil(() => state.pending.size === 1);
+      const [request] = phase === "inflight" ? await state.poll(browser, { timeoutMs: 1 }) : [...state.pending.values()];
+      controller.abort(new Error("interrupt script"));
+      await rejected;
+      controller.abort(new Error("duplicate interrupt"));
+      assert.equal(state.complete(request.id, { ...browser, ok: true, result: "late" }), false);
+      const other = await pairBrowser(state, { id: "other" });
+      assert.deepEqual(await state.poll(other, { timeoutMs: 1 }), [], "cancellation stays with the original browser");
+
+      const next = executeMcpTool(state, "qingzhou_execute_tool", args);
+      if (phase === "inflight") assert.deepEqual(await state.poll(browser, { timeoutMs: 1, maxBatch: 1 }), [
+        { id: request.id, method: "cancel_request" },
+      ]);
+      const [successor] = await state.poll(browser, { timeoutMs: 1 });
+      assert.equal(successor.method, "execute_tool");
+      assert.notEqual(successor.id, request.id);
+      assert.equal(state.complete(successor.id, { ...browser, ok: true, result: "continued" }), true);
+      assert.equal(await next, "continued");
+      assert.deepEqual(await state.poll(browser, { timeoutMs: 1 }), [], "no duplicate cancellation or replay");
+      assert.equal(state.inflight.size + state.pending.size, 0);
+    } finally { state.close(); }
+  });
+});
+
+test("a queued script cancellation cannot cross a browser reconnection", async () => {
+  const state = new BridgeState({ connectWaitMs: 0 });
+  try {
+    const browser = await pairBrowser(state, { id: "browser" });
+    const controller = new AbortController();
+    const running = executeMcpTool(state, "qingzhou_execute_tool", {
+      name: "run_script", sessionId: "same-session", args: {},
+    }, { signal: controller.signal });
+    const rejected = assert.rejects(running, /interrupt/);
+    const [request] = await state.poll(browser, { timeoutMs: 1 });
+    controller.abort(new Error("interrupt"));
+    await rejected;
+    await state.disconnect(browser);
+    const replacement = await state.pair({ ...browser, connectionId: randomUUID() });
+    assert.deepEqual(await state.poll({ ...replacement, pairingVersion: 1 }, { timeoutMs: 1 }), []);
+    assert.equal(state.complete(request.id, { ...replacement, ok: true, result: "late" }), false);
+  } finally { state.close(); }
+});
+
 test("async execute_tool jobs survive their initial MCP response and expose success/failure", async t => {
   const bridge = await withBridge(t);
   await pairBrowser(bridge.state, { id: "browser" });
   const client = await withClient(t, bridge);
   const job = unpack(await client.callTool({ name: "qingzhou_execute_tool", arguments: {
-    name: "ask_user", args: { message: "choose" }, sessionId: "session-job", runId: "run-job", wait: false,
+    name: "ask_user", args: { message: "choose" }, sessionId: "session-job", wait: false,
   } }));
   assert.equal(job.done, false);
   const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
   assert.equal(request.params.sessionId, "session-job");
-  assert.equal(request.params.runId, "run-job");
+  assert.equal(Object.hasOwn(request.params, "runId"), false);
   completeBrowser(bridge.state, request.id, { ok: true, result: { selectedIds: ["one"] } });
   await waitUntil(() => bridge.state.getJob(job.jobId).done);
   const done = unpack(await client.callTool({ name: "qingzhou_get_tool_job", arguments: { jobId: job.jobId } }));
@@ -281,7 +390,7 @@ test("async execute_tool jobs survive their initial MCP response and expose succ
   const [second] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
   completeBrowser(bridge.state, second.id, { ok: false, code: "TAB_MISSING", error: "The tab is gone" });
   await waitUntil(() => bridge.state.getJob(failed.jobId).done);
-  assert.match(bridge.state.getJob(failed.jobId).error, /TAB_MISSING.*tab is gone/);
+  assert.deepEqual(bridge.state.getJob(failed.jobId).error, { code: "TAB_MISSING", message: "The tab is gone" });
 });
 
 test("Skill wrappers dispatch current methods with default arguments and do not retry missing methods", async () => {
@@ -418,7 +527,7 @@ test("shutdown rejects pending work and closes long polls", async () => {
   const closing = bridge.close();
   await polling.catch(() => undefined);
   await closing;
-  await assert.rejects(bridge.state.callExtension("create_session"), /BRIDGE_CLOSED/);
+  await assert.rejects(bridge.state.callExtension("create_session"), { code: "BRIDGE_CLOSED" });
   assert.equal(bridge.server.listening, false);
 });
 
@@ -441,7 +550,7 @@ test("request timeout clears delivery state and rejects late completion", async 
   const state = new BridgeState({ connectWaitMs: 0 });
   await pairBrowser(state, { id: "browser" });
   const waiting = state.callExtension("ping", {}, { timeoutSeconds: 1 });
-  const rejected = assert.rejects(waiting, /BRIDGE_REQUEST_TIMEOUT/);
+  const rejected = assert.rejects(waiting, { code: "BRIDGE_REQUEST_TIMEOUT" });
   const [request] = await pollBrowser(state, { id: "browser" }, { timeoutMs: 1 });
   await rejected;
   assert.equal(completeBrowser(state, request.id, { ok: true, result: "late" }), false);
@@ -454,15 +563,115 @@ test("request timeout clears delivery state and rejects late completion", async 
 test("MCP result content retains FastMCP list/string/null serialization", () => {
   assert.deepEqual(resultToContent(null), []);
   assert.deepEqual(resultToContent(["plain", { value: 1 }, null]), [
-    { type: "text", text: "plain" }, { type: "text", text: '{\n  "value": 1\n}' },
+    { type: "text", text: "plain" }, { type: "text", text: '{"value":1}' },
   ]);
+  const batch = resultToContent({
+    results: [
+      { id: "open", name: "open_tab", result: { id: 1 }, isError: false },
+      { id: "shot", name: "screenshot", result: { ok: true }, isError: false, images: [{ mimeType: "image/png", data: "YQ==" }] },
+    ],
+  }, { toolResult: true });
+  assert.equal(batch[0].type, "text");
+  assert.equal(batch[0].text.includes("YQ=="), false);
+  assert.deepEqual(JSON.parse(batch[0].text).results[1].images, [{ id: "shot", index: 0 }]);
+  assert.deepEqual(batch[1], { type: "image", data: "YQ==", mimeType: "image/png", _meta: { id: "shot", index: 0 } });
+  const single = resultToContent({
+    toolName: "screenshot", result: { ok: true }, images: [{ mimeType: "image/png", data: "YQ==" }],
+  }, { toolResult: true });
+  assert.equal(single[0].text.includes("YQ=="), false);
+  assert.equal(single[0].text.includes('"images"'), false);
+  assert.deepEqual(single[1], { type: "image", data: "YQ==", mimeType: "image/png" });
+});
+
+test("a batch of two screenshots keeps each image with its call", () => {
+  const first = Buffer.from("one").toString("base64");
+  const second = Buffer.from("two").toString("base64");
+  const content = resultToContent({
+    sessionId: "s",
+    results: [
+      { id: "s1", name: "screenshot", result: { ok: true }, isError: false, images: [{ mimeType: "image/png", data: first }] },
+      { id: "s2", name: "screenshot", result: { ok: true }, isError: false, images: [{ mimeType: "image/png", data: second }] },
+    ],
+  }, { toolResult: true });
+  assert.equal(content[0].type, "text");
+  assert.equal(content[0].text.includes(first), false);
+  assert.equal(content[0].text.includes(second), false);
+  const text = JSON.parse(content[0].text);
+  assert.deepEqual(text.results[0].images, [{ id: "s1", index: 0 }]);
+  assert.deepEqual(text.results[1].images, [{ id: "s2", index: 0 }]);
+  assert.equal(Object.hasOwn(text, "images"), false);
+  assert.deepEqual(content.slice(1).map(block => block._meta), [{ id: "s1", index: 0 }, { id: "s2", index: 0 }]);
+  const restored = resultValue({ content });
+  assert.equal(restored.results[0].images[0].data, first);
+  assert.equal(restored.results[1].images[0].data, second);
+  assert.equal(Object.hasOwn(restored, "images"), false);
+});
+
+test("drive calls require an explicit session id and do not invent one", async t => {
+  const bridge = await withBridge(t);
+  await pairBrowser(bridge.state, { id: "browser" });
+  const client = await withClient(t, bridge);
+  for (const name of ["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]) {
+    const pending = client.callTool({ name, arguments: name === "qingzhou_list_tools" ? {} : { name: "list_tabs" } });
+    if (name === "qingzhou_execute_tool") {
+      const missing = await pending;
+      assert.equal(missing.isError, true);
+      assert.match(missing.content[0].text, /DRIVE_SESSION_REQUIRED/);
+      assert.match(missing.content[0].text, /qz session create/);
+    } else {
+      const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+      assert.equal(request.method, name.slice("qingzhou_".length));
+      assert.equal(request.params.sessionId, undefined);
+      completeBrowser(bridge.state, request.id, { ok: true, result: { name: "list_tabs", signature: "list_tabs({})" } });
+      assert.notEqual((await pending).isError, true);
+    }
+    assert.equal(bridge.state.pending.size, 0);
+    const unknown = client.callTool({ name, arguments: { sessionId: "missing", ...(name === "qingzhou_list_tools" ? {} : { name: "list_tabs" }) } });
+    const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+    assert.equal(request.params.sessionId, "missing");
+    assert.notEqual(request.method, "create_drive_session");
+    completeBrowser(bridge.state, request.id, { ok: false, code: "DRIVE_SESSION_NOT_FOUND",
+      error: "Session not found. Use qz session create (MCP: qingzhou_create_drive_session).",
+    });
+    const failed = await unknown;
+    assert.equal(failed.isError, true);
+    assert.equal(unpack(failed).code, "DRIVE_SESSION_NOT_FOUND");
+    assert.equal(bridge.state.pending.size, 0);
+  }
+  const created = client.callTool({ name: "qingzhou_create_drive_session", arguments: { title: "Inspect page" } });
+  const [createRequest] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+  assert.equal(createRequest.method, "create_drive_session");
+  assert.equal(createRequest.params.clientName, "bridge-test");
+  assert.equal(createRequest.params.title, "Inspect page");
+  completeBrowser(bridge.state, createRequest.id, { ok: true, result: { sessionId: "kept-id" } });
+  assert.equal(unpack(await created).sessionId, "kept-id");
+  async function driveCall(name, args) {
+    const pending = client.callTool({ name, arguments: args });
+    const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+    const tool = name === "qingzhou_get_tool"
+      ? { name: args.name, description: "List", parameters: {} }
+      : { ok: true };
+    const result = name === "qingzhou_get_tool" ? { tools: [tool] } : tool;
+    completeBrowser(bridge.state, request.id, { ok: true, result });
+    await pending;
+    return request;
+  }
+  const listed = await driveCall("qingzhou_list_tools", { sessionId: "kept-id" });
+  const inspected = await driveCall("qingzhou_get_tool", { name: "list_tabs", sessionId: "kept-id" });
+  const explicit = await driveCall("qingzhou_execute_tool", { name: "list_tabs", args: {}, sessionId: "kept-id" });
+  assert.equal(listed.method, "list_tools");
+  assert.equal(listed.params.sessionId, "kept-id");
+  assert.equal(inspected.method, "get_tool");
+  assert.equal(inspected.params.sessionId, "kept-id");
+  assert.equal(explicit.params.sessionId, "kept-id");
+  assert.equal(Object.hasOwn(explicit.params, "runId"), false);
 });
 
 test("MCP session deletion cancels pending work and invalidates the old session", async t => {
   const bridge = await withBridge(t);
   await pairBrowser(bridge.state, { id: "browser" });
   const client = new Client({ name: "session-cleanup-test", version: "1" });
-  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`));
+  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp?profile=full`));
   await client.connect(transport);
   t.after(() => client.close());
   const sessionId = transport.sessionId;
@@ -489,7 +698,7 @@ test("stopping the bridge settles an in-flight MCP operation without replay", as
   await bridge.close();
   const result = await settled;
   assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /BRIDGE_CLOSED/);
+  assert.equal(JSON.parse(result.content[0].text).code, "BRIDGE_CLOSED");
   assert.equal(bridge.state.pending.size, 0);
   assert.equal(bridge.state.inflight.size, 0);
   assert.equal(completeBrowser(bridge.state, request.id, { ok: true, result: "late" }), false);
@@ -500,7 +709,7 @@ test("an abandoned MCP POST cancels only its operation and never replays it", as
   const bridge = await withBridge(t);
   await (await post(bridge, "/v1/qingzhou/poll", { client: { id: "browser", pollTimeoutMs: 100 } })).json();
   const client = new Client({ name: "disconnect-test", version: "1" });
-  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`));
+  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp?profile=full`));
   await client.connect(transport);
   t.after(() => client.close());
   for (const phase of ["queued", "inflight"]) {
@@ -543,7 +752,7 @@ test("an abandoned MCP POST cancels only its operation and never replays it", as
 test("MCP idle expiry releases abandoned sessions while active GET and POST responses survive", async t => {
   const bridge = await withBridge(t, { mcpSessionIdleTimeoutMs: 100 });
   const client = new Client({ name: "session-expiry-test", version: "1" });
-  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`));
+  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp?profile=full`));
   await client.connect(transport);
   t.after(() => client.close());
   const sessionId = transport.sessionId;
@@ -577,7 +786,7 @@ test("repeated real SDK calls and overlapping HTTP polls preserve isolation and 
   const delivered = new Set();
   for (let round = 0; round < 6; round++) {
     const client = new Client({ name: `stress-${round}`, version: "1" });
-    const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`));
+    const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp?profile=full`));
     await client.connect(transport);
     try {
       for (const id of ["browser-a", "browser-b"]) {
@@ -635,13 +844,16 @@ test("aborted long polls release their listeners and a fresh HTTP poll receives 
     await response;
     await waitUntil(() => bridge.state.events.listenerCount("change") === 0);
   }
-  assert.equal(bridge.state.status().clientCount, 1);
+  assert.equal(bridge.state.status().clientCount, 0, "closed polling transports release their live lease");
   const client = await withClient(t, bridge);
+  const polling = post(bridge, "/v1/qingzhou/poll", { client: { id: "restarted-browser", pollTimeoutMs: 1000 } });
+  await waitUntil(() => bridge.state.status().clientCount === 1);
   const running = client.callTool({ name: "qingzhou_call", arguments: {
     method: "ping", clientId: "restarted-browser", params: { recovered: true }, timeoutSeconds: 3,
   } });
-  const [request] = (await (await post(bridge, "/v1/qingzhou/poll", { client: { id: "restarted-browser", pollTimeoutMs: 1000 } })).json()).requests;
+  const [request] = (await (await polling).json()).requests;
   assert.ok(request);
+  assert.equal(bridge.state.status().clientCount, 1, "the same authenticated connection can resume polling");
   await post(bridge, "/v1/qingzhou/result", { requestId: request.id, clientId: "restarted-browser", ok: true, result: request.params });
   assert.deepEqual(unpack(await running), { recovered: true });
   assert.equal(bridge.state.pending.size, 0);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -13,17 +13,18 @@ import { parseArgs, promisify } from "node:util";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const execute = promisify(execFile);
 const { values: options, tokens } = parseArgs({ options: {
-  tarball: { type: "string" }, output: { type: "string" }, help: { type: "boolean" },
+  tarball: { type: "string" }, output: { type: "string" }, "npm-cache": { type: "string" }, help: { type: "boolean" },
 }, tokens: true });
 assert.equal(new Set(tokens.map(token => token.name)).size, tokens.length, "Options may only be supplied once.");
 if (options.help) {
-  console.log("Usage: node tests/release/npm-package.mjs [--tarball package.tgz] [--output verified-package.tgz]\n"
+  console.log("Usage: node tests/release/npm-package.mjs [--tarball package.tgz] [--output verified-package.tgz] [--npm-cache DIR]\n"
     + "Pack and install the npm package, then verify its CLI and MCP lifecycle outside the repository.\n"
     + "--tarball tests an existing artifact; --output keeps the exact verified artifact (never overwrites).\n"
+    + "--npm-cache seeds an isolated cache with existing package bytes and prefers them over network fetches.\n"
     + "Requires npm and public registry access; uses no npm credentials or install scripts.");
   process.exit(0);
 }
-for (const key of ["tarball", "output"]) if (options[key] !== undefined) {
+for (const key of ["tarball", "output", "npm-cache"]) if (options[key] !== undefined) {
   assert.ok(options[key], `--${key} requires a nonempty path.`);
   options[key] = resolve(options[key]);
 }
@@ -103,6 +104,10 @@ async function cleanupDaemon() {
 try {
   await writeFile(env.npm_config_userconfig, "");
   await writeFile(env.npm_config_globalconfig, "");
+  if (options["npm-cache"]) {
+    await cp(join(options["npm-cache"], "_cacache"), join(env.npm_config_cache, "_cacache"), { recursive: true });
+    env.npm_config_prefer_offline = "true";
+  }
   let tarball = options.tarball;
   if (!tarball) {
     console.error("Packing the npm package with lifecycle scripts disabled…");
@@ -152,6 +157,11 @@ try {
   assert.equal(status.connected, false);
   assert.equal(status.endpoint, running.endpoint);
   assert.equal(status.updateAvailable, false);
+  assert.equal(await cli(installs[1], ["connect", "uri"]), `${running.endpoint}/qz-connect`,
+    "The installed connect uri command prints only the address for manual profile selection.");
+  assert.deepEqual(await result(installs[1], ["connect", "uri", "--name", "package-smoke"]),
+    { url: `${running.endpoint}/qz-connect?name=package-smoke` });
+  assert.equal((await result(installs[1], ["status"])).connected, false, "Printing a URI does not pair a browser.");
   const mcp = await result(installs[1], ["mcp"]);
   assert.equal(mcp.url, `${running.endpoint}/mcp`);
 
@@ -176,18 +186,19 @@ try {
     await transport.terminateSession().catch(() => {});
     await client.close();
   }
-  assert.equal((await result(installs[1], ["stop"])).stopped, true);
+  assert.equal((await second.stopDaemon({ stateDir: env.QZ_STATE_DIR })).stopped, true);
   assert.deepEqual(await result(installs[0], ["status"]), { running: false, connected: false });
-  assert.equal((await result(installs[0], ["stop"])).stopped, false);
-  assert.equal(exited(daemonChild), true, "The installed stop command must terminate its service.");
+  assert.equal((await first.stopDaemon({ stateDir: env.QZ_STATE_DIR })).stopped, false);
+  assert.equal(exited(daemonChild), true, "The installed daemon cleanup must terminate its captured service.");
 
   if (options.output && options.output !== tarball) {
     await mkdir(dirname(options.output), { recursive: true });
     await copyFile(tarball, options.output, constants.COPYFILE_EXCL);
   }
   console.log(JSON.stringify({ ok: true, name: metadata.name, version: metadata.version, node: process.versions.node, sha256,
+    dependencyCache: options["npm-cache"] ? "seeded-prefer-offline" : "fresh",
     ...(options.output || options.tarball ? { tarball: options.output || options.tarball } : {}),
-    checks: ["npm-install", "installed-bin", "version", "cache-path-identity", "daemon-reuse", "mcp", "stop"],
+    checks: ["npm-install", "installed-bin", "version", "cache-path-identity", "daemon-reuse", "connect-uri", "mcp", "daemon-cleanup"],
   }));
 } finally {
   try { await cleanupDaemon(); }

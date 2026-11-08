@@ -36,7 +36,7 @@ for (const firstSignal of ["SIGINT", "SIGTERM"]) {
     });
     assert.equal(code, firstSignal === "SIGINT" ? 130 : 143);
     assert.equal(aborts, 1);
-    assert.equal(JSON.parse(output).error.code, "interrupted");
+    assert.equal(JSON.parse(output).code, "INTERRUPTED");
     assert.deepEqual(["SIGINT", "SIGTERM"].map(signal => process.listenerCount(signal)), before);
   });
 }
@@ -97,7 +97,7 @@ async function alive(pid) {
   return true;
 }
 
-test("real process signals stop CLI observation without stopping its service or browser task", {
+test("real process signals cancel scripts, preserve delegated tasks and keep the service running", {
   skip: process.platform === "win32" ? "POSIX process-group signals; Windows handler logic is covered above." : false,
   timeout: 90000,
 }, async t => {
@@ -142,22 +142,29 @@ test("real process signals stop CLI observation without stopping its service or 
     { name: "npm exec", args: [npm, "exec", "--offline", "--", "qz"], cwd: work, deliveries: ["group", "cli"] },
   ];
   for (const launch of launches) for (const signal of ["SIGINT", "SIGTERM"]) {
-    for (const delivery of launch.deliveries) for (const phase of ["stdin", "stream"]) {
+    for (const delivery of launch.deliveries) for (const phase of ["stdin", "stream", "script"]) {
       await t.test(`${launch.name}: ${signal} to ${delivery} during ${phase}`, async t => {
+        const taskId = `signal-task-${randomUUID()}`;
         const argv = phase === "stdin" ? ["create", "-", "--json"]
+          : phase === "script" ? ["script", "--session", taskId, "-", "--client", proof.clientId]
           : ["create", "Keep running in the browser", "--stream", "--json", "--client", proof.clientId];
         const command = startCommand(t, [...launch.args, ...argv], launch.cwd, env);
+        if (phase === "script") command.child.stdin.end("await new Promise(() => {});");
         let request;
-        const taskId = `signal-task-${randomUUID()}`;
         if (phase === "stdin") await command.ready();
         else {
+          const probes = await poll(5000);
+          assert.deepEqual(probes.map(item => item.method), ["ping"], "one read-only probe verifies the selected browser");
+          assert.equal((await post("result", { ...proof, requestId: probes[0].id, ok: true, result: { pong: true } })).ok, true);
           const created = await poll(5000);
-          assert.deepEqual(created.map(item => item.method), ["create_session"]);
-          assert.equal((await post("result", { ...proof, requestId: created[0].id, ok: true, result: { sessionId: taskId } })).ok, true);
+          assert.deepEqual(created.map(item => item.method), [phase === "script" ? "capabilities" : "create_session"]);
+          assert.equal((await post("result", { ...proof, requestId: created[0].id, ok: true,
+            result: phase === "script" ? { scriptApiVersion: 2 } : { sessionId: taskId } })).ok, true);
           const snapshots = await poll(5000);
-          assert.deepEqual(snapshots.map(item => item.method), ["get_session_snapshot"]);
+          assert.deepEqual(snapshots.map(item => item.method), [phase === "script" ? "execute_tool" : "get_session_snapshot"]);
           [request] = snapshots;
           assert.equal(request.params.sessionId, taskId);
+          if (phase === "script") assert.equal(request.params.name, "run_script");
         }
         const cliPid = Number(command.stderr.match(/QZ_CLI_PID:(\d+)/)?.[1]);
         assert.ok(cliPid);
@@ -167,15 +174,26 @@ test("real process signals stop CLI observation without stopping its service or 
         const exited = await waitForExit(command);
         // npm may re-emit the signal after its child exits. Its child's JSON must survive either way.
         assert.ok(exited.code === (signal === "SIGINT" ? 130 : 143) || exited.signal === signal, JSON.stringify(exited));
-        const payload = command.stdout.split("\n").filter(line => line.startsWith('{"ok":')).map(line => JSON.parse(line)).at(-1);
-        assert.equal(payload?.error?.code, "interrupted", `${command.stdout}\n${command.stderr}`);
-        if (request) {
-          assert.equal(payload.error.sessionId, taskId);
-          assert.equal(payload.error.clientId, proof.clientId);
-          assert.equal((await post("result", { ...proof, requestId: request.id, ok: true, result: { status: "completed" } })).ok, false,
-            "an abandoned observation cannot consume a late result");
+        if (phase === "script") {
+          assert.deepEqual(await poll(1000), [{ id: request.id, method: "cancel_request" }],
+            "script interruption cancels the exact running request without stopping its session");
         }
-        assert.deepEqual(await poll(20), [], "interrupting never cancels, resubmits or creates a browser task");
+        const payload = command.stdout.split("\n").filter(line => line.startsWith("{")).map(line => JSON.parse(line)).at(-1);
+        const error = phase === "script" ? payload?.result : payload;
+        assert.equal(error?.code, "INTERRUPTED", `${command.stdout}\n${command.stderr}`);
+        if (phase === "script") {
+          assert.equal(payload.ok, false);
+          assert.deepEqual(payload.trace, []);
+        }
+        if (request) {
+          if (phase === "stream") {
+            assert.equal(error.details.sessionId, taskId);
+            assert.equal(error.details.clientId, proof.clientId);
+          }
+          assert.equal((await post("result", { ...proof, requestId: request.id, ok: true, result: { status: "completed" } })).ok, false,
+            "an abandoned request cannot consume a late result");
+        }
+        assert.deepEqual(await poll(20), [], "interruption does not cancel delegated tasks, resubmit work or repeat cancellation");
         const health = await readHealth(running.endpoint);
         assert.equal(health.instanceId, running.instanceId, "the existing daemon remains running");
         assert.equal(health.processId, running.processId);

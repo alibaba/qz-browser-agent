@@ -175,7 +175,7 @@ test("an explicit title and family override presentation defaults without changi
   const registered = registry.get("open_tab");
   assert.equal(registered.title, "打开资料");
   assert.equal(registered.familyId, "collect");
-  assert.equal(registered.model.pageContext, "working");
+  assert.equal(registered.model.pageContext, "explicit");
   assert.equal(registered.profileFamily, getCoreToolMetadata("open_tab").profileFamily);
   assert.equal(registered.schema.function.name, "open_tab");
 });

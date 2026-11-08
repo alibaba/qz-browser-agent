@@ -55,7 +55,7 @@ for (const [name, total, request, expectedName, timerCount] of [
     const error = await outcome;
     assert.equal(error.name, expectedName);
     assert.equal(error, read.signal.reason, "the caller and downstream observe the identical cancellation");
-    if (expectedName === "Error") assert.equal(error.code, "request_timeout");
+    if (expectedName === "Error") assert.equal(error.code, "REQUEST_TIMEOUT");
     assert.equal(calls, 1, "observation cannot replay or cancel a task");
     assert.equal(clock.timers.size, 0, "all observation timers are cleared");
   });
@@ -88,7 +88,7 @@ for (const settle of ["resolve", "reject"]) {
         if (settle === "reject") throw new Error("late transport failure");
         return snapshot("completed");
       },
-    }), error => error.code === "request_timeout" && error === read.signal.reason);
+    }), error => error.code === "REQUEST_TIMEOUT" && error === read.signal.reason);
     assert.equal(clock.timers.size, 0);
   });
 }
@@ -224,7 +224,7 @@ test("queued observation remains cancellable and stops if the preceding task is 
     const stopped = snapshot(status);
     assert.equal((await sequence([stopped], { expectedMessageId: "message-2" })).result, stopped);
   }
-  await assert.rejects(sequence([{ session: null }], { expectedMessageId: "message-2" }), error => error.code === "task_deleted");
+  await assert.rejects(sequence([{ session: null }], { expectedMessageId: "message-2" }), error => error.code === "TASK_DELETED");
   const controller = new AbortController();
   await assert.rejects(sequence([snapshot("waiting_user", [], { runtime: { waitId: "old-question" } })], {
     expectedMessageId: "message-2", signal: controller.signal,
@@ -267,14 +267,14 @@ test("an unlimited watch still aborts a hung snapshot with a distinct request ti
       return new Promise(() => {});
     },
   }), error => {
-    assert.equal(error.code, "request_timeout");
+    assert.equal(error.code, "REQUEST_TIMEOUT");
     assert.notEqual(error.name, "TimeoutError");
     assert.match(error.message, /Reading task session-1 timed out.*browser connection.*resume watching/);
     return true;
   });
   assert.equal(calls, 1);
   assert.equal(requestSignal.aborted, true);
-  assert.equal(requestSignal.reason.code, "request_timeout");
+  assert.equal(requestSignal.reason.code, "REQUEST_TIMEOUT");
 });
 
 test("each snapshot gets a fresh request deadline and completed requests leave no timeout behind", async () => {
@@ -297,7 +297,7 @@ test("caller abort and explicit total deadline take priority over a simultaneous
   let signal;
   await assert.rejects(waitForTask({ sessionId: "session-1", timeoutSeconds: 0.02, requestTimeoutSeconds: 1,
     getSnapshot(request) { signal = request.signal; return new Promise(() => {}); },
-  }), error => error.name === "TimeoutError" && error.code !== "request_timeout");
+  }), error => error.name === "TimeoutError" && error.code !== "REQUEST_TIMEOUT");
   assert.equal(signal.reason.name, "TimeoutError");
 
   const controller = new AbortController();
@@ -343,7 +343,7 @@ test("an unlimited watch rejects snapshots without a status after one read", asy
         assert.equal(++calls, 1, "malformed responses must not be polled repeatedly");
         return response;
       }, onUpdate() { updates++; },
-    }), error => error.code === "invalid_response" && /no status/.test(error.message));
+    }), error => error.code === "INVALID_RESPONSE" && /no status/.test(error.message));
     assert.equal(calls, 1);
     assert.equal(updates, 0);
   }
@@ -355,7 +355,7 @@ test("nonempty future status values remain observable and deletion keeps its spe
   assert.equal(result, done);
   assert.equal(updates[0].status, "reconnecting");
   await assert.rejects(waitForTask({ sessionId: "session-1", getSnapshot: () => ({ session: null }) }),
-    error => error.code === "task_deleted");
+    error => error.code === "TASK_DELETED");
 });
 
 test("resuming ignores the just-submitted wait and keeps observing through the next question", async () => {
@@ -510,13 +510,13 @@ for (const [name, pollIntervalMs, cancel] of [
 
 test("snapshot failures propagate once and never repeat task mutations", async () => {
   let calls = 0;
-  const failure = Object.assign(new Error("The bridge disconnected"), { code: "not_connected" });
+  const failure = Object.assign(new Error("The bridge disconnected"), { code: "NOT_CONNECTED" });
   await assert.rejects(waitForTask({ sessionId: "session-1", timeoutSeconds: 1, getSnapshot() { calls++; throw failure; } }), error => error === failure);
   assert.equal(calls, 1);
 });
 
 test("a different Session is rejected while later runs continue the watched task", async () => {
-  await assert.rejects(sequence([snapshot("running", [], { sessionId: "other" })]), error => error.code === "task_changed");
+  await assert.rejects(sequence([snapshot("running", [], { sessionId: "other" })]), error => error.code === "TASK_CHANGED");
   for (const tracking of [{}, { expectedRunId: "run-1" }]) {
     const done = snapshot("completed", [], { runId: "run-2" });
     assert.equal((await sequence([snapshot("running"), done], tracking)).result, done);
@@ -576,7 +576,7 @@ test("a deleted Session fails immediately before or after observing its active r
         assert.ok(calls < snapshots.length, "deletion must not trigger another poll");
         return snapshots[calls++];
       },
-    }), error => error.code === "task_deleted");
+    }), error => error.code === "TASK_DELETED");
     assert.equal(calls, snapshots.length);
     assert.ok(!updates.some(update => update.status === "idle"), "deletion must not look like successful idle completion");
   }

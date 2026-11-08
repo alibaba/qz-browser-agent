@@ -1,7 +1,7 @@
 {
   "tabs.tabs": "Вкладки",
-  "tabs.tab": "Вкладка {tabId}",
-  "tabs.current": "Текущая",
+  "tabs.tab": "Вкладка {tabRef}",
+  "tabs.current": "Пользователь просматривает",
   "tabs.window": "Окно {windowId}",
   "tabs.qingzhouTask": "Задача qz",
   "tabs.organizedInto": "Объединены в «{name}»",
@@ -38,8 +38,6 @@
   "tabs.usePage": "Выбрать рабочую вкладку",
   "tabs.navigatePage": "Перейти по URL",
   "tabs.organizeTabsTool": "Упорядочить вкладки",
-  "tabs.currentSessionWorkingTabIsNotAWebPage": "Рабочая вкладка текущей задачи не является обычной веб-страницей.",
-  "tabs.tabIsNotAWebPageAndCannotBe": "Вкладка {tabId} не является обычной веб-страницей и не может быть рабочей.",
   "tabs.openingAnAgentOwnedTabRequiresTheCurrentSession": "Для открытия вкладки задачи нужна служба вкладок текущей задачи.",
   "tabs.viewWorkingPageShort": "Рабочая вкладка",
   "tabs.usePageShort": "Выбрать вкладку",

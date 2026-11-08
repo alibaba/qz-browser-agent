@@ -1,7 +1,7 @@
 {
   "tabs.tabs": "탭",
-  "tabs.tab": "탭 {tabId}",
-  "tabs.current": "현재",
+  "tabs.tab": "탭 {tabRef}",
+  "tabs.current": "사용자가 보고 있음",
   "tabs.window": "창 {windowId}",
   "tabs.qingzhouTask": "qz 작업",
   "tabs.organizedInto": "‘{name}’으로 정리됨",
@@ -38,8 +38,6 @@
   "tabs.usePage": "작업 탭 설정",
   "tabs.navigatePage": "URL로 이동",
   "tabs.organizeTabsTool": "탭 정리",
-  "tabs.currentSessionWorkingTabIsNotAWebPage": "현재 작업 탭은 일반 웹페이지가 아닙니다.",
-  "tabs.tabIsNotAWebPageAndCannotBe": "탭 {tabId}은(는) 일반 웹페이지가 아니므로 작업 탭으로 사용할 수 없습니다.",
   "tabs.openingAnAgentOwnedTabRequiresTheCurrentSession": "작업 전용 탭을 열려면 현재 작업의 탭 서비스가 필요합니다.",
   "tabs.viewWorkingPageShort": "작업 탭",
   "tabs.usePageShort": "탭 사용",

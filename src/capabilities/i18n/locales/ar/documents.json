@@ -81,7 +81,7 @@
   "documents.failedToCreateTemporaryPdfRenderTab": "تعذّر فتح تبويب مؤقت لإنشاء PDF.",
   "documents.temporaryPdfRenderingRequiresTheChromeDebuggerRuntime": "يتطلب إنشاء PDF الوصول إلى مصحّح أخطاء Chrome.",
   "documents.chromePagePrinttopdfReturnedEmptyData": "لم يُعِد Chrome Page.printToPDF أي بيانات.",
-  "documents.temporaryTabDidNotFinishLoading": "لم يكتمل تحميل التبويب المؤقت {tabId}.",
+  "documents.temporaryTabDidNotFinishLoading": "لم يكتمل تحميل التبويب المؤقت.",
   "documents.documentArtifactHasNoContent": "المستند الناتج فارغ.",
   "documents.docxDocumentXmlNotFound": "ملف DOCX يفتقد document.xml.",
   "documents.xlsxWorkbookXmlNotFound": "ملف XLSX يفتقد workbook.xml.",

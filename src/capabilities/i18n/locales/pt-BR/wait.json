@@ -39,7 +39,7 @@
   "wait.waitNotContinued": "Tarefa não retomada",
   "wait.loginVerificationCompleted": "Login verificado",
   "wait.userContinued": "Tarefa retomada",
-  "wait.waitForElementSelectorSupportsRawCssOrCss": "O selector de wait_for_element aceita CSS ou css:<selector>; uid:<element_uid> referencia um snapshot e não permite aguardar um estado futuro do DOM.",
+  "wait.waitForElementSelectorSupportsRawCssOrCss": "O target de wait_for_element aceita CSS ou css:<target>; uid:<element_uid> referencia um snapshot e não permite aguardar um estado futuro do DOM.",
   "wait.userWaitRuntimeIsUnavailable": "O serviço de entrada do usuário está indisponível.",
   "wait.currentTaskHasNoWorkingTab": "A tarefa atual não tem uma aba de trabalho.",
   "wait.waitUntilRequiresAValidAbsoluteTimeWithAn": "wait_until exige uma data e hora absolutas válidas com fuso horário explícito.",

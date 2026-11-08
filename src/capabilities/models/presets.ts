@@ -14,6 +14,7 @@ export default {
     endpoint: "",
     modelsEndpoint: "",
     modelsAuth: false,
+    requiresApiKey: false,
     defaultContextWindow: 128000,
     custom: true,
   },

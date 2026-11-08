@@ -183,7 +183,6 @@ test.describe("queued follow-up visibility", () => {
         runId,
         name: "run_script",
         args: {
-          target: "inner",
           code: Array.from({ length: 20 }, (_, index) => `const value${index} = ${index};`).join("\n"),
         },
         result: { ok: true, result: { count: 20 } },

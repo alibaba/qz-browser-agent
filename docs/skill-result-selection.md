@@ -36,6 +36,10 @@ and `totalItems`. The Agent can continue using those IDs and fields. qz keeps th
 in the wait transcript and sends only selected records in the completed tool result. Each tool
 invocation creates a new selection; completed results are read-only in the transcript and exports.
 
+Declare `outputSchema` for this final `{selectedIds, selectedItems, totalItems}` value, including the
+selected item fields used by the next tool. The host validates it after confirmation. Renderer paths
+still refer to the candidate data returned by the script; selection does not extend the collection timeout.
+
 | Property | Behavior |
 | --- | --- |
 | `itemsPath` | Candidate array, default `items`. |

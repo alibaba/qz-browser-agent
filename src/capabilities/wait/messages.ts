@@ -52,7 +52,7 @@ export default defineMessages("wait", {
   "waitNotContinued": { "zh-CN": "等待未继续", en: "Task not resumed" },
   "loginVerificationCompleted": { "zh-CN": "登录验证完成", en: "Sign-in verified" },
   "userContinued": { "zh-CN": "用户已继续", en: "Task resumed" },
-  "waitForElementSelectorSupportsRawCssOrCss": { "zh-CN": "wait_for_element 的 selector 仅支持 CSS 或 css:<selector>；uid:<element_uid> 是快照引用，不能用于等待未来 DOM 状态。", en: "wait_for_element selector supports raw CSS or css:<selector>; uid:<element_uid> is a snapshot reference and cannot wait for future DOM state." },
+  "waitForElementSelectorSupportsRawCssOrCss": { "zh-CN": "wait_for_element 的 target 仅支持 CSS 或 css:；uid: 是快照引用，不能用于等待未来 DOM 状态。", en: "wait_for_element target supports raw CSS or css:; uid: is a snapshot reference and cannot wait for future DOM state." },
   "userWaitRuntimeIsUnavailable": { "zh-CN": "用户等待服务不可用。", en: "The user-input service is unavailable." },
   "currentTaskHasNoWorkingTab": { "zh-CN": "当前任务没有工作标签页。", en: "The current task has no working tab." },
   "waitUntilRequiresAValidAbsoluteTimeWithAn": { "zh-CN": "wait_until 需要含明确时区的有效绝对时间。", en: "wait_until requires a valid absolute time with an explicit time zone." },

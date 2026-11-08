@@ -13,11 +13,12 @@ globalThis.chrome = {
   runtime: { getURL: path => path },
   storage: { local: { async get() { return {}; } } },
   tabs: { async get(id) { return readTab(id); },
+    onUpdated: { addListener() {}, removeListener() {} },
     async update(id, { url }) { navigation.commit(id); return { id, url }; } },
   scripting: { async executeScript({ target }) { return navigation.result(target.tabId); } },
 };
 const tools = await import("../../src/background/tools/runtime.js");
-tools.defineTool({ name: "__working_tab_authority", description: "test", parameters: { type: "object", properties: {} },
+tools.defineTool({ name: "__working_tab_authority", description: "test", parameters: { type: "object", properties: { tabId: { type: "number" } } },
   execute: () => ({ tabId: tab.id }),
 });
 
@@ -49,7 +50,7 @@ for (const terminal of ["stop", "delete"]) {
     const f = fixture(); await f.start("old");
     const entered = deferred(), release = deferred(); let reads = 0;
     readTab = async () => { if (++reads === 2) { entered.resolve(); await release.promise; } return tab; };
-    const pending = f.runtime.execute("__working_tab_authority", {}, undefined, { sessionId: "s", runId: "old" });
+    const pending = f.runtime.execute("__working_tab_authority", { tabId: tab.id }, undefined, { sessionId: "s", runId: "old" });
     await entered.promise;
     // Use Supervisor authority without aborting a caller signal: stale run identity alone must deny the write.
     if (terminal === "delete") await f.supervisor.remove("s");
@@ -62,7 +63,7 @@ for (const terminal of ["stop", "delete"]) {
     if (terminal === "delete") assert.equal(f.supervisor.peekEntry("s"), null, "a tool cannot recreate a deleted Session handle");
     else assert.deepEqual(f.supervisor.getRuntime("s"), { status: "stopped", runId: "old" });
     await f.start("new"); readTab = async () => tab;
-    await f.runtime.execute("__working_tab_authority", {}, undefined, { sessionId: "s", runId: "new" });
+    await f.runtime.execute("__working_tab_authority", { tabId: tab.id }, undefined, { sessionId: "s", runId: "new" });
     assert.equal(f.writes(), 1);
     assert.equal(f.supervisor.getRuntime("s").workingTabId, tab.id);
     await f.tabs.clearWorkingTab({ sessionId: "s", runId: "old", tabId: tab.id });

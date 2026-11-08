@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { isToolFailure, toolError } from "../../src/shared/contracts/tool-error.js";
+import { withLanguage } from "../../src/shared/i18n/index.js";
+import { t as skillT } from "../../src/capabilities/skills/i18n.js";
 import { readFileSync, readdirSync } from "node:fs";
 import {
   hasLocalizedToolFailureCode,
@@ -9,12 +12,14 @@ import {
   localizeToolFailureText,
 } from "../../src/shared/tools/tool-error-localization.js";
 
+withLanguage("zh-CN", () => {
 const SOURCE_FILES = [
   "src/background/agent/agent.ts",
   "src/background/skills/skill-tool-runtime.ts",
   "src/background/service-worker.ts",
   "src/background/skills/runtime.ts",
   "src/capabilities/wait/tools.ts",
+  "src/capabilities/media/tools.ts",
   "src/background/tools/runtime.ts",
   ...readdirSync("src/background/tools")
     .filter(name => /\.[jt]s$/.test(name) && !name.endsWith(".d.ts"))
@@ -52,6 +57,51 @@ for (const code of [...codes].sort()) {
   assert.notEqual(label, code, `code should not be shown raw: ${code}`);
   assert.equal(label.includes("_"), false, `localized label should not contain underscores: ${code}`);
 }
+for (const [language, forbidden, target, tabRef] of [
+  ["zh-CN", "直驱不能调用此工具", "直驱脚本只跑页面", "直驱需要页面"],
+  ["en", "Direct drive cannot call this tool", "Page scripts only", "Page reference required"],
+]) withLanguage(language, () => {
+  assert.equal(localizeToolFailureCode("DRIVE_TOOL_FORBIDDEN"), forbidden);
+  assert.equal(localizeToolFailureCode("DRIVE_RUN_SCRIPT_TARGET"), target);
+  assert.equal(localizeToolFailureCode("DRIVE_TAB_REF_REQUIRED"), tabRef);
+});
+
+for (const [language, message] of [
+  ["zh-CN", "截视口不传 target。截元素请传 uid: 或 css: 目标。"],
+  ["en", "Omit target to capture the viewport. For an element, pass a uid: or css: target."],
+]) withLanguage(language, () => {
+  const error = Object.assign(new Error(message), { code: "SCREENSHOT_TARGET_INVALID" });
+  assert.equal(localizeToolFailureError(error).message, message);
+  assert.equal(localizeToolFailurePayload({ error: error.message, code: error.code }).error, message,
+    "runtime and transport localization must preserve screenshot recovery guidance");
+});
+
+for (const language of ["en", "zh-CN"]) withLanguage(language, () => {
+  for (const code of [undefined, "CUSTOM_FAILURE", "TOOL_EXECUTION_FAILED"]) {
+    const error = Object.assign(new Error("Injected lost touchEnd response"), {
+      ...(code ? { code } : {}), hint: "Inspect the page before retrying.",
+      details: { tabRef: "page", trace: [{ message: "touch started" }], tabId: 7 },
+    });
+    const result = localizeToolFailureError(error);
+    assert.equal(result, error, "native Error identity survives tool boundaries");
+    assert.deepEqual(toolError(result.code, result.message, result), { code: code || "TOOL_EXECUTION_FAILED", message: error.message,
+      hint: error.hint, details: { tabRef: "page", trace: [{ message: "touch started" }] } });
+    assert.equal(localizeToolFailureError(result), result, "another tool boundary preserves canonical recovery data");
+  }
+  for (const error of ["AbortError", "TimeoutError"].flatMap(name => [Object.assign(new Error("The operation was aborted"), { name }), new DOMException("The operation was aborted", name)])) {
+    assert.equal(localizeToolFailureError(error), error, "cancellation keeps its native identity and code");
+    assert.ok(["AbortError", "TimeoutError"].includes(error.name));
+    assert.equal(error.message, "The operation was aborted");
+  }
+  const denied = new DOMException("The browser denied the request", "NotAllowedError");
+  assert.equal(localizeToolFailureError(denied), denied, "read-only native codes do not replace the original exception");
+  assert.deepEqual(toolError(String(denied.code || "TOOL_EXECUTION_FAILED"), denied.message), {
+    code: "TOOL_EXECUTION_FAILED", message: "The browser denied the request",
+  });
+  const mapped = Object.assign(new Error("changed revision 7"), { code: "DATA_ROW_CONFLICT", details: { rowId: "row:abc" } });
+  assert.equal(localizeToolFailureError(mapped), mapped, "known legacy errors retain their identity");
+  assert.equal(mapped.message, localizeToolFailurePayload({ ok: false, error: "changed revision 7", code: "DATA_ROW_CONFLICT", details: mapped.details }).error);
+});
 
 assert.equal(localizeToolFailureCode("TOOL_NOT_EXECUTED"), "工具未执行");
 assert.equal(
@@ -71,8 +121,8 @@ assert.equal(
   assert.equal(payload.code, "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED");
   assert.equal(payload.codeLabel, "脚本内工具会卸载当前页面");
   assert.equal(payload.diagnostic.category, "页面生命周期");
-  assert.equal(payload.details.originalCode, "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED");
-  assert.match(payload.details.originalError, /run_script blocked/);
+  assert.equal(payload.details.originalCode, undefined);
+  assert.equal(payload.details.originalError, undefined);
 }
 
 {
@@ -82,7 +132,13 @@ assert.equal(
   const localized = localizeToolFailureError(err);
   assert.equal(localized.message, "未知工具：no_such_tool");
   assert.equal(localized.codeLabel, "未知工具");
-  assert.equal(localized.details.originalMessage, "Unknown tool: no_such_tool");
+  assert.deepEqual(localized.details, { name: "no_such_tool" });
+  // Catalog queries fail inside list_tools, but the requested name is what the
+  // caller must fix. The execution context must not hide that identity.
+  const queryError = Object.assign(new Error("Unknown or unavailable tool: no_such_tool"), {
+    code: "UNKNOWN_TOOL", details: { name: "no_such_tool", toolName: "list_tools" },
+  });
+  assert.equal(localizeToolFailureError(queryError, { toolName: "list_tools" }).message, "未知工具：no_such_tool");
 }
 
 {
@@ -132,6 +188,54 @@ assert.equal(
   assert.equal(diagnostic.originalCategory, "tool_bridge");
 }
 
+for (const [language, label, message] of [
+  ["zh-CN", "技能名称有歧义", "有多个技能都叫“Shared title”，无法确定是哪一个，操作未执行。请改用 list_skills 里的 name：rt1, rt2。"],
+  ["en", "Ambiguous skill name", 'Several skills are named "Shared title", so the action did not run. Use one of these names from list_skills: rt1, rt2.'],
+]) withLanguage(language, () => {
+  const candidates = ["rt1", "rt2"].map(name => ({ name, displayName: "Shared title" }));
+  const payload = localizeToolFailurePayload({ code: "SKILL_NAME_AMBIGUOUS", error: "original", details: { name: "Shared title", candidates } });
+  assert.equal(payload.codeLabel, label);
+  assert.equal(payload.error, message);
+  assert.deepEqual(payload.details.candidates, candidates);
+  assert.equal(skillT("skillNameAmbiguous", { name: "Shared title", names: "rt1, rt2" }), message);
+});
+
+for (const [language, syntax, failed] of [
+  ["zh-CN", "脚本语法错误。", "脚本执行失败。"],
+  ["en", "The script has a syntax error.", "The script failed."],
+]) withLanguage(language, () => {
+  const reference = localizeToolFailurePayload({
+    ok: false,
+    code: "SCRIPT_EVALUATION_FAILED",
+    error: "ReferenceError: price is not defined",
+    details: { lineNumber: 4 },
+  });
+  assert.match(reference.error, /price is not defined/);
+  assert.equal(reference.error.includes("未定义的变量") || reference.error.includes("undefined variable"), false);
+
+  const typeError = localizeToolFailureText(
+    "TypeError: Cannot read properties of undefined (reading 'title')",
+    { code: "SCRIPT_EVALUATION_FAILED" },
+  );
+  assert.match(typeError, /reading 'title'/);
+
+  const safari = localizeToolFailureText("ReferenceError: Can't find variable: tools", { code: "SCRIPT_EVALUATION_FAILED" });
+  assert.match(safari, /tools/);
+
+  const unset = localizeToolFailureText("price is not defined");
+  assert.match(unset, /price/);
+
+  assert.equal(localizeToolFailureText("SyntaxError: Unexpected token", { code: "SCRIPT_EVALUATION_FAILED" }), syntax);
+  assert.equal(localizeToolFailureText("Script evaluation failed", { code: "SCRIPT_EVALUATION_FAILED" }), failed);
+  const restored = localizeToolFailurePayload({
+    ok: false,
+    code: "SCRIPT_EVALUATION_FAILED",
+    error: "Script evaluation failed: ReferenceError: price is not defined",
+  });
+  assert.equal(restored.error, failed);
+  assert.equal(restored.details, undefined, "localization does not append internal diagnostics");
+});
+
 console.log("tool error localization tests passed");
 
 for (const [details, message] of [
@@ -163,16 +267,24 @@ assert.equal(localizeToolFailureText("custom", { code: "DOCUMENT_TABLE_NOT_FOUND
 
 {
   const messages = {}, labels = {};
-  for (const reason of ["unknown_reference", "duplicate_alias", "forward_reference", "invalid_alias", "invalid_reference", "ambiguous_target", "outside_batch", "conflicting_target"]) {
+  for (const reason of ["unknown_reference", "duplicate_alias", "forward_reference", "invalid_alias", "invalid_reference", "ambiguous_target", "outside_batch", "conflicting_target", "no_alias"]) {
     const payload = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_REFERENCE_ERROR", details: { reason, tabRef: "a" } });
     messages[reason] = payload.error;
     labels[reason] = payload.codeLabel;
     assert.ok(!payload.error.includes("{tabRef}"), `${reason} interpolates tabRef`);
     assert.ok(payload.codeLabel && !payload.codeLabel.includes("BATCH_TAB"), `${reason} label stays human-readable`);
   }
-  assert.equal(new Set(Object.values(messages)).size, 8, "every reference reason owns its message");
-  assert.equal(new Set(Object.values(labels)).size, 8, "every reference reason owns its label");
+  assert.equal(new Set(Object.values(messages)).size, 9, "every reference reason owns its message");
+  assert.equal(new Set(Object.values(labels)).size, 9, "every reference reason owns its label");
   assert.equal(messages.unknown_reference, "当前任务没有已打开或本批待创建的别名「a」。请检查名称，或在 tabRef 中使用已返回的浏览器数字 ID。");
+  assert.equal(messages.no_alias, "本会话还没有页面别名。tabRef 可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。别名和 tabRef 都属于本会话。同一任务后续调用带同一个 --session（MCP 带同一个 sessionId）。");
+  assert.doesNotMatch(messages.no_alias, /省略 tabRef/);
+  const englishNoAlias = withLanguage("en", () => localizeToolFailurePayload({
+    error: "x", code: "BATCH_TAB_REFERENCE_ERROR", details: { reason: "no_alias", tabRef: "a" },
+  }).error);
+  assert.equal(englishNoAlias, "This session has no page alias yet. tabRef can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs. Aliases and tab refs belong to this session. Later calls in the same task use the same --session (MCP: the same sessionId).");
+  assert.doesNotMatch(englishNoAlias, /omit tabRef/i);
+  assert.equal(messages.outside_batch, "tabRef「a」尚未关联到本会话的页面。请使用 open_tab 或 list_tabs 返回的 tabRef。");
   assert.equal(labels.duplicate_alias, "tabAlias 重复");
   const generic = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_REFERENCE_ERROR", details: { tabRef: "a" } });
   assert.equal(generic.codeLabel, "标签页引用无法解析");
@@ -187,3 +299,56 @@ assert.equal(localizeToolFailureText("custom", { code: "DOCUMENT_TABLE_NOT_FOUND
   assert.equal(localized.codeLabel, "open_tab 顺序错误");
   assert.equal(localized.message, "tabAlias「b」的 open_tab 必须排在引用它的页面调用之前。请调整本批中的调用顺序。");
 }
+
+// Native ToolError values retain their public shape through localization.
+assert.deepEqual(localizeToolFailurePayload({ code: "CUSTOM_FAILURE", message: "Try again", hint: "Open the page first", details: { tabRef: "page" } }), {
+  code: "CUSTOM_FAILURE", message: "Try again", hint: "Open the page first", details: { tabRef: "page" },
+});
+
+assert.equal(isToolFailure({ code: "BUSINESS_CONFLICT", message: "Retry" }), true);
+assert.equal(isToolFailure({ ok: true, result: { code: "BUSINESS_CONFLICT", message: "User data" } }), false);
+assert.equal(isToolFailure({ code: "SUCCESS", message: "done" }), false);
+
+});
+
+// Real execution boundaries preserve the same native failure in both caller modes.
+{
+  const previousChrome = globalThis.chrome;
+  globalThis.chrome = { storage: { local: { get: async () => ({}) } } };
+  try {
+    const { createToolRegistry } = await import("../../src/background/tools/registry.js");
+    const { createToolRuntime } = await import("../../src/background/tools/runtime.js");
+    const registry = createToolRegistry();
+    let injected;
+    registry.forCapability("native-error")({ name: "native_error_probe", parameters: {
+      type: "object", properties: { code: { type: "string" } },
+    }, execute: args => {
+      injected = Object.assign(new Error("Injected lost touchEnd response"), args.code ? { code: args.code } : {});
+      throw injected;
+    } });
+    const runtime = createToolRuntime({ sessions: { isRunCurrent: () => true } });
+    for (const language of ["en", "zh-CN"]) for (const externalDrive of [false, true]) {
+      for (const code of [undefined, "CUSTOM_FAILURE", "TOOL_EXECUTION_FAILED"]) {
+        await assert.rejects(runtime.execute("native_error_probe", code ? { code } : {}, undefined, {
+          sessionId: "native-error", runId: "opaque-native-error", language, externalDrive,
+          toolRegistrySnapshot: registry.snapshot(language),
+        }), error => {
+          assert.equal(error, injected);
+          assert.deepEqual(toolError(error.code, error.message), {
+            code: code || "TOOL_EXECUTION_FAILED", message: "Injected lost touchEnd response",
+          });
+          return true;
+        });
+      }
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+}
+
+
+withLanguage("en", () => assert.equal(localizeToolFailureText("The requested tab is no longer available.", { code: "SESSION_TAB_UNAVAILABLE" }),
+  "The requested tab is no longer available."));
+withLanguage("zh-CN", () => assert.equal(localizeToolFailureText("Session tab unavailable", { code: "SESSION_TAB_UNAVAILABLE" }),
+  localizeToolFailureCode("SESSION_TAB_UNAVAILABLE")));

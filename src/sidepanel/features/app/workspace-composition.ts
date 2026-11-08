@@ -121,6 +121,7 @@ export function createWorkspaceComposition(options: WorkspaceOptions) {
       appendNote: chat.transcript.appendSystemNote, clearInlineActions: chat.transcript.clearInlineActions,
       flashAction: chat.transcript.flashAction, refreshReferences: chat.slashMenu.refresh,
       isGoalClearPending: chat.goal.isClearPending, renderGoal: chat.goal.renderCurrent,
+      syncExternalDriveChrome: chat.syncExternalDriveChrome,
     },
     presentation: { renderMarkdown: chat.renderMarkdown, clearMath: chat.math.clear,
       scheduleMath: chat.math.schedule, highlightSearchText: chat.search.highlightText },
@@ -215,6 +216,9 @@ export function createWorkspaceComposition(options: WorkspaceOptions) {
     runController: chat.runController,
     onUiEvent: extensions.notify,
     onStableViewChange: notifyStableViewChange,
+    syncExternalDriveChrome: chat.syncExternalDriveChrome,
+    mergeSessionRecord: record => sessionState.mergeRecord(record),
+    getSessionSource: id => sessionState.getRecord(id)?.source,
   });
 
   function captureWorkspaceView(): WorkspaceView {

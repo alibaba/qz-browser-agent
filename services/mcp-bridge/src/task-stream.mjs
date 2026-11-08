@@ -72,7 +72,7 @@ export async function waitForTask({ sessionId, clientId, timeoutSeconds = null, 
     const requestDeadline = Date.now() + milliseconds;
     const requestExpiresFirst = deadline === null || requestDeadline < deadline;
     const requestTimeout = Object.assign(new Error(`Reading task ${sessionId} timed out after ${requestTimeoutSeconds} seconds. Check the browser connection, then resume watching this task.`),
-      { code: "request_timeout" });
+      { code: "REQUEST_TIMEOUT" });
     // A request timeout ends observation too. One controller preserves the first reason,
     // and equal deadlines belong to the total timer. Downstream keeps its full request budget.
     const requestTimer = requestExpiresFirst ? setTimeout(() => controller.abort(requestTimeout), milliseconds) : null;
@@ -127,10 +127,10 @@ export async function waitForTask({ sessionId, clientId, timeoutSeconds = null, 
       const snapshot = record(await readSnapshot());
       checkActive();
       if (snapshot.sessionId && snapshot.sessionId !== sessionId) {
-        throw Object.assign(new Error("The task snapshot belongs to a different session."), { code: "task_changed" });
+        throw Object.assign(new Error("The task snapshot belongs to a different session."), { code: "TASK_CHANGED" });
       }
       if (Object.hasOwn(snapshot, "session") && snapshot.session === null) {
-        throw Object.assign(new Error(TASK_NOT_FOUND_MESSAGE), { code: "task_deleted" });
+        throw Object.assign(new Error(TASK_NOT_FOUND_MESSAGE), { code: "TASK_DELETED" });
       }
       const runtime = record(snapshot.runtime);
       const canonicalInput = Object.hasOwn(snapshot, "input") ? record(snapshot.input) : null;
@@ -138,7 +138,7 @@ export async function waitForTask({ sessionId, clientId, timeoutSeconds = null, 
       const status = taskStatus(snapshot);
       if (!status) {
         throw Object.assign(new Error("The task snapshot has no status. Check the browser connection, then resume watching this task."),
-          { code: "invalid_response" });
+          { code: "INVALID_RESPONSE" });
       }
       const transcript = Array.isArray(snapshot.transcript) ? snapshot.transcript : Array.isArray(snapshot.tail) ? snapshot.tail : [];
       const submittedMessageIndex = expectedMessageId

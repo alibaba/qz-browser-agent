@@ -1,7 +1,7 @@
 {
   "tabs.tabs": "टैब",
-  "tabs.tab": "टैब {tabId}",
-  "tabs.current": "मौजूदा",
+  "tabs.tab": "टैब {tabRef}",
+  "tabs.current": "उपयोगकर्ता को दिखाई दे रहा है",
   "tabs.window": "विंडो {windowId}",
   "tabs.qingzhouTask": "qz कार्य",
   "tabs.organizedInto": "“{name}” में व्यवस्थित किया गया",
@@ -38,8 +38,6 @@
   "tabs.usePage": "कार्य टैब सेट करें",
   "tabs.navigatePage": "URL पर जाएँ",
   "tabs.organizeTabsTool": "टैब व्यवस्थित करें",
-  "tabs.currentSessionWorkingTabIsNotAWebPage": "मौजूदा कार्य का कार्य टैब एक सामान्य वेब पेज नहीं है।",
-  "tabs.tabIsNotAWebPageAndCannotBe": "टैब {tabId} एक सामान्य वेब पेज नहीं है और उसे कार्य टैब के तौर पर इस्तेमाल नहीं किया जा सकता।",
   "tabs.openingAnAgentOwnedTabRequiresTheCurrentSession": "कार्य के स्वामित्व वाला टैब खोलने के लिए मौजूदा कार्य की टैब सेवा आवश्यक है।",
   "tabs.viewWorkingPageShort": "कार्य टैब",
   "tabs.usePageShort": "टैब चुनें",

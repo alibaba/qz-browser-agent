@@ -1,26 +1,25 @@
 import { skillMetaFromResult } from "../skill-renderer-context.js";
 import { record } from "../renderer-input.js";
+import { unwrapResultValue } from "../generic-result-renderer.js";
 type Data = Record<string, unknown>;
 
 /** Normalize historical Skill/MCP result envelopes without loading a capability package. */
 export function skillResultData(result: unknown, originalResult: unknown, plugin: Data | null = null) {
-  const candidate = result != null && result !== "" ? result : record(originalResult).result;
-  const value = candidate && typeof candidate === "object" && !Array.isArray(candidate)
-    ? (record(candidate)._plugin && record(candidate).result && typeof record(candidate).result === "object" ? record(candidate).result : candidate)
-    : candidate;
-  const data = stripSkillMeta(unwrapSkillResultData(value));
-  const meta = skillMetaFromResult(result, originalResult);
+  const source = skillResultEnvelope(result, originalResult);
+  const data = unwrapResultValue(source).envelope ? record(source).result : source;
+  const meta = skillMetaFromResult(originalResult, result);
   return (meta?.runtime || plugin?.runtime) === "mcp" ? normalizeMcpRendererData(data) : data;
 }
 
-function unwrapSkillResultData(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const hasResult = Object.prototype.hasOwnProperty.call(value, "result");
-  if (!hasResult) return value;
-  const keys = Object.keys(value);
-  const isToolEnvelope = keys.length === 1 || ["ok", "hasResult", "resultType", "engine", "reason", "error", "code"]
-    .some(key => Object.prototype.hasOwnProperty.call(value, key));
-  return isToolEnvelope ? record(value).result : value;
+/** Presentation belongs to the host envelope, never to the returned business subtree. */
+export function skillResultEnvelope(result: unknown, originalResult: unknown) {
+  const source = originalResult ?? result;
+  const historical = record(source);
+  const nested = record(historical.result);
+  const envelope = Object.keys(historical).length === 1 && nested._plugin && typeof nested._plugin === "object"
+    && !Array.isArray(nested._plugin) && unwrapResultValue(nested).envelope
+    ? nested : source;
+  return unwrapResultValue(envelope).envelope ? stripSkillMeta(envelope) : envelope;
 }
 
 export function stripSkillMeta(value: unknown): unknown {

@@ -2,7 +2,7 @@ import { t } from "../../shared/i18n/backend.js";
 import { createSkillStateRepository, sameSkillRecord, skillWriteConflict } from "./skill-repository.js";
 import { listSkills, validateSkillMcpConfig, validateSkillManifest } from "./runtime.js";
 import { isBuiltinSkillName, mergeBuiltinSkills } from "../../shared/skills/builtin-skills.js";
-import { modernSkillValuesFromRecord, normalizeModernSkill, normalizeSkillLookup, skillMatchesName } from "../../shared/skills/skill-utils.js";
+import { modernSkillValuesFromRecord, normalizeModernSkill, normalizeSkillLookup, normalizeSkill, skillEntriesByIdentity } from "../../shared/skills/skill-utils.js";
 import { nowBeijingDateTime } from "../../shared/time-utils.js";
 import type { SkillRecord } from "../../shared/skills/skill-utils.js";
 import type { SkillWorkspaceSnapshot, SkillWorkspaceResult } from "../../shared/contracts/skill-workspace.js";
@@ -35,7 +35,6 @@ export function createSkillWorkspaceService({
     await prepare();
     const snapshot = await repository.read();
     const next = { ...snapshot._skills };
-    const original = modernSkillValuesFromRecord(next);
     const name = String(request.name || "");
     const rows = action === "import"
       ? (Array.isArray(request.skills) ? request.skills : []).map(normalizeModernSkill)
@@ -48,10 +47,14 @@ export function createSkillWorkspaceService({
       if (isBuiltinSkillName(candidate)) throw Object.assign(new Error(t("skill.builtinReadOnly", { name: String(candidate) })), { code: "SKILL_READ_ONLY" });
     }
     const readSet = new Set([name, ...names].filter(Boolean));
-    const find = (key: string) => original.find(skill => skillMatchesName(skill, key)) || null;
-    const remove = (key: string) => {
-      for (const [id, value] of Object.entries(next)) {
-        if (skillMatchesName(fields(value), key) || normalizeSkillLookup(id) === normalizeSkillLookup(key)) { readSet.add(id); delete next[id]; }
+    const find = (key: string) => {
+      const entry = skillEntriesByIdentity(snapshot._skills, key)[0];
+      return entry ? normalizeSkill(entry.skill) : null;
+    };
+    const remove = (name: string) => {
+      for (const { key } of skillEntriesByIdentity(next, name)) {
+        readSet.add(key);
+        delete next[key];
       }
     };
     const expectations = action === "import" ? fields(request.expected) : { [name]: request.expected };

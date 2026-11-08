@@ -225,5 +225,12 @@
   "sessions.locationPositionUnavailable": "現在地を特定できませんでした。ネットワークと位置情報サービスを確認するか、都市や地域を教えてください。",
   "sessions.locationTimeout": "位置情報の取得がタイムアウトしました。サイドパネルを開いたまま、ブラウザーの位置情報を許可するか、都市や地域を教えてください。",
   "sessions.locationPanelUnavailable": "サイドパネルが接続されていません。このウィンドウで開いて再試行するか、都市や地域を教えてください。",
-  "sessions.locationResponseTimeout": "位置情報の取得がタイムアウトしました。ブラウザーの位置情報を許可し、システムの位置情報サービスをオンにするか、都市や地域を教えてください。"
+  "sessions.locationResponseTimeout": "位置情報の取得がタイムアウトしました。ブラウザーの位置情報を許可し、システムの位置情報サービスをオンにするか、都市や地域を教えてください。",
+  "sessions.externalDrive": "外部",
+  "sessions.externalDriveReadOnly": "このセッションは外部クライアントが直接操作しています。ここでは閲覧のみです。",
+  "sessions.externalDriveWelcomeTitle": "外部エージェントが直接操作します",
+  "sessions.externalDriveWelcomeBody": "このセッションは外部エージェントが MCP または qz CLI から直接操作します。説明書のインストールまたは更新: npx skills add alibaba/qz-browser-agent -g。CLI コマンドは自動接続します。手動で接続する場合は、次のコマンドを実行し、表示された URL をこのブラウザーで開いてください。",
+  "sessions.externalDriveWelcomeCommandHint": "表示された URL をこのブラウザーで開く",
+  "sessions.externalDriveWelcomeCopy": "コピー",
+  "sessions.externalDriveWelcomeCopied": "コピーしました"
 }

@@ -54,6 +54,27 @@ Complete unknown capabilities through the provider's discovery implementation. S
 uses saved configuration. Save validates those settings locally. Unknown context windows require
 explicit configuration; unknown image support is treated as unavailable.
 
+Local gateways can declare `editableEndpoint` with their default API URL and reuse
+`customEndpoint` for persistence. Their protocol stays fixed; presets and model-list caches include
+the configured endpoint. Gateway credentials stay with that preset, rather than the provider-wide
+remembered key. `requiresApiKey` controls required-field validation; `auth` controls managed login.
+
+A preset with `modelsIncludeCapabilities` returns `contextWindow`, `maxOutputTokens` and `vision`
+from `listModels`. Missing values remain unknown. Settings discovers these capabilities at model
+selection and saves the output limit with the preset; requests and compaction use the saved limit
+without fetching a model list. Local model IDs are matched exactly and never inferred from an
+unrelated public model directory.
+
+[Magpie](https://github.com/yetone/magpie) uses OpenAI Chat Completions at
+`http://127.0.0.1:3425/v1`; the address accepts a different port or LAN host. Its `/v1/models`
+provides `context_window`, `max_output_tokens`, and `modalities.input`. Local loopback requests need
+no key; other computers use a gateway key with Magpie network sharing enabled. Image messages and
+streamed tool calls use the existing OpenAI adapter.
+
+Custom OpenAI and Anthropic endpoints also try their Models API. A supplied key uses the selected
+protocol's authentication header; an empty key sends no credential. Discovery failure leaves manual
+model entry and saving available. Model menus show all matching entries in a scrollable list.
+
 Service labels and authentication hints may use getters to resolve the current language when a
 summary is read. Keep model IDs, user names and parameter values unchanged. Declare menu grouping in
 the preset; settings renders the shared catalog. See [localization](localization.md).
@@ -90,6 +111,15 @@ and shared request scheduling. The Agent owns conversation history.
 framing. It retries recoverable failures while opening a request. The adapter interprets JSON,
 provider error envelopes and end markers, including errors embedded in content, then reports stable
 failure codes and details for the UI.
+
+OpenAI-compatible requests omit optional output-token limits unless configured in model parameters
+or an explicit provider policy. This lets the service choose its default and avoids imposing
+`max_tokens` on models that accept only `max_completion_tokens`. Anthropic requests still supply
+their required `max_tokens` field.
+
+Compaction reserves the greater of 16,000 tokens and the output limit sent by the adapter. The run
+profile captures that limit from the same configuration as the request; an omitted limit retains
+the 16,000-token reserve. Compaction planning, send admission, and context usage share this budget.
 
 The Agent owns the bounded recovery budget, compaction and rollback of partial messages. A recovery
 request uses this budget with transport retries disabled. The [rate

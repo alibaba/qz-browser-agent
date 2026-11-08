@@ -125,10 +125,11 @@ const foreignVisibleContext = contextAgent._formatDynamicContext({
     ownedByCurrentTask: false,
   },
 });
-assert.match(foreignVisibleContext, /当前任务工作标签页（页面工具默认目标）: \[11\] Working/, "the owned page is the default tool target");
-assert.match(foreignVisibleContext, /本轮开始时用户可见标签页（当前窗口 active 网页）: \[22\] Visible.*属于其他任务 other-session/, "a foreign visible page is an ownership-qualified fact");
-assert.match(foreignVisibleContext, /本轮任务开始时当前任务标签页:\n  → \[11\]/, "the tab list marks the owned working page");
-assert.match(contextAgent._formatDynamicContext({ userVisibleTab: { id: 22 } }), /当前任务工作标签页（页面工具默认目标）: 无/, "the visible page never becomes an implicit working page");
+assert.match(foreignVisibleContext, /当前任务最近访问的标签页: \[tabRef=11\] Working/, "recent page context is informational");
+assert.match(foreignVisibleContext, /用户可见标签页.*\[tabRef=22\] Visible.*属于其他任务 other-session/, "a foreign visible page is an ownership-qualified fact");
+assert.match(foreignVisibleContext, /当前任务标签页:[\s\S]*\[tabRef=11\]/, "task pages expose an explicit reference");
+assert.doesNotMatch(foreignVisibleContext, /页面工具默认目标|→/, "neither recent nor visible pages become implicit tool targets");
+assert.doesNotMatch(contextAgent._formatDynamicContext({ userVisibleTab: { id: 22 } }), /最近访问|默认目标/, "visible context does not invent a recent or default page");
 assert.doesNotMatch(foreignVisibleContext, /可先 use_tab 接管|canTakeOver/, "foreign visible pages do not imply transfer permission");
 for (const toolName of ["read_article", "find_elements", "list_images"]) {
   assert.match(foreignVisibleContext, new RegExp(`\\b${toolName}\\b`), `foreign visible tabs should advertise ${toolName}`);
@@ -168,15 +169,10 @@ assert.match(
   /_buildSiteSkillContextEventMessage\(previousSkills,\s*snapshot\.siteSkills \|\| nextSkills,\s*toolName\)/,
   "site skill refresh should emit a hidden context event after the skill set changes",
 );
-assert.match(
+assert.doesNotMatch(
   agent,
-  /async _collectToolRuntimeContext\(\)/,
-  "agent should keep a separate live tool-runtime context for current workingTab defaults",
-);
-assert.match(
-  agent,
-  /workingTabId: toolRuntimeContext\.workingTabId \|\| null/,
-  "tool execution should use the live tool-runtime workingTabId, not the run-start prompt snapshot",
+  /_collectToolRuntimeContext|_enrichToolCallArgsWithPageContext/,
+  "Agent forwards explicit page arguments without a context-derived default",
 );
 
 assert.doesNotMatch(
@@ -207,7 +203,7 @@ assert.match(
 );
 assert.match(
   tools,
-  /getToolRuntimeDependencies\(context\)\.sessions\?\.resolveTargetTab\?\./,
+  /sessions\?\.resolveTargetTab\?\./,
   "tools should call the central session target resolver",
 );
 assert.match(
@@ -223,7 +219,7 @@ const sendToContent = sliceBetween(
 );
 assert.match(
   sendToContent,
-  /SESSION_TAB_TARGET_REQUIRED/,
+  /TAB_REF_REQUIRED/,
   "content script calls should require an explicit session-owned tab",
 );
 assert.doesNotMatch(
@@ -240,7 +236,7 @@ const resolveGuardrailTargetTabId = sliceBetween(
 assert.doesNotMatch(
   resolveGuardrailTargetTabId,
   /chrome\.tabs\.query|activeTab/,
-  "guardrail checks should use resolved tool args or session working tab only",
+  "guardrail checks should use resolved explicit tool arguments",
 );
 
 console.log("session tab isolation tests passed");

@@ -81,7 +81,7 @@
   "documents.failedToCreateTemporaryPdfRenderTab": "無法開啟用來建立 PDF 的暫時分頁。",
   "documents.temporaryPdfRenderingRequiresTheChromeDebuggerRuntime": "建立 PDF 需要存取 Chrome 偵錯工具。",
   "documents.chromePagePrinttopdfReturnedEmptyData": "Chrome Page.printToPDF 未傳回資料。",
-  "documents.temporaryTabDidNotFinishLoading": "暫時分頁 {tabId} 未能完成載入。",
+  "documents.temporaryTabDidNotFinishLoading": "暫時分頁 未能完成載入。",
   "documents.documentArtifactHasNoContent": "文件成果沒有內容。",
   "documents.docxDocumentXmlNotFound": "DOCX 檔案缺少 document.xml。",
   "documents.xlsxWorkbookXmlNotFound": "XLSX 檔案缺少 workbook.xml。",

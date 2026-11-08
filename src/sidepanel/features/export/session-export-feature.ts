@@ -21,7 +21,7 @@ import {
 import { loadActiveSidepanelSkin, resolveActiveSidepanelSkin } from "../../ui/skin-runtime.js";
 import { mathExportStylesheet, renderMathSvg, withMathRuntime } from "../chat/math-runtime.js";
 
-interface ExportSession { id?: unknown; title?: string }
+interface ExportSession { id?: unknown; title?: string; source?: string }
 
 interface StaticTranscriptContext {
   sessionId: string;
@@ -280,7 +280,9 @@ export function createSessionExportFeature(options: ExportOptions = {}) {
 
 export function buildStaticSessionChatHtml(session: ExportSession, transcript: TranscriptEntry[], host: StaticTranscriptHost) {
   const sessionId = host.normalizeSessionId(session?.id) || "exported-session";
-  const history: TranscriptEntry[] = groupConsecutiveToolTranscriptEntries(host.projectTranscript(transcript));
+  const history: TranscriptEntry[] = groupConsecutiveToolTranscriptEntries(host.projectTranscript(transcript), {
+    groupTools: session?.source !== "external-drive",
+  });
   const lastUserIndex = findLastIndex(history, item => item?.type === "user");
   const assistantActionIndexes = new Set<number>();
   const container = document.createElement("div");

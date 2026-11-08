@@ -208,13 +208,33 @@ export async function deleteSessionMessageDocuments(sessionId: string) {
   const completion = txDone(tx);
   try {
     const [deletedFileCount, deletedModelCount] = await Promise.all([
-      deleteOwnedChatRecords(tx.objectStore(FILES_STORE), owner),
-      deleteOwnedChatRecords(tx.objectStore(MODELS_STORE), owner),
+      deleteOwnedRecords(tx.objectStore(FILES_STORE), owner, "chat_attachment"),
+      deleteOwnedRecords(tx.objectStore(MODELS_STORE), owner, "chat_attachment"),
     ]);
     await completion;
     return { deletedFileCount, deletedModelCount };
   } catch (error) {
     try { tx.abort(); } catch(_abortError) { /* transaction already settled */ }
+    await completion.catch(() => null);
+    throw error;
+  }
+}
+
+/** Delete only records explicitly owned by this Session, including tool-created files and artifacts. */
+export async function deleteSessionDocuments(sessionId: string) {
+  const owner = String(sessionId || "").trim();
+  if (!owner) throw new Error("document cleanup requires sessionId");
+  const db = await openDocumentDb();
+  const tx = db.transaction([FILES_STORE, MODELS_STORE, ARTIFACTS_STORE], "readwrite");
+  const completion = txDone(tx);
+  try {
+    const [deletedFileCount, deletedModelCount, deletedArtifactCount] = await Promise.all(
+      [FILES_STORE, MODELS_STORE, ARTIFACTS_STORE].map(name => deleteOwnedRecords(tx.objectStore(name), owner)),
+    );
+    await completion;
+    return { deletedFileCount, deletedModelCount, deletedArtifactCount };
+  } catch (error) {
+    try { tx.abort(); } catch { /* Already settled. */ }
     await completion.catch(() => null);
     throw error;
   }
@@ -408,14 +428,14 @@ function requestDocumentDb(version?: number) {
   });
 }
 
-function deleteOwnedChatRecords(store: IDBObjectStore, sessionId: string) {
+function deleteOwnedRecords(store: IDBObjectStore, sessionId: string, sourceTool = "") {
   return new Promise<number>((resolve, reject) => {
     let count = 0;
     const request = store.openCursor();
     request.onsuccess = () => {
       const cursor = request.result;
       if (!cursor) return resolve(count);
-      if (cursor.value.sessionId === sessionId && cursor.value.sourceTool === "chat_attachment") {
+      if (cursor.value.sessionId === sessionId && (!sourceTool || cursor.value.sourceTool === sourceTool)) {
         cursor.delete();
         count += 1;
       }

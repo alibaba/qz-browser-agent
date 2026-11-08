@@ -211,7 +211,7 @@ function assertSourceContracts() {
 
   assert.match(
     sidepanel,
-    /artifactsFeature\.scheduleSummaryBackfill\(list\)/,
+    /artifactsFeature\.scheduleSummaryBackfill\(visibleSessions\)/,
     "session list should still schedule stale summary backfill",
   );
   assert.match(

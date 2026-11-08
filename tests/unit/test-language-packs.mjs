@@ -110,7 +110,8 @@ for (const pack of packs.filter(pack => pack.catalog)) {
       const input = { ok: false, code: "SKILL_NOT_FOUND", error: "Legacy provider detail", details: { skillName: "用户技能 {name} <script>" } };
       const output = localizeToolFailurePayload(input);
       assert.equal(output.code, input.code);
-      assert.equal(output.details.originalError, input.error);
+      assert.equal(output.details.originalError, undefined);
+      assert.equal(input.error, "Legacy provider detail", "localization preserves the caller's input");
       assert.equal(output.details.skillName, input.details.skillName);
       assert.equal(output.codeLabel, messages[chromeMessageId("backend.toolError.SKILL_NOT_FOUND.label")].message);
       assert.notEqual(output.error, "The tool failed.");

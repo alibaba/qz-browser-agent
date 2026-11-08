@@ -1,9 +1,16 @@
+import { toolError, toolErrorDetails, type ToolErrorDetails } from "../../shared/contracts/tool-error.js";
+
 /** Pure argument validation, before tab ownership, permissions, or execution. */
 export class ToolExecutionError extends Error {
-  constructor(public code: string, message: string, public details: Record<string, unknown> = {}) {
+  details: ToolErrorDetails;
+  constructor(public code: string, message: string, details: unknown = {}) {
     super(message);
     this.name = "ToolExecutionError";
+    this.code = code.toUpperCase();
+    this.details = toolErrorDetails(details);
   }
+  hint?: string;
+  toJSON() { return toolError(this.code, this.message, { hint: this.hint, details: this.details }); }
 }
 
 export function isMissingRequiredValue(value: unknown): boolean {
@@ -24,7 +31,7 @@ export function requireToolFields(
 
 export function throwMissingToolArgs(name: string, missing: readonly string[], args: object, details: Record<string, unknown> = {}): never {
   throw new ToolExecutionError("MISSING_REQUIRED_ARGUMENTS", `Invalid arguments for ${name}: missing required field(s): ${missing.join(", ")}`, {
-    name, missing, ...details, providedKeys: Object.keys(args).slice(0, 50),
+    name, missing, ...details,
   });
 }
 
@@ -54,8 +61,21 @@ export function validateToolSchema(name: string, value: unknown, schema: unknown
       && (!Object.hasOwn(value, key) || value[key] === undefined));
     if (missing.length) throwMissingToolArgs(name, missing, value, { path });
   }
-  if (!record(schema.properties)) return;
-  for (const [key, property] of Object.entries(schema.properties)) {
+  const properties = record(schema.properties) ? schema.properties : {};
+  const patterns = Object.entries(record(schema.patternProperties) ? schema.patternProperties : {})
+    .map(([pattern, property]) => ({ pattern: new RegExp(pattern), property }));
+  if (schema.additionalProperties === false) {
+    const allowedFields = [...Object.keys(properties), ...patterns.map(({ pattern }) => pattern.toString())];
+    const invalidFields = Object.keys(value).filter(key => !Object.hasOwn(properties, key)
+      && !patterns.some(({ pattern }) => pattern.test(key)));
+    if (invalidFields.length) throw new ToolExecutionError("INVALID_ARGUMENTS",
+      `Invalid arguments for ${name}: unknown field(s) at ${path}: ${invalidFields.join(", ")}. Supported fields: ${allowedFields.join(", ") || "none"}.`,
+      { name, path, invalidFields, allowedFields });
+  }
+  for (const [key, property] of Object.entries(properties)) {
     if (Object.hasOwn(value, key) && value[key] !== undefined) validateToolSchema(name, value[key], property, `${path}.${key}`);
+  }
+  for (const [key, item] of Object.entries(value)) for (const { pattern, property } of patterns) {
+    if (pattern.test(key)) validateToolSchema(name, item, property, `${path}.${key}`);
   }
 }

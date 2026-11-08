@@ -43,13 +43,14 @@ async function executeSkillAuthorLoadAvailableRenderers() {
   };
 }
 
-async function executeSkillAuthorDistributionHostTool(args: Record<string, unknown>, { callTool, tool: toolDefinition }: SkillHostContext) {
+async function executeSkillAuthorDistributionHostTool(args: Record<string, unknown>, { callTool, tool: toolDefinition, context }: SkillHostContext) {
   const name = String(toolDefinition.localName || toolDefinition.rawName || toolDefinition.name || "").trim();
   const payload = args;
 
   if (name === "import_page_zip") {
     return callTool("import_skill_from_page_zip", {
       url: payload.url,
+      tabRef: context.requestedTabRef ?? payload.tabRef,
       overwrite: payload.overwrite === true,
     });
   }
@@ -59,22 +60,21 @@ async function executeSkillAuthorDistributionHostTool(args: Record<string, unkno
   }
 
   const opened = (await callTool("open_tab", { url: payload.repositoryUrl })) as Record<string, unknown>;
-  const tabId = Number(opened?.id || opened?.tabId || 0);
-  if (!Number.isInteger(tabId) || tabId <= 0) {
+  const tabRef = opened?.tabRef;
+  if (!(typeof tabRef === "string" && tabRef.trim()) && !(typeof tabRef === "number" && Number.isInteger(tabRef) && tabRef > 0)) {
     const err = new ToolExecutionError("GIT_REPOSITORY_TAB_FAILED", "Git repository tab did not open", { repositoryUrl: payload.repositoryUrl });
     throw err;
   }
   if (name === "import_git_repository") {
     return callTool("import_git_skill_repository", {
       repositoryUrl: payload.repositoryUrl,
-      tabId,
+      tabRef,
       overwrite: payload.overwrite === true,
     });
   }
-  await callTool("use_tab", { tabId });
   return callTool("install_skill_to_git", {
     name: payload.name,
-    tabId,
+    tabRef,
     commitMessage: payload.commitMessage,
   });
 }

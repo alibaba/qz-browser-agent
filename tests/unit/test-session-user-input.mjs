@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSessionUserInput } from '../../src/background/session/user-input.js';
+import { createSessionSupervisor } from '../../src/background/session/supervisor.js';
 import { selectSkillResults } from '../../src/background/skills/skill-selection.js';
 
 const fields = [
@@ -241,4 +242,70 @@ test('connection cancellation during permission or consent checks leaves the wai
     if (kind === 'newConsent') assert.equal(receivedSignal, controller.signal);
     assert.equal(f.resolved.length, 0); assert.equal(f.api.get({ sessionId: 's1' }).waiting, true);
   }
+});
+
+test('direct-drive permission waits work without an Agent and survive Agent hydration for history', async () => {
+  const supervisor = createSessionSupervisor({ createAgent: () => ({ subscribe() {} }) });
+  const sessionId = 'drive-permission', runId = supervisor.mintDriveRunId(sessionId);
+  let granted = false;
+  const api = createSessionUserInput({
+    getWait: supervisor.getUserWait, getRuntime: supervisor.getRuntime,
+    resolve: supervisor.resolveUserWait, reject: supervisor.rejectUserWait,
+    hasBrowserPermission: async permission => { assert.equal(permission, 'userScripts'); return granted; },
+  });
+  const waitId = 'drive-grant';
+  const pending = supervisor.beginUserWait(sessionId, { waitId, runId });
+  supervisor.setRuntime(sessionId, { runId, waitId, waitForm: { browserPermission: 'userScripts' } });
+  assert.equal(api.get({ sessionId }).kind, 'browser_permission');
+  assert.equal((await api.respond({ sessionId, waitId, action: 'approve' })).code, 'BROWSER_PERMISSION_REQUIRED');
+  granted = true;
+  assert.equal((await api.respond({ sessionId, waitId, action: 'approve' })).accepted, true);
+  assert.equal((await pending).continued, true);
+  assert.equal(supervisor.hasAgent(sessionId), false);
+  assert.equal(api.get({ sessionId }).waiting, false);
+
+  // Opening the sidebar requests get_messages, which hydrates an Agent after the drive wait starts.
+  granted = false;
+  const viewingWaitId = 'drive-viewing';
+  const viewing = supervisor.beginUserWait(sessionId, { waitId: viewingWaitId, runId });
+  supervisor.setRuntime(sessionId, { runId, waitId: viewingWaitId, waitForm: { browserPermission: 'userScripts' } });
+  await supervisor.getAgent(sessionId);
+  assert.equal(api.get({ sessionId }).waitId, viewingWaitId);
+  granted = true;
+  assert.equal((await api.respond({ sessionId, waitId: viewingWaitId, action: 'approve' })).accepted, true);
+  assert.equal((await viewing).continued, true);
+});
+
+test('retired drive runs keep cleanup authority but cannot create or approve user waits', async () => {
+  const supervisor = createSessionSupervisor({ createAgent: () => { throw new Error('no Agent'); } });
+  const sessionId = 'drive-retired', runId = supervisor.mintDriveRunId(sessionId), waitId = 'old-wait';
+  let grant;
+  const permission = new Promise(resolve => { grant = resolve; });
+  const api = createSessionUserInput({
+    getWait: supervisor.getUserWait, getRuntime: supervisor.getRuntime,
+    resolve: supervisor.resolveUserWait, reject: supervisor.rejectUserWait,
+    hasBrowserPermission: () => permission,
+  });
+  const pending = supervisor.beginUserWait(sessionId, { waitId, runId });
+  const rejected = assert.rejects(pending, { code: 'OPERATION_ABORTED' });
+  supervisor.setRuntime(sessionId, { runId, waitId, waitForm: { browserPermission: 'userScripts' } });
+  const approving = api.respond({ sessionId, waitId, action: 'approve' });
+  assert.equal(supervisor.takeDriveRunForRelease(sessionId), runId);
+  assert.equal(supervisor.isRunCurrent(sessionId, runId), true, 'release still owns debugger cleanup');
+  await rejected;
+  assert.equal(supervisor.getUserWait(sessionId), null);
+  assert.equal(supervisor.isWaitingForUser(sessionId), false);
+  assert.throws(() => supervisor.beginUserWait(sessionId, { waitId: 'stale', runId }), { code: 'STALE_RUN' });
+  assert.equal(supervisor.resolveUserWait({ sessionId, waitId }), false);
+  grant(true);
+  assert.equal((await approving).code, 'STALE_WAIT', 'a late browser grant cannot resume a retired execution');
+
+  const nextRun = supervisor.mintDriveRunId(sessionId);
+  const next = supervisor.beginUserWait(sessionId, { waitId: 'next-wait', runId: nextRun });
+  const nextRejected = assert.rejects(next, { code: 'OPERATION_ABORTED' });
+  assert.equal(supervisor.resolveUserWait({ sessionId, waitId }), false, 'the old wait cannot resolve its successor');
+  supervisor.clearDriveRunId(sessionId);
+  await nextRejected;
+  assert.equal(supervisor.getUserWait(sessionId), null);
+  assert.equal(supervisor.resolveUserWait({ waitId: 'next-wait' }), false);
 });

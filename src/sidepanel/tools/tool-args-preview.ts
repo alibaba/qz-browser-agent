@@ -138,6 +138,8 @@ function pageDisplayTarget(args: unknown = {}, result: unknown = {}, { maxLength
     argsObject.url,
   ]);
   if (url) return presentation.summarizeValue(url, maxLength);
+  const tabRef = presentation.firstNonEmpty([argsObject.tabRef, resultObject.tabRef, nestedResult.tabRef]);
+  if (tabRef !== "") return presentation.summarizeValue(t("tabNamed", { name: String(tabRef) }), maxLength);
   const tabId = presentation.firstNonEmpty([
     resultObject._tabId,
     nestedResult._tabId,

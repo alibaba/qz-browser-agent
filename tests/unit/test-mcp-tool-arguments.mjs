@@ -12,7 +12,7 @@ test("advertised MCP schemas reject unknown top-level arguments before dispatch"
     ["qingzhou_update_settings", { config: { debugMode: true }, apikey: "synthetic-secret" }],
   ]) {
     await assert.rejects(executeMcpTool(state, name, input), error => {
-      assert.equal(error.code, "invalid_arguments");
+      assert.equal(error.code, "INVALID_ARGUMENTS");
       assert.match(error.message, /additional propert/i);
       assert.doesNotMatch(error.message, /synthetic-secret/);
       return true;
@@ -20,9 +20,9 @@ test("advertised MCP schemas reject unknown top-level arguments before dispatch"
   }
 });
 
-test("nested tool arguments, answers, settings patches and raw method params remain extensible", () => {
+test("nested tool arguments, answers, settings patches and raw method params remain extensible", async () => {
   for (const [name, input, field] of [
-    ["qingzhou_execute_tool", { name: "custom_tool", args: { customField: { nested: [1, "two"] } } }, "args"],
+    ["qingzhou_execute_tool", { sessionId: "task", name: "custom_tool", args: { customField: { nested: [1, "two"] } } }, "args"],
     ["qingzhou_respond_to_user_input", { sessionId: "task", waitId: "wait", action: "submit", answers: { city: "杭州", choices: ["a"] } }, "answers"],
     ["qingzhou_update_settings", { config: { language: "zh-CN", providerKeys: { custom: "synthetic-secret" } } }, "config"],
     ["qingzhou_call", { method: "new_method", params: { futureField: true } }, "params"],
@@ -31,4 +31,12 @@ test("nested tool arguments, answers, settings patches and raw method params rem
   assert.equal(args.clientId, "selected-browser");
   assert.equal(args.firstMessage, "Do this task.");
   assert.equal(args.title, "");
+  assert.throws(() => validateMcpToolInput("qingzhou_execute_tool", { name: "list_tabs", args: {} }), /sessionId/);
+  const drive = validateMcpToolInput("qingzhou_execute_tool", { sessionId: "task", name: "list_tabs", args: {} });
+  assert.equal(drive.sessionId, "task");
+  assert.equal(Object.hasOwn(drive, "runId"), false);
+  await assert.rejects(
+    executeMcpTool({ callExtension: () => assert.fail("unknown runId must not reach Chrome") }, "qingzhou_execute_tool", { sessionId: "task", name: "list_tabs", runId: "run-1" }),
+    /additional propert/i,
+  );
 });

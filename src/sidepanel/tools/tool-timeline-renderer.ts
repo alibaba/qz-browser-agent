@@ -76,7 +76,9 @@ const TOOL_TIMELINE_TRACE_BUFFER_LIMIT = 120;
 const transientClassTimers = new WeakMap<HTMLElement, Map<string, number>>();
 const thinkingTimelineGroupViewStateByKey = new Map<string, ThinkingState>();
 
-export function groupConsecutiveToolTranscriptEntries(history: Entry[]) {
+export function groupConsecutiveToolTranscriptEntries(history: Entry[], options: { groupTools?: boolean } = {}) {
+  // Direct drive shows every call, including each batch item, as its own card.
+  const groupTools = options.groupTools !== false;
   const out: Entry[] = [];
   let currentUserKey = "";
   let turnOrdinal = 0;
@@ -93,16 +95,23 @@ export function groupConsecutiveToolTranscriptEntries(history: Entry[]) {
         runId: turn.runId,
       }));
     }
-    const visibleTools = visibleTimelineTools(turn.tools);
+    const visibleTools = groupTools ? visibleTimelineTools(turn.tools) : turn.tools;
     if (visibleTools.length) {
       const presentationAnchor = `${turn.key}:tools`;
-      out.push(visibleTools.length >= 2
-        ? createToolTimelineGroupEntry(visibleTools, {
+      if (groupTools && visibleTools.length >= 2) {
+        out.push(createToolTimelineGroupEntry(visibleTools, {
           uiKey: presentationAnchor,
           presentationAnchor,
           runId: turn.runId,
-        })
-        : { ...visibleTools[0], _toolPresentationAnchor: presentationAnchor });
+        }));
+      } else if (groupTools) {
+        out.push({ ...visibleTools[0], _toolPresentationAnchor: presentationAnchor });
+      } else {
+        visibleTools.forEach((tool, index) => {
+          const anchor = `${presentationAnchor}:${tool.toolCallId || tool._uiKey || index}`;
+          out.push({ ...tool, _toolPresentationAnchor: anchor });
+        });
+      }
     }
     for (const assistant of turn.assistants) {
       if (String(assistant?.content || "").trim() || assistant?.streaming) out.push(assistant);

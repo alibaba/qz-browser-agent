@@ -70,7 +70,8 @@ function appendInspectElementProfile(parent: HTMLElement, args: Data, result: un
 
 function appendElementActionProfile(parent: HTMLElement, toolName: string, args: Data, result: unknown) {
   const data = record(result);
-  const element = record(data.element);
+  const evidence = record(record(data._display).elementAction);
+  const element = record(evidence.element || data.element);
   const action = data.action || args.action || inferredElementAction(toolName);
   presentation.appendCompactLine(parent, {
     title: elementActionTitle(toolName, action, args, data, element),
@@ -85,8 +86,9 @@ function appendElementActionProfile(parent: HTMLElement, toolName: string, args:
     ].filter(Boolean),
   });
 
-  const structure = richTextStructureFromAction(data);
+  const structure = evidence.structure ? record(evidence.structure) : richTextStructureFromAction(data);
   if (structure) appendRichTextStructure(parent, structure);
+  if (data.confirmationRequired && data.hint) presentation.appendNoteSection(parent, t("message"), data.hint);
   return true;
 }
 

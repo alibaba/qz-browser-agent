@@ -14,7 +14,7 @@ import type { SettingsConfig } from "#sdk/shared/settings";
 interface AlertRateState { timestamps: number[]; dedupe: Record<string, unknown> }
 import { requireToolFields } from "#sdk/background/tools";
 import { getQingzhouManageGuardrailsToolDescription, QINGZHOU_MANAGE_GUARDRAILS_TOOL_PARAMETERS, getQingzhouManageSkillSettingsToolDescription, QINGZHOU_MANAGE_SKILL_SETTINGS_TOOL_PARAMETERS, getQingzhouManageSettingsToolDescription, QINGZHOU_MANAGE_SETTINGS_TOOL_PARAMETERS } from "./embedded-skill.js";
-import { matchConfiguredModelCapabilities } from "#sdk/background/models";
+import { matchConfiguredModelCapabilities } from "#sdk/background/model-discovery";
 import { normalizeModelParameters } from "#sdk/shared/models";
 import {
   getSecurityGuardrails,
@@ -513,7 +513,7 @@ async function executeManageSettingsAction(input: SettingsInput = {}, context: T
       provider: input.provider,
       apiKey: input.apiKey,
       customProtocol: input.customProtocol,
-      customEndpoint: input.customEndpoint || input.endpoint,
+      customEndpoint: input.customEndpoint ?? input.endpoint,
       signal,
     });
     const models = Array.isArray(result.models) ? result.models : [];
@@ -743,9 +743,11 @@ async function settingsCompleteConfigForUpdate(input: SettingsInput = {}, signal
   const sameProvider = targetProvider === current.provider;
   const modelChanged = Object.prototype.hasOwnProperty.call(input, "model");
   const providerChanged = Object.prototype.hasOwnProperty.call(input, "provider") && !sameProvider;
-  const modelIdentityChanged = providerChanged
-    || (modelChanged && String(rawPatch.model || "").trim() !== String(current.model || "").trim());
   const providerSummary = settingsProviderSummary(targetProvider);
+  const endpointChanged = Object.hasOwn(rawPatch, "customEndpoint") && String(rawPatch.customEndpoint || "").trim() !== current.customEndpoint;
+  const credentialChanged = providerSummary?.modelsIncludeCapabilities && Object.hasOwn(rawPatch, "apiKey") && rawPatch.apiKey !== current.apiKey;
+  const modelIdentityChanged = providerChanged || endpointChanged || credentialChanged
+    || (modelChanged && String(rawPatch.model || "").trim() !== String(current.model || "").trim());
   const codexProvider = Boolean(providerSummary?.auth);
   const customProvider = targetProvider === "custom";
   const model = modelChanged ? rawPatch.model : (providerChanged ? "" : current.model);
@@ -764,14 +766,15 @@ async function settingsCompleteConfigForUpdate(input: SettingsInput = {}, signal
     customProtocol: customProvider
       ? (Object.prototype.hasOwnProperty.call(input, "customProtocol") ? rawPatch.customProtocol : (sameProvider ? current.customProtocol : "openai"))
       : "",
-    customEndpoint: customProvider
+    customEndpoint: customProvider || providerSummary?.editableEndpoint
       ? (Object.prototype.hasOwnProperty.call(input, "customEndpoint") || Object.prototype.hasOwnProperty.call(input, "endpoint")
           ? rawPatch.customEndpoint
-          : (sameProvider ? current.customEndpoint : ""))
+          : (sameProvider ? current.customEndpoint : providerSummary?.editableEndpoint || ""))
       : "",
     customPresetName: customProvider
       ? (Object.prototype.hasOwnProperty.call(input, "customPresetName") ? rawPatch.customPresetName : (sameProvider ? current.customPresetName : ""))
       : "",
+    maxOutputTokens: modelIdentityChanged ? undefined : current.maxOutputTokens,
     contextWindow: Object.prototype.hasOwnProperty.call(input, "contextWindow") ? rawPatch.contextWindow : current.contextWindow,
     trimOldToolResults: Object.prototype.hasOwnProperty.call(input, "trimOldToolResults")
       ? rawPatch.trimOldToolResults
@@ -789,6 +792,10 @@ async function settingsCompleteConfigForUpdate(input: SettingsInput = {}, signal
 function settingsApiKeyForProvider({ input, rawPatch, current, targetProvider, codexProvider, sameProvider }: { input: SettingsInput; rawPatch: Record<string, unknown>; current: SettingsConfig; targetProvider: string; codexProvider: boolean; sameProvider: boolean }) {
   if (codexProvider) return "";
   if (Object.prototype.hasOwnProperty.call(input, "apiKey")) return rawPatch.apiKey;
+  if (targetProvider === "custom" || settingsProviderSummary(targetProvider)?.editableEndpoint) {
+    const endpointChanged = Object.hasOwn(rawPatch, "customEndpoint") && rawPatch.customEndpoint !== current.customEndpoint;
+    return sameProvider && !endpointChanged ? current.apiKey || "" : "";
+  }
   if (sameProvider) return current.apiKey || "";
   const providerApiKeys = current.providerApiKeys && typeof current.providerApiKeys === "object" && !Array.isArray(current.providerApiKeys)
     ? current.providerApiKeys
@@ -796,11 +803,11 @@ function settingsApiKeyForProvider({ input, rawPatch, current, targetProvider, c
   return String(providerApiKeys[targetProvider] || "").trim();
 }
 
-async function applySettingsModelCapabilityDefaults(input: SettingsInput, config: { provider: string; model?: unknown; contextWindow?: unknown; vision?: unknown }, modelIdentityChanged = false, signal?: AbortSignal) {
+async function applySettingsModelCapabilityDefaults(input: SettingsInput, config: { provider: string; model?: unknown; customEndpoint?: unknown; apiKey?: unknown; maxOutputTokens?: number; contextWindow?: unknown; vision?: unknown }, modelIdentityChanged = false, signal?: AbortSignal) {
   if (!modelIdentityChanged) return config;
   const hasExplicitContextWindow = Object.prototype.hasOwnProperty.call(input, "contextWindow");
   const hasExplicitVision = Object.prototype.hasOwnProperty.call(input, "vision");
-  if (hasExplicitContextWindow && hasExplicitVision) return config;
+  if (hasExplicitContextWindow && hasExplicitVision && !settingsProviderSummary(config.provider)?.modelsIncludeCapabilities) return config;
 
   const provider = config.provider;
   const modelName = String(config.model || "").trim();
@@ -812,13 +819,14 @@ async function applySettingsModelCapabilityDefaults(input: SettingsInput, config
 
   let match = null;
   try {
-    match = await matchConfiguredModelCapabilities({ model: modelName, provider }, signal);
+    match = await matchConfiguredModelCapabilities({ model: modelName, provider, customEndpoint: String(config.customEndpoint || ""), apiKey: String(config.apiKey || "") }, signal);
   } catch (err) {
     signal?.throwIfAborted();
     toolTrace(`[settings] model capability match failed provider=${provider || ""} model=${modelName}: ${err instanceof Error ? err.message : String(err)}`);
   }
   signal?.throwIfAborted();
 
+  config.maxOutputTokens = settingsProviderSummary(provider)?.modelsIncludeCapabilities ? match?.maxOutputTokens ?? undefined : undefined;
   const missingFields = [];
   if (!hasExplicitContextWindow) {
     if (match?.matched && Number(match.contextWindow) > 0) {
@@ -902,6 +910,7 @@ function settingsConfigResult(config: SettingsConfig) {
     apiKey: config.apiKey || "",
     providerApiKeys: { ...providerApiKeys },
     contextWindow: Number(config.contextWindow) || 0,
+    ...(config.maxOutputTokens ? { maxOutputTokens: config.maxOutputTokens } : {}),
     trimOldToolResults: config.trimOldToolResults !== false,
     vision: config.vision === true,
     requestRateLimit: config.requestRateLimit === true,
@@ -929,6 +938,7 @@ function settingsPresetResults(presets: SettingsConfig["presets"] = []) {
     customEndpoint: String(preset?.customEndpoint || ""),
     customPresetName: String(preset?.customPresetName || ""),
     contextWindow: Number(preset?.contextWindow) || 0,
+    ...(preset?.maxOutputTokens ? { maxOutputTokens: preset.maxOutputTokens } : {}),
     trimOldToolResults: preset?.trimOldToolResults !== false,
     vision: preset?.vision === true,
     updatedAt: String(preset?.updatedAt || ""),

@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "轻舟浏览器",
+    "description": "通过 qz SDK 操作已连接的浏览器，在对话中查看结果、Trace、脚本和截图。",
+    "detail": "README.zh-CN.md"
+  }
+}

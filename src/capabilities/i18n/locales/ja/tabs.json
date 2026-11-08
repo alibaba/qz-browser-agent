@@ -1,7 +1,7 @@
 {
   "tabs.tabs": "タブ",
-  "tabs.tab": "タブ {tabId}",
-  "tabs.current": "現在",
+  "tabs.tab": "タブ {tabRef}",
+  "tabs.current": "ユーザーが閲覧中",
   "tabs.window": "ウィンドウ {windowId}",
   "tabs.qingzhouTask": "軽舟のタスク",
   "tabs.organizedInto": "「{name}」に整理しました",
@@ -38,8 +38,6 @@
   "tabs.usePage": "作業用タブを設定",
   "tabs.navigatePage": "URLに移動",
   "tabs.organizeTabsTool": "タブを整理",
-  "tabs.currentSessionWorkingTabIsNotAWebPage": "現在のタスクの作業用タブは通常のウェブページではありません。",
-  "tabs.tabIsNotAWebPageAndCannotBe": "タブ {tabId} は通常のウェブページではないため、作業用タブにできません。",
   "tabs.openingAnAgentOwnedTabRequiresTheCurrentSession": "タスク専用タブを開くには、現在のタスクのタブサービスが必要です。",
   "tabs.viewWorkingPageShort": "作業タブ",
   "tabs.usePageShort": "タブを使用",

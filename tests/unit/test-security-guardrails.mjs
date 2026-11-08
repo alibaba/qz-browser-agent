@@ -120,6 +120,14 @@ globalThis.chrome = {
       return details.injectImmediately ? navigation.result(details.target.tabId) : [];
     },
   },
+  webNavigation: {
+    ...Object.fromEntries(["onBeforeNavigate", "onCommitted", "onHistoryStateUpdated", "onReferenceFragmentUpdated", "onErrorOccurred"]
+      .map(name => [name, { addListener() {}, removeListener() {} }])),
+    async getFrame({ tabId }) {
+      const tab = await chrome.tabs.get(tabId);
+      return { url: tab.url, documentId: navigation.result(tabId)[0].documentId, errorOccurred: false };
+    },
+  },
   runtime: {
     onMessage: { addListener() {} },
     sendMessage() {},
@@ -248,6 +256,7 @@ function createOpenTabRuntime(toolsModule, options = {}) {
 function setMockTabUrl(tabId, url, title = "") {
   const tab = mockTabs.find(item => Number(item.id) === Number(tabId));
   if (!tab) throw new Error(`No tab ${tabId}`);
+  if (tab.url.split("#", 1)[0] !== url.split("#", 1)[0]) navigation.commit(tabId);
   tab.url = url;
   tab.pendingUrl = "";
   if (title) tab.title = title;
@@ -269,7 +278,7 @@ function installClickableElementMock({
     return activeHref;
   };
   contentMessageHandler = async (_tabId, message) => {
-    if (message?.action === "inspectElement") {
+    if (message?.action === "inspectElement" || message?.action === "readElementReadiness") {
       const currentHref = resolveHref();
       return {
         selector: message.selector,
@@ -277,6 +286,7 @@ function installClickableElementMock({
         visible: true,
         disabled: false,
         state: { inViewport: true, clickablePointInViewport: true, obscuredAtCenter: false },
+        rect: { x: 2, y: 24, width: 20, height: 20 },
         clickablePoint: clickable ? { x: 12, y: 34 } : null,
         href: currentHref || undefined,
         ...element,
@@ -344,7 +354,8 @@ test("normalizes URL patterns with safe wildcard syntax", () => {
 
 test("rejects adversarial wildcard hosts within a bounded process", () => {
   const result = spawnSync(process.execPath, [
-    "--import", "./tests/support/typescript-loader.mjs", "--input-type=module", "-e",
+    // Bound guardrail evaluation without rerunning the parent test bootstrap's asset generators.
+    "--import", "tsx", "--import", "./tests/support/default-locale.mjs", "--input-type=module", "-e",
     `import assert from 'node:assert/strict';
      import { normalizeGuardrailPatternInput, matchBlockedUrl } from './src/shared/security-guardrails.js';
      for (const suffix of ['!', ':', '@', '_']) {
@@ -938,7 +949,7 @@ test("builds a concise system prompt section for configured rules", () => {
   assert.doesNotMatch(section, /URL Pattern/);
 });
 
-test("tool metadata APIs keep blocked tabs visible but annotated", async () => {
+test("tab discovery keeps guarded pages visible without exposing execution metadata", async () => {
   resetStorage();
   resetChromeMocks();
   await saveSecurityGuardrails({ rules: [{ action: "block", type: "domain", value: "example.com" }] });
@@ -946,23 +957,13 @@ test("tool metadata APIs keep blocked tabs visible but annotated", async () => {
     { id: 1, windowId: 1, title: "Private", url: "https://example.com/private", active: true, pinned: false },
     { id: 2, windowId: 1, title: "News", url: "https://news.example.org", active: false, pinned: false },
   ];
-
   const tools = await importToolsForGuardrailTests();
   const session = installSessionTabResolver(tools);
   const runtime = session.createRuntime();
-  const active = await runtime.execute("get_working_tab", {}, null, { ...session.context, workingTabId: 1 });
-  assert.equal(active.hasWorkingTab, true);
-  assert.equal(active.id, 1);
-  assert.equal(active.url, "https://example.com/private");
-  assert.equal(active.securityGuardrailBlocked, true);
-  assert.equal(active.contentAccess, "blocked");
-
-  const listed = await runtime.execute("list_tabs", {});
-  assert.deepEqual(listed.map(tab => tab.id), [1, 2]);
-  assert.equal(listed[0].securityGuardrailBlocked, true);
-  assert.equal(listed[1].securityGuardrailBlocked, undefined);
-
-  assert.equal(listed[0].contentAccess, "blocked");
+  const listed = await runtime.execute("list_tabs", { scope: "all" }, null, session.context);
+  assert.deepEqual(listed.tabs, mockTabs.map(({ id, url, title, active }) => ({ tabRef: id, url, title, active })));
+  assert.equal(listed.count, 2);
+  for (const tab of listed.tabs) assert.deepEqual(Object.keys(tab).sort(), ['active', 'tabRef', 'title', 'url']);
 });
 
 test("tool content and navigation APIs are blocked before touching guarded URLs", async () => {
@@ -1099,19 +1100,19 @@ test("navigate uses safety guardrail pattern rate limits without domain fallback
   const toolEvents = [];
   const runtime = session.createRuntime({ emit: event => toolEvents.push(event) });
   try {
-    await runtime.execute("navigate", { url: "https://pattern-nav.example/free/1" }, null, {
+    await runtime.execute("navigate", { tabRef: 77, url: "https://pattern-nav.example/free/1" }, null, {
       ...sessionContext,
       runId: "run_nav_pattern_free",
       spanId: "span_nav_pattern_free",
       toolCallId: "call_nav_pattern_free",
     });
-    await runtime.execute("navigate", { url: "https://pattern-nav.example/rate/a" }, null, {
+    await runtime.execute("navigate", { tabRef: 77, url: "https://pattern-nav.example/rate/a" }, null, {
       ...sessionContext,
       runId: "run_nav_pattern_a",
       spanId: "span_nav_pattern_a",
       toolCallId: "call_nav_pattern_a",
     });
-    await runtime.execute("navigate", { url: "https://pattern-nav.example/rate/b" }, null, {
+    await runtime.execute("navigate", { tabRef: 77, url: "https://pattern-nav.example/rate/b" }, null, {
       ...sessionContext,
       runId: "run_nav_pattern_b",
       spanId: "span_nav_pattern_b",
@@ -1181,7 +1182,7 @@ test("act_on_element uses rate limits for known click href targets", async () =>
   const session = installSessionTabResolver(tools, { sessionId: "click-rate-session" });
   const sessionContext = session.context;
   const toolEvents = [];
-  const runtime = session.createRuntime({ emit: event => toolEvents.push(event) });
+  const runtime = session.createRuntime({ emit: event => toolEvents.push({ ...event, observedAt: Date.now() }) });
   try {
     await runtime.execute("act_on_element", { tabId: 82, target: "css:a.next", action: "click" }, null, {
       ...sessionContext,
@@ -1217,12 +1218,13 @@ test("act_on_element uses rate limits for known click href targets", async () =>
   }
 
   assert.equal(mockTabs[0].url, "https://click-rate.example/b");
-  assert.equal(toolEvents.some(event => (
-    event.type === "tool_execution_update"
-    && event.toolCallId === "call_click_rate_b"
-    && event.statusText === "流控等待中"
-    && event.rateLimit?.host === "click-rate.example"
-  )), true);
+  const grants = toolEvents.filter(event => event.type === "tool_execution_update"
+    && event.phase === "running" && event.rateLimit?.host === "click-rate.example");
+  assert.deepEqual(grants.map(event => [event.toolCallId, event.rateLimit.minOpenIntervalMs]), [
+    ["call_click_rate_a", 300], ["call_click_rate_b", 300],
+  ]);
+  assert.ok(grants[1].observedAt - grants[0].observedAt >= grants[0].rateLimit.nextIntervalMs,
+    "the second click cannot acquire its navigation slot before the first interval expires");
 });
 
 test("act_on_element records unknown post-click URL changes for later rate limits", async () => {
@@ -1254,7 +1256,7 @@ test("act_on_element records unknown post-click URL changes for later rate limit
       spanId: "span_js_click",
       toolCallId: "call_js_click",
     });
-    assert.equal(clicked.observedNavigation?.rateLimitRecorded, true);
+    assert.deepEqual(clicked, { navigated: true, url: "https://js-click.example/after" });
 
     const openRuntime = installSessionTabResolver(tools, { sessionId: "js-click-open-session" })
       .createRuntime({ emit: event => toolEvents.push(event) });
@@ -1331,8 +1333,7 @@ test("act_on_element ignores hash-only URL changes for navigation rate limits", 
       spanId: "span_hash_click",
       toolCallId: "call_hash_click",
     });
-    assert.equal(clicked.navigated, false);
-    assert.equal(clicked.observedNavigation, undefined);
+    assert.deepEqual(clicked, {});
 
     const openRuntime = installSessionTabResolver(tools, { sessionId: "hash-open-session" })
       .createRuntime({ emit: event => toolEvents.push(event) });

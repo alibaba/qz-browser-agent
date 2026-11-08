@@ -1,3 +1,4 @@
+import { SESSIONS_KEY } from "../../shared/session/session-store.js";
 import type { StorageAdapter } from "../internal/storage.js";
 import { sweepHistoryImages } from "../../shared/asset-store.js";
 import { collectSessionImageReferences, persistSessionImages } from "../../shared/session/session-image-assets.js";
@@ -28,7 +29,7 @@ function createOwner(storage: StorageAdapter) {
     return running;
   }
 
-  function sweep() {
+  function sweep(deletingSessionId = "") {
     const preceding = [barrier, ...active];
     let release!: () => void;
     barrier = new Promise<void>(resolve => { release = resolve; });
@@ -37,6 +38,11 @@ function createOwner(storage: StorageAdapter) {
       // of assets from an unavailable store or a failed storage read.
       if (typeof indexedDB === "undefined") return [];
       const stored = await storage.get(null);
+      if (deletingSessionId && stored[SESSIONS_KEY] && typeof stored[SESSIONS_KEY] === "object") {
+        const metadata = { ...stored[SESSIONS_KEY] as Record<string, unknown> };
+        delete metadata[deletingSessionId];
+        stored[SESSIONS_KEY] = metadata;
+      }
       // Mark ALL keys, including records, active/current checkpoints, runtime
       // queues, drafts and unknown future keys. Uncertainty keeps the image.
       const references = collectSessionImageReferences(stored);

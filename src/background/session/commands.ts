@@ -1,4 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
+import { externalDriveLeaseActive, forgetExternalDriveSession, noteExternalDriveStopped, protectExternalDriveSession } from "../mcp/external-drive.js";
 import type { Agent, AgentEvent, DynamicContext } from "../agent/agent.js";
 import type { createSessionSupervisor, SessionTask } from "./supervisor.js";
 import type { createSessionRepository } from "./repository.js";
@@ -10,6 +11,10 @@ import type { createSessionAgentHost } from "./agent-host.js";
 import type { SessionMetadata } from "../../shared/session/session-store.js";
 import type { TranscriptEntry } from "../../shared/contracts/session.js";
 import type { ModelMessage } from "../../shared/contracts/model-message.js";
+import { publicSessionObservation, type SessionStopReceipt } from "../../shared/contracts/session-observation.js";
+import { toolError } from "../../shared/contracts/tool-error.js";
+import { normalizeTabAliases } from "../../shared/tab-reference.js";
+import { resolveTabReference } from "../tools/tab-reference.js";
 import type { chat as llmChat } from "../llm/index.js";
 import type { getCurrentRuntimeConfig } from "../runtime-config.js";
 import type { normalizeSessionRuntimeStatus } from "../../shared/session/session-runtime-status.js";
@@ -51,8 +56,8 @@ interface SessionCommandsDependencies {
   artifacts: Readonly<Pick<Artifacts,
     "clearListSummaryPatch" | "clearSummaryRefresh" | "buildListSummary" | "collect" | "empty"
   >>;
-  tabs: Readonly<Pick<Tabs, "getOwnedTabContexts" | "closeOwnedTabsAfterTerminal">
-    & Partial<Pick<Tabs, "restoreOwnedTabs">>>;
+  tabs: Readonly<Pick<Tabs, "getOwnedTabContexts" | "closeOwnedTabsAfterTerminal" | "settleStoppedDriveTabs">
+    & Partial<Pick<Tabs, "restoreOwnedTabs" | "syncGroup">>>;
   sessionRuntimeReady: Promise<unknown>;
   sessionSupervisor: ReturnType<typeof createSessionSupervisor<Agent>>;
   sessionRepository: Repository;
@@ -71,6 +76,8 @@ interface SessionCommandsDependencies {
   copyChatMessageDocuments?: Documents["copyMessageDocuments"];
   removeChatSessionDocuments?(id: string): Promise<unknown>;
   removeSessionObservations?(id: string): Promise<unknown>;
+  removeSessionResources?(id: string): Promise<unknown>;
+  onDriveSettled?(): Promise<unknown>;
   blockChatDocumentParsing?(id: string): Promise<(() => void) | void>;
   observeAgentEvent?: ((id: string, event: AgentEvent) => unknown) | null;
   getAutomationRuntime(): { syncSessionOutcome(id: string): unknown };
@@ -104,7 +111,7 @@ import { extractUserMessageImages } from "../../shared/session/conversation-edit
 import { summarizeQueuedUserMessage } from "../agent/message-queue.js";
 import { createKeyedSerialQueue } from "../internal/serial-queue.js";
 import { formatTraceFields, trace } from "../trace.js";
-import { getOwnedTabIds, normalizeVisitedTaskSites, normalizeWorkingTab } from "./tabs.js";
+import { getOwnedTabIds, normalizeSessionTabIds, normalizeVisitedTaskSites, normalizeWorkingTab } from "./tabs.js";
 import {
   buildNextSessionGoal,
   buildNextSessionTracker,
@@ -150,6 +157,8 @@ export function createSessionCommands(deps: SessionCommandsDependencies) {
     copyChatMessageDocuments,
     removeChatSessionDocuments = async () => {},
     removeSessionObservations = async () => {},
+    removeSessionResources,
+    onDriveSettled = async () => {},
     blockChatDocumentParsing = async () => {},
     observeAgentEvent = null,
     getAutomationRuntime,
@@ -205,21 +214,38 @@ function normalizeCanManageSessionId(value: unknown = "") {
 }
 
 
-async function listSessionsRuntime({ limit = 100, excludeSessionId = "" } = {}) {
+async function listSessionsRuntime({
+  publicView = false,
+  limit = 100,
+  excludeSessionId = "",
+  sessionId = "",
+  scope = "",
+}: { publicView?: boolean; limit?: number; excludeSessionId?: string; sessionId?: string; scope?: string } = {}) {
   await sessionRuntimeReady;
-  const max = Math.max(1, Math.min(500, Math.floor(Number(limit) || 100)));
   const excluded = typeof excludeSessionId === "string" ? excludeSessionId.trim() : "";
+  const requestedId = typeof sessionId === "string" ? sessionId.trim() : "";
   const sessions = Object.values(await getSessions())
     .filter((session) => session?.source !== "automation")
     .filter((session) => !excluded || session.id !== excluded)
-    .sort((a, b) => compareBeijingDateTimeDesc(a.updatedAt, b.updatedAt))
-    .slice(0, max)
-    .map((session) => formatSessionRuntimeRecord(session));
-  return { sessions };
+    .sort((a, b) => compareBeijingDateTimeDesc(a.updatedAt, b.updatedAt));
+  if (scope === "session") {
+    const match = requestedId ? sessions.find((session) => session.id === requestedId) : undefined;
+    return {
+      scope: "session",
+      session: match ? (publicView ? publicSessionRecord(match) : compactSessionRecord(match)) : null,
+      otherCount: sessions.filter((session) => session.id !== requestedId).length,
+    };
+  }
+  const max = Math.max(1, Math.min(500, Math.floor(Number(limit) || 100)));
+  return {
+    sessions: sessions.slice(0, max).map((session) => publicView
+      ? publicSessionRecord(session) : formatSessionRuntimeRecord(session)),
+  };
 }
 
 
-async function createSessionRuntime({ title = "", firstMessage = "", parentSessionId = ROOT_SESSION_ID }: Fields = {}, signal?: AbortSignal) {
+async function createSessionRuntime({ title = "", firstMessage = "", parentSessionId = ROOT_SESSION_ID,
+  publicView = false }: Fields = {}, signal?: AbortSignal) {
   await sessionRuntimeReady;
   signal?.throwIfAborted();
   const message = String(firstMessage || "").trim();
@@ -235,7 +261,7 @@ async function createSessionRuntime({ title = "", firstMessage = "", parentSessi
   broadcast({ type: "session_created", session, firstMessage: message });
   broadcast({ type: "sessions_changed", action: "create", sessionId: session.id, session });
   const started = launchSessionPrompt(session.id, message, signal);
-  return { session, started };
+  return { session: publicView ? publicSessionRecord(session) : session, started };
 }
 
 async function createSessionMetadataRuntime({
@@ -245,6 +271,8 @@ async function createSessionMetadataRuntime({
   parentSessionId = ROOT_SESSION_ID,
   titleSource = "",
   source = "",
+  driveClientName,
+  driveGroupTitle = "",
   automationId = "",
   automationRunId = "",
   composerDraft = null,
@@ -264,6 +292,8 @@ async function createSessionMetadataRuntime({
       parentSessionId: normalizedParentId,
       titleSource: titleSource || (normalizedParentId === ROOT_SESSION_ID ? "first_message" : "fixed"),
       source,
+      driveClientName,
+      driveGroupTitle,
       automationId,
       automationRunId,
     });
@@ -687,8 +717,16 @@ function createSessionAgentTaskSpec({
   };
 }
 
+async function rejectExternalDriveComposer(sessionId: string) {
+  if (!sessionId) return;
+  const sessions = await getSessions();
+  if (sessions[sessionId]?.source !== "external-drive") return;
+  throw Object.assign(new Error(t("drive.sendMessageRejected")), { code: "DRIVE_MODEL_DISABLED" });
+}
+
 async function startSessionPromptTask(params: PromptInput = {}, signal?: AbortSignal) {
   signal?.throwIfAborted();
+  await rejectExternalDriveComposer(normalizeSessionId(params.sessionId));
   const prompt = prepareSessionPrompt(params);
   const existing = await sessionSupervisor.withAgent(prompt.sessionId, agent => (
     agent.findAcceptedUserMessage?.(prompt.clientMessageId) || null
@@ -718,6 +756,7 @@ async function startSessionPromptTask(params: PromptInput = {}, signal?: AbortSi
 
 async function submitSessionMessageRuntime(params: PromptInput = {}, signal?: AbortSignal) {
   signal?.throwIfAborted();
+  await rejectExternalDriveComposer(normalizeSessionId(params.sessionId));
   const deliveryMode = params.deliveryMode || "follow_up";
   if (!["follow_up", "steer"].includes(deliveryMode)) throw new Error("Invalid message deliveryMode");
   let resolveAcceptance: (message: unknown) => void = () => {};
@@ -897,12 +936,16 @@ function launchSessionPrompt(sessionId: string, firstMessage: unknown, signal?: 
   return true;
 }
 
-function createSessionFromApi(params: Fields = {}, signal?: AbortSignal) {
-  return createSessionRuntime({
+async function createSessionFromApi(params: Fields = {}, signal?: AbortSignal) {
+  const { session: created, started } = await createSessionRuntime({
     title: params.title || "",
     firstMessage: params.firstMessage || params.text || "",
     parentSessionId: params.parentSessionId || ROOT_SESSION_ID,
+    publicView: true,
   }, signal);
+  const session = created as ReturnType<typeof publicSessionRecord>;
+  // Older CLI/MCP clients read session.id when displaying or observing the new task.
+  return { session: { ...session, id: session.sessionId }, started };
 }
 
 function createUiSessionFromApi(params: Fields = {}) {
@@ -919,6 +962,7 @@ function createUiSessionFromApi(params: Fields = {}) {
 async function followUpSessionRuntime(params: PromptInput = {}, signal?: AbortSignal) {
   signal?.throwIfAborted();
   const sessionId = requireExplicitSessionId(params.sessionId, "follow_up");
+  await rejectExternalDriveComposer(sessionId);
   const documents = assertMessageDocumentOwnership(params.documents, {
     sessionId,
     messageId: params.clientMessageId,
@@ -1006,6 +1050,7 @@ async function steerSessionFollowUpRuntime(params: Fields = {}) {
 
 async function resendSessionMessageRuntime(params: PromptInput = {}) {
   const sessionId = requireExplicitSessionId(params.sessionId, "resend_prompt");
+  await rejectExternalDriveComposer(sessionId);
   const documents = assertMessageDocumentOwnership(params.documents, {
     sessionId,
     messageId: params.clientMessageId,
@@ -1265,11 +1310,12 @@ async function getLastMessagesRuntime({ sessionId, num = 5 }: { sessionId?: unkn
   const count = Math.max(1, Math.min(50, Math.floor(Number(num) || 5)));
   const sessions = await getSessions();
   const entry = await agentHost.getLiveEntry(id);
+  const conversation = entry?.agent.exportSession();
   let source = "";
   let transcript: TranscriptEntry[] = [];
 
   if (entry) {
-    transcript = await sessionTranscript.get(id, entry.agent.exportSession());
+    transcript = await sessionTranscript.get(id, conversation);
     source = "runtime";
   }
 
@@ -1293,14 +1339,22 @@ async function getLastMessagesRuntime({ sessionId, num = 5 }: { sessionId?: unkn
   }
 
   const runtime = getSessionRuntimeState(id);
-  const tail = transcript.slice(-count).map(compactTranscriptEvent);
+  // Public task observations use the same messages the child model receives.
+  // UI tool payloads contain execution arguments and presentation, not public values.
+  const observed = transcriptFromConversation(await sessionTranscript.getConversation(id, conversation));
+  const progress = (runtime.running || runtime.pendingStart) ? transcript.filter(event =>
+    event.type === "tool" && event.isRunning || event.type === "wait" && event.status === "waiting",
+  ).map(event => event.type === "tool" ? toolExecutionProgress(event) : event) : [];
+  const messages = observed.length
+    ? [...observed, ...progress]
+    : transcript.map(event => event.type === "tool" ? toolExecutionProgress(event) : event);
+  const tail = messages.slice(-count).map(compactTranscriptEvent);
   const artifacts = await sessionArtifacts.collect(id, transcript);
   return {
     sessionId: id,
-    session: sessions[id] || null,
+    session: sessions[id] ? publicSessionRecord(sessions[id]) : null,
     running: runtime.running,
     pendingStart: runtime.pendingStart,
-    runId: runtime.runId,
     source,
     count: tail.length,
     messages: tail,
@@ -1354,18 +1408,17 @@ async function waitSessionsRuntime({
   const ids = normalizeWaitSessionIds(sessionIds);
   const caller = typeof excludeSessionId === "string" ? excludeSessionId.trim() : "";
   if (ids.length === 0) {
-    return localizeToolFailurePayload({
-      error: "manage_sessions wait requires sessionIds",
-      code: "MISSING_SESSION_IDS",
+    return localizeToolFailurePayload(toolError("MISSING_SESSION_IDS", "manage_sessions wait requires sessionIds", {
+      hint: "Pass sessionIds returned by manage_sessions create or list.",
       details: { action: "wait" },
-    }, { toolName: "manage_sessions" });
+    }), { toolName: "manage_sessions" });
   }
   if (caller && ids.includes(caller)) {
-    return localizeToolFailurePayload({
-      error: "Cannot wait for the session currently executing this tool",
-      code: "CANNOT_WAIT_CALLER_SESSION",
-      details: { sessionId: caller, sessionIds: ids },
-    }, { toolName: "manage_sessions" });
+    return localizeToolFailurePayload(toolError("CANNOT_WAIT_CALLER_SESSION",
+      "Cannot wait for the session currently executing this tool", {
+        hint: "Choose other sessionIds to wait for.",
+        details: { action: "wait" },
+      }), { toolName: "manage_sessions" });
   }
 
   const mode = waitFor === "any" ? "any" : "all";
@@ -1374,11 +1427,10 @@ async function waitSessionsRuntime({
   const sessions = await getSessions();
   const missingIds = ids.filter((id) => !sessions[id] && !sessionSupervisor.has(id));
   if (missingIds.length > 0) {
-    return localizeToolFailurePayload({
-      error: "Some sessions do not exist",
-      code: "SESSION_NOT_FOUND",
-      details: { sessionIds: ids, missingIds },
-    }, { toolName: "manage_sessions" });
+    return localizeToolFailurePayload(toolError("SESSION_NOT_FOUND", "Some sessions do not exist", {
+      hint: "Call manage_sessions with action list, then retry with existing sessionIds.",
+      details: { missing: missingIds },
+    }), { toolName: "manage_sessions" });
   }
 
   const startedAt = nowBeijingDateTime();
@@ -1650,6 +1702,21 @@ async function buildSkillUiContext(sessionId: string) {
   return context;
 }
 
+function compactSessionRecord(session: Partial<SessionMetadata> & { id: string }) {
+  const runtime = getSessionRuntimeState(session.id);
+  return {
+    id: session.id,
+    title: session.title || t("session.new"),
+    status: runtime.status,
+    running: runtime.running,
+    updatedAt: session.updatedAt || session.createdAt || "",
+  };
+}
+
+function publicSessionRecord(session: Partial<SessionMetadata> & { id: string }) {
+  return publicSessionObservation(session.id, session.title?.trim() || t("session.new"), getSessionRuntimeState(session.id).status);
+}
+
 function formatSessionRuntimeRecord(session: Partial<SessionMetadata> & { id: string }, { compact = false } = {}) {
   const runtime = getSessionRuntimeState(session.id);
   const base = compact
@@ -1755,15 +1822,12 @@ async function collectWaitSessionSummaries(sessionIds: string[], num: number) {
       });
     }
     const session = sessions[id] || { id, title: tail?.session?.title || "", updatedAt: "" };
-    const runtimeRecord = formatSessionRuntimeRecord(session, { compact: true });
+    const runtime = getSessionRuntimeState(id);
     summaries.push({
-      sessionId: id,
-      title: runtimeRecord.title,
-      status: runtimeRecord.status,
-      running: runtimeRecord.running,
-      pendingStart: runtimeRecord.pendingStart,
-      runId: runtimeRecord.runId,
-      updatedAt: runtimeRecord.updatedAt,
+      ...publicSessionObservation(id, session.title?.trim() || t("session.new"), runtime.status),
+      running: runtime.running,
+      pendingStart: runtime.pendingStart,
+      updatedAt: session.updatedAt || session.createdAt || "",
       lastMessages: tail?.messages || [],
       lastMessagesSource: tail?.source || "",
       artifactCount: artifacts?.total || 0,
@@ -1774,6 +1838,10 @@ async function collectWaitSessionSummaries(sessionIds: string[], num: number) {
 }
 
 const SESSION_TAIL_TEXT_LIMIT = 6000;
+
+function toolExecutionProgress(event: TranscriptEntry): TranscriptEntry {
+  return { type: "tool", name: event.name, phase: event.phase, isRunning: event.isRunning, isError: event.isError };
+}
 
 function compactTranscriptEvent(event: TranscriptEntry) {
   if (!event || typeof event !== "object") return { type: "unknown" };
@@ -1840,7 +1908,7 @@ function clipText(value: unknown, maxChars: number) {
   return `${text.slice(0, maxChars)}\n[truncated: ${text.length - maxChars} chars omitted]`;
 }
 
-async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
+async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal, canDelete?: () => Promise<boolean>) {
   await sessionRuntimeReady;
   signal?.throwIfAborted();
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
@@ -1850,7 +1918,20 @@ async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal
   const snapshot = await sessionSupervisor.remove(id, {
     admissionSignal: signal,
     reason: "delete_session",
+    canRemove: canDelete,
     beforeRelease: async (revoked) => {
+      noteExternalDriveStopped(id, meta);
+      if (canDelete) {
+        await sessionRepository.patchMetadata(id, { driveRetentionPending: true });
+        const runtime = sessionSupervisor.getRuntime(id) || {};
+        const tabs = snapshotStoppedTabs(runtime);
+        if (tabs.ownedTabIds.length || tabs.createdTabIds.length || tabs.driveHandoffTabIds.length) {
+          await sessionTabs.settleStoppedDriveTabs(id, { ...tabs, keepTabs: runtime.driveKeepTabs === true,
+            keepTabIds: normalizeSessionTabIds(runtime.driveKeepTabIds), source: "drive_retention" });
+        }
+        await sessionTabs.syncGroup?.(id);
+        sessionRepository.beginDeletion(id);
+      }
       await releaseTerminalRunResources(
         id,
         revoked?.activeRunId || revoked?.liveState?.runId,
@@ -1858,43 +1939,106 @@ async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal
       );
       const releaseDocumentParsing = await blockChatDocumentParsing(id);
       try {
-        stored = await deleteStoredSession(id);
-        await removeChatSessionDocuments(id).catch(error => console.warn("[轻舟] deleted Session document cleanup failed", error));
-        await removeSessionObservations(id).catch(error => console.warn("[轻舟] deleted Session observation cleanup failed", error));
+        if (canDelete) {
+          if (!removeSessionResources) throw new Error("Session resource cleanup is unavailable");
+          await removeSessionResources(id);
+          await removeSessionObservations(id);
+          stored = await sessionRepository.deleteSession(id, { strict: true });
+        } else {
+          stored = await deleteStoredSession(id);
+          await removeChatSessionDocuments(id).catch(error => console.warn("[轻舟] deleted Session document cleanup failed", error));
+          await removeSessionObservations(id).catch(error => console.warn("[轻舟] deleted Session observation cleanup failed", error));
+        }
       } finally {
         releaseDocumentParsing?.();
       }
     },
   });
+  if (!snapshot) return { sessionId: id, deleted: false };
   const stopped = Boolean(snapshot.hadTask || object(snapshot.liveState).isStreaming);
   const hadRuntime = Boolean(snapshot.hadAgent || snapshot.hadTask);
 
-  await sessionTabs.closeOwnedTabsAfterTerminal(id, "delete_session").catch((err) => {
+  if (!canDelete) await sessionTabs.closeOwnedTabsAfterTerminal(id, "delete_session").catch((err) => {
     console.debug("[轻舟] close deleted session owned tabs failed:", errorMessage(err));
   });
   sessionArtifacts.clearListSummaryPatch(id);
   sessionArtifacts.clearSummaryRefresh(id);
   sessionTranscript.remove(id);
   runtimeState.remove(id);
+  forgetExternalDriveSession(id);
   const result = {
     ...object(stored),
+    sessionId: id,
+    deleted: true,
     stopped,
     hadRuntime,
-    requestedBy: meta.requestedBy || "",
-    source: meta.source || "",
   };
   broadcast({ type: "session_deleted", ...result });
   broadcast({ type: "sessions_changed", action: "delete", sessionId: id });
   return result;
 }
 
+function snapshotStoppedTabs(runtime: Fields) {
+  return {
+    ownedTabIds: getOwnedTabIds(runtime),
+    createdTabIds: normalizeSessionTabIds(runtime.createdTabIds),
+    popupTabIds: normalizeSessionTabIds(runtime.popupTabIds),
+    driveHandoffTabIds: normalizeSessionTabIds(runtime.driveHandoffTabIds),
+  };
+}
+
 async function stopSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
-  await sessionRuntimeReady;
-  signal?.throwIfAborted();
+  const release = protectExternalDriveSession(sessionId);
+  try { return await stopSessionWithChildren(sessionId, meta, signal); }
+  finally { release(); void onDriveSettled(); }
+}
+
+async function stopSessionWithChildren(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
+  let keepTabIds: number[] = [];
+  if (meta.keepTabRefs !== undefined) {
+    await sessionRuntimeReady;
+    signal?.throwIfAborted();
+    const session = (await getSessions())[id];
+    signal?.throwIfAborted();
+    if (session?.source !== "external-drive") throw Object.assign(new Error("Selected tabs can only be kept when ending a direct-drive session."),
+      toolError("INVALID_ARGUMENTS", "Selected tabs can only be kept when ending a direct-drive session.", {
+        hint: "Use qz session list to choose the direct-drive session that owns these tabs.",
+      }));
+    const runtime = sessionSupervisor.getRuntime(id) || {};
+    // A completed stop owns the retention decision, even after aliases were released.
+    if (runtime.status === "aborted") keepTabIds = normalizeSessionTabIds(runtime.driveKeepTabIds);
+    else {
+      if (!Array.isArray(meta.keepTabRefs)) throw sessionError("INVALID_ARGUMENTS", "keepTabRefs must be an array of tabRef values.");
+      const owned = getOwnedTabIds(runtime);
+      const aliases = normalizeTabAliases(runtime.tabAliases, owned);
+      keepTabIds = [...new Set(meta.keepTabRefs.map(tabRef => {
+        const tabId = resolveTabReference(tabRef, aliases);
+        if (!owned.includes(tabId)) throw Object.assign(new Error("The tab to keep does not belong to this session."),
+          toolError("SESSION_TAB_FOREIGN", "The tab to keep does not belong to this session.", {
+            hint: "Use list_tabs in this session and pass one of its tabRef values.", details: { tabRef },
+          }));
+        return tabId;
+      }))];
+    }
+  }
+  const driveRunId = meta.driveRunCaptured === true
+    ? String(meta.driveRunId || "")
+    : sessionSupervisor.takeDriveRunForRelease(id);
+  const stoppedTabs = snapshotStoppedTabs(sessionSupervisor.getRuntime(id) || {});
+  await sessionRuntimeReady;
+  if (signal?.aborted) {
+    if (driveRunId) {
+      await releaseRunResources({ sessionId: id, runId: driveRunId, eventType: "aborted" }).catch((error) => {
+        console.warn("[轻舟] release drive run failed:", errorMessage(error));
+      });
+      sessionSupervisor.finishDriveRunRelease(id, driveRunId);
+    }
+    signal.throwIfAborted();
+  }
 
-  const result = await stopSingleSessionRuntime(id, meta, signal);
+  const result = await stopSingleSessionRuntime(id, meta, signal, { driveRunId, stoppedTabs, keepTabIds });
   const cascade = meta.cascade !== false;
   const childResults = [];
   if (cascade) {
@@ -1918,10 +2062,29 @@ async function stopSessionRuntime(sessionId: string, meta: Fields = {}, signal?:
   };
 }
 
-async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
+async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal, early?: {
+  driveRunId: string;
+  stoppedTabs: { ownedTabIds: number[]; createdTabIds: number[]; popupTabIds: number[]; driveHandoffTabIds: number[] };
+  keepTabIds: number[];
+}) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
+  const captured = early || {
+    driveRunId: sessionSupervisor.takeDriveRunForRelease(id),
+    stoppedTabs: snapshotStoppedTabs(sessionSupervisor.getRuntime(id) || {}),
+    keepTabIds: [],
+  };
+  const invalidated = noteExternalDriveStopped(id, meta);
+  const driveRunIds = captured.driveRunId ? [captured.driveRunId] : [];
+  if (invalidated) {
+    const extra = sessionSupervisor.takeDriveRunForRelease(id);
+    if (extra && !driveRunIds.includes(extra)) driveRunIds.push(extra);
+  }
 
+  const session = (await getSessions())[id];
+  const externalDrive = session?.source === "external-drive";
+  let keepDriveTabs = meta.keepTabs === true;
+  let keepTabIds = captured.keepTabIds;
   const before = getSessionRuntimeState(id);
   let hadRuntime = false;
   let runId = before.runId || null;
@@ -1936,10 +2099,16 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     beforeRelease: async (snapshot) => {
       const liveState = snapshot.liveState || {};
       const checkpoint = sessionSupervisor.getRuntime(id) || before;
+      captured.stoppedTabs = snapshotStoppedTabs(checkpoint);
+      if (externalDrive && checkpoint.status === "aborted") {
+        keepDriveTabs = object(checkpoint).driveKeepTabs === true;
+        keepTabIds = normalizeSessionTabIds(object(checkpoint).driveKeepTabIds);
+      }
       pendingFollowUpMessages = runtimeState.normalizePendingFollowUps(checkpoint.pendingFollowUpMessages);
       pendingSteeringMessages = runtimeState.normalizePendingFollowUps(checkpoint.pendingSteeringMessages);
       hadRuntime = Boolean(
-        snapshot.hadTask
+        externalDrive
+        || snapshot.hadTask
         || checkpoint.running
         || isActiveSessionRuntimeStatus(checkpoint.status)
         || checkpoint.waitId
@@ -1952,6 +2121,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
 
       if (checkpoint.waitId) sessionSupervisor.rejectUserWait({ sessionId: id, waitId: String(checkpoint.waitId) });
       runtimeState.set(id, {
+        ...(externalDrive ? { driveKeepTabs: keepDriveTabs, driveKeepTabIds: keepTabIds } : {}),
         status: "aborted",
         running: false,
         pendingStart: false,
@@ -2005,22 +2175,47 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     queueFollowUpResume("stop");
   }
 
+  const closeStoppedTabs = async () => {
+    await (async () => {
+      for (const runId of driveRunIds) {
+        try {
+          await releaseRunResources({ sessionId: id, runId, eventType: "aborted" });
+        } catch (error) {
+          console.warn("[轻舟] release drive run failed:", errorMessage(error));
+        } finally {
+          sessionSupervisor.finishDriveRunRelease(id, runId);
+        }
+      }
+      const sessions = await getSessions();
+      const external = sessions[id]?.source === "external-drive";
+      if (!external && !hadRuntime) return;
+      if (external) {
+        await sessionTabs.settleStoppedDriveTabs(id, {
+          keepTabs: keepDriveTabs,
+          keepTabIds,
+          source: "stop_session",
+          runIds: driveRunIds,
+          blocked: () => externalDriveLeaseActive(id),
+          ...captured.stoppedTabs,
+        });
+        return;
+      }
+      await sessionTabs.closeOwnedTabsAfterTerminal(id, "stop_session", captured.stoppedTabs.popupTabIds);
+    })().catch((err) => {
+      console.debug("[轻舟] close stopped session owned tabs failed:", errorMessage(err));
+    });
+  };
+
   if (!hadRuntime) {
+    void closeStoppedTabs();
     return {
-      sessionId: id,
+      ...publicSessionObservation(id, session?.title?.trim() || t("session.new"), before.status),
       stopped: false,
-      hadRuntime: false,
-      runId,
-      status: before.status || "idle",
-      runtime: before,
-      source: meta.source || "",
-      parentSessionId: meta.parentSessionId || "",
-    };
+    } satisfies SessionStopReceipt;
   }
 
-  sessionTabs.closeOwnedTabsAfterTerminal(id, "stop_session").catch((err) => {
-    console.debug("[轻舟] close stopped session owned tabs failed:", errorMessage(err));
-  });
+  if (externalDrive) await closeStoppedTabs();
+  else void closeStoppedTabs();
   const stateEvent = {
     type: "state",
     sessionId: id,
@@ -2034,15 +2229,9 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
   broadcast({ type: "sessions_changed", action: "run_state", sessionId: id });
 
   return {
-    sessionId: id,
+    ...publicSessionObservation(id, session?.title?.trim() || t("session.new"), runtime.status),
     stopped: true,
-    hadRuntime,
-    runId,
-    status: runtime.status,
-    runtime,
-    source: meta.source || "",
-    parentSessionId: meta.parentSessionId || "",
-  };
+  } satisfies SessionStopReceipt;
 }
 
 async function releaseTerminalRunResources(sessionId: string, runId: unknown, eventType: string) {

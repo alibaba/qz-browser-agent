@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { build, transform } from "esbuild";
 import { capabilityBuildProfile } from "../../scripts/capability-catalog.mjs";
+import { playwrightDomSources } from "../../scripts/vendor/playwright-dom.mjs";
 
 import { createBrowserV8CoverageCollector } from "../support/browser-v8-coverage.mjs";
 
@@ -88,7 +89,7 @@ test("classic entry coverage keeps first-party sources beside bundled npm code",
   const generated = join(extensionDir, "content/content-script.js");
   const compiled = await build({ entryPoints: ["src/content/content-script.ts"], bundle: true,
     format: "iife", platform: "browser", outfile: generated, write: false, sourcemap: "external", sourcesContent: true,
-    plugins: [capabilityBuildProfile(resolve("src")).plugin] });
+    plugins: [capabilityBuildProfile(resolve("src")).plugin, playwrightDomSources()] });
   mkdirSync(join(extensionDir, "content"), { recursive: true });
   for (const output of compiled.outputFiles) writeFileSync(output.path, output.contents);
   const source = readFileSync(generated, "utf8");

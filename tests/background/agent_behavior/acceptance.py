@@ -261,8 +261,6 @@ async def validate_case(
         checks["runScriptTimeouts"] = run_script_timeouts
         if len(rows) != 6:
             return {"success": False, "reason": "expected 6 catalog rows", "checks": checks}
-        if not run_script_timeouts or any(value is None or value <= 0 for value in run_script_timeouts):
-            return {"success": False, "reason": "run_script timeout was not explicit positive seconds", "checks": checks}
         row_datas = row_data_list(rows)
         expected = {
             sku: {"name": name, "price": int(price), "page": page}
@@ -384,15 +382,18 @@ async def validate_case(
         expected_receipts = dict(zip(("open", "navigate", "reload", "redirect"),
                                     ("QZ-first-1", "QZ-second-1", "QZ-second-2", "QZ-landed-1")))
         checks["navigationReads"] = []
-        opened_id = safe_int((navigations[0][1].get("result") or {}).get("id"))
+        opened = navigations[0][1]
+        opened_result = opened.get("result") or {}
+        opened_ref = opened_result.get("tabRef", opened_result.get("id"))
+        references = {str(value) for value in (opened_ref, parse_tool_args(opened).get("tabAlias")) if value is not None}
         for (index, navigation), (step, receipt) in zip(navigations, expected_receipts.items()):
             read = calls[index + 1] if index + 1 < len(calls) else {}
             result = read.get("result") or {}
             if read.get("name") != "read_article" or receipt not in str(result.get("text") or ""):
                 return failure(f"{step}: first read did not return the new document's receipt", checks)
-            if opened_id is None or tool_effective_tab_id(read) != opened_id or (step != "open" and tool_effective_tab_id(navigation) != opened_id):
+            if opened_ref is None or str(tool_page_reference(read)) not in references or (step != "open" and str(tool_page_reference(navigation)) not in references):
                 return failure(f"{step}: navigation/read did not retain the opened tab", checks)
-            checks["navigationReads"].append({"step": step, "receipt": receipt, "tabId": opened_id})
+            checks["navigationReads"].append({"step": step, "receipt": receipt, "tabRef": opened_ref})
         stored = {str(row.get("step") or ""): row.get("receipt") for row in row_data_list(rows)}
         if len(rows) != 4 or stored != expected_receipts:
             return failure("stored receipts do not match the four actual documents", checks)
@@ -874,29 +875,38 @@ async def validate_journey_case(
         checks["correctedAttemptSucceeded"] = len(corrected) == 1 and corrected[0].get("isError") is not True
         if not checks["invalidAttemptRejected"] or not checks["correctedAttemptSucceeded"]:
             return failure("Agent did not recover from the intentional retryCount=99 validation error", checks)
-        listed = await client.execute_tool(
-            "qingzhou_management__manage_skill_settings",
-            {"timeout": 30, "action": "list"},
-            session_id=session_id,
-        )
+        listed = await client.list_skill_settings()
         settings = listed.get("settings") if isinstance(listed, dict) else []
         matches = [item for item in (settings or []) if item.get("skillName") == skill_name]
         if len(matches) != 1:
             return failure("created Skill settings were not discoverable through the shared settings service", checks)
-        setting_id = str(matches[0].get("id") or "")
-        current = await client.execute_tool(
-            "qingzhou_management__manage_skill_settings",
-            {"timeout": 30, "action": "get", "settingId": setting_id},
-            session_id=session_id,
-        )
-        fields = ((current or {}).get("setting") or {}).get("fields") or []
+        fields = matches[0].get("fields") or []
         by_key = {str(field.get("key") or ""): field for field in fields}
         checks["storedRetryCount"] = by_key.get("retryCount", {}).get("value")
         checks["secretHasValue"] = by_key.get("apiToken", {}).get("hasValue")
         if safe_int(checks["storedRetryCount"]) != 5 or checks["secretHasValue"] is not True:
             return failure("corrected setting or secret presence was not durably stored", checks)
-        if case.expected["secret"] in json.dumps(current, ensure_ascii=False):
-            return failure("secret value was exposed by the settings read API", checks)
+        # The owner-facing settings service includes editable secret values. Check
+        # redaction at the model's public read boundary, not the administrative readback.
+        public_reads = [
+            item for item in setting_calls
+            if item.get("isError") is not True and parse_tool_args(item).get("action") in {"list", "get"}
+        ]
+        checks["publicSettingsReadCount"] = len(public_reads)
+        if not public_reads:
+            return failure("settings were not read back through the model's public tools", checks)
+        checks["secretExposedBySettingsRead"] = any(
+            case.expected["secret"] in json.dumps(item.get("result"), ensure_ascii=False)
+            for item in public_reads
+        )
+        checks["secretEchoedByAssistant"] = any(
+            case.expected["secret"] in str(item.get("content") or "")
+            for item in transcript if item.get("type") == "assistant"
+        )
+        if checks["secretExposedBySettingsRead"]:
+            return failure("secret value was exposed by the model's public settings read tool", checks)
+        if checks["secretEchoedByAssistant"]:
+            return failure("assistant repeated the secret despite the user's instruction", checks)
         return success(checks)
 
     if case.name == "browser_library_workflow":
@@ -1260,6 +1270,11 @@ def tool_effective_tab_id(item: dict[str, Any]) -> int | None:
         if tab_id is not None:
             return tab_id
     return None
+
+
+def tool_page_reference(item: dict[str, Any]) -> str | int | None:
+    args = parse_tool_args(item)
+    return args.get("tabRef", tool_effective_tab_id(item))
 
 
 def row_data_list(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -13,10 +13,10 @@ function appendTabProfile(parent: HTMLElement, toolName: string, args: Data, res
   const tabs = Array.isArray(result) ? result : Array.isArray(data.tabs) ? data.tabs : [];
   if (!tabs.length) return false;
   presentation.appendSlimList(parent, t("tabs"), tabs.map(record), item => ({
-    title: item.title || item.url || t("tab", { tabId: String(item.id || "") }),
+    title: item.title || item.url || t("tab", { tabRef: String(item.tabRef ?? item.id ?? "") }),
     subtitle: item.url || "",
     meta: [item.active ? t("current") : "", item.pageMode === "mobile" ? t("mobileMode") : item.pageMode === "desktop" ? t("desktopMode") : "",
-      item.id ? `ID ${item.id}` : "", item.windowId ? t("window", { windowId: String(item.windowId) }) : ""].filter(Boolean),
+      item.tabRef != null ? String(item.tabRef) : item.id ? `ID ${item.id}` : "", item.windowId ? t("window", { windowId: String(item.windowId) }) : ""].filter(Boolean),
   }));
   return true;
 }

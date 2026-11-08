@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerWaitTools } from "../../src/capabilities/wait/tools.js";
+import { createMemoryStorage } from "../support/memory-storage.mjs";
 
 function createHarness(beginUserWait) {
   const definitions = new Map();
@@ -17,6 +18,37 @@ function createHarness(beginUserWait) {
   });
   return { tool: definitions.get("ask_user"), events };
 }
+
+test("wait_for_user captures its explicit page after continuation and leaves untargeted waits page-independent", async context => {
+  const previous = globalThis.chrome;
+  globalThis.chrome = { runtime: { getURL: path => path }, storage: { local: createMemoryStorage() },
+    tabs: { get: async id => ({ id, title: 'Requested page', url: 'https://example.test/', active: false }) } };
+  context.after(() => { globalThis.chrome = previous; });
+  const { createToolRegistry } = await import('../../src/background/tools/registry.js');
+  const { createToolRuntime } = await import('../../src/background/tools/runtime.js');
+  const registry = createToolRegistry(), captured = [], resolved = [];
+  registerWaitTools({
+    registerTool: registry.forCapability('human-wait'),
+    getToolRuntimeDependencies: () => ({ sessions: {
+      async beginUserWait() { return { reason: 'continued' }; },
+      resolveUserWait() {}, rejectUserWait() {}, isWaitingForUser() {},
+    } }),
+    captureTabScreenshot: async tabId => { captured.push(tabId); return { dataUrl: 'data:image/png;base64,AA==', method: 'test' }; },
+  });
+  const runtime = createToolRuntime({ sessions: {
+    isRunCurrent: () => true, getTabAliases: () => ({ checkout: 5 }),
+    resolveTargetTab: async input => { resolved.push(input.tabId); return { ok: true, tabId: input.tabId, ownedByCurrentTask: true }; },
+  } });
+  const callContext = { sessionId: 'human-wait', runId: 'wait-run', toolRegistrySnapshot: registry.snapshot(), workingTabId: 99 };
+  assert.equal(runtime.getBatchTabPolicy('wait_for_user', { tabRef: 'checkout' }, callContext).kind, 'target');
+  const continued = await runtime.execute('wait_for_user', { message: 'Finish checkout', tabRef: 'checkout' }, undefined, callContext);
+  assert.equal(continued.continued, true);
+  assert.deepEqual(captured, [5]);
+  assert.deepEqual(resolved, [5]);
+  await runtime.execute('wait_for_user', { message: 'Continue when ready' }, undefined, callContext);
+  assert.deepEqual(captured, [5], 'the previous page is never an implicit screenshot target');
+  assert.deepEqual(resolved, [5]);
+});
 
 test("result cards retain stable values and use the existing user-wait lifecycle", async () => {
   const signal = new AbortController().signal;

@@ -198,6 +198,29 @@ export function renderInputNotice(input, options = {}) {
   return out.finish();
 }
 
+function formatUsage(usage) {
+  if (!usage || typeof usage !== "object") return "";
+  const count = value => {
+    const number = Number(value);
+    return Number.isFinite(number) ? String(Math.max(0, Math.trunc(number))) : "0";
+  };
+  const cost = Number(usage.costUsd);
+  const text = Number.isFinite(cost) ? cost.toFixed(6).replace(/\.?0+$/u, "") : "";
+  const shown = ["inputTokens", "outputTokens", "cachedTokens", "costUsd", "modelCalls", "toolCalls", "screenshots", "contextCompressions"]
+    .some(key => Number(usage[key]) > 0);
+  if (!shown) return "";
+  return [
+    `input ${count(usage.inputTokens)}`,
+    `output ${count(usage.outputTokens)}`,
+    `cached ${count(usage.cachedTokens)}`,
+    `cost $${text || "0"}`,
+    `model calls ${count(usage.modelCalls)}`,
+    `tool calls ${count(usage.toolCalls)}`,
+    `screenshots ${count(usage.screenshots)}`,
+    `compressions ${count(usage.contextCompressions)}`,
+  ].join(", ");
+}
+
 function snapshotView(out, snapshot, { streamed = false, clientId = "" } = {}) {
   const status = taskStatus(snapshot);
   out.line(label(status), tone(status));
@@ -212,6 +235,8 @@ function snapshotView(out, snapshot, { streamed = false, clientId = "" } = {}) {
   if (response && !streamed) {
     out.line(); out.line("Latest response", "muted"); out.line(response);
   }
+  const usage = formatUsage(snapshot.usage);
+  if (usage) out.field("Usage", usage);
 }
 
 function taskList(out, sessions, client = "") {
@@ -412,13 +437,14 @@ export function renderResult(parsed, result, options = {}) {
     if (action === "list" || !action) taskList(out, result?.sessions || [], client);
     else if (action === "get") snapshotView(out, result || {}, presentation);
     else if (action === "create") {
+      const sessionId = result?.session?.sessionId || result?.sessionId || result?.session?.id;
       if (result?.snapshot) snapshotView(out, result.snapshot, presentation);
       else {
         out.line(result?.started ? "Task queued" : "Task created", "accent");
-        out.field("Task", result?.session?.id);
+        out.field("Task", sessionId);
         out.field("Title", single(result?.session?.title));
       }
-      taskCommands(out, result?.session?.id || result?.snapshot?.sessionId, { client, cancel: !result?.snapshot || ["pending", "running", "waiting_user", "waitingUser", "paused"].includes(taskStatus(result.snapshot)) });
+      taskCommands(out, sessionId || result?.snapshot?.sessionId, { client, cancel: !result?.snapshot || ["pending", "running", "waiting_user", "waitingUser", "paused"].includes(taskStatus(result.snapshot)) });
     } else if (action === "stop") {
       out.line(result?.stopped ? "Task stopped" : "Task has no active run", "accent");
       out.field("Task", result?.sessionId || parsed.id);
@@ -456,16 +482,19 @@ export function renderResult(parsed, result, options = {}) {
       out.line("Service upgrade required for browser pairing.", "waiting");
       out.line(result.hint);
     } else if (result?.updateAvailable) {
-      out.line("Service update available. Restart when your current work is finished:", "waiting");
-      out.command("qz stop && qz connect");
-    } else if (!result?.connected) out.command("qz connect");
+      out.line("Service update available. Compatible connections remain in use.", "waiting");
+    } else if (!result?.connected) out.command("qz connect uri");
+  } else if (command === "cleanup") {
+    out.line(result?.stopped || result?.removedFiles ? "Cleanup complete" : "Nothing to clean", "accent");
+    out.field("Services stopped", result?.stopped ?? 0);
+    out.field("Runtime files removed", result?.removedFiles ?? 0);
+    for (const service of result?.services || []) {
+      if (service.status === "stopped") out.field(`Stopped PID ${service.processId}`, service.endpoint || service.scopeId);
+    }
   } else if (command === "install") {
     out.line(result?.opened ? "Chrome Web Store opened" : "Install qz from the Chrome Web Store", "accent");
     if (!result?.opened) out.line(result?.url);
-    out.line("Click Add to Chrome, then connect:"); out.command("qz connect");
-  } else if (command === "stop") {
-    out.line(result?.stopped ? "Local service stopped" : "Local service is already stopped", "accent");
-    out.command("qz connect");
+    out.line("Click Add to Chrome, then create a session:"); out.command('qz session create --title "Browser task"');
   } else {
     out.line(JSON.stringify(result ?? null, null, 2));
   }
@@ -480,13 +509,18 @@ export function renderHelp(topic = "", options = {}) {
     for (const detail of details) { out.line(); out.line(detail, detail.startsWith("qz ") ? "accent" : undefined); }
   } else {
     out.line("qz · Your browser, from the terminal", "accent");
-    out.line("Run tasks with the qz browser agent, manage results, and connect via MCP.");
+    out.line("Drive your browser with sessions and scripts, or delegate a task to the built-in agent.");
     out.line();
-    for (const { help, summary: description } of Object.values(COMMANDS)) {
-      if (!help) continue;
-      const name = help[0].replace(/^qz /, "").replace(/ \[.*$/, "");
-      if (out.width >= 64) out.line(`  ${pad(name, 23)} ${description}`);
-      else { out.command(`qz ${name}`); out.line(`    ${description}`, "muted"); }
+    const entries = Object.entries(COMMANDS);
+    for (const direct of [true, false]) {
+      out.line(direct ? "Browser scripts" : "Connection, built-in agent and saved results", "accent");
+      for (const [command, { help, summary: description }] of entries) {
+        if (!help || (["session", "script"].includes(command)) !== direct) continue;
+        const name = help[0].replace(/^qz /, "").replace(/ \[.*$/, "");
+        if (out.width >= 64) out.line(`  ${pad(name, 23)} ${description}`);
+        else { out.command(`qz ${name}`); out.line(`    ${description}`, "muted"); }
+      }
+      out.line();
     }
     out.line(); out.command('qz create "Summarize this page." --stream');
     out.command('qz create "Compare these tabs." --title Research --wait');
@@ -503,15 +537,31 @@ export function renderHelp(topic = "", options = {}) {
   out.line("Version: qz --version (-v)", "muted");
   out.line("npm: npm run qz -- COMMAND [options]", "muted");
   out.shellNote();
+  if (!topic) {
+    out.line();
+    out.line("Full browser guide: qz skill", "muted");
+  }
   return out.finish();
 }
 
 export function renderError(payload, options = {}) {
   const out = output(options);
-  const error = payload?.error || payload || {};
-  const waiting = error.code === "connection_pending";
-  out.line(waiting ? "Waiting for Chrome" : "qz error", waiting ? "waiting" : "error");
+  const value = payload?.error || payload || {};
+  const error = { ...value.details, ...value };
+  const waiting = error.code === "CONNECTION_PENDING";
+  out.line(waiting ? "Waiting for browser extension" : "qz error", waiting ? "waiting" : "error");
   out.line(error.message || "The command could not be completed.");
+  if (error.code === "CLEANUP_INCOMPLETE") {
+    for (const service of error.services || []) {
+      if (service.status === "skipped") out.field(service.endpoint || service.scopeId, service.message || service.code);
+    }
+  }
+  if (waiting || error.code === "CLIENT_OFFLINE") {
+    out.field("Stage", error.stage);
+    out.field("Browser", error.selectedBrowser?.name);
+    out.field("UUID", error.selectedBrowser?.clientId);
+    if (Array.isArray(error.attemptedBrowsers)) out.field("Browsers tried", error.attemptedBrowsers.slice(0, 3).join(", ") || "None");
+  }
   if (error.url) { out.line(); out.line(error.url, "accent"); }
   if (error.hint) { out.line(); out.line(error.hint); }
   if (error.command) out.script(error.command);

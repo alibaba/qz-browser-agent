@@ -8,7 +8,8 @@ import { tokenizer } from "acorn";
 import { loadExtension, loadRules, runRules, formatJson } from "storecheck";
 
 const STORECHECK_VERSION = "0.1.0";
-const SANDBOX_TOKENS = "be360135e3b288b310f1fd14dfac454cc9620223262b2be8b1012c04fbb5a8eb";
+// Reviewed packaged SDK data conversions; execution and sandbox boundaries are documented in store-code-audit.md.
+const SANDBOX_TOKENS = "d92e5d577e8ed51b371afb11c067cbb9b4dc3e7dad90463b0be27eb462e024ee";
 const REQUIRED_CLEAN = /^(?:code\/(?:obfuscated-code|minified-without-source)|privacy\/(?:remote-code-execution|remote-script-tag)|csp\/)/u;
 const identity = finding => JSON.stringify([finding.ruleId, finding.file, finding.line, finding.message]);
 
@@ -23,7 +24,7 @@ export function reviewedSandboxFinding(source, finding) {
   const runtime = source.file("runner-sandbox.js")?.text();
   const html = source.file("runner-sandbox.html")?.text();
   if (!runtime || !html || !/<script src="runner-sandbox\.js"><\/script>/u.test(html) ||
-      !runtime.split("\n")[finding.line - 1]?.includes('new Function("input", "args", "$plugin", "tools", "tool", "trace", "log", "tabId"')) return false;
+      !runtime.split("\n")[finding.line - 1]?.includes('new Function("input", "args", "$plugin", "tools", "tool", "trace", "log", "tabId", "qz",')) return false;
   const digest = createHash("sha256").update(JSON.stringify([...tokenizer(runtime, { ecmaVersion: "latest" })].map(token => [token.type.label, token.value]))).digest("hex");
   return digest === SANDBOX_TOKENS;
 }

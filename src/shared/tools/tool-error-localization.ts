@@ -1,3 +1,5 @@
+import { copyToolResultPresentation } from "../contracts/tool-result-presentation.js";
+import { isToolFailure, isToolValue, toolError } from "../contracts/tool-error.js";
 import { getLanguage } from "../i18n/index.js";
 import { t, type BackendMessageKey } from "../i18n/backend.js";
 interface FailureContext { code?: unknown; details?: unknown; toolName?: unknown; isError?: boolean }
@@ -10,6 +12,7 @@ const UPPER_ERROR_CODE_RE = /^[A-Z][A-Z0-9_]+$/;
 
 // Each error owns its label and optional fixed recovery message; contextual messages stay below.
 const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message?: BackendMessageKey }>> = Object.freeze({
+  SKILL_OUTPUT_INVALID: { label: "toolError.SKILL_OUTPUT_INVALID.label", message: "toolError.SKILL_OUTPUT_INVALID.message" },
   SKILL_SELECTION_INVALID_ITEMS: { label: "toolError.SKILL_SELECTION_INVALID_ITEMS.label", message: "toolError.SKILL_SELECTION_INVALID_ITEMS.message" },
   SKILL_SELECTION_INVALID_ANSWER: { label: "toolError.SKILL_SELECTION_INVALID_ANSWER.label", message: "toolError.SKILL_SELECTION_INVALID_ANSWER.message" },
   LOCATION_CONSENT_REQUIRED: { label: "locationRequired", message: "locationRequired" },
@@ -22,6 +25,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   ABORTED: { label: "toolError.ABORTED.label", message: "toolError.ABORTED.message" },
   BATCH_TAB_REFERENCE_ERROR: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.message" },
   BATCH_TAB_DEPENDENCY_FAILED: { label: "toolError.BATCH_TAB_DEPENDENCY_FAILED.label", message: "toolError.BATCH_TAB_DEPENDENCY_FAILED.message" },
+  AMBIGUOUS_ELEMENT: { label: "toolError.AMBIGUOUS_ELEMENT.label" },
   AGENT_ALREADY_RUNNING: { label: "toolError.AGENT_ALREADY_RUNNING.label" },
   SESSION_PERSIST_FAILED: { label: "toolError.SESSION_PERSIST_FAILED.label" },
   STALE_AGENT_LEASE: { label: "toolError.STALE_AGENT_LEASE.label" },
@@ -45,6 +49,8 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   CDP_TAB_LEASE_CONFLICT: { label: "toolError.CDP_TAB_LEASE_CONFLICT.label", message: "toolError.CDP_TAB_LEASE_CONFLICT.message" },
   CONTENT_SCRIPT_MESSAGE_FAILED: { label: "toolError.CONTENT_SCRIPT_MESSAGE_FAILED.label", message: "toolError.CONTENT_SCRIPT_MESSAGE_FAILED.message" },
   CONTENT_SCRIPT_NOT_READY: { label: "toolError.CONTENT_SCRIPT_NOT_READY.label", message: "toolError.CONTENT_SCRIPT_NOT_READY.message" },
+  PDF_PAGE_UNSUPPORTED: { label: "toolError.PDF_PAGE_UNSUPPORTED.label", message: "toolError.PDF_PAGE_UNSUPPORTED.message" },
+  PAGE_CONTENT_UNAVAILABLE: { label: "toolError.PAGE_CONTENT_UNAVAILABLE.label", message: "toolError.PAGE_CONTENT_UNAVAILABLE.message" },
   DATA_DESTRUCTIVE_ACTION_DISABLED: { label: "toolError.DATA_DESTRUCTIVE_ACTION_DISABLED.label", message: "toolError.DATA_DESTRUCTIVE_ACTION_DISABLED.message" },
   DATA_ROW_CONFLICT: { label: "toolError.DATA_ROW_CONFLICT.label", message: "toolError.DATA_ROW_CONFLICT.message" },
   DATA_ROW_NOT_FOUND: { label: "toolError.DATA_ROW_NOT_FOUND.label", message: "toolError.DATA_ROW_NOT_FOUND.message" },
@@ -56,6 +62,9 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   DESKTOP_CAPTURE_AUDIO_NOT_SELECTED: { label: "toolError.DESKTOP_CAPTURE_AUDIO_NOT_SELECTED.label" },
   DESKTOP_CAPTURE_FAILED: { label: "toolError.DESKTOP_CAPTURE_FAILED.label" },
   DESKTOP_CAPTURE_UNAVAILABLE: { label: "toolError.DESKTOP_CAPTURE_UNAVAILABLE.label" },
+  DRIVE_TOOL_FORBIDDEN: { label: "toolError.DRIVE_TOOL_FORBIDDEN.label", message: "toolError.DRIVE_TOOL_FORBIDDEN.message" },
+  DRIVE_RUN_SCRIPT_TARGET: { label: "toolError.DRIVE_RUN_SCRIPT_TARGET.label", message: "drive.runScriptPageOnly" },
+  DRIVE_TAB_REF_REQUIRED: { label: "toolError.DRIVE_TAB_REF_REQUIRED.label", message: "drive.tabRefRequired" },
   DOCUMENT_ARTIFACT_EMPTY: { label: "toolError.DOCUMENT_ARTIFACT_EMPTY.label", message: "toolError.DOCUMENT_ARTIFACT_EMPTY.message" },
   DOCUMENT_ARTIFACT_NOT_FOUND: { label: "toolError.DOCUMENT_ARTIFACT_NOT_FOUND.label", message: "toolError.DOCUMENT_ARTIFACT_NOT_FOUND.message" },
   DOCUMENT_BLOCK_SCHEMA_INVALID: { label: "toolError.DOCUMENT_BLOCK_SCHEMA_INVALID.label" },
@@ -78,6 +87,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   DOCUMENT_TABULAR_SOURCE_CONFLICT: { label: "toolError.DOCUMENT_TABULAR_SOURCE_CONFLICT.label", message: "toolError.DOCUMENT_TABULAR_SOURCE_CONFLICT.message" },
   DOCUMENT_TABLE_NOT_FOUND: { label: "toolError.DOCUMENT_TABLE_NOT_FOUND.label", message: "toolError.DOCUMENT_TABLE_NOT_FOUND.message" },
   ELEMENT_HAS_NO_RENDERED_BOX: { label: "toolError.ELEMENT_HAS_NO_RENDERED_BOX.label", message: "toolError.ELEMENT_HAS_NO_RENDERED_BOX.message" },
+  ELEMENT_QUERY_FAILED: { label: "toolError.ELEMENT_QUERY_FAILED.label", message: "toolError.ELEMENT_QUERY_FAILED.message" },
   ELEMENT_RESOLVE_FAILED: { label: "toolError.ELEMENT_RESOLVE_FAILED.label", message: "toolError.ELEMENT_RESOLVE_FAILED.message" },
   ELEMENT_SCREENSHOT_EMPTY: { label: "toolError.ELEMENT_SCREENSHOT_EMPTY.label", message: "toolError.ELEMENT_SCREENSHOT_EMPTY.message" },
   ELEMENT_SCREENSHOT_BOUNDS_FAILED: { label: "toolError.ELEMENT_SCREENSHOT_BOUNDS_FAILED.label", message: "toolError.ELEMENT_SCREENSHOT_BOUNDS_FAILED.message" },
@@ -112,6 +122,8 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   INVALID_BOOKMARK_ACTION: { label: "toolError.INVALID_BOOKMARK_ACTION.label" },
   INVALID_DATA_ACTION: { label: "toolError.INVALID_DATA_ACTION.label" },
   INVALID_DOCUMENT_URL: { label: "toolError.INVALID_DOCUMENT_URL.label", message: "toolError.INVALID_DOCUMENT_URL.message" },
+  INVALID_ELEMENT_LOCATOR: { label: "toolError.INVALID_ELEMENT_LOCATOR.label" },
+  INVALID_ELEMENT_WAIT: { label: "toolError.INVALID_ELEMENT_WAIT.label" },
   INVALID_ELEMENT_TARGET: { label: "toolError.INVALID_ELEMENT_TARGET.label", message: "toolError.INVALID_ELEMENT_TARGET.message" },
   INVALID_ELEMENT_SCREENSHOT_BOUNDS: { label: "toolError.INVALID_ELEMENT_SCREENSHOT_BOUNDS.label", message: "toolError.INVALID_ELEMENT_SCREENSHOT_BOUNDS.message" },
   INVALID_GUARDRAILS_ACTION: { label: "toolError.INVALID_GUARDRAILS_ACTION.label" },
@@ -123,6 +135,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   INVALID_IMAGE_ASSET_ACTION: { label: "toolError.INVALID_IMAGE_ASSET_ACTION.label" },
   INVALID_LONG_PRESS_DURATION: { label: "toolError.INVALID_LONG_PRESS_DURATION.label" },
   INVALID_REGEX: { label: "toolError.INVALID_REGEX.label", message: "toolError.INVALID_REGEX.message" },
+  INVALID_SELECTOR: { label: "toolError.INVALID_SELECTOR.label" },
   INVALID_RUN_SCRIPT_INPUT: { label: "toolError.INVALID_RUN_SCRIPT_INPUT.label", message: "toolError.INVALID_RUN_SCRIPT_INPUT.message" },
   INVALID_RUN_SCRIPT_TARGET: { label: "toolError.INVALID_RUN_SCRIPT_TARGET.label", message: "toolError.INVALID_RUN_SCRIPT_TARGET.message" },
   INVALID_SCREEN_COORDINATE: { label: "toolError.INVALID_SCREEN_COORDINATE.label", message: "toolError.INVALID_SCREEN_COORDINATE.message" },
@@ -160,6 +173,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   MISSING_SESSION_IDS: { label: "toolError.MISSING_SESSION_IDS.label", message: "toolError.MISSING_SESSION_IDS.message" },
   MISSING_SELECTOR: { label: "toolError.MISSING_SELECTOR.label" },
   MISSING_TAB_ID: { label: "toolError.MISSING_TAB_ID.label", message: "toolError.MISSING_TAB_ID.message" },
+  MISSING_TAB_REF: { label: "toolError.MISSING_TAB_ID.label", message: "toolError.MISSING_TAB_ID.message" },
   MISSING_TOOL_NAME: { label: "toolError.MISSING_TOOL_NAME.label", message: "toolError.MISSING_TOOL_NAME.message" },
   MCP_SDK_ERROR: { label: "toolError.MCP_SDK_ERROR.label" },
   MCP_SERVER_AMBIGUOUS: { label: "toolError.MCP_SERVER_AMBIGUOUS.label" },
@@ -180,6 +194,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   BROWSER_PERMISSION_REQUIRED: { label: "toolError.BROWSER_PERMISSION_REQUIRED.label" },
   BROWSER_PERMISSION_DENIED: { label: "toolError.BROWSER_PERMISSION_DENIED.label" },
   OPERATION_ABORTED: { label: "toolError.OPERATION_ABORTED.label", message: "toolError.OPERATION_ABORTED.message" },
+  NAVIGATION_FAILED: { label: "toolError.NAVIGATION_FAILED.label" },
   PAGE_CONTEXT_UNAVAILABLE: { label: "toolError.PAGE_CONTEXT_UNAVAILABLE.label", message: "toolError.PAGE_CONTEXT_UNAVAILABLE.message" },
   PAGE_SKILL_ZIP_DOWNLOAD_FAILED: { label: "toolError.PAGE_SKILL_ZIP_DOWNLOAD_FAILED.label" },
   PAGE_SKILL_ZIP_DUPLICATE: { label: "toolError.PAGE_SKILL_ZIP_DUPLICATE.label" },
@@ -203,11 +218,14 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   RUN_SCRIPT_TOOL_CALL_FAILED: { label: "toolError.RUN_SCRIPT_TOOL_CALL_FAILED.label", message: "toolError.RUN_SCRIPT_TOOL_CALL_FAILED.message" },
   RUN_SCRIPT_TOOL_DEPTH_EXCEEDED: { label: "toolError.RUN_SCRIPT_TOOL_DEPTH_EXCEEDED.label", message: "toolError.RUN_SCRIPT_TOOL_DEPTH_EXCEEDED.message" },
   RUN_STOPPED: { label: "toolError.RUN_STOPPED.label", message: "toolError.RUN_STOPPED.message" },
+  SCRIPT_CONTEXT_UNAVAILABLE: { label: "toolError.SCRIPT_EVALUATION_FAILED.label", message: "toolError.SCRIPT_EVALUATION_FAILED.message" },
+  SCRIPT_REQUEST_INVALID: { label: "toolError.SCRIPT_EVALUATION_FAILED.label", message: "toolError.SCRIPT_EVALUATION_FAILED.message" },
   SCRIPT_EVALUATION_FAILED: { label: "toolError.SCRIPT_EVALUATION_FAILED.label", message: "toolError.SCRIPT_EVALUATION_FAILED.message" },
   SCRIPT_EXECUTION_UNAVAILABLE: { label: "toolError.SCRIPT_EXECUTION_UNAVAILABLE.label", message: "toolError.SCRIPT_EXECUTION_UNAVAILABLE.message" },
   SCRIPT_SYNTAX_ERROR: { label: "toolError.SCRIPT_SYNTAX_ERROR.label", message: "toolError.SCRIPT_SYNTAX_ERROR.message" },
   SECURITY_GUARDRAIL_BLOCKED: { label: "toolError.SECURITY_GUARDRAIL_BLOCKED.label" },
   SCREENSHOT_CONTEXT_STALE: { label: "toolError.SCREENSHOT_CONTEXT_STALE.label", message: "toolError.SCREENSHOT_CONTEXT_STALE.message" },
+  SCREENSHOT_TARGET_INVALID: { label: "toolError.SCREENSHOT_TARGET_INVALID.label", message: "toolError.SCREENSHOT_TARGET_INVALID.message" },
   SCREENSHOT_COORDINATES_UNAVAILABLE: { label: "toolError.SCREENSHOT_COORDINATES_UNAVAILABLE.label", message: "toolError.SCREENSHOT_COORDINATES_UNAVAILABLE.message" },
   SCREENSHOT_FEEDBACK_FAILED: { label: "toolError.SCREENSHOT_FEEDBACK_FAILED.label", message: "toolError.SCREENSHOT_FEEDBACK_FAILED.message" },
   SELECTOR_BOUNDS_FAILED: { label: "toolError.SELECTOR_BOUNDS_FAILED.label", message: "toolError.SELECTOR_BOUNDS_FAILED.message" },
@@ -222,8 +240,10 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   SESSION_TAB_FOREIGN: { label: "toolError.SESSION_TAB_FOREIGN.label" },
   SESSION_TAB_NOT_WEB: { label: "toolError.SESSION_TAB_NOT_WEB.label" },
   SESSION_TAB_TARGET_DENIED: { label: "toolError.SESSION_TAB_TARGET_DENIED.label" },
-  SESSION_TAB_TARGET_REQUIRED: { label: "toolError.SESSION_TAB_TARGET_REQUIRED.label" },
+  SESSION_TAB_TARGET_REQUIRED: { label: "toolError.TAB_REF_REQUIRED.label", message: "toolError.TAB_REF_REQUIRED.message" },
+  TAB_REF_REQUIRED: { label: "toolError.TAB_REF_REQUIRED.label", message: "toolError.TAB_REF_REQUIRED.message" },
   SESSION_TAB_UNAVAILABLE: { label: "toolError.SESSION_TAB_UNAVAILABLE.label" },
+  TAB_CLOSED: { label: "toolError.SESSION_TAB_UNAVAILABLE.label" },
   SESSION_TAB_UNOWNED: { label: "toolError.SESSION_TAB_UNOWNED.label" },
   SESSION_TOOL_FORBIDDEN: { label: "toolError.SESSION_TOOL_FORBIDDEN.label", message: "toolError.SESSION_TOOL_FORBIDDEN.message" },
   SKILL_ALREADY_EXISTS: { label: "toolError.SKILL_ALREADY_EXISTS.label" },
@@ -265,6 +285,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   SKILL_NETWORK_URL_INVALID: { label: "toolError.SKILL_NETWORK_URL_INVALID.label" },
   SKILL_NETWORK_URL_TOO_LONG: { label: "toolError.SKILL_NETWORK_URL_TOO_LONG.label" },
   SKILL_NOT_FOUND: { label: "toolError.SKILL_NOT_FOUND.label" },
+  SKILL_NAME_AMBIGUOUS: { label: "toolError.SKILL_NAME_AMBIGUOUS.label" },
   SKILL_PLUGIN_JSON_INVALID: { label: "toolError.SKILL_PLUGIN_JSON_INVALID.label" },
   SKILL_PLUGIN_MANIFEST_INVALID: { label: "toolError.SKILL_PLUGIN_MANIFEST_INVALID.label", message: "toolError.SKILL_PLUGIN_MANIFEST_INVALID.message" },
   SKILL_READ_ONLY: { label: "toolError.SKILL_READ_ONLY.label" },
@@ -319,6 +340,7 @@ const BATCH_TAB_REFERENCE_REASONS: Readonly<Record<string, { label: BackendMessa
   ambiguous_target: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.ambiguousTarget.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.ambiguousTarget.message" },
   conflicting_target: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.conflictingTarget.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.conflictingTarget.message" },
   outside_batch: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.outsideBatch.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.outsideBatch.message" },
+  no_alias: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message" },
 });
 
 function batchTabReferenceReason(details: Record<string, unknown> = {}) {
@@ -366,8 +388,18 @@ export function localizeToolFailureError(value: unknown, context: FailureContext
     return new Error(localizeToolFailureText(String(value || t("toolFailure.toolFailed")), context));
   }
   const err = value as Record<string, unknown>;
+  if (!(value instanceof Error) && typeof err.code === "string" && typeof err.message === "string" && !Object.hasOwn(err, "error")) {
+    return copyToolResultPresentation(value, toolError(err.code, err.message, {
+      hint: typeof err.hint === "string" ? err.hint : undefined, details: objectValue(err.details),
+    }));
+  }
   const original = String(err.message || err.error || "");
   const originalCode = String(err.code || context.code || "").trim();
+  if (err.name === "AbortError" || err.name === "TimeoutError") return value;
+  if (value instanceof Error && (!originalCode || originalCode.toUpperCase() === "TOOL_EXECUTION_FAILED" || !hasLocalizedToolFailureCode(originalCode))) {
+    try { if (!err.code) err.code = originalCode || "TOOL_EXECUTION_FAILED"; } catch (_error) {}
+    return value;
+  }
   const localized = localizeToolFailureText(original, {
     ...context,
     code: originalCode,
@@ -376,25 +408,26 @@ export function localizeToolFailureError(value: unknown, context: FailureContext
   if (localized && localized !== original) {
     try {
       err.message = localized;
-      if (err.details && typeof err.details === "object" && !Array.isArray(err.details)) {
-        err.details = { ...err.details, originalMessage: objectValue(err.details).originalMessage || original };
-      }
     } catch (_e) {}
   }
   const codeLabel = localizeToolFailureCode(originalCode, err.details || context.details);
   if (codeLabel) {
     try {
       err.codeLabel = codeLabel;
-      if (err.details && typeof err.details === "object" && !Array.isArray(err.details)) {
-        err.details = { ...err.details, originalCode: objectValue(err.details).originalCode || originalCode };
-      }
     } catch (_e) {}
   }
   return err;
 }
 
 export function localizeToolFailurePayload(payload: unknown, context: FailureContext = {}) {
+  if (isToolValue(payload)) return payload;
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const failure = payload as Record<string, unknown>;
+  if (typeof failure.code === "string" && typeof failure.message === "string" && !Object.hasOwn(failure, "error")) {
+    return copyToolResultPresentation(payload, toolError(failure.code, failure.message, {
+      hint: typeof failure.hint === "string" ? failure.hint : undefined, details: objectValue(failure.details),
+    }));
+  }
   const hasFailureSignal = isFailurePayload(payload as Record<string, unknown>, context);
   if (!hasFailureSignal) return payload;
   const out = { ...payload } as Record<string, unknown>;
@@ -408,34 +441,31 @@ export function localizeToolFailurePayload(payload: unknown, context: FailureCon
   const codeLabel = localizeToolFailureCode(code, details);
   if (codeLabel) {
     out.codeLabel = codeLabel;
-    out.details = { ...details, originalCode: details.originalCode || code };
   }
 
   if (typeof out.error === "string" && out.error.trim()) {
     const original = out.error;
     out.error = localizeToolFailureText(original, baseContext);
-    if (out.error !== original) {
-      const nextDetails = out.details && typeof out.details === "object" && !Array.isArray(out.details) ? objectValue(out.details) : details;
-      out.details = { ...nextDetails, originalError: nextDetails.originalError || original };
-    }
   }
   if (typeof out.message === "string" && out.message.trim() && (out.ok === false || out.error)) {
     const original = out.message;
     out.message = localizeToolFailureText(original, baseContext);
-    const nextDetails = out.details && typeof out.details === "object" && !Array.isArray(out.details) ? objectValue(out.details) : details;
-    if (out.message !== original) out.details = { ...nextDetails, originalMessage: nextDetails.originalMessage || original };
   }
   if (!out.error && !out.message && codeLabel) out.error = codeLabel;
   if (out.diagnostic && typeof out.diagnostic === "object" && !Array.isArray(out.diagnostic)) {
     out.diagnostic = localizeToolDiagnostic(out.diagnostic);
   }
-  return out;
+  return copyToolResultPresentation(payload, out);
 }
 
 export function localizeToolFailureText(message: unknown = "", context: FailureContext = {}) {
   const text = String(message || "").replace(/\s+/g, " ").trim();
   const details = objectValue(context.details);
   const code = String(context.code || "").trim();
+  if (["INVALID_SELECTOR", "INVALID_ELEMENT_LOCATOR", "INVALID_ELEMENT_WAIT", "AMBIGUOUS_ELEMENT"].includes(code)) return text || localizeToolFailureCode(code, details);
+  if (code === "SESSION_TAB_UNAVAILABLE" || code === "TAB_CLOSED") {
+    return getLanguage() === "en" && text && !CJK_RE.test(text) ? text : localizeToolFailureCode(code, details);
+  }
   const toolName = String(context.toolName || details.toolName || details.tool || details.name || "").trim();
   const preferPattern = [
     "CDP_COMMAND_FAILED",
@@ -468,9 +498,20 @@ export function localizeToolDiagnostic(diagnostic: unknown = {}) {
 }
 
 function isFailurePayload(payload: Record<string, unknown>, context: FailureContext = {}) {
-  if (payload.ok === false || payload.isError === true || payload.error != null) return true;
+  if (isToolFailure(payload)) return true;
   if (context.isError === true) return true;
   return hasLocalizedToolFailureCode(payload.code || context.code || "");
+}
+
+/** Timeout messages use execution evidence, not the name of the outer wait. */
+export function localizeToolTimeoutMessage(tool: string, details: Record<string, unknown> = {}) {
+  const actionTool = String(details.tool || tool);
+  if (details.status === "not_started") return t("toolFailure.timeoutBeforeExecution", { tool: actionTool });
+  if (details.status === "unconfirmed") return t("toolFailure.timeoutUnconfirmed", { tool: actionTool });
+  if (details.status === "completed" && details.pending) {
+    return t("toolFailure.timeoutAfterExecution", { tool: actionTool, pending: String(details.pending) });
+  }
+  return t("toolFailure.toolTimeout", { tool });
 }
 
 function localizeByCode(code: string, details: Record<string, unknown> = {}) {
@@ -481,11 +522,11 @@ function localizeByCode(code: string, details: Record<string, unknown> = {}) {
   }
   const tool = details.toolName || details.tool || details.name || t("toolFailure.thisTool");
   const action = details.action || "";
-  const tabId = details.tabId || details.refTabId || "";
+  const tabRef = details.tabRef || "";
   const missing = Array.isArray(details.missing) ? details.missing.join(", ") : "";
   switch (code) {
     case "UNKNOWN_TOOL":
-      return t("toolFailure.unknownTool", { tool: String(tool) });
+      return t("toolFailure.unknownTool", { tool: String(details.name || tool) });
     case "UNKNOWN_PLUGIN_TOOL":
       return t("toolFailure.unknownSkillTool", { tool: String(tool) });
     case "TOOL_FORBIDDEN_BY_RUN_PROFILE":
@@ -493,6 +534,10 @@ function localizeByCode(code: string, details: Record<string, unknown> = {}) {
     case "TOOL_EXECUTION_FAILED":
       return t("toolFailure.toolCallFailed", { tool: String(tool) });
     case "INVALID_ARGUMENTS": {
+      if (Array.isArray(details.invalidFields) && Array.isArray(details.allowedFields)) {
+        return t("toolFailure.unknownFields", { tool: String(tool), path: String(details.path || "$"),
+          fields: details.invalidFields.map(String).join(", "), allowed: details.allowedFields.map(String).join(", ") || "—" });
+      }
       if (!details.path || details.path === "$") return t("toolFailure.objectRequired", { tool: String(tool) });
       const field = String(details.path).replace(/^\$\./, "");
       if (Array.isArray(details.allowedValues)) return t("toolFailure.allowedValues", { tool: String(tool), field, values: details.allowedValues.map(String).join(getLanguage() === "zh-CN" ? "、" : ", ") });
@@ -510,11 +555,11 @@ function localizeByCode(code: string, details: Record<string, unknown> = {}) {
     case "MISSING_REQUIRED_ARGUMENTS":
       return t("toolFailure.requiredArguments", { tool: String(tool), suffix: detailSuffix(missing) });
     case "NOT_WEB_TAB":
-      return t("toolFailure.notWebTab", { tab: tabId ? t("toolFailure.tab", { id: String(tabId) }) : t("toolFailure.targetTab") });
+      return t("toolFailure.notWebTab", { tab: tabRef ? t("toolFailure.tab", { id: String(tabRef) }) : t("toolFailure.targetTab") });
     case "SECURITY_GUARDRAIL_BLOCKED":
       return securityGuardrailMessage(details);
     case "TOOL_TIMEOUT":
-      return t("toolFailure.toolTimeout", { tool: String(tool) });
+      return localizeToolTimeoutMessage(String(tool), details);
     case "UNSUPPORTED_ELEMENT_ACTION":
       return t("toolFailure.elementAction", { action: String(action || t("toolFailure.unknownAction")) });
     case "MISSING_SESSION_ID":
@@ -546,6 +591,11 @@ function localizeByCode(code: string, details: Record<string, unknown> = {}) {
       return t("toolFailure.skillScriptMissing", { suffix: detailSuffix([details.skillName, details.script].filter(Boolean).join("/")) });
     case "PLUGIN_NOT_FOUND":
       return t("toolFailure.pluginMissing", { suffix: detailSuffix(details.pluginId) });
+    case "SKILL_NAME_AMBIGUOUS":
+      return t("toolFailure.skillNameAmbiguous", {
+        name: String(details.name || ""),
+        names: (Array.isArray(details.candidates) ? details.candidates : []).map(candidate => String(objectValue(candidate).name || "")).join(", "),
+      });
     case "SKILL_NOT_FOUND":
       return t("toolFailure.skillMissing", { suffix: detailSuffix(details.name) });
     case "SKILL_RESOURCE_NOT_FOUND":
@@ -559,6 +609,18 @@ function localizeByCode(code: string, details: Record<string, unknown> = {}) {
     default:
       return "";
   }
+}
+
+/** Keep the engine text for fixable script errors so the variable or property name survives localization. */
+function recoverableScriptError(text: string) {
+  if (/\b(?:ReferenceError|TypeError)\b/.test(text)) return text;
+  if (/\bSyntaxError\b|Unexpected token|Unexpected identifier/i.test(text)) return "";
+  if (/Cannot (?:read|set) propert(?:y|ies) of (?:null|undefined)/i.test(text)) return text;
+  if (/(?:null|undefined) is not an object/i.test(text)) return text;
+  if (/Can't find variable:/i.test(text)) return text;
+  if (/\bis not defined\b/i.test(text)) return text;
+  if (/\bis not a (?:function|constructor)\b/i.test(text)) return text;
+  return "";
 }
 
 function localizeByPattern(text: string, _details: Record<string, unknown> = {}) {
@@ -599,8 +661,8 @@ function localizeByPattern(text: string, _details: Record<string, unknown> = {})
   if (/URL did not return an image/i.test(text)) return t("toolError.IMAGE_URL_NOT_IMAGE.message");
   if (/CDP failed: .*scripting fallback failed:/i.test(text)) return t("toolError.SCRIPT_EXECUTION_UNAVAILABLE.message");
   if (/Script evaluation failed/i.test(text)) return t("toolError.SCRIPT_EVALUATION_FAILED.message");
-  if (/Cannot read propert(?:y|ies) of (null|undefined)/i.test(text)) return t("toolFailure.nullProperty");
-  if (/is not defined/i.test(text)) return t("toolFailure.undefinedVariable");
+  const recoverable = recoverableScriptError(text);
+  if (recoverable) return recoverable;
   if (/Unexpected token|Unexpected identifier|SyntaxError/i.test(text)) return t("toolFailure.scriptSyntax");
   if (/Failed to fetch/i.test(text)) return t("toolFailure.networkFailed");
   if (/Invalid regular expression/i.test(text)) return t("toolError.INVALID_REGEX.message");

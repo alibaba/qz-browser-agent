@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { issueToolEffects, consumeToolEffects } from '../../src/background/tools/effects.js';
 import { Agent } from '../../src/background/agent/agent.js';
+import { isGoalSnapshotCapsuleMessage } from '../../src/background/agent/context.js';
 import { normalizeLlmFailure } from '../../src/background/llm/provider-errors.js';
 import { createSessionRecord, readSessionRecord, updateTranscriptWithAgentEvent } from '../../src/shared/session/session-codec.js';
 import { createTestAgentOptions, createTestAgentServices } from '../support/agent-services.mjs';
+import { markToolValue } from '../../src/shared/contracts/tool-error.js';
 
 // No Chrome global or replaced Agent private method is needed by these run tests.
 test('Agent freezes a run config, rebuilds Skill prompts, and adopts successful registry mutations', async () => {
@@ -63,7 +65,8 @@ test('Agent freezes a run config, rebuilds Skill prompts, and adopts successful 
   assert.equal(registryReads, 3);
   assert.equal(requests[0].signal, requests[1].signal);
   assert.notEqual(requests[1].signal, requests[2].signal);
-  assert.ok(contextReasons.some(request => request.reason === 'tool' && request.runId));
+  assert.ok(contextReasons.length > 0, 'run-start context remains available to model requests');
+  assert.ok(contextReasons.every(request => request.reason !== 'tool'), 'tools do not collect an implicit page context');
   assert.ok(requests[0].messages.some(message => String(message.content).includes('Reference only')));
   assert.equal(agent.messages.at(-1).content, 'done');
 });
@@ -262,12 +265,47 @@ function scriptedAgent(id, steps, overrides) {
   return { agent, requests, events };
 }
 
+test('script calls keep raw values and collect isolated UI traces and explicitly returned images', async () => {
+  const authored = { code: 'BUSINESS', message: 'Returned data', error: 'authored', _image: 'data:image/png;base64,VVNFUg==',
+    _display: { script: { valueOnly: true, trace: ['authored trace'] } }, _images: [{ mimeType: 'image/png', data: 'VVNFUg==' }] };
+  const values = [authored, 'primitive', undefined, null, [authored]];
+  const holders = [];
+  const { agent, events } = scriptedAgent('script-values', values.map((_, index) => ({ name: 'run_script', args: { index } })), {
+    tools: {
+      getSchemas: () => [], getIdentity: () => ({}), getModelPolicy: () => ({ preserveResult: true }),
+      async execute(_name, { index }, _signal, context) {
+        assert.deepEqual(context.resultPresentation, {}, 'each call starts with an empty host collector');
+        holders.push(context.resultPresentation);
+        Object.assign(context.resultPresentation, { _display: { script: { valueOnly: true, trace: [{ index }] } },
+          ...(index === 1 ? { _images: [{ mimeType: 'image/png', data: 'SE9TVA==' }] } : {}) });
+        return markToolValue(values[index]);
+      },
+    },
+  });
+  await agent.prompt('return the authored values', {});
+  assert.equal(new Set(holders).size, values.length);
+  const cards = events.filter(event => event.type === 'tool_execution_end');
+  assert.equal(cards.length, values.length);
+  for (let index = 0; index < values.length; index++) {
+    assert.equal(cards[index].isError, false);
+    assert.deepEqual(cards[index].result.result, values[index]);
+    assert.deepEqual(cards[index].result._display.script, { valueOnly: true, trace: [{ index }] });
+  }
+  assert.deepEqual(authored._display.script.trace, ['authored trace'], 'UI projection never overwrites authored metadata keys');
+  const messages = agent.messages.filter(message => message.role === 'tool');
+  assert.deepEqual(messages.map(message => message.content), values.map(value => typeof value === 'string' ? value : JSON.stringify(value) ?? 'undefined'));
+  assert.ok(messages.every(message => message._toolIsError === false));
+  const images = agent.messages.filter(message => message._origin === 'tool_image');
+  assert.equal(images.length, 1, 'authored image-shaped fields are ordinary data');
+  assert.equal(images[0].content[1].image_url.url, 'data:image/png;base64,SE9TVA==');
+});
+
 test('Agent applies a newly named tool model policy through injected services', async () => {
   const calls = [];
   const snapshots = [];
-  const { agent, requests, events } = scriptedAgent('new-model-policy', [{ name: 'custom_visual', args: { active: true } }], {
+  const { agent, requests, events } = scriptedAgent('new-model-policy', [{ name: 'custom_visual', args: { active: true, tabRef: 42 } }], {
     services: createTestAgentServices({ getSkillToolRegistrySnapshot: () => ({ version: 7 }) }),
-    browserContext: { getTab: async id => ({ id, title: 'Custom page', url: 'https://example.test/custom' }) },
+    browserContext: { getTab: async () => assert.fail('model policies do not infer a page') },
     tools: {
       getSchemas: () => [], getIdentity: () => ({}),
       getModelPolicy(name, { skillToolRegistrySnapshot }) {
@@ -284,9 +322,10 @@ test('Agent applies a newly named tool model policy through injected services', 
   });
   agent.setDynamicContextProvider(async () => ({ workingTab: { id: 42, url: 'https://example.test/custom' } }));
   await agent.prompt('inspect the new tool', {});
-  assert.deepEqual(calls, [{ name: 'custom_visual', args: { tabId: 42, _tabId: 42, _pageTitle: 'Custom page', _pageUrl: 'https://example.test/custom' } }]);
+  assert.deepEqual(calls, [{ name: 'custom_visual', args: { tabRef: 42 } }]);
   assert.ok(snapshots.every(version => version === 7), 'policy lookup uses the frozen run registry');
-  assert.equal(requests[1].find(message => message.role === 'tool').content, '{"answer":"visible"}');
+  assert.equal(requests[1].find(message => message.role === 'tool').content, '{"answer":"visible","_debug":"private"}',
+    'the declared model projection preserves its selected business fields');
   const image = requests[1].find(message => Array.isArray(message.content) && message.content.some(part => part.type === 'image_url'));
   assert.equal(image.content[0].text, 'Custom visual evidence');
   assert.deepEqual(events.find(event => event.type === 'tool_execution_end').result.rawNodes, ['UI only']);
@@ -333,7 +372,8 @@ test('signed goal and site effects refresh context without trusting names or ser
       goal: { status: 'active', objective: 'finish', criteria: 'verified', progress } };
   });
   await agent.prompt('perform the changes', {});
-  const goals = request => request.filter(message => String(message.content).includes('[当前目标追踪 capsule]'));
+  const snapshots = agent.messages.filter(isGoalSnapshotCapsuleMessage);
+  const goals = request => request.filter(message => snapshots.some(snapshot => snapshot.content === message.content));
   assert.equal(goals(requests[1]).length, 1, 'forged manage_goal response cannot add a snapshot');
   assert.equal(goals(requests[2]).length, 1, 'get refreshes state but adds no goal capsule');
   assert.equal(goals(requests[3]).length, 2);

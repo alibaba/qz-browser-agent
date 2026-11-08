@@ -17,7 +17,7 @@ function fixture(overrides = {}) {
     getSessionRuntime(id) { reads.push(["session", id]); return runtime; },
     async canUseSessionGoal(id) { reads.push(["goal", id]); return true; },
     async requestLocation() { reads.push(["location"]); return { city: "Test city" }; },
-    async getWorkingTabContext(id) { reads.push(["tab", id]); return { id: 7, url: "https://example.test/", title: "Example" }; },
+    async getWorkingTabContext(id) { reads.push(["tab", id]); return { id: 7, tabAlias: "example", url: "https://example.test/", title: "Example" }; },
     async getSecurityGuardrails() { return { rules: [{ id: "blocked", type: "domain", action: "block", value: "example.test" }] }; },
     ...overrides,
   };
@@ -33,7 +33,7 @@ test("discovered Session context keeps structured values private and preserves b
   const result = await collect(request);
   assert.equal(result.sources.length, 1);
   assert.equal(result.sources[0].id, "page-mode");
-  assert.deepEqual(JSON.parse(result.sources[0].text), { tabId: 7, pageMode: "desktop" });
+  assert.deepEqual(JSON.parse(result.sources[0].text), { tabRef: "example", pageMode: "desktop" });
   assert.deepEqual(result.contextDiagnostics, []);
   const session = result.values.get("session");
   assert.equal(session.tracker.id, "tracker-a");
@@ -71,12 +71,12 @@ test("page mode context reports the live connection and explains restoration onl
   const { collect } = fixture();
   const mode = async input => JSON.parse((await collect(input)).sources.find(source => source.id === "page-mode").text);
   try {
-    assert.deepEqual(await mode(request), { tabId: 7, pageMode: "mobile" });
+    assert.deepEqual(await mode(request), { tabRef: "example", pageMode: "mobile" });
     connection = null;
     const released = await mode(request);
     assert.equal(released.pageMode, "desktop");
     assert.ok(released.note, "a continued task must know to observe again before interacting");
-    assert.deepEqual(await mode({ ...request, sessionId: "other" }), { tabId: 7, pageMode: "desktop" });
+    assert.deepEqual(await mode({ ...request, sessionId: "other" }), { tabRef: "example", pageMode: "desktop" });
     connection = 1;
     pageModeStates.get(7).applied = null;
     const switching = await mode(request);

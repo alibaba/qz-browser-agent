@@ -1,15 +1,16 @@
+import { toolError, type ToolError } from "#sdk/background/tools";
 import { mapConcurrent } from "./concurrent.js";
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import { filterViewportNodes, isViewportStructure, readViewportBands, verticalBand } from "./viewport.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
-import { directChildFrames, openChildFrame, isCdpFallbackForbiddenError, type CdpCommand } from "#sdk/background/browser";
-import { isPageOverview, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
+import { waitForParsedDocument, directChildFrames, openChildFrame, isCdpFallbackForbiddenError, type CdpCommand } from "#sdk/background/browser";
+import { isPageOverview, createElementObservation, toRect, type CanvasObservation, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
 type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
   | "sendToContent" | "withDebugger"> & Pick<ToolExtensionAPI["element"],
-  "makeSnapshotId" | "makeElementUid" | "elementTargetForUid" | "registerElementRef" | "resolveElementReference"
-  | "backendNodeIdForSelector" | "bindBackendNodes" | "callElement" | "readMainDocumentId" | "elementTargetGrammar">;
+  "makeSnapshotId" | "elementTargetForUid" | "registerElementBinding" | "resolveElementReference"
+  | "backendNodeIdForSelector" | "bindElementReferences" | "callElement" | "readMainDocumentId" | "elementTargetGrammar">;
 interface AxValue { value?: unknown }
 interface AxNode {
   nodeId: string; parentId?: string; childIds?: string[]; backendDOMNodeId?: number; ignored?: boolean;
@@ -27,12 +28,11 @@ export function registerAccessibilityTools({
   ToolExecutionError,
   clampLimit,
   makeSnapshotId,
-  makeElementUid = (snapshotId: string, seq: number, mark = "") => `${snapshotId}.${mark}${seq}`,
   elementTargetForUid,
-  registerElementRef,
+  registerElementBinding,
   resolveElementReference,
   backendNodeIdForSelector,
-  bindBackendNodes = async (_tabId: number, selectors: string[] = []) => ({ loaderId: "", ids: selectors.map(() => 0) }),
+  bindElementReferences,
   callElement,
   readMainDocumentId = async () => "",
   makeSessionTabTargetError,
@@ -61,7 +61,7 @@ interface ActionAnchor {
   ancestors: { backendNodeId: number; childBackendIds: number[] }[];
 }
 type DisplayNode = {
-  uid: string; target: string; depth: number; nodeId: string; parentUid?: string;
+  uid: string; target: string; depth: number; nodeId: string; parentUid?: string; index?: number;
   omitted?: number; suppressName?: boolean; unavailable?: boolean; placeholder?: string; inputType?: string;
   accept?: string; multiple?: boolean; selectedFileCount?: number;
   viewportAbove?: number; viewportBelow?: number; listItems?: number;
@@ -150,16 +150,25 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
   rebuildSemanticList(semanticRoots, semanticNodes);
   const includedNodes = selectSemanticNodesByBreadth(semanticRoots, limit, required);
   const displayNodes: DisplayNode[] = [];
-  let counter = 0;
   const emitDisplayNode = (semanticNode: SemanticNode, parentUid: string | null): void => {
     if (!includedNodes.has(semanticNode)) return;
     const compact = semanticNode.compact;
     // Text roles are display-only unless the page overview identified an explicit action.
     if (!semanticNode.actionNode && PURE_TEXT_ROLES.has(String(compact.role || "").toLowerCase())) semanticNode.unavailable = true;
-    const uid = semanticNode.unavailable ? "" : makeElementUid(snapshotId, counter++);
+    const frameId = String(compact.documentFrameId || "");
+    const ref = semanticNode.unavailable ? null : registerElementBinding({
+      tabId, sessionId, pageUrl, snapshotId, documentId,
+      backendNodeId: compact.backendNodeId,
+      loaderId: (frameId ? String(compact.documentLoaderId || "") : loaderId) || undefined,
+      ...(frameId ? { frameId } : {}), selector: semanticNode.locator?.selector, index: semanticNode.locator?.index,
+      role: compact.role, name: compact.name, url: compact.url || undefined,
+    });
+    const uid = ref?.uid || "";
+    if (!ref?.target) semanticNode.unavailable = true;
     const item: DisplayNode = {
       uid,
-      target: semanticNode.unavailable ? "" : elementTargetForUid(uid),
+      target: ref?.target || "",
+      ...(!uid && ref?.index ? { index: ref.index } : {}),
       depth: semanticNode.depth,
       nodeId: compact.nodeId,
     };
@@ -198,23 +207,6 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
     const omitted = omittedDescendantCount(semanticNode, includedNodes);
     if (omitted) item.omitted = omitted;
     displayNodes.push(item);
-    const frameId = String(compact.documentFrameId || "");
-    if (!semanticNode.unavailable) registerElementRef({
-      uid,
-      tabId,
-      sessionId,
-      pageUrl,
-      backendNodeId: item.backendNodeId,
-      loaderId: (frameId ? String(compact.documentLoaderId || "") : loaderId) || undefined,
-      documentId: documentId || undefined,
-      ...(frameId ? { frameId } : {}),
-      selector: semanticNode.locator?.selector,
-      index: semanticNode.locator?.index,
-      role: item.role,
-      name: item.name,
-      url: compact.url || undefined,
-      snapshotId,
-    });
     for (const child of semanticNode.children) emitDisplayNode(child, uid);
   };
 
@@ -533,7 +525,8 @@ function shouldKeepAxNode(node: CompactNode, depth: number) {
 
 function formatSnapshotLine(node: DisplayNode) {
   const target = node.unavailable ? "" : (node.target || elementTargetForUid(node.uid));
-  const attrs = target ? [`target=${target}`] : [];
+  const attrs = target ? [`target=${target.startsWith("css:") ? JSON.stringify(target) : target}`] : [];
+  if (node.index) attrs.push(`index=${node.index}`);
   if (node.role) attrs.push(node.role);
   if (node.name && !node.suppressName) attrs.push(`"${truncateInline(node.name, 90)}"`);
   if (node.value && node.value !== node.name) attrs.push(`value="${truncateInline(node.value, 80)}"`);
@@ -559,18 +552,12 @@ function compactAxCanvasesForModel(canvases: Canvas[]) {
   return (Array.isArray(canvases) ? canvases : [])
     .slice(0, 8)
     .map((canvas) => {
-      const rect = canvas?.rect && typeof canvas.rect === "object"
-        ? {
-            x: Number(canvas.rect.x),
-            y: Number(canvas.rect.y),
-            w: Number(canvas.rect.w),
-            h: Number(canvas.rect.h),
-          }
-        : null;
-      if (!rect || !Object.values(rect).every(Number.isFinite) || rect.w <= 0 || rect.h <= 0) return null;
+      const rect = toRect(canvas?.rect);
+      if (!rect || !Object.values(rect).every(Number.isFinite) || rect.width <= 0 || rect.height <= 0) return null;
       const bitmapWidth = Number(canvas?.bitmapSize?.width);
       const bitmapHeight = Number(canvas?.bitmapSize?.height);
-      const next = {
+      const next: CanvasObservation = {
+        ...createElementObservation({}, canvas.target),
         name: truncateInline(canvas?.name, 160),
         rect,
         inViewport: typeof canvas?.inViewport === "boolean" ? canvas.inViewport : undefined,
@@ -779,37 +766,38 @@ async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: n
 registerTool({
   name: "get_ax_tree",
   behavior: { parallelRead: true, timeoutResult: { kind: "read", pending: "main document accessibility tree" } },
-  model: { projectResult: projectAxResultForModel },
   get description() { return toolT("getAxTreeDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("getAxTreeTabId") },
-      root: { type: "string", description: toolT("getAxTreeRoot") },
+      tabRef: { type: ["integer", "string"], description: toolT("getAxTreeTabId") },
+      target: { type: "string", description: toolT("getAxTreeRoot") },
       scope: { type: "string", enum: ["viewport", "full"], description: toolT("getAxTreeScope") },
       depth: { type: "number", description: toolT("getAxTreeDepth") },
       limit: { type: "number", description: toolT("getAxTreeLimit") },
       actionsLimit: { type: "number", description: toolT("getAxTreeActionsLimit") },
     },
+    required: ["tabRef"],
   } as const; },
-  page: "owned",
+  argumentAliases: { root: "target", selector: "target" },
+  page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, root = "root", scope, depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
+  execute: async ({ tabId, target = "root", scope, depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
     const axDepth = Number.isFinite(Number(depth)) ? clampLimit(depth, 1, 40) : 16;
     const snapshotLimit = Number.isFinite(Number(limit)) ? clampLimit(limit, 20, 300) : 120;
     const actionMax = Number.isFinite(Number(actionsLimit)) ? clampLimit(actionsLimit, 5, 80) : 40;
     let snapshotId = "";
     const sessionId = String(context.sessionId || "").trim();
-    const requestedRoot = String(root || "root").trim() || "root";
+    const requestedRoot = String(target || "root").trim() || "root";
     const snapshotScope = scope || (requestedRoot === "root" ? "viewport" : "full");
-    let targetTabId = tabId;
+    let targetTabId: number | undefined = tabId;
     let resolvedRoot = requestedRoot;
     let overviewSelector = "body";
     let rootBackendNodeId = 0;
     let rootRef: Awaited<ReturnType<typeof resolveElementReference>> | null = null;
 
     if (requestedRoot !== "root") {
-      rootRef = await resolveElementReference(tabId, { target: requestedRoot }, context);
+      rootRef = await resolveElementReference(tabId, { target: requestedRoot, readOnly: true }, context);
       targetTabId = rootRef.tabId;
       resolvedRoot = rootRef.target || requestedRoot;
       overviewSelector = rootRef.selector || "";
@@ -819,9 +807,7 @@ registerTool({
       }
       if (!rootBackendNodeId) {
         throw new ToolExecutionError("AX_ROOT_UNRESOLVED", t("cannotResolveAxRoot", { selector: String(requestedRoot) }), {
-          root: requestedRoot,
           target: resolvedRoot,
-          selector: overviewSelector || undefined,
         });
       }
     }
@@ -830,35 +816,44 @@ registerTool({
       toolName: "get_ax_tree",
       sessionId: context?.sessionId || "",
       depth,
-      root: requestedRoot,
+      target: requestedRoot,
     });
 
+    if (requestedRoot === "root") await waitForParsedDocument(targetTabId, context);
     snapshotId = makeSnapshotId(targetTabId, context);
     let overview: PageOverview;
+    let overviewError: ToolError | undefined;
     try {
       const result = rootRef?.uid
         ? await callElement(targetTabId, rootRef, "pageOverview", { limit: actionMax }, context)
         : await sendToContent(targetTabId, "pageOverview", { limit: actionMax, selector: overviewSelector || "body" }, context);
       if (!isPageOverview(result)) throw new ToolExecutionError("PAGE_OVERVIEW_FAILED", t("pageOverviewResponseIsInvalid"));
       overview = result;
+      if (overview.error) {
+        const failure = record(result);
+        overviewError = toolError(overview.code || "PAGE_OVERVIEW_FAILED", overview.error, {
+          hint: typeof failure.hint === "string" ? failure.hint : undefined, details: failure.details,
+        });
+      }
     } catch (err) {
       if (isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(err.code).startsWith("STALE_ELEMENT_UID"))) throw err;
-      overview = {
-        error: err instanceof Error ? err.message : String(err),
-        code: err instanceof ToolExecutionError ? err.code : "PAGE_OVERVIEW_FAILED",
-      };
+      overview = {};
+      const failure = record(err);
+      overviewError = toolError(typeof failure.code === "string" ? failure.code : "PAGE_OVERVIEW_FAILED",
+        typeof failure.message === "string" ? failure.message : String(err), {
+          hint: typeof failure.hint === "string" ? failure.hint : undefined, details: failure.details,
+        });
     }
 
     // UID pageUrl guards the owning tab, while a child overview reports its own URL.
     const pageUrl = String(rootRef?.ref?.frameId ? rootRef.ref.pageUrl || "" : overview?.url || "").trim();
     const documentId = await readMainDocumentId(targetTabId);
+    let canvasResults = overview.canvases || [];
     const resultFor = (ax: ReturnType<typeof buildAccessibilitySnapshot>, scope = snapshotScope) => ({
-      tabId: targetTabId,
       title: overview?.title,
       url: overview?.url,
       viewport: overview?.viewport,
-      snapshotId,
-      root: resolvedRoot,
+      ...(resolvedRoot === "root" ? {} : { target: resolvedRoot }),
       scope,
       viewportOmitted: ax.viewportOmitted,
       rootFound: ax.rootFound,
@@ -868,18 +863,23 @@ registerTool({
       returnedNodeCount: ax.returnedNodeCount,
       outlineTruncated: ax.outlineTruncated,
       snapshot: ax.snapshot,
-      canvases: compactAxCanvasesForModel(overview?.canvases || []),
-      pageOverviewError: overview?.error ? { error: overview.error, code: overview.code } : undefined,
+      canvases: compactAxCanvasesForModel(canvasResults),
+      pageOverviewError: overviewError,
     });
     const ax = await withDebugger(targetTabId, async (_target, send) => {
       const actionList = overview?.actions || [];
       const rootFrameId = String(rootRef?.ref?.frameId || "");
-      const bound = await bindBackendNodes(targetTabId, actionList.map(action => String(action?.selector || "")), context, rootRef?.ref);
       const frame = rootFrameId ? await openChildFrame(send, rootFrameId) : null;
-      if (rootFrameId && (!frame || frame.loaderId !== bound.loaderId)) {
-        throw new ToolExecutionError("STALE_ELEMENT_UID", t("cannotResolveAxRoot", { selector: requestedRoot }), { root: requestedRoot });
+      const loaderId = frame?.loaderId || String(record(record(record(await send("Page.getFrameTree")).frameTree).frame).loaderId || "");
+      if (rootFrameId && (!frame || rootRef?.ref?.loaderId && frame.loaderId !== rootRef.ref.loaderId)) {
+        throw new ToolExecutionError("STALE_ELEMENT_UID", t("cannotResolveAxRoot", { selector: requestedRoot }), { target: requestedRoot });
       }
-      const anchors = await actionAnchors(frame?.send || send, actionList, bound.ids);
+      const canvases = overview.canvases || [];
+      const bound = await bindElementReferences(targetTabId, [...actionList, ...canvases].map(item => ({ ...item })), context, {
+        ...rootRef?.ref, loaderId, documentId, pageUrl,
+      });
+      canvasResults = canvases.map((canvas, index) => ({ ...canvas, target: bound[actionList.length + index].target }));
+      const anchors = await actionAnchors(frame?.send || send, actionList, bound.slice(0, actionList.length).map(ref => Number(ref.backendNodeId) || 0));
       // Viewport omission counts must not depend on the later depth/BFS budgets.
       const fetchDepth = snapshotScope === "viewport" ? undefined : rootBackendNodeId ? 40 : axDepth;
       const result = await send("Accessibility.getFullAXTree", fetchDepth == null ? {} : { depth: fetchDepth });
@@ -888,7 +888,7 @@ registerTool({
       _signal?.throwIfAborted();
       const snapshotOptions = {
         tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,
-        rootBackendNodeId, rootFrameId, maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,
+        rootBackendNodeId, rootFrameId, maxDepth: axDepth, loaderId, actions: anchors,
       };
       if (context.reportPartial && !rootFrameId) {
         context.reportPartial({ ...resultFor(buildAccessibilitySnapshot(nodes, snapshotOptions), "full"), documentId },
@@ -912,26 +912,5 @@ registerTool({
 
 
 }
-
-/** The model gets actionable fields; UI diagnostics remain in the original result. */
-function projectAxResultForModel(result: unknown): unknown {
-  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
-  const { nodes, ...out } = result as Record<string, unknown>;
-  if (Array.isArray(out.actions)) out.actions = out.actions.map((action: Record<string, unknown>) => ({
-    target: action.target,
-    selector: action.selector,
-    role: action.role,
-    name: action.name,
-    text: action.text,
-    value: action.value,
-    placeholder: action.placeholder,
-    href: action.href,
-    disabled: action.disabled,
-    editable: action.editable,
-    inViewport: action.inViewport,
-  }));
-  return out;
-}
-
 
 export default ((host) => { registerAccessibilityTools({ ...host, ...host.element }); }) satisfies ToolExtension;

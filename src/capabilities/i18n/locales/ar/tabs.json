@@ -1,7 +1,7 @@
 {
   "tabs.tabs": "علامات التبويب",
-  "tabs.tab": "علامة التبويب {tabId}",
-  "tabs.current": "الحالية",
+  "tabs.tab": "علامة التبويب {tabRef}",
+  "tabs.current": "ظاهرة للمستخدم",
   "tabs.window": "النافذة {windowId}",
   "tabs.qingzhouTask": "مهمة qz",
   "tabs.organizedInto": "تم تنظيمها في «{name}»",
@@ -38,8 +38,6 @@
   "tabs.usePage": "تعيين علامة تبويب العمل",
   "tabs.navigatePage": "الانتقال إلى الرابط",
   "tabs.organizeTabsTool": "تنظيم علامات التبويب",
-  "tabs.currentSessionWorkingTabIsNotAWebPage": "علامة تبويب العمل للمهمة الحالية ليست صفحة ويب عادية.",
-  "tabs.tabIsNotAWebPageAndCannotBe": "علامة التبويب {tabId} ليست صفحة ويب عادية ولا يمكن استخدامها للعمل.",
   "tabs.openingAnAgentOwnedTabRequiresTheCurrentSession": "يتطلب فتح علامة تبويب خاصة بالمهمة خدمة علامات التبويب للمهمة الحالية.",
   "tabs.viewWorkingPageShort": "تبويب العمل",
   "tabs.usePageShort": "استخدام التبويب",

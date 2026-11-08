@@ -2,7 +2,7 @@
 export const ISOLATED_CONTENT_PROBE = `(() => {
             let extensionId = "";
             try { extensionId = globalThis.chrome?.runtime?.id || ""; } catch {}
-            return { extensionId, bridge: typeof globalThis.__qzInvoke === "function" };
+            return { extensionId, bridge: typeof globalThis.__qzInvoke === "function", elementRefs: globalThis.__qzElementRefVersion === 1 };
           })()`;
 
 /** Runtime.callFunctionOn declaration that enters the content-script bridge. */

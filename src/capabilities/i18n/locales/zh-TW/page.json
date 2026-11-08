@@ -36,7 +36,7 @@
   "page.highlightElement": "標示元素",
   "page.injectStyles": "注入樣式",
   "page.modifyDom": "修改 DOM",
-  "page.readArticleRequiresASelectorWhenSourceSelector": "source=selector 時，read_article 需要 selector。",
+  "page.readArticleRequiresASelectorWhenSourceSelector": "source=target 時，read_article 需要 target。",
   "page.searchTerms": "搜尋詞",
   "page.argumentCharacters": "（參數：{count} 個字元）",
   "page.contentScriptReturnedAnInvalidResponse": "內容腳本 {action} 傳回無效回應。",
@@ -62,5 +62,5 @@
   "page.elementNotCheckable": "目標不是原生核取方塊或選項按鈕，請選擇其他元素。",
   "page.radioCannotBeUnchecked": "無法透過點擊取消已選取的選項按鈕，請選擇同組的其他選項。",
   "page.elementCheckStateMismatch": "點擊後未達到指定的勾選狀態，請檢查元素後再繼續。",
-  "page.inputNotDelivered": "輸入未送達。頁面沒有收到這次點擊，請先讓分頁完成排版後再試。"
+  "page.inputNotDelivered": "輸入未送達。頁面沒有收到這次點擊或按鍵，請先讓分頁完成排版後再試。"
 }

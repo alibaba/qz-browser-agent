@@ -342,6 +342,7 @@
   "skills.commitMessage": "कमिट संदेश",
   "skills.filesWithMatchingNamesWillBeUpdatedExtraRemoteFiles": "मेल खाती फ़ाइलें एक ही कमिट में अपडेट होंगी। रिपॉज़िटरी की बाकी फ़ाइलें सुरक्षित रहेंगी।",
   "skills.cancel": "रद्द करें",
+  "skills.skillNameAmbiguous": "कई स्किल का नाम “{name}” है, इसलिए कार्रवाई नहीं की गई। list_skills में दिए गए इन नामों में से किसी एक का उपयोग करें: {names}।",
   "skills.skillNotFound": "स्किल “{name}” नहीं मिली",
   "skills.resourceNotFound": "स्किल रिसोर्स “{path}” नहीं मिला",
   "skills.managementInternalOnly": "manage_skill, qz स्किल वर्कबेंच का आंतरिक टूल है।",

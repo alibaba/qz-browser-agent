@@ -84,14 +84,14 @@ test("model options preserve a display label while searching and selecting by ei
 });
 
 test("prefix query filters suggestions without hiding the menu", () => {
-  const state = computeModelSuggestionState({ query: "gpt-5", options: sampleModels, limit: 8 });
+  const state = computeModelSuggestionState({ query: "gpt-5", options: sampleModels });
   assert.equal(state.hidden, false);
   assert.equal(state.useAllOptions, false);
   assert.deepEqual(state.visibleOptions.map(item => item.id), ["gpt-5.4", "gpt-5.4-mini"]);
 });
 
 test("exact model match stays hidden for automatic open", () => {
-  const state = computeModelSuggestionState({ query: "gpt-5.4-mini", options: sampleModels, limit: 8 });
+  const state = computeModelSuggestionState({ query: "gpt-5.4-mini", options: sampleModels });
   assert.equal(state.exactMatch, true);
   assert.equal(state.hidden, true);
   assert.deepEqual(state.visibleOptions, []);
@@ -101,7 +101,6 @@ test("exact model match can be manually expanded into the full list", () => {
   const state = computeModelSuggestionState({
     query: "gpt-5.4-mini",
     options: sampleModels,
-    limit: 8,
     showAllOnExactMatch: true,
   });
   assert.equal(state.exactMatch, true);
@@ -110,14 +109,12 @@ test("exact model match can be manually expanded into the full list", () => {
   assert.deepEqual(state.visibleOptions.map(item => item.id), sampleModels.map(item => item.id));
 });
 
-test("manual exact-match expansion still obeys the menu limit", () => {
-  const state = computeModelSuggestionState({
-    query: "gpt-5.4-mini",
-    options: sampleModels,
-    limit: 2,
-    showAllOnExactMatch: true,
-  });
-  assert.deepEqual(state.visibleOptions.map(item => item.id), ["gpt-5.4", "gpt-5.4-mini"]);
+test("model menus keep every result when opened, searched or expanded", () => {
+  const options = normalizeModelOptions(Array.from({ length: 21 }, (_, index) => `provider/model-${index}`));
+  for (const query of ["", "model", "provider/model-0"]) {
+    const state = computeModelSuggestionState({ query, options, showAllOnExactMatch: true });
+    assert.deepEqual(state.visibleOptions.map(item => item.id), options.map(item => item.id));
+  }
 });
 
 test("settings model suggestions render in a viewport popover without growing the settings scroller", () => {
@@ -168,7 +165,7 @@ test("Skill settings are manifest-driven and use conventional credential inputs"
 });
 
 test("compact query can match a model without being treated as literal exact match", () => {
-  const state = computeModelSuggestionState({ query: "gpt54mini", options: sampleModels, limit: 8 });
+  const state = computeModelSuggestionState({ query: "gpt54mini", options: sampleModels });
   assert.equal(state.hidden, false);
   assert.deepEqual(state.visibleOptions.map(item => item.id), ["gpt-5.4-mini"]);
 });
@@ -502,10 +499,12 @@ test("settings require a context window when automatic capability matching has n
   const source = readSettingsFeature();
   const validation = extractFunction(source, "validateSettingsConfigFields");
   const clearModelFields = extractFunction(source, "clearModelScopedSettings");
+  const clearCapabilities = extractFunction(source, "clearConfiguredModelCapabilities");
 
   assert.match(validation, /if \(!contextWindow\)[\s\S]*t\("selectAContextLength"\)/u);
-  assert.match(clearModelFields, /\$\("#cfg-context-window"\)\.value = ""/u);
-  assert.match(clearModelFields, /\$\("#cfg-vision"\)\.value = "false"/u);
+  assert.match(clearModelFields, /clearConfiguredModelCapabilities\(\)/u);
+  assert.match(clearCapabilities, /\$\("#cfg-context-window"\)\.value = ""/u);
+  assert.match(clearCapabilities, /\$\("#cfg-vision"\)\.value = "false"/u);
   assert.doesNotMatch(validation, /请选择是否支持图片/u);
 });
 
@@ -615,8 +614,9 @@ test("custom OpenAI endpoint saves protocol, endpoint, modality and preset name 
   assert.equal(config.customPresetName, "Router A");
   assert.equal(config.contextWindow, 128000);
   assert.equal(config.vision, true);
-  assert.equal(config.providerApiKeys.custom, "custom-openai-key");
+  assert.equal(config.providerApiKeys.custom, undefined);
   assert.equal(config.presets.length, 1);
+  assert.equal(config.presets[0].apiKey, "custom-openai-key");
   assert.equal(config.presets[0].name, "Router A");
   assert.equal(config.presets[0].customProtocol, "openai");
   assert.equal(config.presets[0].customEndpoint, "https://router.example/v1/chat/completions");

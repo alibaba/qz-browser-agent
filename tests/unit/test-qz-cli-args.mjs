@@ -6,8 +6,15 @@ import { resourceRequest } from "../../services/mcp-bridge/src/cli-resources.mjs
 import { TOOL_CATALOG, validateMcpToolInput } from "../../services/mcp-bridge/src/tools.mjs";
 
 function rejects(argv, message) {
-  assert.throws(() => parseCommand(argv), error => error.code === "invalid_arguments" && (!message || message.test(error.message)), argv.join(" "));
+  assert.throws(() => parseCommand(argv), error => error.code === "INVALID_ARGUMENTS" && (!message || message.test(error.message)), argv.join(" "));
 }
+
+test("cleanup accepts only local cleanup and output options", () => {
+  assert.equal(parseCommand(["cleanup"]).command, "cleanup");
+  assert.equal(parseCommand(["cleanup", "--json"]).options.json, true);
+  assert.equal(parseCommand(["cleanup", "--help"]).helpTopic, "cleanup");
+  for (const args of [["cleanup", "all"], ["cleanup", "--client", "work"], ["cleanup", "--session", "task"], ["cleanup", "--port", "18765"]]) rejects(args);
+});
 
 test("resource commands select explicit operations, exact names, and export formats", () => {
   for (const command of ["data", "images", "skills"]) {
@@ -51,8 +58,22 @@ test("settings supports reading, typed field updates, and JSON patches from stdi
 
 test("MCP only prints a URL; automation commands remain explicit", () => {
   assert.equal(parseCommand(["mcp"]).action, undefined);
+  assert.equal(parseCommand(["script", "--session", "drive"]).command, "script");
+  assert.deepEqual(parseCommand(["script", "--session", "drive", "--args", '{"query":"page"}']).options.args, { query: "page" });
+  assert.equal(parseCommand(["session", "create", "--title", "Inspect page"]).action, "create");
+  rejects(["script"], /requires --session/);
+  rejects(["tools"], /Unknown command/);
+  rejects(["exec"], /Unknown command/);
+  rejects(["session", "create"], /requires --title/);
+  rejects(["session", "create", "--title", "  "], /requires --title/);
+  rejects(["session"], /qz session create/);
+  assert.equal(parseCommand(["session", "list"]).action, "list");
+  assert.equal(parseCommand(["session", "show", "drive"]).id, "drive");
+  assert.equal(parseCommand(["session", "cancel", "drive"]).action, "cancel");
+  rejects(["session", "show"]);
+  rejects(["session", "cancel", "one", "two"]);
   for (const args of [["mcp", "tools"], ["mcp", "call", "anything"], ["mcp", "--client", "browser"],
-    ["tools"], ["tools", "list"], ["tools", "show", "open_tab"], ["tools", "call", "open_tab", "-s", "task"],
+    ["tools", "show", "open_tab"], ["tools", "call", "open_tab", "-s", "task"],
     ["call", "open_tab", "-s", "task"], ["logs"], ["logs", "clear"], ["input", "task"],
     ["downloads"], ["downloads", "list"], ["downloads", "show", "42"]]) rejects(args);
   assert.equal(parseCommand(["automations"]).action, "list");
@@ -73,6 +94,22 @@ test("send accepts short follow-up text, stdin, and task observation options", (
   for (const args of [["create", "hello", "--steer"], ["watch", "task-1", "--steer"], ["send", "task-1", "hello", "--steer=false"]]) rejects(args);
 });
 
+test("session cancellation accepts repeatable explicit tab references", () => {
+  const parsed = parseCommand(["session", "cancel", "drive", "--keep", " result ", "--keep=evidence", "--keep", "42"]);
+  assert.deepEqual(parsed.options.keep, ["result", "evidence", "42"]);
+  assert.deepEqual(resourceRequest(parsed), {
+    name: "qingzhou_stop_session", args: { sessionId: "drive", keepTabRefs: ["result", "evidence", "42"] },
+  });
+  assert.equal(Object.hasOwn(resourceRequest(parseCommand(["session", "cancel", "drive"])).args, "keepTabRefs"), false);
+  for (const args of [["session", "cancel", "drive", "--keep"], ["session", "cancel", "drive", "--keep="],
+    ["session", "cancel", "drive", "--keep", "result", "--keep", " "],
+    ["session", "show", "drive", "--keep", "result"], ["session", "list", "--keep", "result"],
+    ["session", "create", "--title", "Task", "--keep", "result"], ["cancel", "drive", "--keep", "result"]]) rejects(args);
+  assert.doesNotThrow(() => validateMcpToolInput("qingzhou_stop_session", { sessionId: "drive", keepTabRefs: [42, "result"] }));
+  assert.doesNotThrow(() => validateMcpToolInput("qingzhou_stop_session", { sessionId: "drive", keepTabs: true }));
+  assert.throws(() => validateMcpToolInput("qingzhou_stop_session", { sessionId: "drive", keepTabRefs: [true] }));
+});
+
 test("task commands normalize to the existing task operations", () => {
   assert.deepEqual(parseCommand(["create", "Compare", "two laptops", "-t", "Research"]), {
     command: "tasks", action: "create", id: undefined, options: { title: "Research", prompt: "Compare two laptops" }, timeoutSeconds: 180, waitTimeoutSeconds: null,
@@ -84,7 +121,7 @@ test("task commands normalize to the existing task operations", () => {
     assert.equal(result.action, action);
     assert.equal(result.id, "task-1");
   }
-  assert.equal(parseCommand(["stop"]).command, "stop");
+  rejects(["stop"]);
   rejects(["stop", "task-1"]);
 });
 
@@ -157,7 +194,7 @@ test("short options normalize without accepting duplicate identities", () => {
 test("command-specific options fail instead of being silently ignored", () => {
   for (const args of [
     ["status", "--client", "browser"], ["status", "--timeout", "1"], ["mcp", "--session", "task"],
-    ["stop", "--timeout", "1"], ["install", "--title", "x"], ["connect", "--title", "x"],
+    ["install", "--title", "x"], ["connect", "--title", "x"],
     ["skills", "--title", "x"], ["skills", "tools", "-s", "task", "--title", "x"],
     ["tasks", "--session", "task"], ["tasks", "--wait"],
     ["show", "task", "--title", "x"], ["cancel", "task", "--stream"],
@@ -165,7 +202,7 @@ test("command-specific options fail instead of being silently ignored", () => {
 });
 
 test("output options are global and JSON/plain formats are mutually exclusive", () => {
-  for (const command of ["status", "mcp", "stop", "install", "tasks"]) {
+  for (const command of ["status", "mcp", "install", "tasks"]) {
     assert.equal(parseCommand([command, "--json", "--no-color"]).options.json, true);
     assert.equal(parseCommand([command, "--plain", "--no-color"]).options.plain, true);
   }
@@ -186,10 +223,10 @@ test("help is contextual and does not require operation arguments", () => {
 });
 
 test("deadlines retain defaults and enforce the documented range", () => {
-  assert.equal(parseCommand(["connect"]).timeoutSeconds, 30);
+  assert.equal(parseCommand(["connect", "uri"]).timeoutSeconds, 30);
   assert.equal(parseCommand(["create", "Read this page"]).timeoutSeconds, 180);
   assert.equal(parseCommand(["tasks", "--timeout", "0.1"]).timeoutSeconds, 0.1);
-  assert.equal(parseCommand(["connect", "--timeout=3600"]).timeoutSeconds, 3600);
+  assert.equal(parseCommand(["connect", "uri", "--timeout=3600"]).timeoutSeconds, 3600);
   for (const value of ["0", "-1", "3601", "NaN", "Infinity", ""]) rejects(["tasks", `--timeout=${value}`], /timeout/);
 });
 
@@ -215,12 +252,20 @@ test("removed commands and flags are rejected rather than interpreted", () => {
     ["call", "inspect", "-s", "task", "--args", "{}"], ["help", "run"], ["help", "tasks", "create"]]) rejects(args);
 });
 
+test("connection URI is explicit and never accepts removed lifecycle commands", () => {
+  assert.equal(parseCommand(["connect", "uri"]).action, "uri");
+  assert.equal(parseCommand(["connect", "uri", "--name", "work"]).options.name, "work");
+  assert.equal(parseCommand(["connect", "uri", "--client", "work"]).options["client-id"], "work");
+  for (const argv of [["connect"], ["connect", "uri", "extra"], ["connect", "uri", "--no-open"], ["stop"],
+    ["connect", "uri", "--client", "work", "--name", "personal"]]) rejects(argv);
+});
+
 test("valid commands and malformed syntax remain explicit", () => {
-  for (const args of [["install"], ["connect"], ["status"], ["mcp"], ["stop"],
+  for (const args of [["install"], ["connect", "uri"], ["status"], ["mcp"],
     ["skills", "tools"], ["tasks"], ["create", "Read this page"],
     ["show", "task"], ["cancel", "task"]]) assert.ok(parseCommand(args));
   for (const args of [["unknown"], ["status", "extra"], ["install", "qz"], ["install", "something"], ["tools", "one", "two"],
-    ["show"], ["show", "one", "two"], ["cancel", ""], ["tools", "--wat"], ["tools", "--session"]]) rejects(args);
+    ["show"], ["show", "one", "two"], ["cancel", ""], ["tools", "--session", "drive", "--wat"], ["tools", "--session"]]) rejects(args);
   const argv = ["create", "Read this page", "--title", "Research"];
   const before = [...argv];
   parseCommand(argv);
@@ -253,6 +298,7 @@ test("every declared CLI resource route maps to an advertised MCP schema", () =>
       export: ["export", "research", "--filename", "research.zip"] },
     settings: { get: ["get", "model"], set: ["set", "vision", "true"] },
     automations: { list: ["--limit", "5"], run: ["run", "daily"] },
+    session: { create: ["create", "--title", "Inspect page"], list: ["list"], show: ["show", "drive"], cancel: ["cancel", "drive", "--keep", "result"] },
   };
   const advertised = new Set(TOOL_CATALOG.map(tool => tool.name));
   for (const [command, definition] of Object.entries(COMMANDS)) {

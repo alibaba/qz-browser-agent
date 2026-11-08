@@ -10,6 +10,7 @@ export interface RuntimeConfig {
   customEndpoint?: string;
   customPresetName?: string;
   contextWindow?: number;
+  maxOutputTokens?: number;
   vision?: boolean;
   toolCalling?: boolean;
   trimOldToolResults?: boolean;

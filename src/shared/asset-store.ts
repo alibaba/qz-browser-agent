@@ -119,14 +119,6 @@ export async function saveImageAsset(input: ImageAssetInput = {}, options: Image
     return { ...stripBinary(next), deduped: true };
   }
 
-  const stats = await getImageAssetStats();
-  if (stats.count >= limits.maxImages) {
-    throw new Error(`image asset limit exceeded: ${stats.count}/${limits.maxImages}`);
-  }
-  if (stats.totalBytes + bytes > limits.maxBytes) {
-    throw new Error(`image asset storage limit exceeded: ${formatBytes(stats.totalBytes + bytes)}/${formatBytes(limits.maxBytes)}`);
-  }
-
   const thumbBlob = options.thumbnail !== false ? await createThumbnailBlob(blob, {
     maxSize: options.thumbMaxSize || DEFAULT_THUMB_MAX_SIZE,
   }) : null;
@@ -149,21 +141,28 @@ export async function saveImageAsset(input: ImageAssetInput = {}, options: Image
   const tx = db.transaction(IMAGE_ASSETS_STORE, "readwrite");
   const done = txDone(tx);
   const store = tx.objectStore(IMAGE_ASSETS_STORE);
-  // Other Sessions/contexts can finish the same image while hashing or making
-  // its thumbnail. Recheck the unique index inside the insertion transaction.
+  // Deduplication and quota admission share one write transaction: another
+  // context may have saved this image after the initial lookup missed it.
   let saved = record;
   let deduped = false;
-  const request = store.index("sha256").get(hash);
+  let limitError: Error | undefined;
+  const request = store.getAll();
   request.onsuccess = () => {
-    if (request.result) {
-      saved = refresh(request.result);
+    const rows = request.result as ImageAssetRecord[];
+    const duplicate = rows.find(item => item.sha256 === hash);
+    if (duplicate) {
+      saved = refresh(duplicate);
       deduped = true;
       store.put(saved);
     } else {
-      store.add(record);
+      const stats = summarizeAssets(rows);
+      if (stats.count >= limits.maxImages) limitError = new Error(`image asset limit exceeded: ${stats.count}/${limits.maxImages}`);
+      else if (stats.totalBytes + bytes > limits.maxBytes) limitError = new Error(`image asset storage limit exceeded: ${formatBytes(stats.totalBytes + bytes)}/${formatBytes(limits.maxBytes)}`);
+      else store.add(record);
     }
   };
   await done;
+  if (limitError) throw limitError;
   return { ...stripBinary(saved), deduped };
 }
 

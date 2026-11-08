@@ -24,6 +24,7 @@ test("help and plans do not build, launch children or read live credentials", as
     ["live", "agent", "--cases", "example", "--list"], ["live", "deepseek", "--help"],
     ["live", "rate", "--list"], ["live", "cli-mcp", "--help"], ["live", "cli-mcp", "--list"],
     ["live", "pi-concurrent-browsers", "--help"], ["live", "pi-concurrent-browsers", "--list"],
+    ["live", "direct-drive", "--help"], ["live", "direct-drive", "--list"],
     ["grid", "--help"], ["grid", "--list"],
     ["playwright", "--help"], ["behavior", "--help"], ["report", "--help"],
   ]) {
@@ -80,6 +81,7 @@ test("native runners receive their exact arguments, including spaces and equals"
     [["live", "rate"], "tests/live/deepseek-rate-governor.mjs", []],
     [["live", "pi-concurrent-browsers"], "tests/live/pi-concurrent-browsers.mjs", []],
     [["live", "cli-mcp", "--duration-seconds", "1800", "--cases", "research,forms"], "tests/live/deepseek-cli-mcp-soak.mjs", ["--duration-seconds", "1800", "--cases", "research,forms"]],
+    [["live", "direct-drive", "--output", "a directory/evidence"], "tests/live/direct-drive.mjs", ["--output", "a directory/evidence"]],
   ];
   for (const [args, path, expectedArgs] of cases) {
     const result = fixture.run(args);
@@ -168,7 +170,7 @@ async function createFixture(t) {
     "tests/unit/example.mjs", "tests/coverage/check-critical.mjs", "tests/behavior/run.mjs",
     "tests/background/agent-behavior-e2e.mjs", "tests/data-grid/extension-page.mjs",
     "tests/live/deepseek-extension.mjs", "tests/live/deepseek-rate-governor.mjs", "tests/live/deepseek-cli-mcp-soak.mjs",
-    "tests/live/pi-concurrent-browsers.mjs",
+    "tests/live/pi-concurrent-browsers.mjs", "tests/live/direct-drive.mjs",
   ]) await put(path, recorder);
   await put("node_modules/@playwright/test/package.json", '{"type":"module"}');
   await put("node_modules/@playwright/test/cli.js", recorder);

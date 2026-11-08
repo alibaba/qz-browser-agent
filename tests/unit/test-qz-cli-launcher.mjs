@@ -25,11 +25,11 @@ test("launcher rejects unsupported Node before resolving runtime modules", async
       if (json) {
         assert.equal(result.stderr, "");
         const payload = JSON.parse(result.stdout);
-        assert.equal(payload.ok, false);
-        assert.equal(payload.error.code, "unsupported_node_version");
-        assert.match(payload.error.message, /requires Node\.js 22 or later/);
-        assert.ok(payload.error.message.includes(version));
-        assert.match(payload.error.hint, /Install Node\.js 22/);
+        assert.deepEqual(Object.keys(payload).sort(), ["code", "hint", "message"]);
+        assert.equal(payload.code, "UNSUPPORTED_NODE_VERSION");
+        assert.match(payload.message, /requires Node\.js 22 or later/);
+        assert.ok(payload.message.includes(version));
+        assert.match(payload.hint, /Install Node\.js 22/);
       } else {
         assert.equal(result.stdout, "");
         assert.match(result.stderr, /requires Node\.js 22 or later/);

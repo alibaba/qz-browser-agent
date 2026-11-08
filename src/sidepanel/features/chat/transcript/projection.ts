@@ -3,6 +3,7 @@ import type { TranscriptEntry } from "../../../tools/renderer-input.js";
 interface ProjectionOptions {
   projectArtifacts?(entries: TranscriptEntry[], sessionId: string): TranscriptEntry[];
   isQueuedSubmission?(sessionId: string, clientMessageId: unknown): boolean;
+  groupTools?(sessionId: string): boolean;
 }
 
 import { groupConsecutiveToolTranscriptEntries } from "../../../tools/tool-timeline-renderer.js";
@@ -44,7 +45,9 @@ function transcriptUiHistory(history: TranscriptEntry[], { sessionId = "" } = {}
   const visible = visibleTranscriptHistory(history).filter(entry => !(entry.type === "user"
     && entry.deliveryStatus === "pending" && options.isQueuedSubmission?.(sessionId, entry.clientMessageId)));
   return projectArtifacts(
-    groupConsecutiveToolTranscriptEntries(visible),
+    groupConsecutiveToolTranscriptEntries(visible, {
+      groupTools: options.groupTools?.(sessionId) !== false,
+    }),
     sessionId,
   );
 }

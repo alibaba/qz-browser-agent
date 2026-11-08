@@ -37,8 +37,8 @@ loads the compiled extension from `dist/extension/`.
 - Stop/delete establishes terminal state or a deletion barrier and revokes old write authority before
   cleanup. Reject late events and writes from obsolete runs. Parent and child Sessions own separate
   runs and tabs; aggregate their data through read-only APIs.
-- Page tools target the Session's `workingTabId` or an explicitly owned tab. Require explicit selection
-  when a target is unavailable.
+- Page tools require an explicit `tabRef`. Keep user-visible active-tab state separate from task
+  ownership; owned tabs enforce mutual exclusion, permissions, and cleanup.
 - Use the owning Repository/Store API for storage. Version wire and storage formats, normalize old
   records at boundaries, and test migrations. Preserve Data Store optimistic concurrency checks.
 - Derive `listSummary` from Session records, transcripts, and resource stores. Parse and serialize

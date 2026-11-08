@@ -53,33 +53,41 @@ try {
     progress("idle", sample);
   }
   report.idlePolls = environment.pollRequests.length - pollsBeforeIdle;
-  assert.ok(report.idleSamples.every(sample => sample.connected && sample.clientCount === 1),
-    `connection expired while idle: ${JSON.stringify(report.idleSamples)}`);
+  const connected = sample => sample.connected && sample.clientCount === 1;
+  assert.ok(report.idleSamples.filter(sample => sample.elapsedMs < report.workerStop.elapsedMs).every(connected),
+    `connection expired before the forced worker stop: ${JSON.stringify(report.idleSamples)}`);
+  const recovered = report.idleSamples.findIndex(sample => sample.elapsedMs >= report.workerStop.elapsedMs && connected(sample));
+  assert.ok(recovered >= 0, "the stopped worker must reconnect within the idle observation window");
+  assert.ok(report.idleSamples.slice(recovered).every(connected),
+    `connection did not stay healthy after recovery: ${JSON.stringify(report.idleSamples)}`);
   assert.ok(report.idlePolls >= 3, "the extension must renew multiple long polls without an open UI");
   assert.ok(report.workerStop?.stopped, "the test must stop the extension worker during idle observation");
   assert.ok(environment.pollRequests.some(request => request.at > idleStartedAt + report.workerStop.elapsedMs),
     "the extension must resume polling after its worker is stopped without opening the panel or connection page");
 
   const { runCli } = await import("../../services/mcp-bridge/src/cli.mjs");
-  const cliConnection = await runCli(["connect", "--timeout", "10"], {
-    ensureDaemon: async () => {
-      const health = await readHealth(environment.bridge.endpoint);
-      return { endpoint: environment.bridge.endpoint, instanceId: health.instanceId, health };
-    },
-    openBrowser: () => assert.fail("a live connection must confirm browser readiness without opening a page"),
-  });
-  assert.equal(cliConnection.result.connected, true);
+  const locate = async () => {
+    const health = await readHealth(environment.bridge.endpoint);
+    return { endpoint: environment.bridge.endpoint, instanceId: health.instanceId, health };
+  };
+  const dependencies = { findDaemon: locate, ensureDaemon: locate,
+    openBrowser: () => assert.fail("connect uri must only print the URL"),
+    openConnectionBrowser: () => assert.fail("a live connection must be reused without opening a page") };
+  const cliConnection = await runCli(["connect", "uri", "--json"], dependencies);
+  assert.equal(cliConnection.result.url, `${environment.bridge.endpoint}/qz-connect`);
+  const ready = await runCli(["tasks", "--json", "--timeout", "10"], dependencies);
+  assert.ok(Array.isArray(ready.result.sessions), "a browser command must confirm readiness after idle");
   report.afterIdleCliConnect = true;
 
-  const created = await call("qingzhou_create_session", { title: "Resilient browser task" });
-  const sessionId = created.session.id;
+  const created = await call("qingzhou_create_drive_session", { title: "Resilient browser task" });
+  const sessionId = created.sessionId;
   const opened = await execute("open_tab", { url: fixture.url }, sessionId);
-  const tabId = opened.result.id;
-  const article = await execute("read_article", { tabId, limit: 1000 }, sessionId);
+  const tabRef = opened.result.tabRef;
+  const article = await execute("read_article", { tabRef, limit: 1000 }, sessionId);
   assert.match(article.result.text, /MCP resilience fixture/);
   report.afterIdleTool = true;
 
-  const pending = execute("navigate", { tabId, url: `${fixture.url}mutation` }, sessionId)
+  const pending = execute("navigate", { tabRef, url: `${fixture.url}mutation` }, sessionId)
     .then(result => ({ result }), error => ({ error }));
   await Promise.race([
     until(() => fixture.mutations === 1, "the synthetic navigation did not start"),
@@ -96,7 +104,7 @@ try {
   await environment.bridge.restart();
   await until(async () => (await readHealth(environment.bridge.endpoint)).status.connected,
     "the saved endpoint did not reconnect after a brief service interruption", 75000);
-  const afterRestart = await execute("read_article", { tabId, limit: 1000 }, sessionId);
+  const afterRestart = await execute("read_article", { tabRef, limit: 1000 }, sessionId);
   assert.match(afterRestart.result.text, /MCP resilience fixture/);
   assert.equal(fixture.mutations, 1, "reconnection must not replay the dispatched navigation");
   report.inflightDisconnect = { rejected: true, mutationCount: 1, samePortRecovery: true };
@@ -121,7 +129,7 @@ try {
   connectionPage = await environment.context.newPage();
   await connect(environment.bridge.endpoint);
   const recoveredAt = Date.now();
-  const afterExplicitConnect = await execute("read_article", { tabId, limit: 1000 }, sessionId);
+  const afterExplicitConnect = await execute("read_article", { tabRef, limit: 1000 }, sessionId);
   assert.match(afterExplicitConnect.result.text, /MCP resilience fixture/);
   assert.equal(fixture.mutations, 1, "explicit reconnection must not replay an interrupted navigation");
   report.boundedRecovery = { failedPolls: environment.failedPollRequests.length,
@@ -135,7 +143,7 @@ try {
     port: Number(new URL(previousEndpoint).port), buildId: "fixture" });
   assert.notEqual(fallback.endpoint, previousEndpoint);
   await connect(fallback.endpoint);
-  const fallbackArticle = await execute("read_article", { tabId, limit: 1000 }, sessionId, fallback.endpoint);
+  const fallbackArticle = await execute("read_article", { tabRef, limit: 1000 }, sessionId, fallback.endpoint);
   assert.match(fallbackArticle.result.text, /MCP resilience fixture/);
   await environment.bridge.close();
   await connectionPage.close();

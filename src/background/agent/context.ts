@@ -134,7 +134,8 @@ export function isGoalSnapshotCapsuleMessage(msg: Partial<ModelMessage> = {}) {
 
 function formatDynamicContextTab(tab: ContextTab = {}) {
   const suffix = tab.securityGuardrailBlocked ? t("pageBlocked") : "";
-  return `[${tab.id ?? ""}${tab.tabAlias ? ` alias=${JSON.stringify(tab.tabAlias)}` : ""}] ${tab.title ?? ""} | ${tab.url ?? ""}${suffix}`;
+  const active = typeof tab.active === "boolean" ? ` | active=${tab.active}` : "";
+  return `[tabRef=${JSON.stringify(tab.tabAlias || tab.id || "")}] ${tab.title ?? ""} | ${tab.url ?? ""}${active}${suffix}`;
 }
 
 function trackerModeText(mode = "") {
@@ -262,31 +263,27 @@ export function formatDynamicContext(context: DynamicContext | null) {
   const lines = [t("dynamicContext")];
   if (context.now) lines.push(t("systemTime", { value: context.now }));
 
-  const working = context.workingTab;
+  const recent = context.workingTab;
   const visible = context.userVisibleTab;
-  if (working) {
-    lines.push(t("workingTab", { value: formatDynamicContextTab(working) }));
-  } else {
-    lines.push(t("noWorkingTab"));
-  }
-  if (!working && (context.pageTitle || context.pageUrl)) {
+  if (recent) lines.push(t("recentTab", { value: formatDynamicContextTab(recent) }));
+  if (!recent && (context.pageTitle || context.pageUrl)) {
     const suffix = context.securityGuardrailBlocked ? t("pageBlocked") : "";
     lines.push(t("initialPage", { title: context.pageTitle ?? "", url: context.pageUrl ?? "", suffix }));
   }
-  if (visible && (!working || Number(visible.id) !== Number(working.id))) {
+  if (visible && (!recent || Number(visible.id) !== Number(recent.id))) {
     const ownership = visible.ownedByCurrentTask
       ? t("owned")
       : (visible.ownerSessionId ? t("foreignOwned", { id: visible.ownerSessionId }) : t("unowned"));
     const access = visible.readOnlyUsable === false ? "" : visible.ownerSessionId && !visible.ownedByCurrentTask
       ? t("readOnlyAccess")
-      : t("useTabAccess");
+      : t("explicitTabAccess");
     lines.push(t("visibleTab", { tab: formatDynamicContextTab(visible), ownership, access }));
   }
 
   if (Array.isArray(context.tabs) && context.tabs.length) {
     lines.push(t("taskTabs"));
     for (const tab of context.tabs) {
-      lines.push(`  ${working?.id === tab.id ? "→" : " "} ${formatDynamicContextTab(tab)}`);
+      lines.push(`  ${formatDynamicContextTab(tab)}`);
     }
   }
 
@@ -493,6 +490,7 @@ export async function collectDynamicContext(
     const guardrails = await services.getSecurityGuardrails();
     if (context.tabs) context.tabs = annotateSecurityGuardrailTabs(context.tabs, guardrails);
     if (context.workingTab) context.workingTab = annotateSecurityGuardrailTab(context.workingTab, guardrails);
+    if (context.userVisibleTab) context.userVisibleTab = annotateSecurityGuardrailTab(context.userVisibleTab, guardrails);
     if (context.pageUrl && matchBlockedUrl(context.pageUrl, guardrails)) {
       context.securityGuardrailBlocked = true;
       context.contentAccess = "blocked";
@@ -501,10 +499,13 @@ export async function collectDynamicContext(
     // Metadata remains useful if settings are unavailable; tool execution checks policy again.
   }
   throwIfCancelled(request.signal);
-  const contextTab = context.workingTab;
+  const recent = context.workingTab;
+  if (recent) {
+    context.pageTitle = recent.title || context.pageTitle || "";
+    context.pageUrl = recent.url || context.pageUrl || "";
+  }
+  const contextTab = context.userVisibleTab;
   if (contextTab) {
-    context.pageTitle = contextTab.title || context.pageTitle || "";
-    context.pageUrl = contextTab.url || context.pageUrl || "";
     if (!contextTab.securityGuardrailBlocked && !(isLocalFileUrl(contextTab.url) && context.fileAccessAllowed === false)) {
       context.selectionText = String(await services.readSelectedText(contextTab.id ?? undefined) || "");
     } else {
@@ -529,15 +530,6 @@ export async function collectSiteSkillPreviewContext(provider: DynamicContextPro
   return context;
 }
 
-export async function collectToolRuntimeContext(
-  provider: DynamicContextProvider | null, request: ContextReadRequest, snapshotWorking: ContextTab | null,
-) {
-  const live = await readContext(provider, request);
-  const workingTab = live?.workingTab || snapshotWorking || null;
-  const workingTabId = Number(workingTab?.id);
-  return { workingTab, workingTabId: Number.isFinite(workingTabId) && workingTabId > 0 ? workingTabId : null };
-}
-
 async function readContext(provider: DynamicContextProvider | null, request: ContextReadRequest): Promise<DynamicContext | null> {
   throwIfCancelled(request.signal);
   if (!provider) return null;
@@ -548,7 +540,7 @@ async function readContext(provider: DynamicContextProvider | null, request: Con
   } catch (error) {
     throwIfCancelled(request.signal);
     if (record(error).name === "AbortError" || record(error).code === "CONTEXT_SOURCE_REQUIRED") throw error;
-    // Optional sources may fail; only tool targeting can fall back to the run's own snapshot.
+    // Optional sources may fail without replacing the last observed context.
     return null;
   }
 }
@@ -602,7 +594,7 @@ export function normalizeDynamicContext(value: unknown): DynamicContext {
 }
 
 function normalizeContextTab(tab: Record<string, unknown>): ContextTab {
-  return { ...textFields(tab, ["url", "pendingUrl", "title", "ownerSessionId", "contentAccess"]),
+  return { ...textFields(tab, ["url", "pendingUrl", "title", "tabAlias", "ownerSessionId", "contentAccess"]),
     ...numberFields(tab, ["id", "windowId"]),
     ...booleanFields(tab, ["active", "pinned", "readOnlyUsable", "securityGuardrailBlocked", "ownedByCurrentTask"]),
   };

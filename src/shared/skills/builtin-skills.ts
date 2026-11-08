@@ -39,11 +39,9 @@ export function mergeBuiltinSkills(storedSkills: readonly object[] = [], languag
     if (!isModernSkillRecord(skill)) continue;
     const normalized = normalizeSkill(skill);
     const key = normalizeSkillLookup(normalized.name);
-    const displayKey = normalizeSkillLookup(getSkillDisplayName(normalized));
     if (!key || seen.has(key) || registry.get(normalized.name)) continue;
-    if (displayKey && (seen.has(displayKey) || registry.get(getSkillDisplayName(normalized)))) continue;
+    if (registry.get(getSkillDisplayName(normalized))) continue;
     seen.add(key);
-    if (displayKey) seen.add(displayKey);
     rows.push(normalized);
   }
   return [...builtins, ...rows];

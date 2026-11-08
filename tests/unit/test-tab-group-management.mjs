@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { getCoreToolMetadata } from "../../src/shared/tools/tool-metadata.js";
 import { chromeMessageId } from "../../src/shared/i18n/definition.js";
+import { createSessionRepository } from "../../src/background/session/repository.js";
+import { createSessionTabs } from "../../src/background/session/tabs.js";
+import { createMemoryStorage } from "../support/memory-storage.mjs";
+
+globalThis.chrome = { i18n: { getUILanguage: () => "zh-CN" } };
 
 const root = new URL("../../", import.meta.url);
 
@@ -20,6 +25,7 @@ function installChromeMock({ tabs = [], groups = [] } = {}) {
   };
 
   globalThis.chrome = {
+    i18n: { getUILanguage: () => "zh-CN" },
     tabs: {
       async get(tabId) {
         const tab = state.tabs.get(Number(tabId));
@@ -49,6 +55,11 @@ function installChromeMock({ tabs = [], groups = [] } = {}) {
       },
     },
     tabGroups: {
+      async get(groupId) {
+        const group = state.groups.get(Number(groupId));
+        if (!group) throw new Error(`missing group ${groupId}`);
+        return { ...group };
+      },
       async query(query = {}) {
         return [...state.groups.values()]
           .filter(group => query.windowId == null || Number(group.windowId) === Number(query.windowId))
@@ -68,13 +79,18 @@ function installChromeMock({ tabs = [], groups = [] } = {}) {
   return state;
 }
 
-function assertToolExposure() {
+async function assertToolExposure() {
   const tools = readProjectFile("src/background/tools/runtime.js");
   assert.doesNotMatch(tools, /registerTool\(\s*\{\s*name:\s*"group_tabs"/, "group_tabs should not be registered as a model-visible tool");
   assert.doesNotMatch(tools, /["']group_tabs["']\s*,?\s*\]/, "group_tabs should not remain in direct tool lists");
+  const { getToolSchemas } = await import("../../src/background/tools/runtime.js");
+  const registeredNames = getToolSchemas().map(tool => tool.function.name);
+  for (const name of ["group_tabs", "use_tab", "get_working_tab"]) {
+    assert.equal(registeredNames.includes(name), false, `${name} must not be registered as a public tool`);
+  }
   for (const [name, title] of [["list_tabs", "查看标签页"], ["get_working_tab", "查看工作页"]]) {
     const metadata = getCoreToolMetadata(name);
-    assert.equal(metadata?.title, title, `${name} should keep its localized tab label`);
+    assert.equal(metadata?.title, title, `${name} should keep its localized label for saved results`);
     assert.deepEqual(metadata?.sets, ["tab"], `${name} should be a tab UI tool`);
   }
   assert.equal(getCoreToolMetadata("search_tabs"), null, "removed tab search tool should not remain in UI metadata");
@@ -173,11 +189,76 @@ async function assertInvalidPreferredGroupIsNotAdopted() {
   }
 }
 
-assertToolExposure();
+async function assertWitnessedDriveGroupKeepsItsId() {
+  const { ensureQingzhouTabGroupForWindow } = await import("../../src/shared/tab-groups.js");
+  const state = installChromeMock({
+    tabs: [{ id: 701, windowId: 7, groupId: 3 }],
+    groups: [{ id: 3, windowId: 7, title: "轻舟任务" }],
+  });
+  globalThis.chrome.i18n = { getUILanguage: () => "zh-CN" };
+  const result = await ensureQingzhouTabGroupForWindow([701], { preferredGroupId: 3, title: "轻舟 · CLI" });
+  assert.equal(result.groupId, 3);
+  assert.equal(result.group.title, "轻舟 · CLI");
+  assert.equal(state.groups.get(3).title, "轻舟 · CLI");
+  assert.equal(state.tabs.get(701).groupId, 3);
+}
+
+async function assertTitleFallbackJoinsTheMatchingDriveGroup() {
+  const { ensureQingzhouTabGroupForWindow } = await import("../../src/shared/tab-groups.js");
+  const state = installChromeMock({
+    tabs: [{ id: 702, windowId: 7, groupId: -1 }],
+    groups: [
+      { id: 3, windowId: 7, title: "轻舟任务" },
+      { id: 4, windowId: 7, title: "轻舟 · CLI" },
+    ],
+  });
+  globalThis.chrome.i18n = { getUILanguage: () => "zh-CN" };
+  const result = await ensureQingzhouTabGroupForWindow([702], { title: "轻舟 · CLI" });
+  assert.equal(result.groupId, 4);
+  assert.equal(state.tabs.get(702).groupId, 4);
+  assert.equal(state.groups.get(3).title, "轻舟任务");
+}
+
+async function assertStoredDriveGroupFollowsLanguage() {
+  const { ensureQingzhouTabGroupForWindow } = await import("../../src/shared/tab-groups.js");
+  const state = installChromeMock({
+    tabs: [{ id: 703, windowId: 7, groupId: 4, url: "https://example.com/" }],
+    groups: [{ id: 4, windowId: 7, title: "轻舟 · CLI" }],
+  });
+  const storage = createMemoryStorage({
+    _sessions: { drive: { id: "drive", source: "external-drive", driveGroupTitle: "轻舟 · CLI", title: "My task" } },
+    _session_tab_groups: { "drive:drive": { windows: { 7: { groupId: 4, tabIds: [703] } } } },
+  });
+  const repository = createSessionRepository({ storage });
+  const runtime = { ownedTabIds: [703] };
+  const sessionTabs = createSessionTabs({
+    supervisor: { getRuntime: () => runtime, setRuntime: (_id, next) => Object.assign(runtime, next), runtimeEntries: () => [["drive", runtime]] },
+    tabsApi: chrome.tabs, tabGroupsApi: chrome.tabGroups, storage,
+    setRuntime: (_id, patch) => Object.assign(runtime, patch), persistRuntime: async () => {},
+    getSessions: repository.listMetadata, ensureTabGroupForWindow: ensureQingzhouTabGroupForWindow,
+  });
+  for (const [language, brand] of [["en", "qz"], ["ja", "軽舟"], ["zh-TW", "輕舟"], ["zh-CN", "轻舟"]]) {
+    const catalog = ["ja", "zh-TW"].includes(language)
+      ? JSON.parse(readProjectFile(`src/capabilities/i18n/locales/${language}/content.json`)) : {};
+    globalThis.chrome.i18n = { getUILanguage: () => language,
+      getMessage: key => key === "qz_language" ? language : key === chromeMessageId("content.brand") ? catalog["content.brand"] || "" : "" };
+    await sessionTabs.syncGroup();
+    assert.equal(state.groups.get(4).title, `${brand} · CLI`);
+    assert.equal(state.groups.size, 1, "renaming must reuse the existing group");
+    assert.equal(state.tabs.get(703).groupId, 4);
+    assert.equal((await repository.getMetadata("drive")).title, "My task");
+  }
+  assert.equal(state.groupCalls.length, 0, "changing language only updates the group label");
+}
+
+await assertToolExposure();
 await assertDuplicateGroupsMerge();
 await assertCreatesGroupWhenMissing();
 await assertManagedGroupSurvivesLanguageSwitch();
 await assertManagedGroupSurvivesLegacyBranding();
 await assertInvalidPreferredGroupIsNotAdopted();
+await assertWitnessedDriveGroupKeepsItsId();
+await assertTitleFallbackJoinsTheMatchingDriveGroup();
+await assertStoredDriveGroupFollowsLanguage();
 
 console.log("tab group management tests passed");

@@ -81,7 +81,7 @@
   "documents.failedToCreateTemporaryPdfRenderTab": "Не удалось открыть временную вкладку для создания PDF.",
   "documents.temporaryPdfRenderingRequiresTheChromeDebuggerRuntime": "Для создания PDF нужен доступ к отладчику Chrome.",
   "documents.chromePagePrinttopdfReturnedEmptyData": "Chrome Page.printToPDF не вернул данные.",
-  "documents.temporaryTabDidNotFinishLoading": "Временная вкладка {tabId} не завершила загрузку.",
+  "documents.temporaryTabDidNotFinishLoading": "Временная вкладка не завершила загрузку.",
   "documents.documentArtifactHasNoContent": "Созданный документ пуст.",
   "documents.docxDocumentXmlNotFound": "В файле DOCX отсутствует document.xml.",
   "documents.xlsxWorkbookXmlNotFound": "В файле XLSX отсутствует workbook.xml.",

@@ -1,3 +1,6 @@
+import type { ToolErrorDetails } from "../shared/contracts/tool-error.js";
+import type { ToolResultPresentation } from "../shared/contracts/tool-result-presentation.js";
+import type { PageObservation } from "../shared/contracts/page-observation.js";
 /** Background extension API. Runtime services are supplied by the owning host. */
 import type { SkillActivationContext } from "../shared/skills/skill-manifest.js";
 import type { ToolDefinition, ToolSchema } from "../shared/contracts/tool.js";
@@ -5,13 +8,31 @@ export type { ToolSchema, ToolArguments, ToolParameter } from "../shared/contrac
 
 export type ToolExecutionPhase = "injection" | "readiness" | "extraction" | "cdp" | "measurement" | "normalization" | "postprocess";
 
+/** Host-only execution evidence. Only a triggered wait shares it with its action. */
+export interface ToolOperationEvidence {
+  prepare(details: ToolErrorDetails): void;
+  dispatch(): void;
+  confirm(): void;
+  snapshot(): ToolErrorDetails;
+  close(): void;
+}
+
 export interface ToolContext extends SkillActivationContext {
   dynamicContext?: SkillActivationContext | null;
-  skillExecution?: { plugin: import("../shared/skills/skill-manifest.js").SkillManifest; config?: Record<string, unknown> };
+  skillExecution?: { plugin: import("../shared/skills/skill-manifest.js").SkillManifest; config?: Record<string, unknown>; resultMode?: "receipt" };
   sessionId?: string;
   runId?: string | null;
+  /** Execution mode supplied by the owning Session, inherited by nested calls. */
+  externalDrive?: boolean;
+  /** The caller's page reference, before resolving it to a browser tab. */
+  requestedTabRef?: string | number;
   /** Call-scoped cancellation, including the tool deadline. */
   signal?: AbortSignal;
+  /** Host-owned absolute deadline shared by preparation and result observation. */
+  deadlineAt?: number;
+  operation?: ToolOperationEvidence;
+  /** Host-owned, call-local presentation; never part of the business result. */
+  resultPresentation?: ToolResultPresentation;
   /** Observation execution preserves the working tab; ordered commit may select the observed tab. */
   preserveWorkingTab?: boolean;
   /** Trusted batch creators publish ownership and working-tab state only at ordered settlement. */
@@ -25,6 +46,16 @@ export interface ToolContext extends SkillActivationContext {
   prepareCreatedTab?(tab: import("../shared/tab-utils.js").TabReference): Promise<ToolContext>;
   /** Publish an immutable completed stage for this call's existing hard deadline. */
   reportPartial?(result: Record<string, unknown>, pending: string): void;
+  /** Opaque live invocation identity carried only by nested script transports. */
+  toolExecutionId?: string;
+  /** Host-only nested dispatch. The live parent owns cancellation and recording. */
+  invokeTool?(name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal; operation?: ToolOperationEvidence }): Promise<unknown>;
+  /** Policy-filtered catalog; skillName previews a Skill load with its full tool contracts. */
+  listTools?(names?: readonly string[], options?: { skillName: string }): { tools: Record<string, unknown>[] };
+  /** Confirm already-observed task popups within this call's deadline; never waits for future pages. */
+  observedPopups?(): Promise<PageObservation[]>;
+  /** Opaque scheduler authority; never accepted from a page message. */
+  nestedToolScope?: object;
   /** Call-local diagnostic accumulator. End the measurement in a finally block. */
   measurePhase?(phase: ToolExecutionPhase): () => void;
   /** Captured by the run. Registry references are in-memory capabilities, never wire data. */
@@ -42,7 +73,7 @@ export interface RegisterTool {
   <const S extends ToolSchema, R>(definition: ToolDefinition<S, R, ToolContext, AbortSignal>): void;
 }
 
-export type ToolErrorConstructor = new (code: string, message: string, details?: Record<string, unknown>) => Error & { code: string; details: Record<string, unknown> };
+export type ToolErrorConstructor = new (code: string, message: string, details?: unknown) => Error & { code: string; details: ToolErrorDetails };
 
 export interface ToolRunProfile {
   platform?: { os?: string } | null; features?: { imageInput?: boolean; toolImages?: boolean; screenshots?: boolean };
@@ -84,6 +115,10 @@ export interface ToolExtensionAPI extends Omit<PageNavigationHost, "commitObserv
   readonly getDebuggerConnectionId: (tabId: number) => number | null;
   /** Current run owning an attached connection; null while retained without an active run. */
   readonly getDebuggerRun: (tabId: number) => { sessionId: string; runId: string; connectionId: number } | null;
+  /** Keep a persistent feature attached until its own release; does not acquire a connection. */
+  readonly retainDebugger: (tabId: number, reason: string, context: ToolContext) => () => void;
+  /** Includes programmatic idle/terminal detach, for retiring connection-bound state. */
+  readonly onDebuggerDetached: (listener: (tabId: number, connectionId: number) => void) => () => void;
   /** Retain configuration across runs; optional restore replays it after target loss, never after user detach. */
   readonly setDebuggerRetention: (tabId: number, retained: boolean, context: ToolContext,
     restore?: (send: CdpCommand) => Promise<void>) => void;

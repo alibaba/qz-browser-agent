@@ -1,4 +1,5 @@
-import { safeValueForMessage, installSecurityGuards } from "../shared/script-runtime.js";
+import { safeValueForMessage, scriptValue, scriptToolArguments, installSecurityGuards, formatScriptErrorTrace } from "../shared/script-runtime.js";
+import { createQzSdk } from "../shared/qz-script-sdk.js";
 import type { FetchResult, InnerWorkerInput, InnerWorkerOutput, ScriptEnvelope, ScriptFailure, ToolBridgeResponse, TraceRow, WorkerExecute } from '../shared/contracts/inner-runner.js';
 
 type ToolCall = { toolName: string; resolve(response: Extract<ToolBridgeResponse, {ok: true}>): void; reject(error: unknown): void };
@@ -9,9 +10,16 @@ const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(v
 const send = (message: InnerWorkerOutput) => self.postMessage(message);
 const pendingToolCalls = new Map<string, ToolCall>();
 const pendingFetchCalls = new Map<string, FetchCall>();
+const liveInnerTraces = new Map<string, TraceRow[]>();
 
 self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
   const data = event.data || {};
+  if (data.type === "trace_snapshot") {
+    const requestId = String(data.requestId || "");
+    const rows = liveInnerTraces.get(requestId) || [];
+    send({ type: "trace_snapshot", requestId, trace: rows.slice(-5) });
+    return;
+  }
   if (data.type === "execute") {
     runInnerScript(data).catch((error) => {
       send({
@@ -31,9 +39,9 @@ self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
       return;
     }
     if (!response.ok) {
-      const error: ScriptFailure = new Error(response.error || ("tools." + call.toolName + " bridge failed"));
+      const error: ScriptFailure = new Error(response.message || response.error || ("tools." + call.toolName + " bridge failed"));
       if (response.code) error.code = response.code;
-      if (response.diagnostic) error.diagnostic = response.diagnostic;
+      if (response.hint) error.hint = response.hint;
       if (response.details) error.details = response.details;
       call.reject(error);
       return;
@@ -62,18 +70,21 @@ self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
 async function runInnerScript(payload: WorkerExecute) {
   const startedAt = Date.now();
   const traceRows: TraceRow[] = [];
+  const requestId = String(payload.requestId || "");
+  if (requestId) liveInnerTraces.set(requestId, traceRows);
   const artifacts: unknown[] = [];
+  const observations = new WeakMap<object, unknown>();
   const source = String(payload.source || "");
-  const input = payload.scriptArgs && typeof payload.scriptArgs === "object" ? payload.scriptArgs : {};
+  const input = payload.scriptArgs;
   const args = input;
   const tabId = null;
   let seq = 0;
-  pushTrace("inner.start", [{ sourceLength: source.length }]);
+  let traceIndex = 0;
 
   function traceText(value: unknown) {
     try {
       if (typeof value === "string") return value;
-      if (value instanceof Error) return value.stack || value.message || String(value);
+      if (value instanceof Error) return formatScriptErrorTrace(value);
       if (value && typeof value === "object") return JSON.stringify(safeValueForMessage(value));
       return String(value);
     } catch (_err) {
@@ -83,12 +94,15 @@ async function runInnerScript(payload: WorkerExecute) {
 
   function pushTrace(level: string, items: unknown[]) {
     const message = Array.from(items || []).map(traceText).join(" ");
-    traceRows.push({
+    const row = {
+      traceIndex: ++traceIndex,
       time: new Date().toISOString(),
       level: String(level || "trace"),
       message: message.length > 1000 ? message.slice(0, 1000) + "…[truncated]" : message,
-    });
+    };
+    traceRows.push(row);
     if (traceRows.length > 80) traceRows.splice(0, traceRows.length - 80);
+    send({ type: "script_trace", row });
   }
 
   function trace(...items: unknown[]) { pushTrace("trace", items); }
@@ -104,9 +118,8 @@ async function runInnerScript(payload: WorkerExecute) {
   function callTool(name: string, args: unknown = {}) {
     const toolName = String(name || "").trim();
     if (!toolName) throw new Error("tools call requires a tool name");
-    const toolArgs = args && typeof args === "object" && !Array.isArray(args) ? { ...args } : {};
-    const safeToolArgs = safeValueForMessage(toolArgs);
-    pushTrace("tool.start", [toolName, toolArgs]);
+    const toolArgs: Record<string, unknown> = isRecord(args) && !Array.isArray(args) ? { ...args } : {};
+    const safeToolArgs = scriptToolArguments(toolName, toolArgs);
     const callId = "inner_tool_" + Date.now() + "_" + (++seq);
     send({
       type: "tool_call",
@@ -118,25 +131,27 @@ async function runInnerScript(payload: WorkerExecute) {
       pendingToolCalls.set(callId, {
         toolName,
         resolve(response) {
-          pushTrace("tool.end", [toolName, response.result]);
           addToolArtifacts(response.artifacts || response.artifact);
-          resolve(response.result);
+          // Modern scripts receive business values; legacy callers retain the declared receipt.
+          const result = payload.strictResult && response.resultFormat === "receipt" && isRecord(response.result)
+            ? response.result.result : response.result;
+          if (result && typeof result === "object" && response.observation) {
+            observations.set(result, response.observation);
+          }
+          resolve(result);
         },
-        reject(error) {
-          pushTrace("tool.error", [toolName, failure(error).message || error]);
-          reject(error);
-        },
+        reject,
       });
     });
   }
 
   const tool = callTool;
+  const qz = createQzSdk(callTool);
   const tools = new Proxy(Object.create(null), {
     get(_target, prop) {
       if (prop === "then") return undefined;
       if (prop === Symbol.toStringTag) return "RunScriptInnerTools";
       if (prop === "$call") return callTool;
-      if (prop === "$list") return () => callTool("__list_tools__", {});
       if (typeof prop !== "string") return undefined;
       return (args = {}) => callTool(prop, args);
     },
@@ -147,11 +162,24 @@ async function runInnerScript(payload: WorkerExecute) {
   const restoreConsole = patchConsole(pushTrace);
   const restoreSecurity = installSecurityGuards(payload.securityGuardrails || {});
   try {
-    const fn = new Function("input", "args", "$plugin", "tools", "tool", "trace", "log", "tabId", "\"use strict\"; return (async () => {\n" + source + "\n})();");
-    const result = await fn(input, args, input.$plugin || {}, tools, tool, trace, log, tabId);
+    const fn = new Function("input", "args", "$plugin", "tools", "tool", "trace", "log", "tabId", "qz", "\"use strict\"; return (async () => {\n" + source + "\n})();");
+    const result = await fn(input, args, isRecord(input) ? input.$plugin || {} : {}, tools, tool, trace, log, tabId, qz);
+    const value = payload.strictResult ? scriptValue(result) : result;
+    const returnedObservations: unknown[] = [];
+    const visited = new Set<object>();
+    const collectObservations = (item: unknown) => {
+      if (!item || typeof item !== "object" || visited.has(item)) return;
+      visited.add(item);
+      const observation = observations.get(item);
+      if (observation) returnedObservations.push(observation);
+      // Legacy Skill values can contain inaccessible properties; optional image discovery must not change their result.
+      try { for (const child of Object.values(item)) collectObservations(child); } catch { /* No readable child observations. */ }
+    };
+    collectObservations(result);
     send({
       type: "result",
-      result: makeEnvelope(true, result, null, traceRows, artifacts, startedAt),
+      result: { ...makeEnvelope(true, value, null, traceRows, artifacts, startedAt, payload.strictResult),
+        ...(returnedObservations.length ? { observations: scriptValue(returnedObservations) } : {}) },
     });
   } catch (error) {
     decorateSyntaxError(error, source);
@@ -166,6 +194,7 @@ async function runInnerScript(payload: WorkerExecute) {
       result: makeEnvelope(false, null, error, traceRows, artifacts, startedAt),
     });
   } finally {
+    if (requestId) liveInnerTraces.delete(requestId);
     restoreSecurity();
     if (payload.fetchBridge === true) self.fetch = originalFetch;
     restoreConsole();
@@ -286,7 +315,6 @@ function decorateSyntaxError(error: unknown, source: string) {
   annotated.code = "SCRIPT_SYNTAX_ERROR";
   const hints = findSuspiciousSourceTokens(source);
   annotated.details = {
-    reason: "inner",
     sourcePreview: summarizeSourceForError(source),
     suspiciousTokens: hints,
   };
@@ -339,9 +367,9 @@ function findRawNewlineInQuotedString(text: string) {
   return -1;
 }
 
-function makeEnvelope(ok: boolean, result: unknown, thrown: unknown, traceRows: TraceRow[], artifacts: unknown[], startedAt: number): ScriptEnvelope {
+function makeEnvelope(ok: boolean, result: unknown, thrown: unknown, traceRows: TraceRow[], artifacts: unknown[], startedAt: number, strictResult = false): ScriptEnvelope {
   const error = thrown == null ? null : failure(thrown);
-  const safeResult = ok && result !== undefined ? safeValueForMessage(result) : null;
+  const safeResult = ok && result !== undefined ? strictResult ? scriptValue(result) : safeValueForMessage(result) : null;
   const out: ScriptEnvelope = {
     __runScriptEnvelope: true,
     ok,
@@ -355,9 +383,10 @@ function makeEnvelope(ok: boolean, result: unknown, thrown: unknown, traceRows: 
     elapsedMs: Date.now() - startedAt,
   };
   if (!ok) {
-    out.error = error?.stack || error?.message || String(error || "Script evaluation failed");
+    out.error = error?.message || String(error || "Script evaluation failed");
     out.code = error?.code || "SCRIPT_EVALUATION_FAILED";
-    out.details = safeValueForMessage(error?.details && typeof error.details === "object" ? error.details : { reason: "inner" });
+    if (error?.hint) out.hint = error.hint;
+    out.details = safeValueForMessage(error?.details && typeof error.details === "object" ? error.details : {});
     if (error?.diagnostic && typeof error.diagnostic === "object") out.diagnostic = safeValueForMessage(error.diagnostic);
   } else if (result === undefined) {
     out.message = "Script completed successfully but returned undefined. Put an expression at the end or use return to inspect a value.";

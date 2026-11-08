@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
 import test from "node:test";
-import { beginPageNavigationObservation } from "../../src/background/tools/page-navigation.js";
+import { beginPageNavigationObservation, observeNextPageNavigation } from "../../src/background/tools/page-navigation.js";
+import { runToolWithTimeout } from "../../src/background/tools/tool-timeout.js";
 
 const before = { url: "https://example.test/form", title: "Form" };
 const after = { url: "https://example.test/done", title: "Done" };
@@ -10,6 +11,11 @@ function fixture(t) {
   const previous = globalThis.chrome;
   const tab = { id: 7, ...before, status: "complete" };
   const listeners = new Set();
+  const navigation = Object.fromEntries(['onBeforeNavigate', 'onCommitted', 'onHistoryStateUpdated', 'onReferenceFragmentUpdated', 'onErrorOccurred'].map(name => {
+    const events = new Set();
+    return [name, { addListener: fn => events.add(fn), removeListener: fn => events.delete(fn),
+      emit: event => { for (const fn of events) fn(event); }, get size() { return events.size; } }];
+  }));
   let documentId = "old", getHook, probeHook, reads = 0;
   globalThis.chrome = {
     tabs: {
@@ -21,15 +27,14 @@ function fixture(t) {
         return getHook ? getHook(value) : value;
       },
     },
-    scripting: { async executeScript(options) {
-      assert.deepEqual(options.target, { tabId: 7, frameIds: [0] });
-      assert.equal(options.func(), null, "the probe does not read or modify page content");
-      return probeHook ? probeHook() : [{ frameId: 0, documentId }];
+    webNavigation: { ...navigation, async getFrame(options) {
+      assert.deepEqual(options, { tabId: 7, frameId: 0 });
+      return probeHook ? probeHook() : { url: tab.url, documentId, errorOccurred: false };
     } },
   };
   t.after(() => { globalThis.chrome = previous; });
   return {
-    tab, listeners,
+    tab, listeners, navigation,
     get reads() { return reads; },
     onGet(fn) { getHook = fn; }, onProbe(fn) { probeHook = fn; },
     emit(id, change) { for (const listener of listeners) listener(id, change); },
@@ -39,6 +44,33 @@ function fixture(t) {
     },
   };
 }
+
+test("navigation confirmation uses the tool's remaining budget and returns pending before its hard timeout", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const f = fixture(t);
+  let finished = false, callSignal;
+  const pending = runToolWithTimeout("act_on_element", async (signal, _publish, deadlineAt) => {
+    callSignal = signal;
+    assert.equal(deadlineAt, 1100);
+    const observer = await f.start(signal, { timeoutMs: 10_000, deadlineAt });
+    t.mock.timers.tick(60); // Preparation and dispatch have already consumed this part of the call.
+    Object.assign(f.tab, { status: "loading", pendingUrl: after.url });
+    f.emit(7, { status: "loading" });
+    return observer.finish(before);
+  }, undefined, 100, () => { throw new Error("confirmation must not reach the hard timeout"); }, {})
+    .then(result => { finished = true; return result; });
+  await new Promise(resolve => setImmediate(resolve));
+  for (let tick = 0; !finished && tick < 40; tick++) {
+    t.mock.timers.tick(1);
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  const result = await pending;
+  assert.equal(result.navigationPending, true);
+  assert.equal(result.navigationStarted, true);
+  assert.equal(callSignal.aborted, true, "a settled call revokes any remaining work");
+  assert.ok(Date.now() < 1100);
+  assert.equal(f.listeners.size, 0);
+});
 
 test("an observed form navigation waits through loading and returns the committed page", async t => {
   const f = fixture(t);
@@ -56,7 +88,7 @@ test("an observed form navigation waits through loading and returns the committe
   f.document("new");
   f.emit(7, { status: "complete", url: after.url });
   assert.deepEqual(await pending, {
-    pageBefore: before, pageAfter: after, navigationPending: false, documentChanged: true, navigationStarted: true,
+    pageBefore: before, pageAfter: after, navigationPending: false, navigationCommitted: true, documentChanged: true, navigationStarted: true,
   });
   assert.ok(f.reads >= 2);
   assert.equal(f.listeners.size, 0);
@@ -67,7 +99,7 @@ test("a same-URL navigation is identified by its new document even when it finis
   const observer = await f.start();
   f.document("reloaded");
   assert.deepEqual(await observer.finish(before), {
-    pageBefore: before, pageAfter: before, navigationPending: false, documentChanged: true, navigationStarted: true,
+    pageBefore: before, pageAfter: before, navigationPending: false, navigationCommitted: true, documentChanged: true, navigationStarted: true,
   });
   assert.equal(f.listeners.size, 0);
 });
@@ -78,7 +110,7 @@ test("a prevented navigation ignores updates from other tabs and retains the cur
   f.emit(8, { status: "loading", url: after.url });
   f.emit(8, { status: "complete" });
   assert.deepEqual(await observer.finish(before), {
-    pageBefore: before, pageAfter: before, navigationPending: false, documentChanged: false, navigationStarted: false,
+    pageBefore: before, pageAfter: before, navigationPending: false, navigationCommitted: false, documentChanged: false, navigationStarted: false,
   });
   assert.equal(f.reads, 2, "one baseline read and one post-action read suffice");
   assert.equal(f.listeners.size, 0);
@@ -90,7 +122,7 @@ for (const state of [{ status: "loading" }, { pendingUrl: after.url }]) {
     Object.assign(f.tab, state);
     const observer = await f.start(undefined, { timeoutMs: 10 });
     assert.deepEqual(await observer.finish(before), {
-      pageBefore: before, pageAfter: before, navigationPending: false, documentChanged: false, navigationStarted: null,
+      pageBefore: before, pageAfter: before, navigationPending: false, navigationCommitted: false, documentChanged: false, navigationStarted: null,
     });
     assert.equal(f.listeners.size, 0);
   });
@@ -111,7 +143,7 @@ test("a navigation that stops loading without committing releases the wait", asy
   delete f.tab.pendingUrl;
   f.emit(7, { status: "complete" });
   assert.deepEqual(await pending, {
-    pageBefore: before, pageAfter: before, navigationPending: false, documentChanged: false, navigationStarted: true,
+    pageBefore: before, pageAfter: before, navigationPending: false, navigationCommitted: false, documentChanged: false, navigationStarted: true,
   });
   assert.equal(f.reads, 3, "loading completion ends observation even when no document replaces the original");
   assert.equal(f.listeners.size, 0);
@@ -157,7 +189,7 @@ test("a same-URL new document remains confirmed while its subresources are still
   const result = await observer.finish(before);
   assert.equal(result.documentChanged, true);
   assert.equal(result.navigationStarted, true);
-  assert.equal(result.navigationPending, true);
+  assert.equal(result.navigationPending, false);
 });
 
 test("an explicit navigation request settles when its new document is observed", async t => {
@@ -166,8 +198,33 @@ test("an explicit navigation request settles when its new document is observed",
   Object.assign(f.tab, after);
   f.document("new");
   assert.deepEqual(await observer.finish(before), {
-    pageBefore: before, pageAfter: after, navigationPending: false, documentChanged: true, navigationStarted: true,
+    pageBefore: before, pageAfter: after, navigationPending: false, navigationCommitted: true, documentChanged: true, navigationStarted: true,
   });
+});
+
+test("post-action observation rejects an error page and releases all navigation listeners", async t => {
+  const f = fixture(t);
+  const observer = await f.start();
+  Object.assign(f.tab, after);
+  f.onProbe(() => ({ url: after.url, documentId: 'error-document', errorOccurred: true }));
+  f.navigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url: after.url, timeStamp: 10 });
+  f.navigation.onErrorOccurred.emit({ tabId: 7, frameId: 0, url: after.url, timeStamp: 20,
+    documentId: 'error-document', error: 'net::ERR_EMPTY_RESPONSE' });
+  await assert.rejects(observer.finish(before), { code: 'NAVIGATION_FAILED' });
+  assert.equal(f.listeners.size, 0);
+  assert.ok(Object.values(f.navigation).every(event => event.size === 0));
+});
+
+test("downloads and 204 responses retain the document after ERR_ABORTED", async t => {
+  const f = fixture(t);
+  const observer = await f.start();
+  f.navigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url: after.url, timeStamp: 10 });
+  f.navigation.onErrorOccurred.emit({ tabId: 7, frameId: 0, url: after.url, timeStamp: 20, error: 'net::ERR_ABORTED' });
+  const result = await observer.finish(before);
+  assert.equal(result.navigationCommitted, false);
+  assert.equal(result.navigationPending, false);
+  assert.equal(result.documentChanged, false);
+  assert.deepEqual(result.pageAfter, before);
 });
 
 for (const pendingState of [{ status: "loading" }, { pendingUrl: after.url }]) {
@@ -223,10 +280,10 @@ test("a Chrome tab lookup failure propagates and releases navigation listeners",
 
 test("an unavailable document probe leaves identity unknown and does not claim a replacement", async t => {
   const f = fixture(t);
-  f.onProbe(() => { throw new Error("Document changed during injection"); });
+  f.onProbe(() => null);
   const observer = await f.start();
   assert.deepEqual(await observer.finish(before), {
-    pageBefore: before, pageAfter: before, navigationPending: false, documentChanged: null, navigationStarted: false,
+    pageBefore: before, pageAfter: before, navigationPending: false, navigationCommitted: false, documentChanged: null, navigationStarted: false,
   });
   assert.equal(f.listeners.size, 0);
 });
@@ -251,4 +308,18 @@ test("cancellation releases the listener while the action itself is still pendin
   assert.equal(f.listeners.size, 0);
   assert.equal(getEventListeners(controller.signal, "abort").length, 0);
   await assert.rejects(observer.finish(before), { code: "OPERATION_ABORTED" });
+});
+
+test("disposing an explicit navigation observer stops polling and releases its events", async t => {
+  const f = fixture(t);
+  const observer = observeNextPageNavigation(7, new AbortController().signal);
+  const rejected = assert.rejects(observer.result);
+  await new Promise(resolve => setImmediate(resolve));
+  observer.dispose();
+  await rejected;
+  assert.equal(f.listeners.size, 0);
+  assert.ok(Object.values(f.navigation).every(event => event.size === 0));
+  const reads = f.reads;
+  await new Promise(resolve => setTimeout(resolve, 120));
+  assert.equal(f.reads, reads);
 });

@@ -1,3 +1,4 @@
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import { loadModelsDevFixture } from "../support/models-dev-fixture.mjs";
 import { createStreamAttempt } from "../../src/background/llm/stream-attempt.js";
 import assert from "node:assert/strict";
@@ -349,13 +350,13 @@ assert.equal(updateResult.config.requestRateLimit, false);
 assert.deepEqual(updateResult.config.modelParameters, { reasoning_effort: "high", temperature: 0.2 });
 assert.deepEqual(updateResult.config.presets[0].modelParameters, updateResult.config.modelParameters);
 assert.equal(updateResult.config.hasApiKey, true);
-assert.equal(updateResult.config.providerApiKeyProviders.includes("custom"), true);
+assert.equal(updateResult.config.providerApiKeyProviders.includes("custom"), false);
 assert.equal(updateResult.config.presets[0].hasApiKey, true);
 assert.equal(updateResult.config.apiKey, secret);
-assert.equal(updateResult.config.providerApiKeys.custom, secret);
+assert.equal(updateResult.config.providerApiKeys.custom, undefined);
 assert.equal(updateResult.config.presets.find(preset => preset.id === updateResult.config.activePresetId)?.apiKey, secret);
-assert.equal(updateResult._plugin.id, "qingzhou-management");
-assert.equal(updateResult._plugin.runtime, "host");
+assert.equal(getToolResultPresentation(updateResult)._plugin.id, "qingzhou-management");
+assert.equal(getToolResultPresentation(updateResult)._plugin.runtime, "host");
 assert.equal(stringify(updateResult).includes(secret), true, "update result should preserve apiKey like any other field");
 assert.equal(Object.prototype.hasOwnProperty.call(updateResult, "trace"), false, "management results should not expose host trace");
 assert.equal(runtimeConfig.getCurrentRuntimeConfigSnapshot().apiKey, secret, "runtime config should receive the real secret internally");
@@ -368,7 +369,7 @@ assert.equal(configEvent.config.apiKey, secret, "UI config event may carry the r
 const getResult = await tools.executeTool("manage_settings", { action: "get" }, null, { source: "test" });
 assert.equal(getResult.config.hasApiKey, true);
 assert.equal(getResult.config.apiKey, secret);
-assert.equal(getResult.config.providerApiKeys.custom, secret);
+assert.equal(getResult.config.providerApiKeys.custom, undefined);
 assert.equal(getResult.config.requestRateLimit, false);
 assert.deepEqual(getResult.config.modelParameters, { reasoning_effort: "high", temperature: 0.2 });
 assert.ok(getResult.providers.some(provider => provider.id === "moonshotai"), "Kimi moonshot provider should be discoverable");
@@ -395,7 +396,7 @@ assert.ok(getResult.providers.some(provider => provider.id === "kimicode"), "Kim
     assert.equal(alias.config.provider, "opencodego", "the saved provider identity must retain its existing alias");
     assert.equal(alias.config.contextWindow, 1000000, "OpenCode Go should resolve the SDK's opencode-go entry");
     assert.equal(alias.config.vision, false);
-    assert.equal(alias._plugin.runtime, "host");
+    assert.equal(getToolResultPresentation(alias)._plugin.runtime, "host");
     assert.equal(fetchCalls.filter(call => call.url.includes("models.dev")).length, sdkRequestsBefore,
       "known alias metadata must not trigger an online catalog refresh");
 
@@ -429,7 +430,7 @@ assert.ok(getResult.providers.some(provider => provider.id === "kimicode"), "Kim
     assert.equal(switched.config.provider, "openrouter");
     assert.equal(switched.config.contextWindow, 1047576, "switching to an SDK-only provider must replace the old model's context window");
     assert.equal(switched.config.vision, true, "switching must replace the old text-only capability");
-    assert.equal(switched._plugin.runtime, "host");
+    assert.equal(getToolResultPresentation(switched)._plugin.runtime, "host");
     assert.deepEqual(switched.config.modelParameters, {});
 
     const contextOnly = await manage({

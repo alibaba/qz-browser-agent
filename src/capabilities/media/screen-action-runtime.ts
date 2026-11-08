@@ -1,5 +1,6 @@
 import { t } from "./i18n.js";
 import { IMAGE_MAX_EDGE } from "#sdk/shared/images";
+import { assertHtmlPage } from "#sdk/background/browser";
 import type { ToolContext, ToolErrorConstructor, ToolExtensionAPI } from "#sdk/background";
 import type { CdpCommand, BrowserDebugger } from "#sdk/background/browser";
 import type { MappedKey } from "#sdk/background/browser";
@@ -34,7 +35,7 @@ interface PerformedAction { point: Point | null; marker: Marker | null; duration
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error);
 import { createCdpKeyboard, createCdpTouch, primaryModifierForContext } from "#sdk/background/browser";
-import { diagnosticTrace, formatTraceFields } from "#sdk/background/tools";
+import { bindToolResultPresentation, diagnosticTrace, formatTraceFields } from "#sdk/background/tools";
 
 const SNAPSHOT_LIMIT = 64;
 const PRESENTATION_QUALITY = 72;
@@ -282,10 +283,10 @@ export function createScreenActionRuntime({
           retainedSnapshot.invalidReason = retainedBasisInvalidReason;
           if (coordinateBasisReady && actionStateAfter) retainedSnapshot.state = actionStateAfter;
         }
+        const popups = await context.observedPopups?.();
         const result = {
           status: "completed",
           action,
-          tabId,
           ...(snapshot ? {
             sourceScreenshotId: snapshot.id,
             sourceCoordinateSpace: snapshot.coordinateSpace,
@@ -298,6 +299,7 @@ export function createScreenActionRuntime({
           viewportChange: describeViewportChange(current, actionStateAfter),
           ...delta,
           ...(observedNavigation ? { observedNavigation } : {}),
+          ...(popups?.length ? { popups } : {}),
           ...(observation ? {
             _image: observation.shot.dataUrl,
             _imageDetail: "high",
@@ -306,11 +308,6 @@ export function createScreenActionRuntime({
           ...(observation?.coordinateSpace || retainedSnapshot?.coordinateSpace ? {
             coordinateSpace: observation?.coordinateSpace || retainedSnapshot?.coordinateSpace,
           } : {}),
-          ...(animate ? imageActionDisplay(performed.marker, {
-            action,
-            beforeImage,
-            afterImage,
-          }) : {}),
           feedbackAvailable: Boolean(observation),
           coordinateBasisReady,
           ...(observationError ? { feedbackError: observationError } : {}),
@@ -326,7 +323,7 @@ export function createScreenActionRuntime({
           observation: Boolean(observation),
           animation: animate,
         });
-        return result;
+        return bindToolResultPresentation(result, animate ? imageActionDisplay(performed.marker, { action, beforeImage, afterImage }) : {});
       }, context);
     } finally {
       if (snapshot && latestSnapshot(tabId, context) === snapshot) snapshot.consumedAt = 0;
@@ -370,7 +367,7 @@ export function createScreenActionRuntime({
   function register(tabId: number, state: State, shot: Screenshot, context: ToolContext) {
     const cssWidth = Number(shot.cssWidth), cssHeight = Number(shot.cssHeight);
     if (![cssWidth, cssHeight].every(value => Number.isFinite(value) && value > 0)) {
-      throw new ToolExecutionError("SCREENSHOT_COORDINATES_UNAVAILABLE", t("theCurrentVisualViewportCouldNotBeMeasuredFor"), { tabId });
+      throw new ToolExecutionError("SCREENSHOT_COORDINATES_UNAVAILABLE", t("theCurrentVisualViewportCouldNotBeMeasuredFor"), {});
     }
     const createdAt = timestamp();
     prune();
@@ -456,7 +453,7 @@ export function createScreenActionRuntime({
       throw new ToolExecutionError(
         "SCREENSHOT_COORDINATES_UNAVAILABLE",
         t("theCurrentVisualViewportCouldNotBeMeasuredFor"),
-        { tabId, viewport: raw },
+        { viewport: raw },
       );
     }
     let frame: Fields = {};
@@ -464,6 +461,7 @@ export function createScreenActionRuntime({
       frame = record(record(record(await sendCdp(tabId, "Page.getFrameTree", {}, context)).frameTree).frame);
     } catch (_error) {}
     const page = await getTabPageState(tabId);
+    assertHtmlPage(frame.url || page?.url, frame.mimeType);
     return {
       url: String(frame.url || page?.url || ""),
       loaderId: String(frame.loaderId || ""),
@@ -756,7 +754,7 @@ export function createScreenActionRuntime({
   }
 
   function abortedError(tabId: number) {
-    return new ToolExecutionError("OPERATION_ABORTED", "Screen action was aborted.", { tabId });
+    return new ToolExecutionError("OPERATION_ABORTED", "Screen action was aborted.", {});
   }
 
   function createInputDispatchState(context: ToolContext, tabId: number, action: string) {

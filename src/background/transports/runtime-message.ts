@@ -8,9 +8,9 @@ import { RUNTIME_REQUEST_PORT } from "../../shared/transport/runtime-request.js"
 import { backgroundReceiveBudget, backgroundTransferBudget } from "./transfer-budget.js";
 
 const OWNED_MESSAGE_TYPES = new Set([
-  "accept_location_consent", "accept_data_consent", "get_content_language", "offscreen_keepalive", "session_export_import_request", "mcp_bridge_connect",
+  "accept_location_consent", "accept_data_consent", "get_content_language", "offscreen_keepalive", "session_export_import_request", "mcp_bridge_connect", "mcp_bridge_close",
   "mcp_connection_status", "mcp_connection_connect", "mcp_connection_disconnect",
-  "stop_session", "run_script_inner_result", "run_script_inner_trace", "run_script_inner_fetch",
+  "stop_session", "run_script_inner_result", "run_script_inner_trace", "run_script_inner_diagnostic", "run_script_inner_trace_snapshot_result", "run_script_inner_fetch",
   "run_script_inner_fetch_cancel", "run_script_tool_call",
 ]);
 
@@ -33,9 +33,9 @@ export function createRuntimeMessageTransport(api: BackgroundApi, {
       return true;
     }
 
-    if (type === "mcp_bridge_connect") {
+    if (type === "mcp_bridge_connect" || type === "mcp_bridge_close") {
       respondAsync(
-        () => call("system.connectMcp", sender),
+        () => call(type === "mcp_bridge_close" ? "system.closeMcpConnectPage" : "system.connectMcp", sender),
         result => ({ ok: true, ...object(result) }),
         error => failure(error, "MCP_CONNECTION_FAILED"),
         sendResponse,

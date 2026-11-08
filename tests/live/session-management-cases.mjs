@@ -22,7 +22,7 @@ export async function runSessionManagementCases(h) {
   try {
     const afterCreate = await eventCount(page);
     const created = await manage({ action: "create", title: "live managed child", firstMessage: "不要调用工具。只回复 QZ_CREATED。" });
-    const child = created.session.id;
+    const child = created.session.sessionId;
     children.push(child);
     await done(child, afterCreate);
     pass("create child with firstMessage");
@@ -111,7 +111,7 @@ export async function runSessionManagementCases(h) {
 
       const otherStart = await eventCount(page);
       const otherCreated = await manage({ action: "create", title: "isolated sibling", firstMessage: "必须调用 wait_for_user，message 为 QZ_SIBLING_GATE，然后等待用户。" });
-      const other = otherCreated.session.id;
+      const other = otherCreated.session.sessionId;
       children.push(other);
       await waitEvent(page, { type: "waiting_for_user", sessionId: other }, otherStart, 180000);
       const childStart = await eventCount(page);

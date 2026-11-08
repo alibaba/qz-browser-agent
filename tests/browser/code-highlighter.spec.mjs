@@ -24,6 +24,9 @@ test.describe("streaming code highlighting", () => {
         };
       }
 
+      const previousNow = Object.getOwnPropertyDescriptor(performance, "now");
+      // These renders represent one streaming interval even when the browser worker is busy.
+      Object.defineProperty(performance, "now", { configurable: true, value: () => 0 });
       try {
         const scope = {};
         const first = renderAssistantContentHtml("```js\nconst answer\n```", {
@@ -55,6 +58,8 @@ test.describe("streaming code highlighting", () => {
         host.remove();
         return snapshot;
       } finally {
+        if (previousNow) Object.defineProperty(performance, "now", previousNow);
+        else delete performance.now;
         hljs.highlight = originalHighlight;
         if (originalHighlightAuto) hljs.highlightAuto = originalHighlightAuto;
       }

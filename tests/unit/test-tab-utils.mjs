@@ -48,6 +48,15 @@ const internalTab = { id: 9, url: "chrome://extensions", pendingUrl: "" };
 assert.equal(getEffectiveTabUrl(internalTab), "chrome://extensions");
 assert.equal(isWebTab(internalTab), false);
 
+const pdfViewer = "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html?https://example.test/file.pdf";
+assert.equal(getEffectiveTabUrl({ id: 16, url: pdfViewer }), "https://example.test/file.pdf");
+assert.equal(isPageTab({ id: 16, url: pdfViewer }), true);
+assert.equal(
+  getEffectiveTabUrl({ id: 17, url: "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html" }),
+  "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html",
+);
+assert.equal(isPageTab({ id: 17, url: "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html" }), false);
+
 console.log("tab URL semantics tests passed");
 
 const invisiblePrefix = "\u200b\u202c\ufeff\u200c\u200d\u2061\u2062\u2063 ".repeat(30);

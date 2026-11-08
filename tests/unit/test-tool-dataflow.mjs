@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Agent } from '../../src/background/agent/agent.js';
 import { createSessionTabs } from '../../src/background/session/tabs.js';
+import { bindCreatedTabResult, createdTabResultId } from '../../src/shared/contracts/page-observation.js';
 import { createToolRegistry } from '../../src/background/tools/registry.js';
 import { createTestAgentOptions } from '../support/agent-services.mjs';
 globalThis.chrome = { runtime: { getURL: path => `chrome-extension://test/${path}` }, storage: { local: {
@@ -14,7 +15,7 @@ const read = key => call(`read-${key}`, '__flow_read', { tabRef: key });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function until(predicate) { for (let i = 0; !predicate() && i < 300; i++) await tick(); assert.ok(predicate(), 'fixture reached expected state'); }
 let fixture;
-defineTool({ name: '__flow_open', description: 'Synthetic provisional creator', workingTab: 'created',
+defineTool({ name: '__flow_open', description: 'Synthetic provisional creator', tabLifecycle: 'created',
   behavior: { parallelOpen: true }, parameters: { type: 'object', properties: { tabAlias: { type: 'string' } } },
   async execute(args, signal, context) {
     const id = args.tabAlias.charCodeAt(0);
@@ -24,12 +25,12 @@ defineTool({ name: '__flow_open', description: 'Synthetic provisional creator', 
     fixture.started.push(`open-${args.tabAlias}`);
     await fixture.wait(`open-${args.tabAlias}`, signal);
     if (fixture.fail === args.tabAlias) throw Object.assign(new Error('navigation failed'), { code: 'NAVIGATION_FAILED' });
-    return { id };
+    return bindCreatedTabResult({ tabRef: args.tabAlias, title: tab.title, url: tab.url, active: false }, id);
   },
 });
 for (const action of [false, true]) defineTool({ name: action ? '__flow_action' : '__flow_read', description: 'Synthetic tab-local work', page: 'tab',
   behavior: action ? { parallelTab: true } : { parallelRead: true },
-  parameters: { type: 'object', properties: { tabId: { type: 'number' } }, required: ['tabId'] },
+  parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] } }, required: ['tabRef'] },
   async execute(args, signal, context) {
     const tab = fixture.tabs.get(args.tabId), key = `${action ? 'action' : 'read'}-${tab.title}`;
     const permitted = await getToolRuntimeDependencies(context).sessions.resolveTargetTab({ sessionId: 'flow', runId: 'run', signal,
@@ -46,7 +47,7 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
   const state = { sessionId: 'flow', ownedTabIds: [], workingTabId: null };
   const tabs = new Map(), events = [], writes = [], started = [], gates = new Map(), removed = [];
   const controller = new AbortController();
-  const scriptMetrics = { active: 0, peak: 0 }, scriptContexts = [];
+  const scriptMetrics = { active: 0, peak: 0 }, scriptContexts = [], scriptResultTabs = new WeakMap();
   let sessions;
   const tabsApi = {
     async get(id) { if (!tabs.has(id)) throw new Error('missing tab'); return { ...tabs.get(id) }; },
@@ -54,15 +55,16 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
     async query() { return [...tabs.values()]; },
   };
   chrome.tabs = tabsApi;
+  const isRunCurrent = (_sessionId, runId) => runId === 'run' && !controller.signal.aborted;
   sessions = createSessionTabs({ supervisor: {
-    getRuntime: id => id === 'flow' ? state : null, runtimeEntries: () => [['flow', state]], isRunCurrent: () => !controller.signal.aborted,
+    getRuntime: id => id === 'flow' ? state : null, runtimeEntries: () => [['flow', state]], isRunCurrent,
     setRuntime: (_id, next) => { Object.assign(state, next); return state; },
   }, tabsApi, storage: chrome.storage.local, ready: async () => {}, normalizeSessionId: String,
   setRuntime(_id, patch) { Object.assign(state, patch); writes.push({ owned: [...state.ownedTabIds], working: state.workingTabId }); return state; },
   persistRuntime: async () => {}, broadcast() {}, now: () => 'fixed', logger: { warn() {} },
   loadSecurityGuardrails: async () => ({}),
   });
-  const runtime = createToolRuntime({ sessions: { ...sessions, isRunCurrent: () => !controller.signal.aborted,
+  const runtime = createToolRuntime({ sessions: { ...sessions, isRunCurrent,
     async commitCreatedTab(input) {
       const pendingTab = [...tabs.values()].find(tab => tab.title === failCommit);
       if (pendingTab && !state.ownedTabIds.includes(pendingTab.id) && state.ownedTabIds.length === 1)
@@ -75,7 +77,7 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
   if (scriptFixtures) {
     const registry = createToolRegistry(), register = registry.forCapability('script-fixture');
     for (const name of ['__flow_open', '__flow_read', '__flow_action']) register(runtime.resolveDefinition(name));
-    for (const name of ['run_script', 'run_skill_script']) register({ ...runtime.resolveDefinition(name),
+    for (const name of ['run_script', 'evaluate', 'run_skill_script']) register({ ...runtime.resolveDefinition(name),
       // Keep production declarations, schema, permission checks and effects; control only the script body.
       async execute(args, signal, context) {
         const key = args.args?.stage || args.code || args.script;
@@ -85,8 +87,11 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
           started.push(key); await fixture.wait(key, signal);
           if (fail === key) throw Object.assign(new Error('script failed'), { code: 'SCRIPT_EVALUATION_FAILED' });
           const tab = tabs.get(args.tabId);
-          if (args.mutatesPage) tab.body += '!';
-          return { ok: true, result: { target: args.target || 'page', text: tab?.body || 'inner' } };
+          if (name === 'evaluate' ? args.args?.mutate : args.mutatesPage) tab.body += '!';
+          const value = { text: tab?.body || 'outer' };
+          const result = name === 'run_skill_script' ? { ok: true, result: value } : value;
+          scriptResultTabs.set(result, args.tabId);
+          return result;
         } finally { scriptMetrics.active--; }
       },
     });
@@ -99,8 +104,9 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
   const effects = [], apply = agent._applyToolResultEffects.bind(agent);
   agent._applyToolResultEffects = async (name, result, isError) => {
     effects.push({ name, result, isError, working: state.workingTabId, owned: [...state.ownedTabIds] });
-    if (stopEffects && result.id === 97) controller.abort();
-    const gate = `effects:${name}:${result.tabId ?? result.id ?? result._tabId}`;
+    if (stopEffects && createdTabResultId(result) === 97) controller.abort();
+    const lane = scriptResultTabs.has(result) ? scriptResultTabs.get(result) : createdTabResultId(result) ?? result.tabId;
+    const gate = `effects:${name}:${lane}`;
     if (hold.includes(gate)) await fixture.wait(gate, controller.signal);
     return apply(name, result, isError);
   };
@@ -171,6 +177,16 @@ test('stop closes all uncommitted creations and prevents later state/alias/effec
   assert.ok(f.events.filter(e => e.type === 'tool_execution_end').every(e => e.result.code === 'OPERATION_ABORTED'));
 });
 
+// Speculatively executed calls retain page diagnostics after Stop; unstarted serial calls have none.
+// Compare committed state, errors and model messages while checking that diagnostic difference separately.
+function withoutFailurePagePresentation(snapshot) {
+  return { ...snapshot, events: snapshot.events.map(event => {
+    if (!event.isError) return event;
+    const { _pageTitle, _pageUrl, _pageContext, ...result } = event.result;
+    return { ...event, result };
+  }) };
+}
+
 test('serial and parallel stop at the same committed prefix retain identical state', async () => {
   const input = [open('a'), open('b'), open('c'), read('a'), read('b'), read('c')];
   const snapshots = [];
@@ -178,7 +194,10 @@ test('serial and parallel stop at the same committed prefix retain identical sta
     const f = setup({ serial, stopAt: 'open-a' });
     snapshots.push(f.snapshot(await f.run(input)));
   }
-  assert.deepEqual(snapshots[0], snapshots[1]); assert.deepEqual(snapshots[0].owned, [97]);
+  assert.equal(snapshots[0].events.find(event => event.toolCallId === 'read-a').result._pageUrl, 'https://example.test/a');
+  assert.equal(snapshots[1].events.find(event => event.toolCallId === 'read-a').result._pageUrl, undefined);
+  assert.deepEqual(withoutFailurePagePresentation(snapshots[0]), withoutFailurePagePresentation(snapshots[1]));
+  assert.deepEqual(snapshots[0].owned, [97]);
 });
 
 test('stop during effects retains published ownership but publishes no late success or alias', async () => {
@@ -186,65 +205,70 @@ test('stop during effects retains published ownership but publishes no late succ
   for (const serial of [false, true]) {
     const f = setup({ serial, stopEffects: true }); snapshots.push(f.snapshot(await f.run(input)));
   }
-  assert.deepEqual(snapshots[0], snapshots[1]);
+  assert.equal(snapshots[0].events.find(event => event.toolCallId === 'read-a').result._pageUrl, 'https://example.test/a');
+  assert.deepEqual(withoutFailurePagePresentation(snapshots[0]), withoutFailurePagePresentation(snapshots[1]));
   assert.deepEqual(snapshots[0].owned, [97]); assert.deepEqual(snapshots[0].live, [97]);
   assert.ok(snapshots[0].events.filter(e => e.type === 'tool_execution_end').every(e => e.result.code === 'OPERATION_ABORTED'));
 });
 
-for (const target of [undefined, 'page', 'inner']) for (const mutatesPage of target === 'inner' ? [false] : [false, true]) {
-  test(`script barrier waits for prior commits and blocks later tabs: ${target || 'default'} / mutates=${mutatesPage}`, async () => {
-    const script = call('script', 'run_script', { code: 'tools.$list()', args: { stage: 'script-b' }, timeout: 5, mutatesPage,
-      ...(target ? { target } : {}), ...(target === 'inner' ? {} : { tabRef: 'b' }) });
+for (const code of ['return 42;', 'return await tools.list_tools();']) {
+  test(`outer script overlaps page work while result publication remains ordered: ${code}`, async () => {
+    const script = call('script', 'run_script', { code, args: { stage: 'script-b' }, timeout: 5 });
     const input = [open('a'), open('b'), read('a'), script, call('after', '__flow_read', { tabRef: 'a' }), read('b')];
-    const scriptEffects = `effects:run_script:${target === 'inner' ? 'undefined' : 98}`;
+    const scriptEffects = 'effects:run_script:undefined';
     const hold = ['read-a', 'effects:__flow_read:97', 'script-b', scriptEffects];
     const f = setup({ scriptFixtures: true, hold });
     const run = f.run(input);
-    await until(() => f.gates.has('read-a'));
-    assert.equal(f.started.includes('script-b'), false);
-    f.gates.get('read-a')(); await until(() => f.gates.has('effects:__flow_read:97'));
-    assert.equal(f.started.includes('script-b'), false, 'execution completion alone does not release the barrier');
-    f.gates.get('effects:__flow_read:97')(); await until(() => f.gates.has('script-b'));
-    assert.equal(f.events.filter(e => e.type === 'tool_execution_end').length, 3);
-    assert.equal(f.started.filter(key => key === 'read-a').length, 1);
-    assert.equal(f.started.includes('read-b'), false, 'later work on another tab waits too');
-    hold.splice(0, 2); // Later reads are no longer held.
+    const committed = () => f.events.filter(event => event.type === 'tool_execution_end').map(event => event.toolCallId);
+    await until(() => f.gates.has('read-a') && f.gates.has('script-b') && f.started.includes('read-b'));
+    assert.equal(f.started.filter(key => key === 'read-a').length, 1, 'same-page work waits for its prior execution');
+    assert.deepEqual(committed(), ['open-a', 'open-b']);
+    hold.splice(hold.indexOf('read-a'), 1);
+    f.gates.get('read-a')();
+    await until(() => f.gates.has('effects:__flow_read:97') && f.started.filter(key => key === 'read-a').length === 2);
+    assert.deepEqual(committed(), ['open-a', 'open-b'], 'later completed work cannot overtake the first read commit');
+    hold.splice(hold.indexOf('effects:__flow_read:97'), 1);
+    f.gates.get('effects:__flow_read:97')();
+    await until(() => committed().length === 3);
     f.gates.get('script-b')(); await until(() => f.gates.has(scriptEffects));
-    assert.equal(f.started.filter(key => key === 'read-a').length, 1);
-    assert.equal(f.started.includes('read-b'), false, 'later work also waits for the script commit');
-    assert.equal(f.siteChanges.length, 0);
+    assert.deepEqual(committed(), ['open-a', 'open-b', 'read-a'], 'later reads await script publication, not execution');
     f.gates.get(scriptEffects)();
     const result = f.snapshot(await run);
-    assert.equal(f.siteChanges.length, mutatesPage ? 1 : 0);
-    assert.ok(f.scriptContexts.every(context => context.deferred === false));
+    assert.deepEqual(committed(), input.map(item => item.id));
+    assert.equal(f.siteChanges.length, 0, 'outer computation has no direct page effect');
+    assert.ok(f.scriptContexts.every(context => context.deferred === true && context.tabId === undefined));
     const serial = setup({ serial: true, scriptFixtures: true });
     assert.deepEqual(result, serial.snapshot(await serial.run(input)));
   });
 }
 
-for (const target of ['page', 'inner']) for (const cancel of [false, true]) {
-  test(`script barrier ${cancel ? 'cancellation' : 'failure'} is serial-equivalent: ${target}`, async () => {
-    const snapshots = [], input = [open('a'), open('b'), call('script', 'run_script', {
-      code: 'tools.$list()', args: { stage: 'script-b' }, timeout: 5, target, ...(target === 'page' ? { tabRef: 'b', mutatesPage: true } : {}),
-    }), read('a'), read('b')];
+for (const name of ['run_script', 'run_skill_script']) for (const cancel of [false, true]) {
+  test(`${name} ${cancel ? 'cancellation at a committed prefix' : 'failure'} preserves ordered Session outcomes`, async () => {
+    const args = name === 'run_script' ? { code: 'return await tools.list_tools();', args: { stage: 'script-b' }, timeout: 5 }
+      : { skill: 'fixture', script: 'script-b', target: 'inner', timeout: 5 };
+    const snapshots = [], input = [open('a'), open('b'), call('script', name, args), read('a'), read('b')];
     for (const serial of [false, true]) {
       const f = setup({ serial, scriptFixtures: true, ...(cancel ? { hold: ['script-b'] } : { fail: 'script-b' }) });
       const run = f.run(input);
-      if (cancel) { await until(() => f.gates.has('script-b')); f.controller.abort(); }
+      if (cancel) {
+        await until(() => f.gates.has('script-b') && f.events.some(event => event.type === 'tool_execution_end' && event.toolCallId === 'open-b'));
+        if (!serial && name === 'run_script') await until(() => f.started.includes('read-b'));
+        f.controller.abort();
+      }
       snapshots.push(f.snapshot(await run));
       assert.equal(f.siteChanges.length, 0);
-      assert.equal(f.started.includes('read-a'), !cancel);
+      assert.equal(f.started.includes('read-a'), !cancel || !serial && name === 'run_script',
+        'modern script containers permit independent reads; legacy Skill scripts retain their barrier');
     }
-    assert.deepEqual(snapshots[0], snapshots[1]);
+    assert.deepEqual(withoutFailurePagePresentation(snapshots[0]), withoutFailurePagePresentation(snapshots[1]));
     assert.equal(snapshots[0].events.find(e => e.type === 'tool_execution_end' && e.toolCallId === 'script').result.code,
       cancel ? 'OPERATION_ABORTED' : 'SCRIPT_EVALUATION_FAILED');
   });
 }
 
-for (const target of [undefined, 'page']) for (const mutatesPage of [false, true]) {
-  test(`no-tools scripts overlap across tabs, serialize within a tab and commit like serial execution: ${target || 'default'} / ${mutatesPage}`, async () => {
-    const script = (id, ref) => call(id, 'run_script', { code: 'async () => input.stage', args: { stage: id },
-      timeout: 5, mutatesPage, tabRef: ref, ...(target ? { target } : {}) });
+for (const mutate of [false, true]) {
+  test(`page evaluations overlap across tabs, serialize within a tab and preserve ordered commit: mutate=${mutate}`, async () => {
+    const script = (id, ref) => call(id, 'evaluate', { code: 'value => value.stage', args: { stage: id, mutate }, timeout: 5, tabRef: ref });
     const input = [open('a'), open('b'), script('script-a', 'a'), script('script-a2', 'a'), script('script-b', 'b')];
     const f = setup({ scriptFixtures: true, hold: ['script-a', 'script-b'] }), run = f.run(input);
     await until(() => f.gates.has('script-a') && f.gates.has('script-b'));
@@ -258,9 +282,9 @@ for (const target of [undefined, 'page']) for (const mutatesPage of [false, true
   });
 }
 
-for (const cancel of [false, true]) test(`no-tools script ${cancel ? 'cancellation' : 'failure'} retains serial Session semantics`, async () => {
-  const input = [open('a'), open('b'), ...['a', 'b'].map(key => call(`script-${key}`, 'run_script', {
-    code: 'async () => args.stage', args: { stage: `script-${key}` }, tabRef: key, mutatesPage: true, timeout: 5,
+for (const cancel of [false, true]) test(`page evaluation ${cancel ? 'cancellation' : 'failure'} retains serial Session semantics`, async () => {
+  const input = [open('a'), open('b'), ...['a', 'b'].map(key => call(`script-${key}`, 'evaluate', {
+    code: 'value => value.stage', args: { stage: `script-${key}`, mutate: true }, tabRef: key, timeout: 5,
   })), read('a')], snapshots = [];
   for (const serial of [false, true]) {
     const f = setup({ serial, scriptFixtures: true, ...(cancel ? { hold: ['script-a'] } : { fail: 'script-a' }) });
@@ -282,6 +306,15 @@ test('hidden Skill script shares the barrier and tabRef protocol', async () => {
   assert.deepEqual(f.siteChanges, [{ name: 'run_skill_script', working: 97 }]);
   const serial = setup({ serial: true, scriptFixtures: true });
   assert.deepEqual(result, serial.snapshot(await serial.run(input)));
+});
+
+test('a parallel open commits when the session has no agent run', async () => {
+  const f = setup(), identity = { sessionId: 'flow', runId: '' };
+  const result = await f.runtime.execute('__flow_open', { tabAlias: 'a' }, f.controller.signal,
+    { ...identity, deferToolCommit: true, deferCreatedTabSelection: true });
+  await f.runtime.commitToolResult(result, f.controller.signal, identity);
+  assert.deepEqual(f.state.ownedTabIds, [97]);
+  assert.equal(f.tabs.size, 1);
 });
 
 test('copied results and foreign runs cannot use or settle a private creation permit', async () => {

@@ -46,7 +46,11 @@ test("mobile tabs use mobile headers from the first request, persist across runs
     // Static test entry only: production modules, CDP, tool assembly and page scripts are unchanged.
     await writeFile(join(extension, "mode-test-worker.js"), `import "./${manifest.background.service_worker}";
       import * as tools from "./background/tools/runtime.js";
-      globalThis.modeTestTools = tools;`);
+      import { readPageMode } from "./capabilities/tabs/page-mode.js";
+      import { toolError } from "./shared/contracts/tool-error.js";
+      globalThis.modeTestTools = tools;
+      globalThis.modeTestPageMode = readPageMode;
+      globalThis.modeTestToolError = toolError;`);
     manifest.background.service_worker = "mode-test-worker.js";
     await writeFile(manifestPath, JSON.stringify(manifest));
     browser = await chromium.launchPersistentContext(join(directory, "profile"), {
@@ -86,13 +90,17 @@ test("mobile tabs use mobile headers from the first request, persist across runs
         try {
           const result = await harness.runtime.execute(name, args, undefined,
             { sessionId, runId: harness.runId, workingTabId: harness.tabId });
-          if (name === "screenshot") return { screenshotId: result.screenshotId, coordinateSpace: result.coordinateSpace, page: result._pageContext };
+          if (name === "screenshot") return { screenshotId: result.screenshotId, coordinateSpace: result.coordinateSpace, page: modeTestTools.getToolResultPageContext(result)._pageContext };
           return result;
-        } catch (error) { return { error: error.message, code: error.code, details: error.details }; }
+        } catch (error) {
+          return modeTestToolError(String(error?.code || "TOOL_EXECUTION_FAILED"), error?.message || String(error),
+            { hint: error?.hint, details: error?.details });
+        }
       };
       globalThis.modeHarness = harness;
     });
     const call = (name, args = {}, sessionId) => worker.evaluate(({ name, args, sessionId }) => modeHarness.call(name, args, sessionId), { name, args, sessionId });
+    const pageMode = tabId => worker.evaluate(tabId => modeTestPageMode(tabId), tabId);
     const inspect = tabId => worker.evaluate(async tabId => (await chrome.scripting.executeScript({ target: { tabId }, func: () => ({
       width: innerWidth, screenWidth: screen.width, dpr: devicePixelRatio, touch: navigator.maxTouchPoints,
       ua: navigator.userAgent, mobile: navigator.userAgentData?.mobile, platform: navigator.userAgentData?.platform,
@@ -105,17 +113,18 @@ test("mobile tabs use mobile headers from the first request, persist across runs
     expect(opened, "open_tab must wait for the initial document to commit").toBe(false);
     releaseInitialNavigation();
     const mobile = await opening;
-    expect(mobile, JSON.stringify(mobile)).not.toHaveProperty("error");
-    expect(mobile.pageMode).toBe("mobile");
-    const tabId = mobile.id;
+    expect(mobile, JSON.stringify(mobile)).not.toHaveProperty("code");
+    expect(Object.keys(mobile).sort()).toEqual(["active", "tabRef", "title", "url"]);
+    const tabId = mobile.tabRef;
+    expect(await pageMode(tabId)).toBe("mobile");
     const [images, article] = await Promise.all([
-      call("list_images", { tabId, minWidth: 1, minHeight: 1 }),
-      call("read_article", { tabId, limit: 1200 }),
+      call("list_images", { tabRef: tabId, minWidth: 1, minHeight: 1 }),
+      call("read_article", { tabRef: tabId, limit: 1200 }),
     ]);
     await expect.poll(async () => { try { return (await inspect(tabId)).ready; } catch { return "loading"; } }).toBe("complete");
-    expect(images, JSON.stringify(images)).not.toHaveProperty("error");
+    expect(images, JSON.stringify(images)).not.toHaveProperty("code");
     expect(images.images).toEqual(expect.arrayContaining([expect.objectContaining({ alt: "Navigation fixture" })]));
-    expect(article, JSON.stringify(article)).not.toHaveProperty("error");
+    expect(article, JSON.stringify(article)).not.toHaveProperty("code");
     expect(article.text).toContain("Mobile mode fixture");
     expect(await inspect(tabId)).toMatchObject({ width: 412, screenWidth: 412, dpr: 2.625, touch: 5, mobile: true, platform: "Android" });
     const first = requests.find(request => request.url === "/mobile");
@@ -123,24 +132,31 @@ test("mobile tabs use mobile headers from the first request, persist across runs
     expect(first.headers["sec-ch-ua-mobile"]).toBe("?1");
     const requestCount = () => requests.filter(request => request.url === "/mobile").length;
     const before = requestCount();
-    expect(await call("set_page_mode", { mode: "mobile" })).toMatchObject({ changed: false, reloaded: false });
+    expect(await call("set_page_mode", { tabRef: tabId, mode: "mobile" })).toMatchObject({ changed: false, reloaded: false });
     expect(requestCount()).toBe(before);
-    expect((await call("get_working_tab")).pageMode).toBe("mobile");
-    expect((await call("list_tabs")).find(tab => tab.id === tabId).pageMode).toBe("mobile");
+    expect(await pageMode(tabId)).toBe("mobile");
+    const listed = await call("list_tabs", { scope: "owned" });
+    const listedMobile = listed.tabs.find(tab => tab.tabRef === tabId);
+    expect(Object.keys(listedMobile).sort()).toEqual(["active", "tabRef", "title", "url"]);
+    expect(listedMobile).toMatchObject({ tabRef: tabId, url: `${url}/mobile`, active: false });
 
     const inputEvents = () => worker.evaluate(async tabId => (await chrome.scripting.executeScript({target:{tabId}, world:"MAIN", func:()=>window.inputEvents}))[0].result, tabId);
-    expect(await call("act_on_element", {target:"css:#target", action:"click"})).toMatchObject({clickDispatched:true});
+    expect(await call("act_on_element", {tabRef:tabId,target:"css:#target", action:"click"})).toEqual({});
     expect(await inputEvents()).toEqual([{type:"touchstart",trusted:true},{type:"touchend",trusted:true}]);
-    const inputShot = await call("screenshot", {actionable:true});
+    const inputShot = await call("screenshot", {tabRef:tabId,actionable:true});
     const point = await worker.evaluate(async tabId => (await chrome.scripting.executeScript({target:{tabId}, func:()=>{
       const r=document.querySelector('#target').getBoundingClientRect();
       return {x:(r.x+r.width/2)/innerWidth,y:(r.y+r.height/2)/innerHeight};
     }}))[0].result, tabId);
-    expect(await call("act_on_screen", {action:"click", returnScreenshot:false,
+    expect(await call("act_on_screen", {tabRef:tabId,action:"click", returnScreenshot:false,
       x:point.x*inputShot.coordinateSpace.width,y:point.y*inputShot.coordinateSpace.height})).toMatchObject({status:"completed"});
     expect((await inputEvents()).map(event=>event.type)).toEqual(["touchstart","touchend","touchstart","touchend"]);
     await worker.evaluate(() => { modeHarness.failTouchEnd = true; });
-    expect(await call("act_on_element", {target:"css:#target", action:"click"})).toHaveProperty("error");
+    expect(await call("act_on_element", {tabRef:tabId,target:"css:#target", action:"click"})).toEqual({
+      code: "TOOL_EXECUTION_FAILED", message: "Injected lost touchEnd response",
+      details: { tool: "act_on_element", action: "click", tabRef: tabId, target: "css:#target",
+        status: "unconfirmed", mayHaveTakenEffect: true, automaticReplay: false },
+    });
     expect((await inputEvents()).map(event=>event.type)).toEqual(["touchstart","touchend","touchstart","touchend","touchstart","touchend"]);
     // A terminal run revokes normal command access before cleanup. Its retained
     // connection still has to release a pressed finger on the native page.
@@ -163,36 +179,37 @@ test("mobile tabs use mobile headers from the first request, persist across runs
       await expect.poll(async () => { try { const state = await inspect(tabId); return state.ready === "complete" && state.url.endsWith(path); } catch { return false; } }).toBe(true);
       expect(await inspect(tabId), action).toMatchObject({ width: 412, screenWidth: 412, touch: 5, mobile: true });
       expect(await worker.evaluate(() => modeHarness.detachEvents), action).toEqual([]);
-      expect((await call("get_working_tab")).pageMode).toBe("mobile");
+      expect(await pageMode(tabId)).toBe("mobile");
       expect(requests.find(request => request.url === path)?.headers["sec-ch-ua-mobile"]).toBe("?1");
     }
 
-    const shot = await call("screenshot", { actionable: true });
+    const shot = await call("screenshot", { tabRef: tabId, actionable: true });
     expect(shot.screenshotId).toBeTruthy();
     expect(shot.page).toEqual({ pageMode: "mobile" });
-    expect(await call("set_page_mode", { mode: "desktop" })).toMatchObject({ pageMode: "desktop", reloaded: true });
+    expect(await call("set_page_mode", { tabRef: tabId, mode: "desktop" })).toMatchObject({ pageMode: "desktop", reloaded: true });
     await expect.poll(async () => { try { return (await inspect(tabId)).ready; } catch { return "loading"; } }).toBe("complete");
     expect(await inspect(tabId)).toMatchObject({ touch: 0, mobile: false });
     expect((await inspect(tabId)).ua).not.toContain("Android");
-    expect(await worker.evaluate(tabId => modeHarness.detached.includes(tabId), tabId)).toBe(true);
-    const stale = await call("act_on_screen", { action: "click", screenshotId: shot.screenshotId, x: 20, y: 20, returnScreenshot: false });
+    await expect.poll(() => worker.evaluate(tabId => modeHarness.detached.includes(tabId), tabId)).toBe(true);
+    const stale = await call("act_on_screen", { tabRef: tabId, action: "click", screenshotId: shot.screenshotId, x: 20, y: 20, returnScreenshot: false });
     expect(stale.code).toMatch(/STALE|SCREENSHOT/);
-    expect((await call("set_page_mode", { mode: "mobile", tabId }, "foreign-task")).code).toBe("SESSION_TAB_FOREIGN");
-    expect(await call("set_page_mode", { mode: "mobile" })).toMatchObject({ pageMode: "mobile" });
-    expect(await call("navigate", { url: `${url}/next` })).toMatchObject({ pageMode: "mobile" });
+    expect((await call("set_page_mode", { tabRef: tabId, mode: "mobile" }, "foreign-task")).code).toBe("SESSION_TAB_FOREIGN");
+    expect(await call("set_page_mode", { tabRef: tabId, mode: "mobile" })).toMatchObject({ pageMode: "mobile" });
+    expect(await call("navigate", { tabRef: tabId, url: `${url}/next` })).toMatchObject({ pageMode: "mobile" });
     await expect.poll(() => requests.find(request => request.url === "/next")?.headers["sec-ch-ua-mobile"]).toBe("?1");
 
     const nextRequests = () => requests.filter(request => request.url === "/next").length;
     const beforeRelease = nextRequests();
     await worker.evaluate(async () => { await modeTestTools.releaseRunCdp("mobile-test", modeHarness.runId); modeHarness.runId = "second"; });
-    expect((await call("get_working_tab")).pageMode).toBe("mobile");
+    expect(await pageMode(tabId)).toBe("mobile");
     expect(await inspect(tabId)).toMatchObject({ width: 412, touch: 5, mobile: true });
-    const restored = await call("screenshot", { actionable: true });
+    const restored = await call("screenshot", { tabRef: tabId, actionable: true });
     expect(restored.page).toEqual({ pageMode: "mobile" });
     expect((await inspect(tabId)).mobile).toBe(true);
     expect(nextRequests()).toBe(beforeRelease, "continuing a task must not reload its mobile page");
     const other = await call("open_tab", { url: `${url}/desktop` }, "other-task");
-    expect(other.pageMode).toBe("desktop");
+    expect(Object.keys(other).sort()).toEqual(["active", "tabRef", "title", "url"]);
+    expect(await pageMode(other.tabRef)).toBe("desktop");
     await expect.poll(() => requests.find(request => request.url === "/desktop")?.headers["sec-ch-ua-mobile"]).toBe("?0");
     expect((await inspect(tabId)).mobile).toBe(true);
     await worker.evaluate(async () => { await modeTestTools.releaseRunCdp("mobile-test", modeHarness.runId); });

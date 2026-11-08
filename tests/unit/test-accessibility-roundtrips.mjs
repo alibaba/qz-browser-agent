@@ -1,3 +1,4 @@
+globalThis.chrome = { tabs: { get: async () => ({ url: "https://example.com/", status: "complete" }) }, scripting: { executeScript: async () => [{ result: true }] } };
 import assert from 'node:assert/strict';
 import { registerAccessibilityTools } from '../../src/capabilities/accessibility/tools.js';
 import { ToolExecutionError } from '../../src/background/tools/arguments.js';
@@ -9,7 +10,7 @@ const main = [node('root', 1, 'RootWebArea', 'Page', undefined, ['group', 'f1', 
 const actions = ['Alpha', 'Beta', 'Gamma'].map((text, index) => ({ selector: `#a${index}`, role: 'button', text }));
 let definition;
 let describes = 0, active = 0, peak = 0;
-const refs = [];
+const refs = [], uids = new Map();
 let hangChild = false, releaseChild;
 const send = async (method, params = {}) => {
   if (hangChild && method === 'Accessibility.getFullAXTree' && params.frameId === 'two') {
@@ -35,8 +36,13 @@ registerAccessibilityTools({
   registerTool: value => { definition = value; }, ToolExecutionError,
   clampLimit: (value, min, max) => Math.max(min, Math.min(value, max)),
   makeSnapshotId: () => 'snapshot', elementTargetForUid: uid => `uid:${uid}`,
-  registerElementRef: ref => refs.push(ref), readMainDocumentId: async () => 'doc',
-  bindBackendNodes: async () => ({ loaderId: 'main-loader', ids: [3,4,5] }),
+  registerElementBinding: ref => {
+    const key = `${ref.frameId || ''}:${ref.backendNodeId}`;
+    if (!uids.has(key)) uids.set(key, `snapshot.${uids.size}`);
+    const bound = { ...ref, uid: uids.get(key), target: `uid:${uids.get(key)}` };
+    refs.push(bound); return bound;
+  }, readMainDocumentId: async () => 'doc',
+  bindElementReferences: async (_tabId, candidates) => candidates.map((ref, index) => ({ ...ref, backendNodeId: [3,4,5][index], target: `css:${ref.selector}` })),
   sendToContent: async () => ({ title: 'Page', url: 'https://example.test/', actions }),
   withDebugger: async (_id, fn) => fn({}, send), elementTargetGrammar: 'target grammar',
 });

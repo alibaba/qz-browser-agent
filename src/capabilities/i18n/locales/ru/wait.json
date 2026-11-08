@@ -39,7 +39,7 @@
   "wait.waitNotContinued": "Задача не возобновлена",
   "wait.loginVerificationCompleted": "Вход подтверждён",
   "wait.userContinued": "Задача возобновлена",
-  "wait.waitForElementSelectorSupportsRawCssOrCss": "selector в wait_for_element поддерживает CSS или css:<selector>; uid:<element_uid> ссылается на снимок и не позволяет ждать будущего состояния DOM.",
+  "wait.waitForElementSelectorSupportsRawCssOrCss": "target в wait_for_element поддерживает CSS или css:<target>; uid:<element_uid> ссылается на снимок и не позволяет ждать будущего состояния DOM.",
   "wait.userWaitRuntimeIsUnavailable": "Служба пользовательского ввода недоступна.",
   "wait.currentTaskHasNoWorkingTab": "У текущей задачи нет рабочей вкладки.",
   "wait.waitUntilRequiresAValidAbsoluteTimeWithAn": "wait_until требует корректного абсолютного времени с явным часовым поясом.",

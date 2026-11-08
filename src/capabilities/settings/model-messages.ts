@@ -68,16 +68,16 @@ const messages = defineMessages("settings-model", {
     en: "Custom endpoint protocol (openai/anthropic, used when provider=custom).",
   },
   settingsCustomEndpoint: {
-    "zh-CN": "自定义接口 HTTP(S) 地址（仅 provider=custom 使用）。",
-    en: "Custom HTTP(S) API endpoint URL (used when provider=custom).",
+    "zh-CN": "HTTP(S) 接口地址，适用于自定义接口或允许修改地址的网关服务商。",
+    en: "HTTP(S) API endpoint URL for a custom endpoint or a provider with an editable gateway address.",
   },
   settingsCustomPresetName: {
     "zh-CN": "自定义接口预设显示名称。",
     en: "Display name for the custom endpoint preset.",
   },
   settingsEndpointAlias: {
-    "zh-CN": "customEndpoint 的兼容别名（仅 provider=custom 使用）。",
-    en: "Compatibility alias for customEndpoint (only when provider=custom).",
+    "zh-CN": "customEndpoint 的兼容别名，适用于自定义接口或允许修改地址的网关服务商。",
+    en: "Compatibility alias for customEndpoint, for custom endpoints or providers with editable gateway addresses.",
   },
   settingsContextWindow: {
     "zh-CN": "上下文窗口 tokens（切换模型时省略以采用自动匹配的默认值；仅用户要求覆盖或返回 MODEL_CAPABILITIES_REQUIRED 时明确传入）。",
@@ -218,7 +218,7 @@ const messages = defineMessages("settings-model", {
 - 先执行 \`action:"list"\` 找到目标 Skill 的稳定 \`settingId\`，再用 \`action:"get"\` 查看字段定义与当前值。
 - 修改时使用 \`action:"update"\`，传入 \`settingId\` 和只包含本次改动字段的 \`values\`。未传字段会保持不变。
 - Skill 配置是全局配置，对之后启动的该 Skill 工具调用生效，不把它当作当前 session 的临时状态。
-- 密钥字段的读取结果只包含 \`hasValue\`，不会返回已保存的明文。用户提供新的密钥值时，把它放入 \`values\` 对应字段即可替换旧值。
+- 密钥字段读取只返回 \`hasValue\`；新值仅放入 \`values\` 对应字段。所有用户可见回复只报告密钥是否已配置，不复述用户提供的值。
 - 不猜测字段名或枚举值；以本次 \`get\` 返回的 \`fields\` 为准。修改后再次 \`get\` 验证结果。
 
 ## 验证与交付
@@ -273,7 +273,7 @@ These key/value choices share the same source as the Settings dropdowns. Preserv
 - First use \`action:"list"\` to find the target Skill's stable \`settingId\`, then \`action:"get"\` to inspect field definitions and current values.
 - Use \`action:"update"\` with \`settingId\` and a \`values\` object containing only fields to change. Omitted fields remain unchanged.
 - Skill settings are global and apply to subsequent tool invocations. Do not treat them as temporary session state.
-- Secret reads contain only \`hasValue\`, never stored plaintext. When the user supplies a new secret, put it in the corresponding \`values\` field to replace the old value.
+- Secret reads return only \`hasValue\`; pass new secrets only in their \`values\` fields. In every user-visible reply, report only whether secrets are configured; never repeat values supplied by the user.
 - Do not guess field names or enum values; use the \`fields\` returned by the latest \`get\`. Read again after updating to verify the result.
 
 ## Verification and delivery

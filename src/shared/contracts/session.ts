@@ -20,6 +20,8 @@ export interface TranscriptEntry extends TranscriptMeta, CompactMeta, Partial<To
   text?: string; content?: unknown; images?: TranscriptImage[]; documents?: MessageDocument[];
   toolCallId?: string; args?: unknown; argsText?: string; argsIncomplete?: boolean; argsGenerating?: boolean;
   argsState?: string; phase?: string; result?: unknown; image?: string | null; rateLimit?: unknown;
+  /** Execution admission, independent of terminal presentation state. Absent in legacy records. */
+  startedExecution?: boolean;
   isError?: boolean; isRunning?: boolean; streaming?: boolean; statusText?: string;
   waitId?: string; message?: string; form?: unknown; reason?: string; summary?: string;
 }

@@ -8,24 +8,24 @@ const messages = defineMessages("sessions-model", {
     "zh-CN": "获取用户当前经纬度、精度（米）和定位时间。仅在任务需要本地位置信息时调用（无参数）。需打开侧边栏并由用户授权定位；不可用或被拒绝时，向用户询问城市或区域并继续任务。",
   },
   manageSessionsWithoutAutomations: {
-    "zh-CN": "管理轻舟子任务与会话（仅 user-created root session 可用）：create 创建子 session 并可通过 firstMessage 启动后台运行；wait 等待子任务完成并回收消息与 artifacts 产物索引（图集、Data 表、文件句柄）；last_messages 读取指定 session 最近消息与 artifacts；send_message 向其他 session 追加消息（follow_up 在当前 run 后执行，steer 在当前完整 turn 后介入，空闲时直接启动）；stop 终止目标当前 run；list/delete 列出或删除其他 session。本 Firefox 包不提供定时任务。",
-    en: "Manage qz child tasks and sessions (available in user-created root sessions only): create starts a child session (pass firstMessage to run in the background); wait waits for child sessions and returns messages plus their artifacts index (galleries, Data tables, file handles); last_messages reads recent messages and artifacts; send_message sends a message to another session (follow_up runs after the current run, steer after the current turn, or immediately if idle); stop ends the target's current run; list/delete lists or deletes other sessions. Session automations are disabled in Firefox.",
+    "zh-CN": "管理轻舟子任务与会话（仅 user-created root session 可用）：create 以必填的可读 title 创建子 session，并可通过 firstMessage 启动后台运行；wait 等待子任务完成并回收消息与 artifacts 产物索引（图集、Data 表、文件句柄）；last_messages 读取指定 session 最近消息与 artifacts；send_message 向其他 session 追加消息（follow_up 在当前 run 后执行，steer 在当前完整 turn 后介入，空闲时直接启动）；stop 终止目标当前 run；list/delete 列出或删除其他 session。本 Firefox 包不提供定时任务。",
+    en: "Manage qz child tasks and sessions (available in user-created root sessions only): create starts a child session with a required readable title (pass firstMessage to run in the background); wait waits for child sessions and returns messages plus their artifacts index (galleries, Data tables, file handles); last_messages reads recent messages and artifacts; send_message sends a message to another session (follow_up runs after the current run, steer after the current turn, or immediately if idle); stop ends the target's current run; list/delete lists or deletes other sessions. Session automations are disabled in Firefox.",
   },
   sessionAutomationsDisabled: {
     "zh-CN": "Firefox 中已停用定时任务，已保存的定时任务不会执行。",
     en: "Session automations are disabled in Firefox. Stored scheduled tasks do not run.",
   },
   sessionActionWithoutAutomations: {
-    "zh-CN": "操作类型。必填项：delete/last_messages/stop 需 sessionId；send_message 需 sessionId + message；wait 需 sessionIds 或 sessionId。",
-    en: "Action. Required fields: delete/last_messages/stop needs sessionId; send_message needs sessionId + message; wait needs sessionIds or sessionId.",
+    "zh-CN": "操作类型。必填项：create 需 title；delete/last_messages/stop 需 sessionId；send_message 需 sessionId + message；wait 需 sessionIds 或 sessionId。",
+    en: "Action. Required fields: create needs title; delete/last_messages/stop needs sessionId; send_message needs sessionId + message; wait needs sessionIds or sessionId.",
   },
   manageSessions: {
-    "zh-CN": "管理轻舟子任务、会话与本地定时任务（仅 user-created root session 可用）。子任务：create 创建子 session 并可通过 firstMessage 启动后台运行；wait 等待子任务完成并附带 artifacts 产物索引（图集、Data 表、文件句柄）；last_messages 读取最近消息与 artifacts；send_message 向其他 session 发送消息（follow_up 在当前 run 后执行，steer 在当前 turn 后介入，空闲时立即启动）；stop 终止目标当前 run；list/delete 列出或删除其他 session。定时任务：create_automation 保存 title、instruction、schedule、missedPolicy、notifyPolicy；list_automations/automation_runs/run_automation/update_automation/delete_automation 查看、立即运行、修改或删除定时任务。",
-    en: "Manage qz child tasks, sessions, and local automations (available in user-created root sessions only). Sessions: create starts a child session (pass firstMessage to run in the background); wait waits for child sessions and includes their artifacts index (galleries, Data tables, file handles); last_messages reads recent messages and artifacts; send_message sends a message to another session (follow_up after the current run, steer after the current turn, or immediately if idle); stop ends the target's current run; list/delete lists or deletes other sessions. Automations: create_automation saves title, instruction, schedule, missedPolicy, and notifyPolicy; list_automations/automation_runs/run_automation/update_automation/delete_automation lists, runs, edits, or deletes automations.",
+    "zh-CN": "管理轻舟子任务、会话与本地定时任务（仅 user-created root session 可用）。子任务：create 以必填的可读 title 创建子 session，并可通过 firstMessage 启动后台运行；wait 等待子任务完成并附带 artifacts 产物索引（图集、Data 表、文件句柄）；last_messages 读取最近消息与 artifacts；send_message 向其他 session 发送消息（follow_up 在当前 run 后执行，steer 在当前 turn 后介入，空闲时立即启动）；stop 终止目标当前 run；list/delete 列出或删除其他 session。定时任务：create_automation 保存 title、instruction、schedule、missedPolicy、notifyPolicy；list_automations/automation_runs/run_automation/update_automation/delete_automation 查看、立即运行、修改或删除定时任务。",
+    en: "Manage qz child tasks, sessions, and local automations (available in user-created root sessions only). Sessions: create starts a child session with a required readable title (pass firstMessage to run in the background); wait waits for child sessions and includes their artifacts index (galleries, Data tables, file handles); last_messages reads recent messages and artifacts; send_message sends a message to another session (follow_up after the current run, steer after the current turn, or immediately if idle); stop ends the target's current run; list/delete lists or deletes other sessions. Automations: create_automation saves title, instruction, schedule, missedPolicy, and notifyPolicy; list_automations/automation_runs/run_automation/update_automation/delete_automation lists, runs, edits, or deletes automations.",
   },
   sessionAction: {
-    "zh-CN": "操作类型。必填项：delete/last_messages/stop 需 sessionId；send_message 需 sessionId + message；wait 需 sessionIds 或 sessionId；create_automation 需 title + instruction；update_automation/delete_automation/run_automation/automation_runs 需 automationId。",
-    en: "Action. Required fields: delete/last_messages/stop needs sessionId; send_message needs sessionId + message; wait needs sessionIds or sessionId; create_automation needs title + instruction; update_automation/delete_automation/run_automation/automation_runs needs automationId.",
+    "zh-CN": "操作类型。必填项：create 需 title；delete/last_messages/stop 需 sessionId；send_message 需 sessionId + message；wait 需 sessionIds 或 sessionId；create_automation 需 title + instruction；update_automation/delete_automation/run_automation/automation_runs 需 automationId。",
+    en: "Action. Required fields: create needs title; delete/last_messages/stop needs sessionId; send_message needs sessionId + message; wait needs sessionIds or sessionId; create_automation needs title + instruction; update_automation/delete_automation/run_automation/automation_runs needs automationId.",
   },
   sessionId: {
     "zh-CN": "目标 sessionId（用于 delete/last_messages/stop/send_message/wait）。",
@@ -52,8 +52,8 @@ const messages = defineMessages("sessions-model", {
     en: "Wait mode: all (default) or any (call any then all on the same sessionIds to inspect the first result before summarizing all).",
   },
   sessionTitle: {
-    "zh-CN": "create 的子任务标题，或 create_automation 必填的简短标题。",
-    en: "Child-session title for create, or required short title for create_automation.",
+    "zh-CN": "create 和 create_automation 必填的简短可读标题。",
+    en: "Required short, readable title for create and create_automation.",
   },
   sessionFirstMessage: {
     "zh-CN": "create 后发送给新 session 并在后台启动执行的首条消息。",

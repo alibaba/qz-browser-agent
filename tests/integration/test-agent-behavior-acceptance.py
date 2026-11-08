@@ -13,6 +13,109 @@ from urllib.parse import parse_qsl, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "background"))
 from agent_behavior import acceptance, capture as case_capture, cases, fixtures, reporting, runner
+from agent_behavior.client import QingzhouMcpClient
+
+
+def test_data_readback_owns_one_drive_session_and_never_reuses_native_authority():
+    class RecordingClient(QingzhouMcpClient):
+        def __init__(self):
+            super().__init__(None)
+            self.calls = []
+            self.active = 0
+
+        async def call(self, name, args):
+            self.calls.append((name, args))
+            if name == "qingzhou_create_drive_session":
+                await asyncio.sleep(0)
+                return {"sessionId": "readback-drive"}
+            if name == "qingzhou_execute_tool":
+                self.active += 1
+                assert self.active == 1, "readbacks sharing a drive session must serialize"
+                await asyncio.sleep(0)
+                self.active -= 1
+                return {"result": {"rows": [{"table": args["args"].get("table")}]}}
+            return {}
+
+    async def scenario():
+        client = RecordingClient()
+        results = await asyncio.gather(
+            client.data_store_list("first", session_id="native-one"),
+            client.data_store_list("second", session_id="native-two"),
+        )
+        assert [result["rows"][0]["table"] for result in results] == ["first", "second"]
+        assert [name for name, _ in client.calls].count("qingzhou_create_drive_session") == 1
+        for name, args in client.calls[1:]:
+            assert name == "qingzhou_execute_tool"
+            assert args["sessionId"] == "readback-drive"
+            assert args["name"] == "data_store" and args["args"]["action"] == "list"
+        await client.execute_tool("read_article", {"tabRef": "page"}, session_id="native-one")
+        assert client.calls[-1][1]["sessionId"] == "native-one", "generic tool calls retain their caller's authority"
+        await client.aclose()
+        await client.aclose()
+        assert client.calls[-1] == ("qingzhou_stop_session", {"sessionId": "readback-drive", "cascade": True})
+        assert [name for name, _ in client.calls].count("qingzhou_stop_session") == 1
+
+    asyncio.run(scenario())
+
+
+def test_data_readback_failure_releases_the_lock_and_keeps_cleanup_available():
+    class FailingClient(QingzhouMcpClient):
+        def __init__(self):
+            super().__init__(None)
+            self.calls = []
+
+        async def call(self, name, args):
+            self.calls.append((name, args))
+            if name == "qingzhou_create_drive_session":
+                return {"sessionId": "readback-drive"}
+            if name == "qingzhou_execute_tool":
+                raise RuntimeError("readback unavailable")
+            return {}
+
+    async def scenario():
+        client = FailingClient()
+        for _ in range(2):
+            try:
+                await client.data_store_list("first", session_id="native-one")
+            except RuntimeError as error:
+                assert str(error) == "readback unavailable"
+            else:
+                raise AssertionError("readback failure must reach acceptance and capture")
+        await client.aclose()
+        assert [name for name, _ in client.calls].count("qingzhou_create_drive_session") == 1
+        assert client.calls[-1][0] == "qingzhou_stop_session"
+
+    asyncio.run(scenario())
+
+
+def test_skill_settings_readback_uses_read_only_management_transport():
+    class RecordingClient(QingzhouMcpClient):
+        def __init__(self):
+            super().__init__(None)
+            self.calls = []
+            self.response = {"type": "skill_settings", "settings": [{"fields": [{"key": "retryCount", "value": 5}]}]}
+
+        async def call(self, name, args):
+            self.calls.append((name, args))
+            return {"response": self.response}
+
+    async def scenario():
+        client = RecordingClient()
+        assert await client.list_skill_settings() == client.response
+        assert client.calls == [("qingzhou_call", {
+            "method": "runtime_message",
+            "params": {"message": {"type": "list_skill_settings"}, "expectedType": "skill_settings"},
+        })]
+        for response in ({"type": "error"}, None):
+            client.response = response
+            try:
+                await client.list_skill_settings()
+            except RuntimeError as error:
+                assert "not acknowledged" in str(error)
+            else:
+                raise AssertionError("an absent settings reply must not become successful readback")
+
+    asyncio.run(scenario())
 
 
 def test_navigation_redirect_preserves_query_values_in_one_header():
@@ -33,11 +136,12 @@ def test_navigation_redirect_preserves_query_values_in_one_header():
 
 
 class FakeClient:
-    def __init__(self, rows, *, automations=None, skill=None, resource=None, tool_results=None, snapshots=None):
+    def __init__(self, rows, *, automations=None, skill=None, resource=None, skill_settings=None, tool_results=None, snapshots=None):
         self.rows = rows
         self.automations = automations or {"automations": [], "runs": {}}
         self.skill = skill or {}
         self.resource = resource or {}
+        self.skill_settings = skill_settings or {}
         self.tool_results = tool_results or {}
         self.snapshots = snapshots or {}
 
@@ -52,6 +156,9 @@ class FakeClient:
 
     async def get_skill_resource(self, _name, _path):
         return self.resource
+
+    async def list_skill_settings(self):
+        return self.skill_settings
 
     async def execute_tool(self, name, args, *, session_id=""):
         return self.tool_results.get((name, args.get("action")), {})
@@ -150,6 +257,16 @@ def test_navigation_judge_requires_each_first_read_without_waits_or_recovery():
             tool("data_store"),
         ])
         assert validate(spec, rows, transcript)["success"] is True
+        for reference in (42, "42", "research"):
+            public = deepcopy(transcript)
+            public[0]["result"] = {"tabRef": reference}
+            for item in public[:8]:
+                item["args"].pop("tabId", None)
+                if item["name"] != "open_tab":
+                    item["args"]["tabRef"] = reference
+            assert validate(spec, rows, public)["success"] is True, reference
+            public[3]["args"]["tabRef"] = "different-page"
+            assert validate(spec, rows, public)["success"] is False, "public refs must still identify one page"
         for fault in ("old_document", "wait", "recovered_error", "wrong_tab", "missed_network"):
             broken = deepcopy(transcript)
             if fault == "old_document":
@@ -165,6 +282,22 @@ def test_navigation_judge_requires_each_first_read_without_waits_or_recovery():
             else:
                 continue
             assert validate(spec, rows, broken)["success"] is False, fault
+
+
+def test_script_collection_accepts_default_timeout_but_checks_both_pages_business_data():
+    spec = next(item for item in cases.build_base_cases("http://fixture.test", "script")
+                if item.name == "run_script_collection")
+    assert "run_script" in spec.prompt and "tools.evaluate" in spec.prompt
+    rows = [{"data": {"sku": sku, "name": name, "price": price, "page": page,
+                       "url": f"http://fixture.test/catalog?page={page}"}}
+            for page, items in fixtures.CATALOG.items() for sku, name, price in items]
+    for args in ({}, {"timeout": 120}, {"timeout": 0.5}):
+        transcript = [tool("open_tab"), tool("run_script", args), tool("data_store")]
+        assert validate(spec, rows, transcript)["success"] is True
+        wrong = deepcopy(rows)
+        wrong[-1]["data"]["page"] = 1
+        assert validate(spec, wrong, transcript)["success"] is False
+        assert validate(spec, rows[:-1], transcript)["success"] is False
 
 
 def test_web_judge_rejects_three_rows_from_the_wrong_page():
@@ -655,16 +788,11 @@ def test_skill_settings_journey_proves_validation_recovery_and_secret_redaction(
         [],
         skill={"name": spec.expected["skillName"], "content": "# Skill\nmarker harbor-42"},
         resource={"path": "plugin.json", "content": json.dumps(spec.expected["pluginManifest"], ensure_ascii=False)},
-        tool_results={
-            ("qingzhou_management__manage_skill_settings", "list"): {
-                "settings": [{"id": setting_id, "skillName": spec.expected["skillName"]}],
-            },
-            ("qingzhou_management__manage_skill_settings", "get"): {
-                "setting": {"fields": [
-                    {"key": "retryCount", "value": 5},
-                    {"key": "apiToken", "hasValue": True},
-                ]},
-            },
+        skill_settings={
+            "settings": [{"id": setting_id, "skillName": spec.expected["skillName"], "fields": [
+                {"key": "retryCount", "value": 5},
+                {"key": "apiToken", "hasValue": True},
+            ]}],
         },
     )
     transcript = [
@@ -673,10 +801,24 @@ def test_skill_settings_journey_proves_validation_recovery_and_secret_redaction(
         tool("qingzhou_skill_author__edit_skill_resource", {"name": spec.expected["skillName"], "path": "plugin.json"}),
         tool("qingzhou_management__manage_skill_settings", {"action": "update", "settingId": setting_id, "values": {"retryCount": 99}}, is_error=True),
         tool("qingzhou_management__manage_skill_settings", {"action": "update", "settingId": setting_id, "values": {"retryCount": 5, "apiToken": spec.expected["secret"]}}),
+        tool("qingzhou_management__manage_skill_settings", {"action": "get", "settingId": setting_id}, {"setting": deepcopy(client.skill_settings["settings"][0])}),
     ]
     assert validate_journey(spec, [], transcript, client=client)["success"] is True
-    no_recovery = transcript[:-1]
+    no_recovery = [item for item in transcript if item.get("args", {}).get("values", {}).get("retryCount") != 5]
     assert validate_journey(spec, [], no_recovery, client=client)["success"] is False
+    secret = spec.expected["secret"]
+    client.skill_settings["settings"][0]["fields"][1]["value"] = secret
+    private_inputs = [{"type": "user", "text": secret}, {"type": "thinking", "text": secret}]
+    assert validate_journey(spec, [], [*private_inputs, *transcript, {"type": "assistant", "content": "retryCount=5; secret configured"}], client=client)["success"] is True
+    for echo in (f"Saved {secret}", [{"type": "text", "text": secret}]):
+        leaked = validate_journey(spec, [], [*transcript, {"type": "assistant", "content": echo}, {"type": "assistant", "content": "Done"}], client=client)
+        assert leaked["success"] is False
+        assert leaked["checks"]["secretEchoedByAssistant"] is True
+    exposed_read = deepcopy(transcript[-1])
+    exposed_read["result"]["setting"]["fields"][1]["value"] = secret
+    exposed = validate_journey(spec, [], [*transcript[:-1], exposed_read], client=client)
+    assert exposed["success"] is False and "public settings read tool" in exposed["reason"]
+    assert exposed["checks"]["secretExposedBySettingsRead"] is True
 
 
 def test_browser_library_journey_requires_history_folder_download_and_artifact():

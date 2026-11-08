@@ -35,6 +35,9 @@ interface NavigationOptions {
     renderCurrent(options: { intent: string }): void; hasTranscript(id: string): boolean;
   };
   onUiEvent?(event: PortMessage): void;
+  syncExternalDriveChrome?(): void;
+  mergeSessionRecord?(record: SessionMetadata): unknown;
+  getSessionSource?(id: string): string | undefined;
   sessionTitleBar?: HTMLElement | null; currentSessionTitle?: HTMLElement | null;
   sessionTitleEditButton?: HTMLButtonElement | null; sessionTitleInput?: HTMLInputElement | null;
   showToast?(message: string, options: { tone: string; anchorEl?: Element | null }): void;
@@ -86,6 +89,7 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
     if (previous !== next) closeSessionTitleEditor();
     options.composer?.handleSessionChanged(previous, next, composerDraft);
     options.setCurrentSessionIdValue?.(next || null);
+    options.syncExternalDriveChrome?.();
     if (previous !== next) options.onUiEvent?.({ type: "ui_session_changed", sessionId: next || null });
     if (previous !== next && pendingSessionRevealId !== next) pendingSessionRevealId = null;
     if (previous !== next) options.chatSearch?.close({ restoreFocus: false });
@@ -105,8 +109,13 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
       return true;
     }
     const transitionEpoch = epoch ?? beginSessionTransition();
-    const composerDraft = await options.composer?.prepareSession(next);
+    const [composerDraft, session] = await Promise.all([
+      options.composer?.prepareSession(next),
+      next && options.mergeSessionRecord ? getSessions().then(sessions => sessions[next] || null) : null,
+    ]);
     if (signal?.aborted || transitionEpoch !== options.getSessionSwitchEpoch?.()) return false;
+    // Source determines read-only chrome and card grouping before the first render.
+    if (session) options.mergeSessionRecord?.(session);
     setCurrentSessionId(next, { composerDraft });
     return true;
   }
@@ -392,7 +401,7 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
       else options.runController.finish({ render: false });
       pendingSessionRevealId = hasCachedTranscript ? null : targetId;
       if (hasCachedTranscript) revealSessionChat(targetId);
-      if (source !== "restore") {
+      if (source !== "restore" && options.getSessionSource?.(targetId) !== "external-drive") {
         options.send?.({ type: "activate_session_working_tab", sessionId: targetId });
       }
       if (wasObservingRunningSession) {

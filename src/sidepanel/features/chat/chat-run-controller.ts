@@ -311,7 +311,7 @@ function applyStopSessionRuntimeStateResponse(event: RunEvent, fallbackSessionId
     ...event,
     type: "state",
     sessionId,
-    isStreaming: false,
+    isStreaming: typeof event?.isStreaming === "boolean" ? event.isStreaming : Boolean(runtime?.running),
     runId: String(event?.runId || runtime?.runId || ""),
     status,
     runtime,

@@ -717,7 +717,7 @@ function stripToolDisplayFields(result: unknown, { stripImage = true } = {}) {
 export function createValueView(value: unknown, options: {localizeToolFailure?: boolean} = {}) {
   const parsed = presentation.parseJsonish(value);
   if (!parsed.ok) {
-    const rawText = String(value ?? "");
+    const rawText = value === null ? "null" : String(value ?? "");
     const text = options.localizeToolFailure ? localizeToolFailureText(rawText) : rawText;
     return {
       kind: "text",

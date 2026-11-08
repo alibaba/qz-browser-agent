@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { expect, test } from "./fixtures.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
 
-const sameDocument = `<!doctype html><div role="group" aria-label="Same controls"><button id="same" class="hit" type="button" onclick="window.clicks=(window.clicks||0)+1">Same</button><input id="field" aria-label="Same field" value=""></div>`;
-const crossDocument = `<!doctype html><div role="group" aria-label="Cross controls"><button id="cross" type="button" onclick="window.clicks=(window.clicks||0)+1">Cross</button><input id="field" aria-label="Cross field" value=""></div>`;
+const sameDocument = `<!doctype html><div role="group" aria-label="Same controls"><button id="same" class="hit" type="button" onclick="window.clicks=(window.clicks||0)+1;window.lastClickTrusted=event.isTrusted">Same</button><input id="field" aria-label="Same field" value=""></div>`;
+const crossDocument = `<!doctype html><div role="group" aria-label="Cross controls"><button id="cross" type="button" onclick="window.clicks=(window.clicks||0)+1;window.lastClickTrusted=event.isTrusted">Cross</button><input id="field" aria-label="Cross field" value=""></div>`;
 const nestDocument = `<!doctype html><iframe title="Inner" srcdoc="<!doctype html><button id='deep'>Deep</button>"></iframe>`;
 const redImage = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"><rect width="40" height="30" fill="red"/></svg>';
 
@@ -121,23 +121,25 @@ test("one-level iframe elements have uids and accept click and fill", async () =
     expect(snapshot, snapshot).not.toContain("Deep");
 
     const sameClick = await call("act_on_element", { target: found.same, action: "click" });
-    expect(sameClick, JSON.stringify(sameClick)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+    expect(sameClick, JSON.stringify(sameClick)).toEqual({});
     expect(sameClick).not.toHaveProperty("code");
     expect(await page.frame({ name: "same" }).evaluate(() => window.clicks)).toBe(1);
+    expect(await page.frame({ name: "same" }).evaluate(() => window.lastClickTrusted)).toBe(true);
     const sameFill = await call("act_on_element", { target: found.sameField, action: "fill", value: "same-value" });
-    expect(sameFill, JSON.stringify(sameFill)).toMatchObject({ filled: true, value: "same-value" });
+    expect(sameFill, JSON.stringify(sameFill)).toEqual({});
     expect(await page.frame({ name: "same" }).evaluate(() => document.querySelector("input").value)).toBe("same-value");
 
     const crossClick = await call("act_on_element", { target: found.cross, action: "click" });
-    expect(crossClick, JSON.stringify(crossClick)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+    expect(crossClick, JSON.stringify(crossClick)).toEqual({});
     expect(crossClick).not.toHaveProperty("code");
     expect(await page.frame({ name: "cross" }).evaluate(() => window.clicks)).toBe(1);
+    expect(await page.frame({ name: "cross" }).evaluate(() => window.lastClickTrusted)).toBe(true);
     const crossFill = await call("act_on_element", { target: found.crossField, action: "fill", value: "cross-value" });
-    expect(crossFill, JSON.stringify(crossFill)).toMatchObject({ filled: true, value: "cross-value" });
+    expect(crossFill, JSON.stringify(crossFill)).toEqual({});
     expect(await page.frame({ name: "cross" }).evaluate(() => document.querySelector("input").value)).toBe("cross-value");
 
     const cssClick = await call("act_on_element", { target: "css:button.hit", action: "click" });
-    expect(cssClick, JSON.stringify(cssClick)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+    expect(cssClick, JSON.stringify(cssClick)).toEqual({});
     expect(cssClick).not.toHaveProperty("code");
     expect(await page.evaluate(() => window.hits)).toBe(1);
     expect(await page.frame({ name: "same" }).evaluate(() => window.clicks)).toBe(1);
@@ -157,10 +159,10 @@ test("one-level iframe elements have uids and accept click and fill", async () =
       expect(button, subtree.snapshot).toMatch(/^uid:/);
       expect(input, subtree.snapshot).toMatch(/^uid:/);
       const clicked = await call("act_on_element", { target: button, action: "click" });
-      expect(clicked, JSON.stringify(clicked)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+      expect(clicked, JSON.stringify(clicked)).toEqual({});
       expect(await page.frame({ name }).evaluate(() => window.clicks)).toBe(2);
       const filled = await call("act_on_element", { target: input, action: "fill", value: `${name}-subtree` });
-      expect(filled, JSON.stringify(filled)).toMatchObject({ filled: true });
+      expect(filled, JSON.stringify(filled)).toEqual({});
       expect(await page.frame({ name }).locator("input").inputValue()).toBe(`${name}-subtree`);
       expect(await page.evaluate(() => window.wrongClicks || 0)).toBe(0);
       expect(await page.locator("#field").inputValue()).toBe("parent");

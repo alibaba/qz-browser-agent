@@ -36,7 +36,7 @@
   "page.highlightElement": "Подсветить элемент",
   "page.injectStyles": "Внедрить стили",
   "page.modifyDom": "Изменить DOM",
-  "page.readArticleRequiresASelectorWhenSourceSelector": "При source=selector инструменту read_article нужен selector.",
+  "page.readArticleRequiresASelectorWhenSourceSelector": "При source=target инструменту read_article нужен target.",
   "page.searchTerms": "Поисковые запросы",
   "page.argumentCharacters": "(Аргументы: {count} символов)",
   "page.contentScriptReturnedAnInvalidResponse": "Скрипт содержимого {action} вернул некорректный ответ.",
@@ -62,5 +62,5 @@
   "page.elementNotCheckable": "Целевой элемент не является стандартным флажком или переключателем. Выберите другой элемент.",
   "page.radioCannotBeUnchecked": "Выбранный переключатель нельзя снять повторным нажатием. Выберите другой вариант в этой группе.",
   "page.elementCheckStateMismatch": "Элемент не перешёл в запрошенное состояние выбора. Проверьте его, прежде чем продолжить.",
-  "page.inputNotDelivered": "Ввод не доставлен. Страница не получила этот щелчок. Дождитесь завершения вёрстки вкладки и повторите попытку."
+  "page.inputNotDelivered": "Ввод не доставлен. Страница не получила этот щелчок или нажатие клавиши. Дождитесь завершения вёрстки вкладки и повторите попытку."
 }

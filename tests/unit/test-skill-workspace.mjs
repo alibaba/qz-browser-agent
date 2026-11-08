@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { createMemoryStorage } from '../support/memory-storage.mjs';
 import { createSkillStateRepository } from '../../src/background/skills/skill-repository.js';
 import { createSkillWorkspaceService } from '../../src/background/skills/skill-workspace.js';
+import { listSkills } from '../../src/background/skills/runtime.js';
+import { listBuiltinSkills, mergeBuiltinSkills } from '../../src/shared/skills/builtin-skills.js';
 import { createGitSkillSourceRepository } from '../../src/background/skills/git-skill-source-repository.js';
 import { nowBeijingDateTime } from '../../src/shared/time-utils.js';
 import { normalizeModernSkill } from '../../src/shared/skills/skill-utils.js';
@@ -18,6 +20,57 @@ function setup(seed = { alpha: skill('alpha') }, options = {}) {
     onChanged: async (reason, detail) => events.push({ reason, detail }), ...options });
   return { storage, repository, workspace, events };
 }
+
+test('skill lists and workspace snapshots dedupe user names, not display names', async t => {
+  const stored = [
+    ['rt1', 'rt-shared'],
+    ['rt2', 'rt-shared'],
+    ['rt3', 'rt1'], // A display name may equal an earlier user identity.
+    ['rt-shared', 'Other title'], // An identity may equal an earlier display name.
+    ['rt-1', 'Duplicate identity'], // Normalized names still dedupe.
+  ].map(([name, displayName]) => normalizeModernSkill({ name, displayName, description: name, content: name }));
+  const { storage, workspace } = setup(Object.fromEntries(stored.map(row => [row.name, row])));
+  const previousChrome = globalThis.chrome;
+  t.after(() => {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  });
+  globalThis.chrome = { storage: { local: storage } };
+  const { createToolRuntime } = await import('../../src/background/tools/runtime.js');
+  const listed = await createToolRuntime().execute('manage_skill', {
+    action: 'list_skills', scope: 'all',
+  }, undefined, { source: 'plugin_host' });
+  const expected = [...listBuiltinSkills().map(row => row.name), 'rt1', 'rt2', 'rt3', 'rt-shared'].sort();
+  for (const [path, rows] of Object.entries({
+    mergeBuiltinSkills: mergeBuiltinSkills(stored),
+    listSkills: await listSkills(),
+    list_skills: listed.items,
+    workspace: (await workspace.read()).skills,
+  })) {
+    assert.deepEqual(rows.map(row => row.name).sort(), expected, path);
+  }
+});
+
+test('workspace save, import and delete use IDs without removing display-name siblings', async () => {
+  const neighbours = [
+    normalizeModernSkill({ name: 'sibling', displayName: 'target', content: 'keep', createdAt: 'sibling-only' }),
+    normalizeModernSkill({ name: 'same-title', displayName: 'Shared title', content: 'keep too' }),
+  ];
+  for (const action of ['save', 'import']) {
+    const { workspace, storage } = setup(Object.fromEntries(neighbours.map(row => [row.name, row])));
+    const incoming = normalizeModernSkill({ name: 'target', displayName: 'Shared title', content: 'new' });
+    const write = expected => action === 'save'
+      ? workspace.save({ name: 'target', expected, skill: incoming })
+      : workspace.import({ skills: [incoming], expected: { target: expected } });
+    await write(null);
+    const created = storage.snapshot()._skills.target;
+    assert.notEqual(created.createdAt, 'sibling-only');
+    await write(created);
+    for (const row of neighbours) assert.deepEqual(storage.snapshot()._skills[row.name], row);
+    await workspace.remove({ name: 'target', expected: storage.snapshot()._skills.target });
+    assert.deepEqual(storage.snapshot()._skills, Object.fromEntries(neighbours.map(row => [row.name, row])));
+  }
+});
 
 test('concurrent unrelated edits merge; a stale edit/delete cannot overwrite the same Skill', async () => {
   const { workspace } = setup({ alpha: skill('alpha'), beta: skill('beta') });

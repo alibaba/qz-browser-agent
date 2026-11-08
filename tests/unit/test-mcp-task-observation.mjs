@@ -32,7 +32,7 @@ test("create streams task text and actionable input, remains waiting, and binds 
       assert.equal(Object.hasOwn(params, "stream"), false);
       assert.equal(Object.hasOwn(params, "wait"), false);
       await pairBrowser(state, { id: "browser-b" });
-      return { session: { id: "task" } };
+      return { session: { sessionId: "task", title: "Plan a trip", status: "pending" } };
     }
     assert.equal(method, "get_session_snapshot");
     assert.equal(params.compact, false);
@@ -124,7 +124,7 @@ test("invalid observation arguments and ambiguous browser selection cannot submi
   const state = await connectedState(t, () => assert.fail("invalid requests must not reach the extension"));
   for (const input of [{ stream: "yes" }, ...["timeoutSeconds", "waitTimeoutSeconds"].flatMap(key =>
     [0, -1, Infinity, 1e100, 86400.1].map(value => ({ [key]: value })))]) {
-    await assert.rejects(executeMcpTool(state, "qingzhou_create_session", { firstMessage: "Task", ...input }), { code: "invalid_arguments" });
+    await assert.rejects(executeMcpTool(state, "qingzhou_create_session", { firstMessage: "Task", ...input }), { code: "INVALID_ARGUMENTS" });
   }
   await pairBrowser(state, { id: "browser-b" });
   await assert.rejects(executeMcpTool(state, "qingzhou_create_session", { firstMessage: "Task", wait: true }), { code: "BRIDGE_CLIENT_REQUIRED" });
@@ -137,7 +137,7 @@ test("watch cancellation revokes its pending read without stopping or resubmitti
   const controller = new AbortController();
   const waiting = executeMcpTool(state, "qingzhou_watch_task", { sessionId: "task" }, { signal: controller.signal });
   const rejected = assert.rejects(waiting, error => {
-    assert.equal(error.code, "interrupted");
+    assert.equal(error.code, "INTERRUPTED");
     assert.equal(error.details.recovery.tool, "qingzhou_watch_task");
     assert.deepEqual(error.details.recovery.arguments, { sessionId: "task", clientId: browserId(state, "browser-a") });
     return true;
@@ -169,7 +169,7 @@ test("timeout recovery watches the original task through later runs without repl
   await assert.rejects(executeMcpTool(state, "qingzhou_send_message", {
     sessionId: "task", text: "Hello", wait: true, waitTimeoutSeconds: 0.01,
   }), error => {
-    assert.equal(error.code, "timeout");
+    assert.equal(error.code, "TIMEOUT");
     recovery = error.details.recovery;
     assert.deepEqual(recovery, {
       tool: "qingzhou_watch_task", arguments: { sessionId: "task", clientId: browserId(state, "browser-a") },
@@ -187,7 +187,7 @@ test("timeout recovery watches the original task through later runs without repl
 test("all MCP observation entry points follow queued work across run boundaries", async t => {
   for (const [name, args, accepted] of [
     ["qingzhou_watch_task", { sessionId: "task", stream: true }, null],
-    ["qingzhou_create_session", { firstMessage: "Start", wait: true }, { session: { id: "task" } }],
+    ["qingzhou_create_session", { firstMessage: "Start", wait: true }, { session: { sessionId: "task", title: "Start", status: "pending" } }],
     ["qingzhou_send_message", { sessionId: "task", text: "Follow up", stream: true }, { accepted: true, clientMessageId: "target" }],
     ["qingzhou_respond_to_user_input", { sessionId: "task", waitId: "old-wait", action: "approve", wait: true }, { accepted: true, runId: "run" }],
   ]) {
@@ -219,7 +219,7 @@ test("an accepted MCP message without a tracking ID can recover by watching with
   });
   let recovery;
   await assert.rejects(executeMcpTool(state, "qingzhou_send_message", { sessionId: "task", text: "Hello", wait: true }), error => {
-    assert.equal(error.code, "invalid_response");
+    assert.equal(error.code, "INVALID_RESPONSE");
     recovery = error.details.recovery;
     return true;
   });
@@ -237,7 +237,7 @@ test("MCP missing-task recovery lists the selected browser's tasks while snapsho
     return missing;
   });
   await assert.rejects(executeMcpTool(state, "qingzhou_watch_task", { sessionId: "task" }), error => {
-    assert.equal(error.code, "task_deleted");
+    assert.equal(error.code, "TASK_DELETED");
     assert.match(error.message, /not found in the selected browser/);
     assert.doesNotMatch(error.message, /was deleted/);
     assert.equal(error.details.sessionId, "task");
@@ -264,7 +264,7 @@ test("MCP wrong-browser recovery keeps the resolved UUID and never searches anot
   });
   await pairBrowser(state, { id: "browser-b" });
   await assert.rejects(executeMcpTool(state, "qingzhou_watch_task", { sessionId: "task", clientId: "browser-b" }), error => {
-    assert.equal(error.code, "task_deleted");
+    assert.equal(error.code, "TASK_DELETED");
     assert.equal(error.details.clientId, browserId(state, "browser-b"));
     recovery = error.details.recovery;
     assert.deepEqual(recovery, {
@@ -282,10 +282,10 @@ test("MCP wrong-browser recovery keeps the resolved UUID and never searches anot
 });
 
 for (const scenario of [
-  { name: "shorter total deadline", total: 2, request: 5, expiresMs: 2000, code: "timeout" },
-  { name: "equal deadlines", total: 5, request: 5, expiresMs: 5000, code: "timeout" },
-  { name: "earlier request deadline", total: 5, request: 2, expiresMs: 2000, code: "request_timeout" },
-  { name: "caller cancellation", total: 5, request: 2, code: "interrupted" },
+  { name: "shorter total deadline", total: 2, request: 5, expiresMs: 2000, code: "TIMEOUT" },
+  { name: "equal deadlines", total: 5, request: 5, expiresMs: 5000, code: "TIMEOUT" },
+  { name: "earlier request deadline", total: 5, request: 2, expiresMs: 2000, code: "REQUEST_TIMEOUT" },
+  { name: "caller cancellation", total: 5, request: 2, code: "INTERRUPTED" },
 ]) test(`MCP observation preserves request budgets and causes: ${scenario.name}`, async t => {
   mockObservationTimers(t, { apis: ["setTimeout", "Date"], now: 1_000_000 });
   const controller = new AbortController();
@@ -305,15 +305,15 @@ for (const scenario of [
   const read = await readReady.promise;
   assert.equal(read.params.timeoutSeconds, scenario.request);
   assert.equal(read.options.timeoutSeconds, scenario.request);
-  if (scenario.code === "interrupted") controller.abort(reason);
+  if (scenario.code === "INTERRUPTED") controller.abort(reason);
   else t.mock.timers.tick(scenario.expiresMs);
   const error = await pending;
   assert.equal(error.code, scenario.code);
   assert.equal(error.cause, read.options.signal.reason, "MCP preserves the downstream cancellation cause");
   assert.equal(read.options.signal.aborted, true);
-  if (scenario.code === "interrupted") assert.equal(error.cause, reason);
-  else if (scenario.code === "timeout") assert.equal(error.cause.name, "TimeoutError");
-  else assert.equal(error.cause.code, "request_timeout");
+  if (scenario.code === "INTERRUPTED") assert.equal(error.cause, reason);
+  else if (scenario.code === "TIMEOUT") assert.equal(error.cause.name, "TimeoutError");
+  else assert.equal(error.cause.code, "REQUEST_TIMEOUT");
   assert.deepEqual(error.details.recovery, {
     tool: "qingzhou_watch_task", arguments: { sessionId: "task", clientId: browserId(state, "browser-a") },
   });
@@ -324,13 +324,23 @@ for (const scenario of [
 test("tool lookup uses task context and returns the exact schema or a useful missing-tool error", async t => {
   const tool = { name: "read_article", inputSchema: { type: "object", properties: { tabId: { type: "number" } } } };
   const state = await connectedState(t, async (method, params, options) => {
-    assert.equal(method, "list_tools");
+    assert.equal(method, "get_tool");
     assert.equal(params.sessionId, "task");
     assert.equal(options.clientId, browserId(state, "browser-a"));
-    return { tools: [tool] };
+    return params.name === "read_article" ? tool : null;
   });
   assert.deepEqual(await executeMcpTool(state, "qingzhou_get_tool", { sessionId: "task", name: "read_article", clientId: "browser-a" }), tool);
-  await assert.rejects(executeMcpTool(state, "qingzhou_get_tool", { sessionId: "task", name: "missing", clientId: "browser-a" }), { code: "tool_not_found" });
+  await assert.rejects(executeMcpTool(state, "qingzhou_get_tool", { sessionId: "task", name: "missing", clientId: "browser-a" }), { code: "TOOL_NOT_FOUND" });
+});
+
+test("a forbidden drive tool keeps its rejection code", async t => {
+  const state = await connectedState(t, async () => {
+    throw Object.assign(new Error("不能通过直驱调用 manage_bookmarks。"), { code: "DRIVE_TOOL_FORBIDDEN" });
+  });
+  await assert.rejects(
+    executeMcpTool(state, "qingzhou_get_tool", { sessionId: "task", name: "manage_bookmarks" }),
+    error => error.code === "DRIVE_TOOL_FORBIDDEN" && error.message.includes("manage_bookmarks"),
+  );
 });
 
 test("async browser-tool admission pins its profile and returns task and job identities", async t => {

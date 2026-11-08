@@ -26,7 +26,7 @@ import {
   normalizeBlocks,
   normalizeSheets,
 } from "./document-utils.js";
-import { createDocumentBytes, inferDocumentFormat, mimeTypeForFormat, parseDocumentBytes } from "#sdk/background/documents";
+import { createDocumentBytes, downloadBytes, inferDocumentFormat, mimeTypeForFormat, parseDocumentBytes } from "#sdk/background/documents";
 
 import {
   DocumentReadProjectionError,
@@ -65,10 +65,7 @@ registerTool({
     const text = String(content ?? "");
     mimeType = resolveSaveFileMimeType(filename, mimeType, text);
     filename = resolveSaveFileFilename(filename, mimeType);
-    // Use a data URL because Service Workers lack URL.createObjectURL.
-    const base64 = btoa(unescape(encodeURIComponent(text)));
-    const url = `data:${mimeType};base64,${base64}`;
-    const id = await chrome.downloads.download({ url, filename, saveAs: false });
+    const id = await downloadBytes(new TextEncoder().encode(text), mimeType, { filename, saveAs: false });
     return { downloadId: id, filename, mimeType, size: text.length };
   },
 });
@@ -743,7 +740,7 @@ async function createPdfBase64FromDocument({ title = "", blocks = [], sheets = [
   aborted.catch(() => {});
   const onAbort = () => {
     void chrome.tabs.remove(tabId).catch(() => {});
-    rejectAbort(new ToolExecutionError("OPERATION_ABORTED", "PDF generation was cancelled", { tabId }));
+    rejectAbort(new ToolExecutionError("OPERATION_ABORTED", "PDF generation was cancelled"));
   };
   signal?.addEventListener("abort", onAbort, { once: true });
   const command = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -754,7 +751,7 @@ async function createPdfBase64FromDocument({ title = "", blocks = [], sheets = [
     if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "PDF generation was cancelled");
     await waitForTabComplete(tabId, 30000, signal);
     if (typeof withTemporaryDebugger !== "function") {
-      throw new ToolExecutionError("DEBUGGER_UNAVAILABLE", t("temporaryPdfRenderingRequiresTheChromeDebuggerRuntime"), { tabId });
+      throw new ToolExecutionError("DEBUGGER_UNAVAILABLE", t("temporaryPdfRenderingRequiresTheChromeDebuggerRuntime"));
     }
     const result = await withTemporaryDebugger(tabId, async (_target, send) => {
       await command(() => send("Page.enable", {}));
@@ -768,7 +765,7 @@ async function createPdfBase64FromDocument({ title = "", blocks = [], sheets = [
       }));
     }, "document_pdf");
     if (!result || typeof result !== "object" || !("data" in result) || typeof result.data !== "string" || !result.data) {
-      throw new ToolExecutionError("PDF_PRINT_FAILED", t("chromePagePrinttopdfReturnedEmptyData"), { tabId });
+      throw new ToolExecutionError("PDF_PRINT_FAILED", t("chromePagePrinttopdfReturnedEmptyData"));
     }
     return result.data;
   } finally {
@@ -798,7 +795,7 @@ function waitForTabComplete(tabId: number, timeoutMs = 30000, signal?: DocumentS
     };
     const onAbort = () => {
       cleanup();
-      reject(new ToolExecutionError("OPERATION_ABORTED", "PDF generation was cancelled", { tabId }));
+      reject(new ToolExecutionError("OPERATION_ABORTED", "PDF generation was cancelled"));
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     const complete = () => {
@@ -810,7 +807,7 @@ function waitForTabComplete(tabId: number, timeoutMs = 30000, signal?: DocumentS
     };
     timer = setTimeout(() => {
       cleanup();
-      reject(new ToolExecutionError("TAB_LOAD_TIMEOUT", t("temporaryTabDidNotFinishLoading", { tabId: String(tabId) }), { tabId, timeoutMs }));
+      reject(new ToolExecutionError("TAB_LOAD_TIMEOUT", t("temporaryTabDidNotFinishLoading"), { timeoutMs }));
     }, timeoutMs);
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.get(tabId).then(tab => {
@@ -827,9 +824,7 @@ async function downloadDocumentArtifactRecord(artifact: Partial<DocumentArtifact
     if (!stored?.base64) throw new ToolExecutionError("DOCUMENT_ARTIFACT_EMPTY", t("documentArtifactHasNoContent"), { artifactId: artifact.artifactId || artifact.id });
     artifact = stored;
   }
-  const url = `data:${artifact.mimeType || mimeTypeForFormat(artifact.format || "")};base64,${artifact.base64}`;
-  const downloadId = await chrome.downloads.download({
-    url,
+  const downloadId = await downloadBytes(base64ToBytes(artifact.base64), artifact.mimeType || mimeTypeForFormat(artifact.format || ""), {
     filename: resolvedFilename,
     saveAs: Boolean(saveAs),
   });

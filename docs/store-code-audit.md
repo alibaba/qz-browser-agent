@@ -52,7 +52,7 @@ upstream code. Runtime vendor outputs are immutable after generation; maps stay 
   dependency provenance is exempt metadata.
 - [`check-reviewable-code.mjs`](../scripts/check-reviewable-code.mjs) parses every JS/MJS/CJS file,
   recursively inspects build-time script strings, checks script-tag concatenation (including
-  `LT + SCRIPT + GT`), imports, Worker/script sinks, eval/Function and aliases, CDP execution, `_0x` names and
+  `LT + SCRIPT + GT`), imports, Worker/script sinks, eval/Function and aliases, CDP and native user-script execution, `_0x` names and
   executable-line/identifier-density heuristics. Literal data tables and strings do not count as
   compressed executable lines. The JSON report retains raw maximum line lengths too. Regression
   tests scan both real legacy PDF inputs: the worker's unrelated numeric `GT` declaration must not
@@ -76,52 +76,78 @@ exemptions. Whitespace/comments and esbuild's numeric name suffixes do not alter
 Changes to a reviewed function require a new review and fingerprint. Three CDP functions
 (`createScriptTools`, `invokeBound`, and page-mode `apply`) have separate bundled and unbundled
 fingerprints: only esbuild's shorthand-property expansion after renaming differs between the forms.
-This is a source-change gate, not a whole-program data-flow proof.
+This is a source-change gate, not a whole-program data-flow proof. Regression tests audit real
+production builds (unbundled Chrome, bundled Chrome and Firefox) in temporary directories, then
+mutate those artifacts to verify identity-source, implicit-target, extra-sink and output-path rejection. Standalone
+TypeScript transforms do not substitute for the production pipeline when reviewing fingerprints.
 
 | Sink | Reason |
 | --- | --- |
 | `renderSessionExchangeScript` | An inert `application/json` element, with JSON escaping; not executable code. |
 | `renderSessionExportRuntime` | Offline HTML contains only escaped localized messages and the recursively audited, build-time export UI runtime. |
 | `loadMathRuntime` | The script source is the literal packaged `vendor/mathjax/startup.js`; browser fixtures use a same-origin test-server URL. |
-| `startWorkerRun` | Creates a sandbox Blob Worker from the exact packaged inner-runner; the embedded source is scanned separately. |
-| Inner-runner's execution function | Existing user/Agent JavaScript execution in a manifest-declared sandbox Worker. Its code is readable and its extension/service access is through validated host messages. |
-| `evaluateCdpScript` | Run-owned CDP evaluation, with cancellation and stale-owner rejection. This is a second intentional user/Agent execution environment, not sandbox execution. |
-| `createScriptTools`, `runScriptWithCdpToolBridgeUnlocked`, `runScriptAsFunctionBody` | Existing page-script entry, message bridge and explicit-return fallback. The entire factory fingerprint includes the builders that combine packaged trace/guard code with user/Agent source; Session/run identity and target ownership remain required. |
+| `startWorkerRun` | Creates a sandbox Blob Worker from the exact packaged inner-runner; the embedded source is scanned separately. Infrastructure failures use the public script-context code; Worker identity, cancellation and message routing remain unchanged. Bridge failures carry ToolError message, hint and details as data. JSON arguments, strict-result mode and explicit image observations remain separate host message fields. Diagnostic rows stream from the current Worker through its request-bound sandbox message channel. A timeout can also request a trace snapshot; neither channel changes cancellation or grants execution authority. |
+| Inner-runner's execution function | Existing user/Agent JavaScript execution in a manifest-declared sandbox Worker. Its code is readable and its extension/service access is through validated host messages. The statically packaged qz SDK is passed as one additional executor argument; its Page/Locator methods lower structured data to the existing tool bridge. It adds no extension APIs, execution sink, or implicit page selection. Public run_script always uses this outer executor; tools keep host authorization, and evaluate function arguments are serialized only at declared code fields. Returned business data is validated without renaming fields; image observations are selected by identity from explicitly returned tool results. Only explicit trace/console diagnostics and errors stream as bounded data to the live host request for aggregation; tool lifecycle identity is assigned by Background. Modern scripts unwrap a host-declared Skill receipt once and bind image observations to the returned business value; legacy callers retain their receipt ABI. Authored result fields do not select receipt format or diagnostics. A timeout snapshot remains available. |
+| `evaluateCdpScript` | Run-owned CDP evaluation holds an execution lease until settlement and releases it in finally for idle cleanup, with cancellation and stale-owner rejection. Error details include the caller's page reference only when supplied, and omit raw CDP parameters. This is a second intentional user/Agent execution environment, not sandbox execution. When a page script times out, it queues a fixed `Runtime.callFunctionOn` reading `__qzTrace` from the promise CDP is already awaiting, followed immediately by `Runtime.terminateExecution`. Both commands require the original owner and connection identities; termination never waits for a diagnostic response that could arrive during a later evaluation. The declaration is a literal in this function. It does not compile page or model text. |
+| `createScriptTools`, `runScriptWithCdpToolBridgeUnlocked` | Public run_script uses the sandbox Worker. evaluate requires an explicit owned page and a self-contained function, evaluated outside the host wrapper with a JSON argument. The private Skill page bridge initializes the same packaged qz SDK with its existing call channel and retains its existing ABI; the old implicit page selection and explicit-return retry fallback are removed. Nested tools require their own explicit page references. The SDK may bind an explicit reference locally, but the host continues to resolve and authorize every call. Public evaluate receives no SDK bridge; SDK functions are never serialized with Function.toString or reconstructed from caller data. The entire factory fingerprint includes the builders that combine packaged trace/guard code with user/Agent source; Session/run identity, target ownership and cancellation remain required. Parent invocation IDs are JSON-serialized data and are resolved against live Background calls. Page messages cannot choose the host execution context. Public tools return raw business values; the host stores status, presentation and image observations separately. Both script success and failure retain trusted trace metadata; only successful raw values use the valueOnly presentation marker. Script Skill producers retain their receipt ABI, and the model boundary builds the shared `{ok,result,trace}` shape. The collector accepts diagnostic rows only for a registered live execution, aggregates nested calls, rejects late rows and retains already received progress on cancellation. The CLI presents ordered trace messages beside the result, without reading trace fields from authored values. ToolError keeps location and recent trace context in details. Cancellation errors include only the caller's page reference when supplied. The factory prepares document readiness before one evaluation, supplies localized context/tool-access recovery hints as data and preserves supplied hints, and records whether dispatch began for timeout reporting. The commit option permits early observation. Preparation never replays user code; execution sources, owned-page checks and cancellation boundaries are unchanged. Automatic script/tool lifecycle trace rows are omitted. Page trace rows stay in the script closure, on a property of the promise CDP holds. They are not posted to the page. |
 | Page-mode `apply` | Evaluates only the literal `navigator.userAgent`. |
-| `contentContextId`, `invokeBound` | Static isolated-world identity probe and literal bridge function; arguments travel as CDP values rather than code. |
-| Firefox `page-command` invoke | Firefox-only emulation of CDP `Runtime.callFunctionOn` for the same callers. It compiles the declaration with the page realm's `Function`, never in the isolated world or extension context. The Chrome package does not contain it. |
-| `getElementScreenshotBoundsFromRuntime` | Calls only the packaged element bounds function on an owned page element. |
+| `contentContextId`, `invokeBound` | Static isolated-world identity/protocol-version probe and literal bridge function; arguments travel as CDP values rather than code. Caller context and the resolved public target are used only to build failure details; a bounded node_unavailable reason supports pre-dispatch locator recovery. The probe and bridge declarations, value-argument channel, and frame selection are unchanged. |
+| Firefox `page-command` invoke | Firefox-only emulation of CDP `Runtime.callFunctionOn` for the same callers. Native exception names are retained as data. Node-array references and `Runtime.getProperties` remain structured data in the isolated world. Coordinate input descends open shadow roots and emits composed pointer/mouse/touch events; these DOM operations do not compile code. It compiles declarations only with the page realm's `Function`, never in the isolated world or extension context. The Chrome package does not contain it. |
+| Firefox `evaluateFirefoxPage` | Native `userScripts.execute` compiles the existing user/Agent expression in the page's `MAIN` world after optional permission and live-run checks. `webNavigation.getFrame` supplies the document ID; the injection targets that exact document and checks context generation again after execution. It never falls back to another document or replays failed code. The enclosing function includes the serialized result/error helper, so changes to that source also require review. Only the Firefox adapter output path is accepted. |
+| `getElementScreenshotBoundsFromRuntime` | Calls only the packaged element bounds function on an owned page element; public geometry uses the shared Rect contract. |
 | `clearStaleOptionDisabled` | Calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code. |
-| `bindFindElementRefs` | Resolves find_elements tokens through the packaged `ISOLATED_CONTENT_INVOKE` bridge with action `resolveFindElement`; token/action values travel as CDP arguments, not code. |
+| `bindContentElementRefs` | Resolves bounded batches of original-node tokens through the packaged `ISOLATED_CONTENT_INVOKE` bridge with action `resolveElementRefs`; token arrays are CDP values, not code. It validates the frame/document and bounds concurrent node descriptions. Required locator binding validates the node-array response and propagates permission/transport failures; ordinary discovery retains its best-effort fallback. This changes binding error handling, not the packaged declaration or value-only token arguments. |
 
 On the Firefox-integrated branch, `contentContextId` and `invokeBound` read their probe and bridge
 source from the literal constants in `background/tools/isolated-page-calls.ts`. Their function
 fingerprints do not cover those constants, so changes to that module need the same review.
 
+Page-code permission requirements are checked before tool execution. The CDP evaluator and page
+Skill bridge preserve permission failures and their recovery hints without replay. The shared error
+trace formatter retains the message when Firefox supplies a stack without its error header; this
+changes diagnostic data only, with the Worker and page execution boundaries preserved.
+
+The packaged SDK lowers find and URL-wait `RegExp` inputs to source and flags passed as data to
+the existing tools, preserving explicit flags and pattern whitespace. A returned Tab object supplies
+only its explicit `tabRef`; locator `css` becomes a `target` string before schema validation. These
+values do not become executable source or grant page ownership. SDK `find()` returns the existing
+`find_elements.results` array and rejects `countOnly`; raw tool receipts remain unchanged. This
+unwraps data without adding execution or source interpolation. Locator validation reports field
+names from its static schema; JSON-value errors retain their source message. The host records dispatch
+and confirmation around the existing evaluation for timeout diagnostics; that evidence never enters
+page code and does not authorize or replay execution. These changes affect the Worker source,
+private page-bridge factory fingerprints, and storecheck's whole-runner token digest without changing
+execution sources, target authorization, sandbox isolation, or replay behavior.
+
 The ten CDP call sites remain explicit findings in the custom report, each limited to its exact
 function fingerprint and owning output path. storecheck does not detect these calls. In particular,
-`run_script target:"page"` deliberately executes user/Agent source in a page through CDP; it is not
+`evaluate` deliberately executes a self-contained user/Agent function in an explicitly owned page through CDP; it is not
 made static or policy-safe merely because there is no `eval` token. This capability has the same
 submission-policy review obligation as the sandbox executor.
 
 ### storecheck's sandbox finding
 
-The unmodified CLI reports one `privacy/remote-code-execution` error for `runner-sandbox.js`'s
-embedded `new Function`. Its CSP rules already distinguish sandbox pages and report no sandbox CSP
-error. Version 0.1.0 has **no ignore-file or inline-suppression feature**.
+The unmodified CLI can report a `privacy/remote-code-execution` error for `runner-sandbox.js`'s
+embedded `new Function`. Its regex comment stripper can also mask this sink: it treats a `//`
+inside the serialized Worker as a comment through the end of the containing source line. The qz
+SDK build currently exhibits that false negative. The recursive AST audit still detects and reviews
+the executor. Its CSP rules distinguish sandbox pages. Version 0.1.0 has **no ignore-file or
+inline-suppression feature**.
 
 The integration uses its supported `runRules({ rules })` / `RuleContext.report` API to adapt only
 that individual report. It requires all of:
 
-- the exact rule, file, message and line containing the expected argument list;
+- the exact rule, file, message and line containing the expected argument list, including the packaged qz SDK binding;
 - a token hash of the **entire** packaged runner, without identifier normalization;
 - the exact sandbox page declaration, sandbox CSP and restrictive extension-page CSP;
 - the sandbox HTML loading the packaged runner.
 
 No rule is disabled and no package bytes are hidden from the CLI. `storecheck.json` preserves the
 original exit code and report, the accepted finding with its reason, and the effective report.
-Additional or changed execution sites fail. Unit tests check another file, a modified runner,
-a removed sandbox declaration and a minification warning.
+Additional or changed execution sites fail the recursive AST audit. Unit tests exercise the exact
+report adapter directly, including another file, a modified runner and a removed sandbox declaration,
+so upstream detection gaps cannot make those assertions vacuous. The upstream CLI result is preserved
+as returned; a minification warning still blocks the package.
 
 This exception preserves a deliberate product capability, not a claim that CWS must accept it.
 Chrome permits eval in sandboxed pages, but store policy also considers remotely supplied logic,

@@ -7,6 +7,10 @@ registerSessionTools({
   registerTool: ({ name, description, parameters: schema, execute }) => definitions.set(name, { schema, execute }),
   ToolExecutionError, secondsToMs: n => n * 1000,
   getToolRuntimeDependencies: () => ({ sessions: {
+    listSessions: async args => { calls.push(['list', args]); return { sessions: [] }; },
+    createSession: async args => { calls.push(['create', args]); return {
+      session: { sessionId: 'child', title: args.title, status: 'idle' }, started: false,
+    }; },
     stopSession: async (...args) => { calls.push(['stop', ...args]); return { stopped: true }; },
     sendMessage: async args => { calls.push(['send', args]); return { accepted: true }; },
     saveAutomation: async args => { calls.push(['save', args]); return { automation: args.automation }; },
@@ -28,6 +32,19 @@ for (const args of [
   { action: 'send_message', sessionId: 'child', message: 'x', mode: 'invalid' },
 ]) await assert.rejects(tool.execute(args, null, context));
 assert.equal(calls.length, 3);
+
+const beforeInvalidTitle = calls.length;
+for (const title of [undefined, '', '  \n ']) {
+  await assert.rejects(tool.execute({ action: 'create', title }, null, context), { code: 'MISSING_REQUIRED_ARGUMENTS' });
+}
+assert.equal(calls.length, beforeInvalidTitle, 'a public task needs a readable title before persistence');
+const child = await tool.execute({ action: 'create', title: '  Collect prices  ' }, null, context);
+assert.deepEqual(child, { created: true, session: { sessionId: 'child', title: 'Collect prices', status: 'idle' }, started: false });
+assert.deepEqual(calls.at(-1), ['create', {
+  title: 'Collect prices', firstMessage: '', parentSessionId: 'parent', publicView: true,
+}]);
+assert.deepEqual(await tool.execute({ action: 'list', limit: 2 }, null, context), { sessions: [] });
+assert.deepEqual(calls.at(-1), ['list', { limit: 2, excludeSessionId: 'parent', publicView: true }]);
 
 const schedule = { type: 'once', datetime: '2026-10-01T09:00:00+08:00' };
 const created = await tool.execute({ action: 'create_automation', title: '  Collect  ', firstMessage: '  Save rows  ',

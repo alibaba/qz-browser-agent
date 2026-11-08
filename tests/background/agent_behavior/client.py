@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 from typing import Any
@@ -21,6 +22,8 @@ except Exception as exc:  # pragma: no cover - exercised by CLI users.
 class QingzhouMcpClient:
     def __init__(self, session: ClientSession) -> None:
         self.session = session
+        self._readback_session_id = ""
+        self._readback_lock = asyncio.Lock()
 
     async def call(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         # timeoutSeconds is the retired bridge field. The streamable HTTP client timeout bounds the call.
@@ -53,8 +56,7 @@ class QingzhouMcpClient:
     def session_id_from_payload(payload: dict[str, Any]) -> str:
         session_id = (
             payload.get("sessionId")
-            or payload.get("id")
-            or (payload.get("session") or {}).get("id")
+            or (payload.get("session") or {}).get("sessionId")
         )
         if not session_id:
             raise RuntimeError(f"create_session returned no session id: {payload}")
@@ -103,18 +105,24 @@ class QingzhouMcpClient:
             })
 
     async def data_store_list(self, table: str, *, session_id: str = "") -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "name": "data_store",
-            "args": {
-                "action": "list",
-                "table": table,
-                "limit": 500,
-            },
-        }
-        if session_id:
-            payload["sessionId"] = session_id
-        tool_result = await self.call("qingzhou_execute_tool", payload)
-        return tool_result.get("result") or {}
+        # Data tables are global. Read them through our own explicit drive session;
+        # the native Agent's session remains the subject of the acceptance test.
+        async with self._readback_lock:
+            if not self._readback_session_id:
+                created = await self.call("qingzhou_create_drive_session", {"title": "Agent test Data readback"})
+                self._readback_session_id = self.session_id_from_payload(created)
+            tool_result = await self.call("qingzhou_execute_tool", {
+                "sessionId": self._readback_session_id,
+                "name": "data_store",
+                "args": {"action": "list", "table": table, "limit": 500},
+            })
+            return tool_result.get("result") or {}
+
+    async def aclose(self) -> None:
+        async with self._readback_lock:
+            if self._readback_session_id:
+                await self.stop_session(self._readback_session_id)
+                self._readback_session_id = ""
 
     async def execute_tool(self, name: str, args: dict[str, Any], *, session_id: str = "") -> Any:
         payload: dict[str, Any] = {"name": name, "args": args}
@@ -140,6 +148,19 @@ class QingzhouMcpClient:
             "start": 0,
             "maxChars": 300000,
         })
+
+    async def list_skill_settings(self) -> dict[str, Any]:
+        payload = await self.call("qingzhou_call", {
+            "method": "runtime_message",
+            "params": {
+                "message": {"type": "list_skill_settings"},
+                "expectedType": "skill_settings",
+            },
+        })
+        response = payload.get("response") if isinstance(payload, dict) else None
+        if not isinstance(response, dict) or response.get("type") != "skill_settings":
+            raise RuntimeError("Skill settings listing was not acknowledged")
+        return response
 
     async def submit_wait_form(self, session_id: str, wait_id: str, answers: dict[str, Any]) -> dict[str, Any]:
         return await self.call("qingzhou_submit_wait_form", {

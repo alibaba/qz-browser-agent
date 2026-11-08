@@ -5,6 +5,7 @@ import { importSkillsZip } from "../../shared/skills/skill-package.js";
 import {
   normalizeModernSkill,
   normalizeSkillLookup,
+  skillEntriesByIdentity,
 } from "../../shared/skills/skill-utils.js";
 import { nowBeijingDateTime } from "../../shared/time-utils.js";
 import { downloadGitArchiveFromTab, resolveDownloadDebuggerScope } from "./git-skill-sources.js";
@@ -164,7 +165,7 @@ export function createPageSkillImportService(options: PageImportOptions) {
         const previous = existingSkills.find(existing => (
           normalizeSkillLookup(existing.name) === normalizeSkillLookup(skill.name)
         ));
-        deleteSkillEntriesByLookup(nextSkills, skill.name);
+        for (const { key } of skillEntriesByIdentity(nextSkills, skill.name)) delete nextSkills[key];
         nextSkills[skill.name] = normalizeModernSkill({
           ...skill,
           createdAt: previous?.createdAt || skill.createdAt || updatedAt,
@@ -215,16 +216,6 @@ function findDuplicateSkillName(skills: readonly SkillRecord[] = []) {
     seen.add(lookup);
   }
   return "";
-}
-
-function deleteSkillEntriesByLookup(skills: Fields, name: string) {
-  const lookup = normalizeSkillLookup(name);
-  for (const [key, value] of Object.entries(skills || {})) {
-    if (
-      normalizeSkillLookup(key) === lookup
-      || normalizeSkillLookup(record(value).name) === lookup
-    ) delete skills[key];
-  }
 }
 
 function throwIfAborted(signal: AbortSignal | undefined) {

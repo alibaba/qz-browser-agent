@@ -81,7 +81,7 @@
   "documents.failedToCreateTemporaryPdfRenderTab": "PDF 作成用の一時タブを開けませんでした。",
   "documents.temporaryPdfRenderingRequiresTheChromeDebuggerRuntime": "PDF の作成には Chrome デバッガーへのアクセスが必要です。",
   "documents.chromePagePrinttopdfReturnedEmptyData": "Chrome Page.printToPDF がデータを返しませんでした。",
-  "documents.temporaryTabDidNotFinishLoading": "一時タブ {tabId} の読み込みが完了しませんでした。",
+  "documents.temporaryTabDidNotFinishLoading": "一時タブ の読み込みが完了しませんでした。",
   "documents.documentArtifactHasNoContent": "ドキュメント成果物が空です。",
   "documents.docxDocumentXmlNotFound": "DOCX ファイルに document.xml がありません。",
   "documents.xlsxWorkbookXmlNotFound": "XLSX ファイルに workbook.xml がありません。",

@@ -301,8 +301,9 @@ def run():
                       runId: context.runId,
                     });
                     if (!response.ok) {
-                      throw Object.assign(new Error(response.error || "run_script tool call failed"), {
+                      throw Object.assign(new Error(response.message || "run_script tool call failed"), {
                         code: response.code,
+                        hint: response.hint,
                         details: response.details,
                       });
                     }
@@ -311,11 +312,11 @@ def run():
                   const scriptTools = new Proxy(Object.create(null), {
                     get(_target, prop) {
                       if (prop === "then") return undefined;
-                      if (prop === "$list") return async () => (await callFromScript("__list_tools__", {})).tools;
+                      if (prop === "$list") return async (args = {}) => (await callFromScript("__list_tools__", args)).tools;
                       return args => callFromScript(String(prop), args);
                     },
                   });
-                  const listedFromScript = await scriptTools.$list();
+                  const listedFromScript = await scriptTools.$list({ names: ["qingzhou_documents__document_create"] });
                   const documentCreateFromScriptSchema = listedFromScript.find(item => item.name === "qingzhou_documents__document_create");
                   const executeSyntheticInnerScript = new Function("tools", `
                     return (async () => tools.qingzhou_documents__document_create({
@@ -368,7 +369,7 @@ def run():
                       download: false,
                     });
                   } catch (error) {
-                    invalidFromScript = { code: error.code, details: error.details };
+                    invalidFromScript = { code: error.code, message: error.message, details: error.details };
                   }
                   let missingFormatFromScript = null;
                   try {
@@ -379,7 +380,7 @@ def run():
                       download: false,
                     });
                   } catch (error) {
-                    missingFormatFromScript = { code: error.code, details: error.details };
+                    missingFormatFromScript = { code: error.code, message: error.message, details: error.details };
                   }
                   const afterInvalidFromScript = await call("document_list_artifacts", { limit: 100 });
                   let foreignError = null;
@@ -393,6 +394,7 @@ def run():
                   }
                   return {
                     fetched, parsed, chunk, created, createdPdfFromModel, modelPdfRenderHtml, listed, downloaded, foreignError,
+                    fetchedPresentation: toolRuntime.getToolResultPageContext(fetched),
                     workbookParsed, workbookFirst, workbookSecond, workbookTextValue,
                     directCreated,
                     directHtml,
@@ -408,6 +410,7 @@ def run():
                     invalidArtifactCountBefore: beforeInvalid.length,
                     invalidArtifactCountAfter: afterInvalid.length,
                     runScriptSchemaRequired: documentCreateFromScriptSchema?.parameters?.required || [],
+                    runScriptTimeoutType: documentCreateFromScriptSchema?.parameters?.properties?.timeout?.type || "",
                     runScriptTitleDescription: documentCreateFromScriptSchema?.parameters?.properties?.title?.description || "",
                     runScriptBlockRequired: documentCreateFromScriptSchema?.parameters?.properties?.blocks?.items?.required || [],
                     createdFromScript,
@@ -447,7 +450,8 @@ def run():
     expect(len(result["workbookFirst"].get("rows", [])) == 50, "XLSX first page size is incorrect")
     expect(result["workbookSecond"].get("offset") == 50, "XLSX next cursor was not honored")
     expect(result["workbookTextValue"].count("row-1\n") == 1, "XLSX conversion duplicated sheet rows")
-    expect(result["fetched"].get("_plugin", {}).get("id") == "qingzhou-documents", "plugin metadata is missing")
+    expect(result["fetchedPresentation"].get("_plugin", {}).get("id") == "qingzhou-documents", "plugin presentation metadata is missing")
+    expect("_plugin" not in result["fetched"], "plugin presentation metadata leaked into the business result")
     expect("trace" not in result["chunk"], "document result was duplicated into host trace")
     expect(result["foreignError"].get("code") == "DOCUMENT_SESSION_FOREIGN", "foreign session access should be rejected")
 
@@ -497,7 +501,8 @@ def run():
     expect(result["invalidResults"]["missingFormat"].get("expectedFormat") == ["docx", "xlsx", "pdf", "html", "txt", "csv"], "missing format did not return its enum schema")
     expect(result["invalidArtifactCountBefore"] == result["invalidArtifactCountAfter"], "invalid calls created document artifacts")
 
-    expect(result["runScriptSchemaRequired"] == ["timeout", "format"], "run_script saw a different document_create required schema")
+    expect(result["runScriptSchemaRequired"] == ["format"], "run_script document_create must require format and keep timeout optional")
+    expect(result["runScriptTimeoutType"] == "number", "run_script did not receive the optional document timeout parameter")
     expect("不会自动写入正文" in result["runScriptTitleDescription"], "run_script did not receive the title metadata contract")
     expect(result["runScriptBlockRequired"] == ["type"], "run_script did not see the block type discriminator")
     expect(result["createdFromScript"].get("artifactId"), "run_script document creation failed")
@@ -510,20 +515,25 @@ def run():
         expect(script_created.get("format") == format_name, f"run_script {format_name} creation returned the wrong format")
         expect(script_created.get("size", 0) > 0, f"run_script {format_name} creation returned an empty artifact")
     expect("Run script formats" in result["runScriptPdfRenderHtml"] and "Alice" in result["runScriptPdfRenderHtml"], "run_script PDF renderer received incomplete HTML")
+    for name in ("invalidFromScript", "missingFormatFromScript"):
+        expect(result[name].get("message") not in (None, "", "run_script tool call failed"), f"{name} lost the ToolError message")
     expect(result["invalidFromScript"].get("code") == "DOCUMENT_BLOCK_SCHEMA_INVALID", "run_script invalid blocks did not fail at the document boundary")
+    invalid_retry = result["invalidFromScript"].get("details", {}).get("retry", {})
     expect(
-        result["invalidFromScript"].get("details", {}).get("retry", {}).get("preservedArgs", {}).get("timeout") == 30
-        and result["invalidFromScript"].get("details", {}).get("retry", {}).get("preservedArgs", {}).get("format") == "pdf",
-        "run_script error did not preserve timeout/format for retry",
+        invalid_retry.get("preservedArgs") == {"format": "pdf", "filename": "bad-from-script.pdf", "download": False}
+        and invalid_retry.get("requiredFields") == ["format"]
+        and invalid_retry.get("replacePaths") == ["blocks"],
+        f"run_script error did not preserve document options and identify the invalid blocks for retry: {invalid_retry}",
     )
     expect(result["missingFormatFromScript"].get("code") == "MISSING_REQUIRED_ARGUMENTS", "run_script missing format returned the wrong error")
     expect(
         result["missingFormatFromScript"].get("details", {}).get("expected", {}).get("format", {}).get("enum") == ["docx", "xlsx", "pdf", "html", "txt", "csv"],
         "run_script missing format did not return the format schema",
     )
+    missing_format_retry = result["missingFormatFromScript"].get("details", {}).get("retry", {})
     expect(
-        result["missingFormatFromScript"].get("details", {}).get("retry", {}).get("preservedArgs", {}).get("timeout") == 30,
-        "run_script missing format did not preserve timeout for retry",
+        missing_format_retry == {"requiredFields": ["format"], "missingFields": ["format"], "preservedArgs": {}},
+        f"run_script missing format did not identify the required correction without inventing valid required arguments: {missing_format_retry}",
     )
     expect(
         result["invalidFromScriptArtifactCountBefore"] == result["invalidFromScriptArtifactCountAfter"],

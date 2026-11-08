@@ -81,7 +81,7 @@
   "documents.failedToCreateTemporaryPdfRenderTab": "PDF बनाने के लिए अस्थायी टैब नहीं खुल सका।",
   "documents.temporaryPdfRenderingRequiresTheChromeDebuggerRuntime": "PDF बनाने के लिए Chrome डीबगर का ऐक्सेस ज़रूरी है।",
   "documents.chromePagePrinttopdfReturnedEmptyData": "Chrome Page.printToPDF ने कोई डेटा नहीं लौटाया।",
-  "documents.temporaryTabDidNotFinishLoading": "अस्थायी टैब {tabId} पूरी तरह लोड नहीं हुआ।",
+  "documents.temporaryTabDidNotFinishLoading": "अस्थायी टैब पूरी तरह लोड नहीं हुआ।",
   "documents.documentArtifactHasNoContent": "बनाया गया दस्तावेज़ खाली है।",
   "documents.docxDocumentXmlNotFound": "DOCX फ़ाइल में document.xml नहीं है।",
   "documents.xlsxWorkbookXmlNotFound": "XLSX फ़ाइल में workbook.xml नहीं है।",

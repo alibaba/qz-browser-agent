@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID, randomBytes } from "node:crypto";
+import { once } from "node:events";
 import fs, { mkdir, mkdtemp, readFile, writeFile, rm, stat, symlink } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
@@ -62,11 +63,22 @@ test("a live worker collision reports its remaining lease without extending it",
   t.after(() => state.close());
   const paired = await state.pair(identity(state));
   const next = { ...paired, connectionId: randomUUID() };
+  await assert.rejects(state.pair({ ...next, pairingToken: "wrong" }), code("BRIDGE_CLIENT_IN_USE"));
+  assert.equal(state.status().connecting, undefined, "unproven callers cannot delay browser discovery");
   await assert.rejects(state.pair(next), error => error.code === "BRIDGE_CLIENT_IN_USE" && error.retryAfterMs === 46001);
+  assert.deepEqual(state.status().connecting, [{ clientId: paired.clientId, name: paired.name, retryAfterMs: 51000 }]);
   t.mock.timers.tick(12000);
   await assert.rejects(state.pair(next), error => error.code === "BRIDGE_CLIENT_IN_USE" && error.retryAfterMs === 34001);
+  assert.deepEqual(state.status().connecting, [{ clientId: paired.clientId, name: paired.name, retryAfterMs: 39000 }], "repeated collisions do not extend the same lease");
   t.mock.timers.tick(34001);
+  assert.equal(state.status().clientCount, 0);
+  assert.deepEqual(state.status().connecting, [{ clientId: paired.clientId, name: paired.name, retryAfterMs: 4999 }], "startup remains observable after the old lease expires");
   assert.equal((await state.pair(next)).connectionId, next.connectionId);
+  assert.equal(state.status().connecting, undefined, "successful pairing clears pending recovery");
+
+  await assert.rejects(state.pair({ ...next, connectionId: randomUUID() }), code("BRIDGE_CLIENT_IN_USE"));
+  t.mock.timers.tick(51000);
+  assert.equal(state.status().connecting, undefined, "abandoned recovery expires without extending discovery indefinitely");
 });
 
 test("pair HTTP errors return only the public remaining lease field", async t => {
@@ -82,6 +94,77 @@ test("pair HTTP errors return only the public remaining lease field", async t =>
   assert.equal(error.code, "BRIDGE_CLIENT_IN_USE");
   assert.ok(error.retryAfterMs > 0 && error.retryAfterMs <= 46001);
   assert.deepEqual(Object.keys(error).sort(), ["code", "error", "ok", "retryAfterMs"]);
+});
+
+test("a closed HTTP poll releases its lease without cancelling issued work and permits immediate browser restart", { timeout: 5000 }, async t => {
+  const bridge = await startBridge({ port: 0, connectWaitMs: 0 });
+  t.after(() => bridge.close());
+  const state = bridge.state, paired = await state.pair(identity(state));
+  const active = state.callExtension("evaluate", {}, { clientId: paired.clientId });
+  const [issued] = await poll(state, paired);
+  const owner = state.clients.get(paired.clientId), controller = new AbortController();
+  const admitted = once(state.events, "change");
+  const waiting = fetch(`${bridge.endpoint}/v1/qingzhou/poll`, {
+    method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal,
+    body: JSON.stringify({ client: { ...paired, id: paired.clientId, pairingVersion: 1, pollTimeoutMs: 20000 } }),
+  }).catch(error => error);
+  await admitted;
+  assert.equal(state.liveClients().length, 1);
+  const expired = once(state.events, "change");
+  controller.abort();
+  await waiting; await expired;
+  assert.equal(state.liveClients().length, 0, "browser closure does not wait for the old lease timeout");
+  assert.equal(owner.controller.signal.aborted, false, "transport loss alone does not cancel admitted operations");
+  assert.equal(state.complete(issued.id, { ...paired, ok: true, result: "finished" }), true);
+  assert.equal(await active, "finished");
+
+  const response = await fetch(`${bridge.endpoint}/v1/qingzhou/pair`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...paired, connectionId: randomUUID() }),
+  });
+  assert.equal(response.status, 200);
+  const next = await response.json();
+  assert.notEqual(next.connectionId, paired.connectionId);
+  await assert.rejects(poll(state, paired), code("BRIDGE_PAIRING_REQUIRED"));
+  await assert.rejects(state.disconnect(paired), code("BRIDGE_PAIRING_REQUIRED"));
+  const task = state.callExtension("ping", {}, { clientId: next.clientId });
+  const [request] = await poll(state, next);
+  assert.equal(state.complete(request.id, { ...paired, ok: true, result: "stale" }), false);
+  assert.equal(state.complete(request.id, { ...next, ok: true, result: "current" }), true);
+  assert.equal(await task, "current");
+});
+
+test("overlapping polls release only an unrenewed lease when every transport closes", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 100000 });
+  for (const reverse of [false, true]) {
+    const state = new BridgeState();
+    t.after(() => state.close());
+    const paired = await state.pair(identity(state));
+    const controllers = [new AbortController(), new AbortController()];
+    const pending = controllers.map(controller => poll(state, paired, { timeoutMs: 10000, signal: controller.signal }).catch(error => error));
+    await settle();
+    const first = reverse ? 1 : 0, last = reverse ? 0 : 1;
+    controllers[first].abort(); await pending[first];
+    assert.equal(state.liveClients().length, 1, "another active poll keeps the identity occupied");
+    await assert.rejects(state.pair({ ...paired, connectionId: randomUUID() }), code("BRIDGE_CLIENT_IN_USE"));
+    controllers[last].abort(); await pending[last];
+    assert.equal(state.liveClients().length, 0, "the last closed poll expires the lease in either order");
+  }
+  for (const renewal of ["poll", "pair"]) {
+    const state = new BridgeState();
+    t.after(() => state.close());
+    const paired = await state.pair(identity(state)), controller = new AbortController();
+    const old = poll(state, paired, { timeoutMs: 10000, signal: controller.signal }).catch(error => error);
+    await settle();
+    if (renewal === "pair") await state.pair(paired);
+    else {
+      const current = poll(state, paired, { timeoutMs: 100 });
+      await settle(); t.mock.timers.tick(100); await current;
+    }
+    controller.abort(); await old;
+    assert.equal(state.liveClients().length, 1, `a late abort cannot erase a successful ${renewal}`);
+    await assert.rejects(state.pair({ ...paired, connectionId: randomUUID() }), code("BRIDGE_CLIENT_IN_USE"));
+  }
 });
 
 test("rename preserves the active lease, rejects conflicts, and exposes a public canonical poll identity", async t => {
@@ -318,7 +401,7 @@ test("HTTP pairing reports typed errors with extension CORS and enforces instanc
   const origin = `chrome-extension://${"a".repeat(32)}`;
   const post = (path, body) => fetch(`${bridge.endpoint}/v1/qingzhou/${path}`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) });
   const health = await (await fetch(`${bridge.endpoint}/health`)).json();
-  assert.deepEqual(health.features, { browserPairing: 1 });
+  assert.deepEqual(health.features, { browserPairing: 1, scriptApiVersion: 2 });
   const paired = await (await post("pair", identity(bridge.state))).json();
   assert.equal(paired.ok, true);
   const denied = await post("pair", { ...paired, connectionId: randomUUID() });
@@ -336,39 +419,67 @@ function cliFixture() {
   const running = { endpoint: "http://127.0.0.1:18765", instanceId: "daemon", health };
   const calls = [];
   const dependencies = { findDaemon: async () => running, ensureDaemon: async () => running,
-    openBrowser: () => assert.fail("strict selection must not open a browser"), stopDaemon: () => assert.fail("must not stop a working service"),
-    callTool: async (_url, tool, args) => { calls.push({ tool, args }); return {}; } };
+    readHealth: async endpoint => { assert.equal(endpoint, running.endpoint); return health; },
+    openBrowser: () => assert.fail("selection must not open the installer"),
+    openConnectionBrowser: () => assert.fail("a selected responsive browser needs no connection page"), stopDaemon: () => assert.fail("must not stop a working service"),
+    callTool: async (_url, tool, args) => { calls.push({ tool, args }); return tool === "qingzhou_call" ? { pong: true } : {}; } };
   return { clients, health, running, calls, dependencies };
 }
 
-test("CLI requires explicit multi-browser selection and resolves names to UUID for every command", async () => {
+test("browser commands choose one responding identity and explicit selectors never fall back", async () => {
   const { clients, health, calls, dependencies } = cliFixture();
-  for (const command of [["connect"], ["tasks"], ["settings"], ["create", "Test"]]) await assert.rejects(runCli(command, dependencies), code("selection_required"));
-  for (const selector of ["missing", "offline"]) for (const command of [["connect"], ["create", "Test"]]) {
-    await assert.rejects(runCli([...command, "--client", selector], dependencies), code(selector === "missing" ? "client_not_found" : "client_offline"));
+  for (const command of [["tasks"], ["settings"], ["create", "Test"]]) {
+    calls.length = 0;
+    await runCli(command, dependencies);
+    assert.deepEqual(calls.map(call => call.args.clientId), [clients[0].clientId, clients[0].clientId]);
+    assert.equal(calls[0].tool, "qingzhou_call");
+    assert.equal(calls[0].args.method, "ping");
+    assert.notEqual(calls[1].tool, "qingzhou_call");
+  }
+  calls.length = 0;
+  for (const selector of ["missing", "offline"]) for (const command of [["tasks"], ["create", "Test"]]) {
+    await assert.rejects(runCli([...command, "--client", selector, "--timeout", "0.03"], dependencies), code(selector === "missing" ? "CLIENT_NOT_FOUND" : "CLIENT_OFFLINE"));
   }
   assert.equal(calls.length, 0);
   await runCli(["create", "Test", "--client", "work"], dependencies);
-  assert.equal(calls[0].args.clientId, clients[1].clientId);
-  await runCli(["connect", "--client", clients[0].clientId], dependencies);
-  assert.equal(calls[1].args.clientId, clients[0].clientId);
+  assert.deepEqual(calls.map(call => call.args.clientId), [clients[1].clientId, clients[1].clientId]);
+  calls.length = 0;
+  await runCli(["tasks", "--client", clients[0].clientId], dependencies);
+  assert.deepEqual(calls.map(call => call.args.clientId), [clients[0].clientId, clients[0].clientId]);
+  calls.length = 0;
+  const firstId = clients[0].clientId;
+  dependencies.callTool = async (_url, tool, args) => {
+    calls.push({ tool, args });
+    if (tool === "qingzhou_call" && args.clientId === firstId) throw Object.assign(new Error("the first registered poller is idle"), { code: "BRIDGE_REQUEST_TIMEOUT" });
+    return tool === "qingzhou_call" ? { pong: true } : {};
+  };
+  await runCli(["create", "Use the responding browser"], dependencies);
+  assert.deepEqual(calls.map(call => [call.tool, call.args.clientId]), [
+    ["qingzhou_call", firstId], ["qingzhou_call", clients[1].clientId], ["qingzhou_create_session", clients[1].clientId],
+  ]);
+  calls.length = 0;
+  await assert.rejects(runCli(["create", "Stay in the selected profile", "--client", firstId, "--timeout", "0.03"], dependencies), code("CLIENT_OFFLINE"));
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every(call => call.tool === "qingzhou_call" && call.args.method === "ping" && call.args.clientId === firstId),
+    "an explicit unresponsive browser only retries its own read-only probe; no mutation or other profile is called");
   assert.equal((await runCli(["browsers"], dependencies)).result.browsers.length, 3);
   await runCli(["browsers", "forget", "offline"], dependencies);
   assert.deepEqual(calls.at(-1), { tool: "qingzhou_forget_browser", args: { clientId: health.status.browsers[2].clientId } });
 });
 
-test("new CLI explains an older healthy daemon and never upgrades it by stopping it", async () => {
+test("read-only status and MCP URI preserve an older healthy daemon", async () => {
   const { health, dependencies, calls } = cliFixture(); delete health.features;
-  for (const command of [["connect"], ["create", "Test"], ["browsers"]]) await assert.rejects(runCli(command, dependencies), error => error.code === "upgrade_required" && /stop/.test(error.details.hint) && /reload/.test(error.details.hint) && /all browsers/.test(error.details.hint));
+  dependencies.restartDaemon=()=>assert.fail("read-only commands cannot upgrade a service");
   assert.equal(calls.length, 0);
   assert.equal((await runCli(["status"], dependencies)).result.running, true);
   assert.match((await runCli(["mcp"], dependencies)).text, /\/mcp/);
+  assert.equal(calls.length, 0);
 });
 
 test("explicit connect ports preserve an existing daemon and report its address", async () => {
   const { dependencies, calls } = cliFixture();
-  await assert.rejects(runCli(["connect", "--port", "18766"], dependencies), error => error.code === "port_mismatch" && /18765/.test(error.details.endpoint));
-  for (const port of ["0", "65536", "NaN", "1.5"]) await assert.rejects(runCli(["connect", "--port", port], dependencies), code("invalid_arguments"));
+  await assert.rejects(runCli(["connect", "uri", "--port", "18766"], dependencies), error => error.code === "PORT_MISMATCH" && /18765/.test(error.details.endpoint));
+  for (const port of ["0", "65536", "NaN", "1.5"]) await assert.rejects(runCli(["connect", "uri", "--port", port], dependencies), code("INVALID_ARGUMENTS"));
   assert.equal(calls.length, 0);
 });
 
@@ -466,7 +577,7 @@ test("async tool jobs outlive their caller but cannot transfer to a replacement 
     const done = state.getJob(job.jobId);
     assert.equal(done.status, replace ? "failed" : "completed");
     if (replace) {
-      assert.match(done.error, /BRIDGE_CLIENT_DISCONNECTED/);
+      assert.equal(done.error.code, "BRIDGE_CLIENT_DISCONNECTED");
       assert.deepEqual(await poll(state, target), []);
     } else assert.deepEqual(done.result, { accepted: true });
     assert.equal(state.pending.size, 0); assert.equal(state.inflight.size, 0);
@@ -492,26 +603,27 @@ test("automatic browser names are unique across concurrent pairing and preserve 
   assert.equal(await pending, "still connected");
 });
 
-test("binding URL preparation does not select, probe or open a browser and supports explicit names", async () => {
-  const { running, dependencies } = cliFixture();
-  let opened;
+test("connect uri only prepares a URL and supports registered profiles and explicit names", async () => {
+  const { clients, running, dependencies } = cliFixture();
   const deps = { ...dependencies, callTool: () => assert.fail("URL preparation does not probe a browser"),
     readHealth: () => assert.fail("URL preparation does not wait for a browser"),
-    openBrowser: async url => { opened = url; return { opened: true }; } };
-  for (const clients of [[], running.health.status.clients]) {
-    const health = { ...running.health, status: { ...running.health.status, clients } };
-    const prepared = await runCli(["connect", "--no-open", "--json"], { ...deps, ensureDaemon: async () => ({ ...running, health }) });
-    assert.deepEqual(prepared.result, { endpoint: running.endpoint, url: `${running.endpoint}/qz-connect`, mcpUrl: `${running.endpoint}/mcp`, opened: false });
-    assert.equal(opened, undefined);
+    openBrowser: () => assert.fail("URL preparation does not open the installer"),
+    openConnectionBrowser: () => assert.fail("URL preparation does not open a browser"),
+    restartDaemon: () => assert.fail("URL preparation does not upgrade a service") };
+  for (const entries of [[], running.health.status.clients]) {
+    const health = { ...running.health, status: { ...running.health.status, clients: entries } };
+    const prepared = await runCli(["connect", "uri", "--json"], { ...deps, findDaemon: async () => ({ ...running, health }) });
+    assert.deepEqual(prepared.result, { url: `${running.endpoint}/qz-connect` });
   }
-  const named = await runCli(["connect", "--no-open", "--name", "work-Chrome_2", "--json"], deps);
-  assert.equal(named.result.url, `${running.endpoint}/qz-connect?name=work-Chrome_2`);
-  assert.equal(named.result.opened, false); assert.equal(opened, undefined);
-  const launched = await runCli(["connect", "--name", "work"], deps);
-  assert.equal(opened, `${running.endpoint}/qz-connect?name=work`);
-  assert.equal(launched.result.opened, true); assert.equal(Object.hasOwn(launched.result, "connected"), false);
-  for (const args of [["--client", "missing", "--no-open"], ["--client", "work", "--name", "personal"],
-    ["--name", ""], ["--name", "two words"], ["--name", randomUUID()]]) {
-    await assert.rejects(runCli(["connect", ...args], { ensureDaemon: () => assert.fail("invalid flags have no effects") }), code("invalid_arguments"));
+  const named = await runCli(["connect", "uri", "--name", "work-Chrome_2", "--json"], deps);
+  assert.deepEqual(named.result, { url: `${running.endpoint}/qz-connect?name=work-Chrome_2` });
+  for (const selector of ["work", clients[1].clientId]) {
+    assert.equal((await runCli(["connect", "uri", "--client", selector], deps)).text, `${running.endpoint}/qz-connect?name=work\n`);
+  }
+  await assert.rejects(runCli(["connect", "uri", "--client", "missing"], deps), code("CLIENT_NOT_FOUND"));
+  for (const args of [[], ["--no-open"], ["uri", "--no-open"], ["uri", "--client", "work", "--name", "personal"],
+    ["uri", "--name", ""], ["uri", "--name", "two words"], ["uri", "--name", randomUUID()]]) {
+    await assert.rejects(runCli(["connect", ...args], { findDaemon: () => assert.fail("invalid flags have no effects"),
+      ensureDaemon: () => assert.fail("invalid flags have no effects") }), code("INVALID_ARGUMENTS"));
   }
 });

@@ -12,7 +12,7 @@
 
 </div>
 
-轻舟（qz）是一个运行在你浏览器里的开源浏览器 Agent（Chrome 扩展）。一句话描述任务，它就会在你已登录的网站上自动操作、提取数据，交付表格、文件或带出处的报告。可接入 DeepSeek、OpenAI、Claude 等任意模型，用自己的 API Key，数据留在本地，只发给你选的模型；Grok Bot、Claude Code、Codex 等 Agent 也能通过 CLI 和 MCP 把网页任务交给它。
+轻舟（qz）是一个运行在你浏览器里的开源浏览器 Agent（Chrome 扩展）。一句话描述任务，它就会在你已登录的网站上自动操作、提取数据，交付表格、文件或带出处的报告。可接入 DeepSeek、OpenAI、Claude 等任意模型，用自己的 API Key，数据留在本地，只发给你选的模型；Grok Bot、Claude Code、Codex 等 Agent 也能通过 CLI 和 MCP 直接操作你的浏览器，或把整个网页任务交给它。
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm"><img src="docs/images/chrome-web-store-badge.png" alt="在 Chrome 应用商店获取" height="58"></a>
@@ -34,7 +34,11 @@ https://github.com/user-attachments/assets/3203bc89-ef26-4f66-86cc-b602a912a1ab
 
 ### 透明可见，人与 Agent 协同
 
-其他 browser agent 大多能看到执行过程，但中途很难介入，而且要么只给人用，要么只给 Agent 用。轻舟常驻在浏览器侧边栏，每一步操作和结果都清晰可见，你可以随时介入或停止。同时，Claude Code、Codex 等 coding agent 也能通过 CLI 和 MCP 直接向轻舟下发任务。
+其他 browser agent 大多能看到执行过程，但中途很难介入，而且要么只给人用，要么只给 Agent 用。轻舟常驻在浏览器侧边栏，每一步操作和结果都清晰可见，你可以随时介入或停止。同时，Claude Code、Codex 等 coding agent 也能通过 CLI 和 MCP 操作同一个浏览器，或直接向轻舟下发任务。
+
+<p align="center">
+  <img src="docs/images/agent-drive-zh-CN.png" width="800" alt="编程 Agent 在终端运行一段 qz 脚本，轻舟侧边栏同步显示每一步浏览器操作和保存的数据表">
+</p>
 
 ### 并行多任务调研，从网页数据到可复用 Skill
 
@@ -110,9 +114,7 @@ https://github.com/user-attachments/assets/3203bc89-ef26-4f66-86cc-b602a912a1ab
 用轻舟查本周 GitHub 上最火的 AI agent 项目，整理成周报发给我。
 ```
 
-<p align="center">
-  <img src="docs/images/examples/zh/pi-delegate-zh.gif" width="800" alt="">
-</p>
+Agent 会在你的浏览器里打开一个轻舟会话，读取页面并通过 `qz script` 操作；也可以用 `qz create` 把整个任务交给轻舟内置 agent。
 
 ## 快速开始
 
@@ -125,7 +127,7 @@ https://github.com/user-attachments/assets/3203bc89-ef26-4f66-86cc-b602a912a1ab
    ```text
    查今年诺贝尔奖各奖项得主，整理成带来源链接的表格。
    ```
-4. **（可选）接入其他 Agent**：在终端运行 `npx --yes qz-browser-agent@latest connect`，即可让外部 Agent 调用轻舟。详见 [让你的 Agent 更会用浏览器](#让你的-agent-更会用浏览器)。
+4. **（可选）接入其他 Agent**：CLI 命令会按需启动本地服务并连接浏览器。Agent 说明书见 [让你的 Agent 更会用浏览器](#让你的-agent-更会用浏览器)。
 
 <details id="手动安装">
 <summary>无法访问 Chrome 应用商店？手动安装</summary>
@@ -139,15 +141,15 @@ https://github.com/user-attachments/assets/3203bc89-ef26-4f66-86cc-b602a912a1ab
 
 ## 让你的 Agent 更会用浏览器
 
-Grok Bot、Claude Code、Codex、pi 等 Agent 遇到网页任务时，可以把它交给轻舟。轻舟在你的浏览器侧边栏里执行，过程看得见，结果再交回给 Agent，让它接着往下做。
+Grok Bot、Claude Code、Codex、pi 等 Agent 可以直接操作已经连接的浏览器。这一份 Skill 就是直驱说明书：开标签、读页面，用 `qz script` 或 MCP 操作。需要轻舟内置 agent 规划执行时，同一份 Skill 会指向 `references/create-task.md`。
 
-1. **安装 Skill**：让你的 Agent 学会怎么调用轻舟。
+1. **安装这一份 Skill**。它就是直驱说明书。
    ```bash
    npx skills add alibaba/qz-browser-agent -g
    ```
-2. **配对一次**：需要 Node.js 22 及以上版本，运行后会自动在你的默认浏览器里完成配对。
+2. **选择浏览器（可选）**：需要 Node.js 22 及以上版本。首个 CLI 命令会在默认浏览器中打开连接页并自动连接；如果那个浏览器没装轻舟，连接页会给出 Chrome 应用商店链接，以及可复制到已装轻舟的浏览器中打开的链接。如需指定浏览器 Profile，运行以下命令，并在该 Profile 中打开输出的链接：
    ```bash
-   npx qz-browser-agent@latest connect
+   npx qz-browser-agent@latest connect uri
    ```
 3. **直接吩咐**：跟你的 Agent 说“用轻舟对比最近 6 个月发布的开源大模型，整理成带来源的表格”。
 
@@ -155,13 +157,19 @@ Grok Bot、Claude Code、Codex、pi 等 Agent 遇到网页任务时，可以把�
 <summary>直接用 CLI 或 MCP</summary>
 
 ```bash
-npx qz-browser-agent@latest create "你的任务" --stream
+npm install --global qz-browser-agent
+qz session create --title "对比模型" --json
+qz script --session SESSION_ID task.js
+qz create "你的任务" --stream
 ```
 
-- `--stream` 会实时显示任务进展、需要你回答的问题和最终结果。
-- 用 MCP 客户端的话，配对后运行 `npx qz-browser-agent@latest mcp`，填入它返回的 HTTP 地址即可。
-- 经常使用的话，可以运行 `npm install --global qz-browser-agent` 全局安装，之后用 `qz` 代替 `npx qz-browser-agent@latest`。
+- `session create` 打开一个浏览器会话，不会启动模型。加 `--json` 时，`result.qz_skills` 列出该会话可直接使用的 Skill。
+- `script` 用 `qz` SDK 在该会话中运行 JavaScript 文件，并以 JSON 输出 `{ok,result,trace}`。完整说明运行 `qz skill` 查看。
+- `create` 把整个任务交给轻舟内置 agent，`--stream` 会实时显示任务进展、需要你回答的问题和最终结果。
+- 不全局安装的话，用 `npx qz-browser-agent@latest` 代替 `qz`。
+- 用 MCP 客户端的话，运行 `qz mcp`，填入它返回的 HTTP 地址即可。
 - 多浏览器配对、追问、导出等用法见 [CLI 与 MCP 参考](docs/cli.md)。
+- DeepSeek Harness 接入见[轻舟 dsh 插件](services/dsh-plugin/README.zh-CN.md)。
 
 </details>
 

@@ -54,11 +54,13 @@ async function connected(browser) {
   return until(async () => (await readHealth(bridge.endpoint)).status.clients.find(client => client.clientId === browser.uuid), `${browser.name} connected`, 100000);
 }
 async function connect(browser) {
-  const result = await runCli(["connect", "--no-open", "--name", browser.name, "--json"], {
-    ensureDaemon: async () => ({ endpoint: bridge.endpoint, instanceId: bridge.instanceId, health: await readHealth(bridge.endpoint) }),
-    openBrowser: () => assert.fail("--no-open must not launch a default user browser"),
+  const locate = async () => ({ endpoint: bridge.endpoint, instanceId: bridge.instanceId, health: await readHealth(bridge.endpoint) });
+  const result = await runCli(["connect", "uri", "--name", browser.name, "--json"], {
+    findDaemon: locate, ensureDaemon: locate,
+    openBrowser: () => assert.fail("connect uri must not launch a default user browser"),
+    openConnectionBrowser: () => assert.fail("connect uri must only print the URL"),
   });
-  assert.ok(result.result.url, "headless connect returns the exact browser pairing URL");
+  assert.equal(result.result.url, `${bridge.endpoint}/qz-connect?name=${browser.name}`);
   const page = await browser.context.newPage();
   try {
     await page.goto(result.result.url);
@@ -210,7 +212,7 @@ async function runCase(spec) {
     : observeMcp(browser, "qingzhou_create_session", { firstMessage: entry.prompt, title: `Live ${entry.id}` });
   try {
     const created = await until(() => { if (observer.error) throw observer.error; return observer.created; }, `${entry.id} admission`, 45000);
-    entry.sessionId = created.session?.id || created.sessionId; assert.ok(entry.sessionId); browser.sessions.add(entry.sessionId);
+    entry.sessionId = created.session?.sessionId || created.sessionId; assert.ok(entry.sessionId); browser.sessions.add(entry.sessionId);
     const deadline = Date.now() + taskTimeout * 1000, answered = new Set();
     while (!observer.settled) {
       if (interrupted || Date.now() > deadline) throw new Error("Bounded live observation ended");
@@ -333,7 +335,7 @@ try {
         await snapshot(other, task.sessionId).then(outside => {
           assert.equal(outside.session, null); assert.equal(outside.transcript.length, 0); assert.equal(outside.hasHistory, false);
         }, error => assert.match(error.message, /not.found|unknown|missing|不存在/i));
-        const listed = await mcp(other, "qingzhou_list_sessions", { limit: 100 }); assert.ok(!listed.sessions.some(session => session.id === task.sessionId));
+        const listed = await mcp(other, "qingzhou_list_sessions", { limit: 100 }); assert.ok(!listed.sessions.some(session => session.sessionId === task.sessionId));
       }
       entry.checked.push({ sessionId: task.sessionId, clientId: owner.uuid });
     }

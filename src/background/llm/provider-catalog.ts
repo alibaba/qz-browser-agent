@@ -2,13 +2,13 @@ import { getProviderEndpoint } from "./provider-endpoint.js";
 export { getProviderEndpoint } from "./provider-endpoint.js";
 import contributions from "#capabilities/presets";
 import { resolveProviderPresets } from "./provider-presets.js";
-import { completeCustomProviderEndpoint, normalizeCustomProtocol } from "../../shared/models/custom-provider-endpoint.js";
+import { completeCustomProviderEndpoint, customProviderModelsEndpoint, normalizeCustomProtocol } from "../../shared/models/custom-provider-endpoint.js";
 export { normalizeCustomProtocol } from "../../shared/models/custom-provider-endpoint.js";
 import { PRODUCT_PROVIDERS, getProductDefaultProvider } from "../product/providers.js";
 
 import type { ProviderDefinition } from './provider-types.js';
 export type { ProviderDefinition } from './provider-types.js';
-type ProviderInput = { provider?: unknown; customProtocol?: unknown; customEndpoint?: unknown; endpoint?: unknown };
+type ProviderInput = { provider?: unknown; customProtocol?: unknown; customEndpoint?: unknown; endpoint?: unknown; maxOutputTokens?: unknown };
 const PROVIDER_BASE_HEADERS = { "x-app": "cli" };
 const CUSTOM_PROVIDER_ID = "custom";
 // Explicit policy patches preserve live labels and executable handler identity.
@@ -27,6 +27,8 @@ export function listProviderSummaries() {
       protocol: providerDef.protocol || "",
       endpoint: getProviderEndpoint(providerDef),
       ...(providerDef.hideEndpoint ? { hideEndpoint: true } : {}),
+      ...(providerDef.editableEndpoint ? { editableEndpoint: providerDef.editableEndpoint } : {}),
+      ...(providerDef.modelsIncludeCapabilities ? { modelsIncludeCapabilities: true } : {}),
       custom: providerDef.custom === true,
       ...(providerDef.auth ? { auth: { label: providerDef.auth.label, hint: providerDef.auth.hint } } : {}),
       modelOptions: providerDef.modelOptions || [],
@@ -77,16 +79,26 @@ export function getProviderDef(configOrProvider: ProviderInput | string = {}): P
     : { provider: configOrProvider };
   const provider = normalizeProvider(config.provider);
   const providerDef = PROVIDERS[provider] || PROVIDERS.fireworks;
+  if (providerDef.editableEndpoint || providerDef.modelsIncludeCapabilities) return {
+    ...providerDef,
+    ...(providerDef.editableEndpoint ? {
+      endpoint: normalizeCustomEndpoint((Object.hasOwn(config, "customEndpoint") ? config.customEndpoint : config.endpoint) || providerDef.editableEndpoint, providerDef.protocol),
+    } : {}),
+    // A local model with unknown output metadata keeps its gateway's default.
+    ...(providerDef.modelsIncludeCapabilities && !(typeof config.maxOutputTokens === "number" && Number.isSafeInteger(config.maxOutputTokens) && config.maxOutputTokens > 0)
+      ? { outputTokenParam: undefined } : {}),
+  };
   if (!isCustomProvider(provider)) return providerDef;
   const protocol = normalizeCustomProtocol(config.customProtocol);
+  const endpoint = normalizeCustomEndpoint(config.customEndpoint || config.endpoint, protocol);
   return {
     ...providerDef,
     api: ({ anthropic: "anthropic-messages", openai: "openai-chat-completions" } as Record<string, string>)[protocol] || protocol,
     protocol,
-    endpoint: normalizeCustomEndpoint(config.customEndpoint || config.endpoint, protocol),
+    endpoint,
     baseUrl: "",
-    modelsEndpoint: "",
-    modelsAuth: false,
+    modelsEndpoint: customProviderModelsEndpoint(endpoint, protocol),
+    modelsAuth: true,
     modelsAuthHeader: protocol === "anthropic" ? "x-api-key" : "",
   };
 }

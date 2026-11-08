@@ -9,7 +9,8 @@ runner options.
 Install the locked browser binaries with `npx playwright install chromium`. Playwright and extension
 tests use Chromium; standalone page fixtures also use Chromium Headless Shell. Python browser tests
 use `tests/python/uv.lock` through uv. Missing dependencies fail the run. The Firefox suite needs
-Mozilla Firefox 154 or newer: `npx playwright install firefox` and `npx playwright install-deps firefox`.
+Mozilla Firefox 154 or newer and Chromium Headless Shell for its DOM unit fixtures:
+`npx playwright install --with-deps chromium-headless-shell firefox`.
 
 ```bash
 npm test -- unit contracts
@@ -53,10 +54,17 @@ Use `node tests/release/npm-package.mjs --help` to retain or test a specific tar
 The **npm package** workflow runs these checks with Node.js 22 and 24 on Linux, macOS, and Windows,
 plus Node.js 22.0.0 on Linux to cover the minimum supported runtime.
 
+For the independent [dsh plugin](../services/dsh-plugin/README.md), run `npm ci`, `npm test`,
+and `npm run check:package` in `services/dsh-plugin`. Its separate workflow checks the CLI
+adapter lifecycle and installs the packed artifact on Linux, macOS, and Windows with Node 24;
+Linux also covers Node 24.9.0. These checks use isolated CLI fixtures and require no model key.
+
 The service suite checks repeated SIGINT/SIGTERM handling and listener cleanup on every platform.
 On Linux and macOS it exercises the real CLI and npm's default shell during stdin input and
-streaming, signaling the process group or the CLI PID and verifying that tasks and the service
-remain running. Supervisors should signal their owned npm process group; delivery to the npm PID
+streaming, signaling the process group or the CLI PID and verifying that delegated tasks and the service
+remain running. Direct-drive script interruption cancels only the current request; shared Chrome/Firefox
+acceptance checks verify that the session and tabs remain usable and no later action executes.
+Supervisors should signal their owned npm process group; delivery to the npm PID
 alone depends on the shell forwarding it to the CLI.
 
 The runner selects one to three concurrent jobs based on available CPUs. Timing-sensitive suites run
@@ -77,20 +85,69 @@ other browser entries accept `CHROME_EXECUTABLE`. Keep the browser version fixed
 Session exchange runs headless by default; set `SESSION_EXCHANGE_HEADLESS=0` to open a browser
 window for debugging.
 
+## Direct-drive CLI fuzzing
+
+Run the connection state-machine corpus and the actual CLI/browser task corpus separately:
+
+```bash
+npm test -- unit --match qz-connection-fuzz
+npm test -- playwright direct-drive-fuzz.spec.mjs --workers 2
+```
+
+The corpus contains **50 distinct scenario types**, not 50 seeds: 25 connection scenarios and
+25 browser task scenarios. Both manifests assert their count and uniqueness.
+
+The [connection corpus](unit/test-qz-connection-fuzz.mjs) uses four persisted seeds and a stateful
+simulated transport. Each seed shuffles all 25 scenarios twice, producing 200 transitions by
+default. It varies browser identities, registration order, session ownership, disconnections,
+compatibility upgrades, service replacement, cancellation, and lost mutation replies. Additional
+histories cover default-browser connection/pending, reconnect deadline exhaustion, cancellation during
+startup/upgrade, and transcript-only ownership discovery/conflicts. It checks routing and rejects
+ambiguous ownership without dispatching a mutation. This layer does not launch browsers or test
+installation of a released CLI version. The separate stalled-health regression in
+`test-qz-client-scope.mjs` uses real HTTP to check cancellation and remaining connection budgets.
+
+The browser corpus launches two isolated Chromium profiles against one real bridge and executes
+the CLI bin in a fresh subprocess for every command. Each of three persisted seeds runs all 25
+scenarios: ordinary, SPA and open-shadow checkout; parallel document comparison; and the 21
+[additional tasks](support/drive-task-scenarios.mjs). These check missing/unknown references,
+detached UIDs, reload/hash/document navigation, exactly-once AJAX triggers, popup chains, alias
+reuse/collisions, foreign-session writes, preservation of read-only user tabs, same-tab serialization,
+cross-tab progress, caught errors, cancellation, timeout without replay, Unicode business values,
+large-result projection, catalog recovery, and iframe target identity.
+Histories vary task order, owning profile, values, action order, and
+failures before or after submission. Service restarts occur before submission, after submission,
+or while the response to a recorded submission is withheld. The test observes automatic
+reconnection with the same browser identities, then resumes the same session without replaying
+the submission. Server receipts and independent Playwright DOM reads verify results and cleanup.
+Compatible build differences use the real daemon discovery path; incompatible upgrade admission
+is covered by the simulated corpus. These new browser cases do not cover Firefox or Edge.
+
+Filter a persisted case with `--grep 'seed=65537'`. Set `QZ_DRIVE_FUZZ_SEEDS` to comma-separated
+positive uint32 seeds to explore more browser histories, or `QZ_CONNECTION_FUZZ_SEEDS` to uint32
+seeds for the simulated corpus. Playwright attaches `direct-drive-fuzz.json` with scenario IDs,
+outcomes, command ranges, generated tasks, fault phases, scripts, CLI output, elapsed times, and
+output character counts. Additional tasks use fresh Sessions and are all attempted even if an
+earlier task fails; any failed task still fails the seed. The browser tests
+also compare full element observations with returned target maps and check that intermediate
+results do not leak into stdout. Explicit script values above 48,000 characters remain intact;
+scripts can return a compact projection instead. Character counts measure transport volume, not model tokens.
+Neither corpus invokes a model or measures model-driven task success rates.
+
 ## Tool data-flow scheduling
 
 Run `npm test -- unit --match tool-dataflow` for the Agent/runtime/Session transaction fixture and
 `npm test -- unit --match agent-tool-scheduler` for the shared ten-call budget. The fixtures hold
 individual opens and actions, prove that ready readers advance before unrelated openings finish,
-and compare serial/parallel ownership, working tab, effects, ordered final events and model messages. Start/progress tests assert live publication and
+and compare serial/parallel ownership, explicit page references, effects, ordered final events and model messages. Start/progress tests assert live publication and
 per-call isolation while execution is still blocked.
 Failure, duplicate aliases, cancellation, private permit identity and cleanup retries are included.
 The data-flow fixture retains production script declarations while controlling their execution:
-no-tools page scripts overlap across tabs and serialize within a tab; tool-using, inner and hidden
+evaluate functions overlap across tabs and serialize within a tab; outer run_script and hidden
 Skill scripts remain barriers. `npm test -- unit --match tool-behavior` verifies barrier predicate
 precedence, single evaluation, throwing predicates, new capability tool names and plugin barriers.
-`npm test -- unit --match script-tool-access` covers static classification; `--match script-runtime`
-checks actual generated page expressions, input bindings and no-replay errors.
+`npm test -- unit --match run-script-source` checks script wrapping; `--match script-runtime`
+checks shared value serialization, input bindings and no-replay errors.
 `npm test -- playwright tests/browser/script-dataflow.spec.mjs` serves six local pages, compares
 serial budget 1 with data-flow budget 10 for three alternating trials, and attaches timings. It also
 checks same-tab serialization, real nested `tools.read_article` barriers and one-shot failure after
@@ -256,7 +313,7 @@ a full disk. It uses local deterministic
 model responses, writes a redacted report under `tests/results/multi-browser/pairing-edges-<timestamp>/`,
 and removes its Chrome processes, Profiles, registry, and network captures. It is a manual entry.
 
-For a shell-pairing check, obtain a URL with `connect --no-open --json` and open it in the selected
+For a shell-pairing check, obtain a URL with `connect uri` and open it in the selected
 test Profile using the [platform launch command](../docs/cli.md#pair-a-selected-browser-from-the-shell).
 Confirm that `browsers --json` lists that Profile online, and use its UUID for the next browser
 operation. URL creation alone does not establish a connection. `--name` should update only the
@@ -352,6 +409,7 @@ npm test -- live agent --cases document_pipeline,network_form_edge
 npm test -- live agent --suite journeys
 npm test -- live realworld
 npm test -- live deepseek
+npm test -- live direct-drive --output tests/results/live-direct-drive
 npm test -- live rate
 npm test -- live cli-mcp --duration-seconds 1800
 npm test -- live multi-browser
@@ -359,6 +417,11 @@ npm test -- live multi-browser
 
 `agent` calls a real model against constructed pages; `realworld` and `cli-mcp` visit public sites.
 `deepseek` checks extension lifecycle and stream behavior; `rate` checks Provider throttling.
+`direct-drive` gives a real external DeepSeek agent the current browser Skill and a qz CLI tool.
+It creates a titled drive session, follows Wikipedia links and images through returned element
+targets, runs a page script, and checks session grouping and tool cards. It saves CLI/model traces
+and screenshots in the output directory. `cli-mcp` and the Pi delegation runners use the built-in
+Agent through `qz create`.
 `cli-mcp` runs English research, data, document, and interaction tasks with real DeepSeek responses
 through CLI and MCP in one isolated Chrome profile. Its 30-minute clock starts after setup; individual
 task failures are recorded and cancelled before the next task. It saves transcripts, downloads,

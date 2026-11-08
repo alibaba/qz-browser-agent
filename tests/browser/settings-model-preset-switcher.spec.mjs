@@ -33,6 +33,40 @@ for (const colorScheme of ["light", "dark"]) {
   test.describe(`model preset switcher · ${colorScheme}`, () => {
     test.use({ colorScheme, viewport: { width: 430, height: 760 } });
 
+    test("header button opens the same picker and restores composer focus", async ({ page }, testInfo) => {
+      await openSidepanel(page, configForPreset(PRESETS[0]));
+      await page.evaluate(() => window.qingzhouConversationBenchmark.runSnapshotRender({
+        sessionId: 'model-switch-button', title: '模型快速切换',
+        transcript: [{ type: 'user', text: '继续当前对话' }],
+      }));
+      const button = page.getByRole('button', { name: '切换模型', exact: true });
+      await expect(button).toBeVisible();
+      const buttonBox = await button.boundingBox();
+      const textSizeBox = await page.locator('#btn-chat-text-size').boundingBox();
+      expect(buttonBox.x + buttonBox.width).toBeLessThanOrEqual(textSizeBox.x);
+      expect(buttonBox.height).toBe(textSizeBox.height);
+      await testInfo.attach(`model-switch-button-${colorScheme}.png`, {
+        body: await page.locator('#session-title-bar').screenshot(), contentType: 'image/png',
+      });
+      await button.click();
+      const input = page.locator('#model-preset-switcher-input');
+      await expect(input).toBeFocused();
+      await input.fill('km k3');
+      await input.press('Enter');
+      await expect.poll(() => page.evaluate(() => window.__qzPostedMessages
+        .filter(message => message.type === 'apply_model_preset').length)).toBe(1);
+      const request = await page.evaluate(() => window.__qzPostedMessages.find(message => message.type === 'apply_model_preset'));
+      expect(request.presetId).toBe('preset-kimi');
+      await page.evaluate(({ requestId, config }) => window.__qzEmitPortMessage({ type: 'config', requestId, config }),
+        { requestId: request.requestId, config: configForPreset(PRESETS[1]) });
+      await expect(page.locator('#model-preset-switcher')).toBeHidden();
+      await expect(page.locator('#input')).toBeFocused();
+      await button.click();
+      await expect(input).toBeFocused();
+      await input.press('Escape');
+      await expect(page.locator('#input')).toBeFocused();
+    });
+
     test("fuzzy-matches and applies a preset entirely from the keyboard", async ({ page }) => {
       const initialConfig = configForPreset(PRESETS[0]);
       await openSidepanel(page, initialConfig);

@@ -64,7 +64,13 @@ function assertUiRuntimeContracts() {
   assert.match(sidepanelCss, /\.msg-user-edit-btn::before\s*\{[\s\S]*bottom:\s*calc\(100% \+ 3px\)/, "edit tooltip should appear above the icon");
   assert.match(sidepanel, /class="qz-field qz-field--bare msg-user-edit-input"/, "message editing should use the shared borderless field treatment");
   assert.match(sidepanelCss, /textarea\.msg-user-edit-input\s*\{[\s\S]*border:\s*0[\s\S]*resize:\s*none/, "message editing should override the generic textarea border and resize handle");
-  assert.match(sidepanelHtml, /id="chat-dock"[\s\S]*id="status-bar"[\s\S]*<footer id="input-area"[^>]*>/, "status and composer should live in one chat dock");
+  assert.match(sidepanelHtml, /id="chat-dock"[\s\S]*id="status-bar"[\s\S]*id="external-drive-readonly"[\s\S]*<footer id="input-area"[^>]*>/, "status and composer should live in one chat dock");
+  assert.match(sidepanelCss, /#app\[data-external-drive="true"\] \.msg-user-actions/, "a read-only drive session hides message edits");
+  assert.match(sidepanelHtml, /id="drive-welcome-command"[^>]*>npx qz-browser-agent@latest connect uri</, "the drive welcome shows the published URL-only connection command");
+  assert.match(readFileSync(join(root, "src/sidepanel/features/chat/chat-workspace-feature.ts"), "utf8"), /setAttribute\("data-external-drive", "true"\)/, "drive chrome sets the attribute value the welcome rules match");
+  assert.match(sidepanelCss, /#app\[data-external-drive="true"\] \.welcome-onboarding[\s\S]*display:\s*none\s*!important/, "a drive session hides the ordinary welcome cards");
+  assert.match(sidepanelCss, /#app\[data-external-drive="true"\] \.drive-welcome\s*\{[^}]*display:\s*block/, "a drive session shows its own welcome");
+  assert.doesNotMatch(sidepanelCss, /#app\[data-external-drive="true"\] #welcome\s*\{[^}]*display:\s*none/, "tool records can replace the drive welcome");
   assert.match(sidepanelCss, /\.chat-dock\s*\{[\s\S]*border-top:\s*1px solid var\(--border\)/, "chat dock should own the bottom separator");
   const appClasses = sidepanelHtml.match(/id="app"[^>]*class="([^"]*)"/)?.[1].split(/\s+/) || [];
   for (const utility of ["qz:rounded-none", "qz:bg-surface", "qz:w-full", "qz:h-full", "qz:flex", "qz:flex-col"]) {

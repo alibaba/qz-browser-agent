@@ -4,6 +4,7 @@ import { discoverSkillManifests } from "../../src/shared/skills/skill-manifest.j
 import { createSkillSettingsService } from "../../src/background/skills/skill-settings.js";
 import { enrichSkillToolIdentity, setSkillToolUiCatalog } from "../../src/sidepanel/tools/skill-tool-ui-registry.js";
 import { appendErrorSection } from "../../src/sidepanel/tools/generic-result-renderer.js";
+import { withLanguage } from "../../src/shared/i18n/index.js";
 
 // Literal installed-package data deliberately does not derive its protocol from the current constants.
 const installedSkill = {
@@ -27,6 +28,49 @@ test("Skill naming retains the installed manifest format and namespace-based too
   assert.equal(manifest.tools[0].name, "legacy_namespace__inspect");
   assert.equal(manifest.tools[0].pluginId, "legacy-namespace");
   assert.equal(manifest.tools[0].rendererId, "plugin-script");
+});
+
+test("page control migration preserves non-page fields, nested schemas, defaults and authored prose", () => {
+  const schema = {
+    type: "object", properties: {
+      tabId: { type: "integer", minimum: 10, enum: [999], description: "Selected tabId" },
+      payload: { type: "object", properties: { tabId: { type: "string" } }, required: ["tabId"] },
+    }, required: ["tabId", "payload"],
+    anyOf: [{ required: ["tabId"] }, false],
+    allOf: [{ properties: { tabId: { type: "integer" } }, required: ["tabId"] }],
+    oneOf: [{ anyOf: [{ required: ["tabId", "tabRef"] }] }, { type: "null" }, true],
+    $defs: { record: { type: "object", properties: { tabId: { type: "string" } }, required: ["tabId"] } },
+    default: { tabId: "authored default" },
+  };
+  const skill = structuredClone(installedSkill);
+  const manifest = JSON.parse(skill.resources[0].content);
+  manifest.tools = [
+    { name: "page", runtime: "page" }, { name: "default_page" },
+    { name: "host_page", runtime: "host", needsPage: true },
+    { name: "no_page", runtime: "page", needsPage: false },
+    { name: "host", runtime: "host" }, { name: "inner", runtime: "inner" },
+  ].map(tool => ({ ...tool, script: "scripts/inspect.js", parameters: schema,
+    description: "Return payload.tabId exactly as authored", args: { tabId: 999 } }));
+  skill.resources[0].content = JSON.stringify(manifest);
+  const before = JSON.stringify(skill);
+  const discovered = discoverSkillManifests([skill]);
+  assert.deepEqual(discovered.diagnostics, []);
+  for (const tool of discovered.plugins[0].tools) {
+    assert.equal(tool.description, "Return payload.tabId exactly as authored");
+    assert.deepEqual(tool.args, { tabId: 999 });
+    assert.deepEqual(tool.parameters.properties.payload, schema.properties.payload);
+    assert.deepEqual(tool.parameters.$defs, schema.$defs);
+    assert.deepEqual(tool.parameters.default, schema.default);
+    if (tool.needsPage) {
+      assert.equal(tool.parameters.properties.tabId, undefined);
+      assert.deepEqual(tool.parameters.properties.tabRef, { type: ["integer", "string"] });
+      assert.deepEqual(tool.parameters.required, ["tabRef", "payload"]);
+      assert.deepEqual(tool.parameters.anyOf, [{ required: ["tabRef"] }, false]);
+      assert.deepEqual(tool.parameters.allOf, [{ properties: { tabRef: { type: ["integer", "string"] } }, required: ["tabRef"] }]);
+      assert.deepEqual(tool.parameters.oneOf, [{ anyOf: [{ required: ["tabRef"] }] }, { type: "null" }, true]);
+    } else assert.deepEqual(tool.parameters, schema);
+  }
+  assert.equal(JSON.stringify(skill), before, "discovery must not rewrite an installed package");
 });
 
 test("Skill settings read and update the existing compound identity without a storage migration", async () => {
@@ -99,9 +143,9 @@ test("Skill error details display historical and current tool names with stable 
     [{ tool: "", skillToolName: "", pluginToolName: "legacy" }, "legacy"],
   ]) {
     const sections = [];
-    appendErrorSection({ appendChild: section => sections.push(section) }, {
+    withLanguage("zh-CN", () => appendErrorSection({ appendChild: section => sections.push(section) }, {
       code: "PLUGIN_TOOL_EXECUTION_FAILED", error: "Skill 工具执行失败", details,
-    });
+    }));
     assert.equal(sections.length, 1);
     assert.equal(sections[0].className, "tool-friendly-section tool-error-section");
     assert.equal(sections[0].innerHTML.match(/<span>工具<\/span>\s*<b>([^<]*)<\/b>/)?.[1], expected);

@@ -77,7 +77,7 @@ function isolatedPage(tabId) {
     }
     if (method === "Runtime.evaluate") {
       if (params.uniqueContextId && params.uniqueContextId === current?.uniqueId) {
-        return { result: { value: { extensionId: "current-extension", bridge: true } } };
+        return { result: { value: { extensionId: "current-extension", bridge: true, elementRefs: true } } };
       }
       throw new Error("Cannot find context with specified id");
     }
@@ -224,13 +224,13 @@ test("selection uses uniqueContextId when a numeric execution context id is reus
     if (method === "Runtime.evaluate") {
       assert.equal(params.contextId, undefined, "a reported unique id is the probe identity");
       if (params.uniqueContextId === "iso-a" && phase === "live") {
-        return { result: { value: { extensionId: "current-extension", bridge: true } } };
+        return { result: { value: { extensionId: "current-extension", bridge: true, elementRefs: true } } };
       }
       if (params.uniqueContextId === "iso-b" && phase === "replaced") {
-        return { result: { value: { extensionId: "current-extension", bridge: true } } };
+        return { result: { value: { extensionId: "current-extension", bridge: true, elementRefs: true } } };
       }
       if (!params.uniqueContextId) {
-        return { result: { value: { extensionId: "current-extension", bridge: true } } };
+        return { result: { value: { extensionId: "current-extension", bridge: true, elementRefs: true } } };
       }
       throw new Error("Cannot find context with specified id");
     }
@@ -311,7 +311,7 @@ test("detaching a child session drops that session's unique context id", async (
     if (method === "Runtime.evaluate") {
       if (params.uniqueContextId !== "main-1") throw new Error("Cannot find context with specified id");
       assert.equal(params.contextId, undefined);
-      return { result: { value: { extensionId: "current-extension", bridge: true } } };
+      return { result: { value: { extensionId: "current-extension", bridge: true, elementRefs: true } } };
     }
     if (method === "DOM.resolveNode") return { object: { objectId: "node" } };
     if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true } } };
@@ -337,7 +337,7 @@ test("detaching a child session drops that session's unique context id", async (
       const expected = sessionId === "kept" ? "side-1" : reportSess ? "oopif-1" : "";
       if (!expected || params.uniqueContextId !== expected) throw new Error("Cannot find context with specified id");
       assert.equal(params.contextId, undefined);
-      return { result: { value: { extensionId: "current-extension", bridge: true } } };
+      return { result: { value: { extensionId: "current-extension", bridge: true, elementRefs: true } } };
     }
     if (method === "DOM.resolveNode") return { object: { objectId: `${sessionId}-node` } };
     if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true } } };

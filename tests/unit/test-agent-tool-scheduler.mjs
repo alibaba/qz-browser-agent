@@ -1,13 +1,141 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Agent } from '../../src/background/agent/agent.js';
-import { scheduleToolCalls } from '../../src/background/tools/tool-scheduler.js';
+import { createNestedToolScheduler, scheduleToolCalls } from '../../src/background/tools/tool-scheduler.js';
+import { planTabBatch } from '../../src/background/tools/tab-batch.js';
 globalThis.chrome = {};
-const { getParallelReadTab } = await import('../../src/background/tools/runtime.js');
+const { getBatchTabPolicy, getParallelReadTab } = await import('../../src/background/tools/runtime.js');
 import { createTestAgentOptions } from '../support/agent-services.mjs';
 
 const call = (id, name, tabId) => ({ id, function: { name, arguments: JSON.stringify({ tabId, limit: 10 }) } });
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('native script calls share the leaf budget and reach their own descendants without a batch barrier', async () => {
+  const items = [1, 2].map(id => ({ id, args: { code: 'return await tools.evaluate(args);', args: { tabRef: id } } }));
+  const plan = planTabBatch(items, item => ({ args: item.args, policy: getBatchTabPolicy('run_script', item.args) }));
+  const nested = createNestedToolScheduler(), started = [], releases = new Map();
+  const run = scheduleToolCalls(items, {
+    tab: () => null, lane: plan.lane, independent: plan.independent, dependencies: plan.dependencies,
+    signal: new AbortController().signal,
+    execute: async (item, signal, _parallel, parent) => nested.run({ parent, group: 'children', lane: item.id,
+      policy: { kind: 'target', implicit: false, parallel: true }, signal,
+      execute: async () => { started.push(item.id); await new Promise(resolve => releases.set(item.id, resolve)); return item.id; },
+    }),
+    commit: async () => {},
+  });
+  await tick();
+  assert.deepEqual(started, [1, 2]);
+  releases.get(2)(); releases.get(1)();
+  await run;
+});
+
+for (const tool of ['wait_for_navigation', 'wait_for_popup', 'wait_for_response']) test(`native ${tool} delegates child locks while preserving same-page ordering`, async t => {
+  const stop = new AbortController(), nested = createNestedToolScheduler();
+  const bothStarted = Promise.withResolvers(), events = [], parents = [];
+  // Native popup creators retain their existing window-anchor dependency on earlier page calls.
+  const items = [7, 8].map(tabRef => ({ name: tool === 'wait_for_popup' && tabRef === 8 ? 'wait_for_navigation' : tool,
+    args: { tabRef, trigger: { name: 'run_script', args: { code: 'return await tools.list_tools();' } } } }));
+  items.push(...[7, 8].map(tabRef => ({ name: 'evaluate', args: { tabRef, code: 'return 1;' } })));
+  const plan = planTabBatch(items, item => ({ args: item.args, policy: getBatchTabPolicy(item.name, item.args) }));
+  const run = scheduleToolCalls(items, {
+    tab: item => item.args.tabRef, lane: plan.lane, independent: plan.independent, orchestration: plan.orchestration,
+    observer: plan.passive, dependencies: plan.dependencies, signal: stop.signal,
+    execute: async (item, signal, _parallel, parent) => {
+      const tab = item.args.tabRef;
+      if (item.name === 'evaluate') { events.push(`follow:${tab}`); return; }
+      return nested.run({ parent, group: 'trigger', lane: null, policy: { kind: 'script' }, signal,
+        execute: async script => {
+          parents.push(tab);
+          if (parents.length === 2) bothStarted.resolve();
+          await bothStarted.promise;
+          await nested.run({ parent: script, group: 'catalog', lane: null, policy: getBatchTabPolicy('list_tools', {}), signal,
+            execute: async () => { events.push(`catalog:${tab}`); },
+          });
+          events.push(`wait:${tab}`);
+        },
+      });
+    },
+    commit: async () => {},
+  });
+  t.after(async () => { stop.abort(); bothStarted.resolve(); await run.catch(() => {}); });
+  await tick();
+  assert.deepEqual(parents, [7, 8]);
+  assert.equal(events.length, 6, 'both waits and their following calls must finish without reaching a deadline');
+  await run;
+  for (const tab of [7, 8]) {
+    assert.ok(events.indexOf(`catalog:${tab}`) < events.indexOf(`wait:${tab}`));
+    assert.ok(events.indexOf(`wait:${tab}`) < events.indexOf(`follow:${tab}`));
+  }
+  assert.equal(nested.pending, 0);
+});
+
+for (const parallel of [true, false]) test(`nested page calls retain their ${parallel ? 'page lane' : 'global barrier'} after a child returns`, async t => {
+  const stop = new AbortController(), nested = createNestedToolScheduler();
+  const resumed = Promise.withResolvers(), finishPage = Promise.withResolvers(), started = [];
+  const items = ['page-script', 'actions'];
+  const plan = planTabBatch(items, () => ({ args: {}, policy: getBatchTabPolicy('run_script', {}) }));
+  const action = (parent, signal, lane) => nested.run({ parent, group: 'actions', lane, signal,
+    policy: { kind: 'target', implicit: false, parallel: true },
+    execute: async () => { started.push(lane); return lane; },
+  });
+  const run = scheduleToolCalls(items, {
+    tab: () => null, lane: plan.lane, independent: plan.independent, orchestration: plan.orchestration,
+    dependencies: plan.dependencies, signal: stop.signal,
+    execute: async (item, signal, _parallel, root) => {
+      if (item === 'page-script') return nested.run({ parent: root, group: item, lane: 7, signal,
+        policy: { kind: 'target', implicit: false, parallel },
+        execute: async page => {
+          // The page script can still access DOM after awaiting a nested tool.
+          await action(page, signal, 7);
+          resumed.resolve();
+          await finishPage.promise;
+          started.push('page-finished');
+        },
+      });
+      await nested.run({ parent: root, group: item, lane: null, signal,
+        policy: { kind: 'observe' }, execute: () => resumed.promise });
+      return Promise.all([action(root, signal, 7), action(root, signal, 8)]);
+    },
+    commit: async () => {},
+  });
+  t.after(async () => { stop.abort(); finishPage.resolve(); await run.catch(() => {}); });
+  await tick();
+  assert.deepEqual(started, parallel ? [7, 8] : [7],
+    'descendants can reach their parent page; siblings must respect its outstanding page access');
+  finishPage.resolve();
+  await run;
+  assert.deepEqual(started, parallel ? [7, 8, 'page-finished', 7] : [7, 'page-finished', 7, 8]);
+  assert.equal(nested.pending, 0);
+});
+
+test('native and nested ready results share one commit gate without holding it during execution', async () => {
+  const nested = createNestedToolScheduler(), events = [];
+  let releaseHead, releaseChild;
+  const run = scheduleToolCalls(['head', 'parent'], {
+    tab: item => item === 'head' ? 1 : 2,
+    signal: new AbortController().signal,
+    execute: async (item, signal, _parallel, parent) => {
+      if (item === 'head') await new Promise(resolve => { releaseHead = resolve; });
+      else await nested.run({ parent, group: 'child', lane: 2, policy: { kind: 'target', implicit: false, parallel: true }, signal,
+        execute: async () => 'child',
+        commit: async value => {
+          events.push('child:commit');
+          await new Promise(resolve => { releaseChild = resolve; });
+          events.push('child:committed'); return value;
+        },
+      });
+      return item;
+    },
+    commit: async item => { events.push(`${item}:committed`); },
+  });
+  await tick();
+  assert.deepEqual(events, ['child:commit']);
+  releaseHead(); await tick();
+  assert.deepEqual(events, ['child:commit'], 'native publication cannot overlap a descendant state commit');
+  releaseChild(); await run;
+  assert.deepEqual(events, ['child:commit', 'child:committed', 'head:committed', 'parent:committed']);
+  assert.equal(nested.pending, 0);
+});
 
 test('a blocked tool publishes its start and flow-control progress before completing', async () => {
   const events = [];
@@ -97,14 +225,14 @@ test('stop revokes progress immediately and preserves a paired ledger for skippe
 
 test('trusted registrations select only explicit cross-tab observations', () => {
   for (const [name, field] of [
-    ['read_article', 'selector'], ['find_elements', 'selector'], ['get_ax_tree', 'root'], ['screenshot', 'target'],
+    ['read_article', 'target'], ['find_elements', 'target'], ['get_ax_tree', 'target'], ['screenshot', 'target'],
   ]) {
     assert.equal(getParallelReadTab(name, { tabId: 12 }), 12);
     assert.equal(getParallelReadTab(name, {}), null);
     assert.equal(getParallelReadTab(name, { tabId: 12, [field]: 'uid:t12.abcdef.1' }), null);
   }
-  assert.equal(getParallelReadTab('screenshot', { tabId: 12, selector: 'uid:t99.abcdef.1' }), 12,
-    'an undeclared selector cannot change screenshot targeting or bypass its page preflight');
+  assert.equal(getParallelReadTab('screenshot', { tabId: 12, selector: 'uid:t99.abcdef.1' }), null,
+    'the hidden legacy selector alias keeps UID targets on their registered tab lane');
   assert.equal(getParallelReadTab('screenshot', { tabId: 12, actionable: true }), null);
   assert.equal(getParallelReadTab('screenshot', { tabId: 12, destination: 'saved-images' }), null);
   assert.equal(getParallelReadTab('spoofed', { tabId: 12 }, { toolRegistrySnapshot: {
@@ -137,6 +265,81 @@ test('scheduler bounds execution at ten and refills slots before earlier calls c
   assert.equal(peak, 10); assert.equal(active, 0);
   assert.deepEqual(committed, started);
   assert.deepEqual(parallelCalls, Array(11).fill(true));
+});
+
+test('finite batches arm ten passive observations without blocking their triggering action', async () => {
+  const items = [...Array.from({ length: 10 }, (_, id) => ({ id, name: 'wait_for_navigation', args: { tabRef: 1 } })),
+    { id: 10, name: 'act_on_element', args: { tabRef: 1, target: 'css:#go', action: 'click' } }];
+  const plan = planTabBatch(items, item => ({ args: item.args, policy: getBatchTabPolicy(item.name, item.args) }));
+  const stop = new AbortController(), started = [], commits = [], observers = new Set();
+  const run = scheduleToolCalls(items, {
+    tab: () => 1, lane: plan.lane, independent: plan.independent, observer: plan.passive,
+    dependencies: plan.dependencies, signal: stop.signal, cancelled: item => item.id,
+    execute: async (item, signal) => {
+      started.push(item.id);
+      if (item.name === 'act_on_element') for (const release of [...observers]) release();
+      else await new Promise(resolve => {
+        const release = () => { signal.removeEventListener('abort', release); observers.delete(release); resolve(); };
+        observers.add(release); signal.addEventListener('abort', release, { once: true });
+      });
+      return item.id;
+    },
+    commit: async id => { commits.push(id); },
+  });
+  try {
+    await tick();
+    assert.deepEqual(started, items.map(item => item.id), 'the action must start while all ten observations are armed');
+    await run;
+    assert.deepEqual(commits, items.map(item => item.id), 'publication retains the original call order');
+    assert.equal(observers.size, 0);
+  } finally { stop.abort(); await run; }
+});
+
+test('finite containers yield a leaf slot before their own execution completes', async () => {
+  const stop = new AbortController(), nested = createNestedToolScheduler();
+  const items = Array.from({ length: 11 }, (_, i) => i + 1), started = [], commits = [], releases = new Map();
+  let resumeParents, releaseAction, active = 0, peak = 0;
+  const parents = new Promise(resolve => { resumeParents = resolve; });
+  const holdLeaf = (id, signal) => new Promise(resolve => {
+    const release = () => { signal.removeEventListener('abort', release); releases.delete(id); resolve(); };
+    releases.set(id, release); signal.addEventListener('abort', release, { once: true });
+  });
+  const run = scheduleToolCalls(items, {
+    tab: id => id, signal: stop.signal, cancelled: id => id, reject: id => id,
+    execute: async (id, signal, _parallel, scope) => {
+      if (id <= 10) {
+        await nested.run({ parent: scope, group: 'children', lane: id, signal,
+          policy: { kind: 'target', implicit: false, observation: false, parallel: true },
+          execute: async () => {
+            started.push(`child-${id}`); peak = Math.max(peak, ++active);
+            try { await holdLeaf(id, signal); return id; } finally { active--; }
+          },
+        });
+        await parents;
+      } else {
+        started.push('action'); peak = Math.max(peak, ++active);
+        try { await new Promise(resolve => { releaseAction = resolve; }); } finally { active--; }
+      }
+      return id;
+    },
+    commit: async id => { commits.push(id); },
+  });
+  try {
+    await tick();
+    assert.equal(started.length, 10); assert.equal(active, 10);
+    releases.get(1)();
+    await tick();
+    assert.equal(started.at(-1), 'action', 'a completed child frees capacity even while its parent remains suspended');
+    assert.equal(active, 10); assert.equal(peak, 10);
+    assert.deepEqual(commits, [], 'the suspended first parent still holds the publication cursor');
+    for (const release of [...releases.values()]) release();
+    resumeParents(); releaseAction();
+    await run;
+    assert.deepEqual(commits, items); assert.equal(active, 0); assert.equal(nested.pending, 0);
+  } finally {
+    stop.abort(); resumeParents(); releaseAction?.();
+    await run;
+  }
 });
 
 test('Agent serializes same-tab lanes without blocking independent reads and retains global barriers', async () => {
@@ -271,33 +474,28 @@ test('scheduler settles siblings before committing an unexpected execute rejecti
   }
 });
 
-test('start events contain enriched args and preparation failures preserve sibling results', async () => {
-  for (const stage of ['collect', 'enrich']) {
-    const events = [], executed = [];
-    let collections = 0;
-    const agent = new Agent('scheduler', createTestAgentOptions({ tools: {
-      getIdentity: () => ({}), getSchemas: () => [], getParallelReadTab,
-      async execute(_name, args) { executed.push(args.tabId); assert.ok(args._pageUrl); return { value: args.tabId }; },
-    } }));
-    agent._emit = event => events.push(event);
-    agent._collectToolRuntimeContext = async () => {
-      if (++collections === 2 && stage === 'collect') throw new Error('collect failed');
-      return { workingTabId: 10 };
-    };
-    agent._enrichToolCallArgsWithPageContext = async (_name, args, context) => {
-      assert.equal(context.workingTabId, 10);
-      if (args.tabId === 2 && stage === 'enrich') throw new Error('enrich failed');
-      return { ...args, _pageUrl: `https://example.test/${args.tabId}` };
-    };
-    const messages = await agent._executeToolCalls([1, 2, 3].map(id => call(String(id), 'read_article', id)), new AbortController().signal);
-    assert.deepEqual(executed, [1, 3]);
-    assert.deepEqual(messages.map(message => message.tool_call_id), ['1', '2', '3']);
-    for (const id of ['1', '3']) {
-      const start = events.find(event => event.type === 'tool_execution_start' && event.toolCallId === id);
-      assert.equal(start.args._pageUrl, `https://example.test/${id}`);
-    }
-    const failed = events.find(event => event.type === 'tool_execution_end' && event.toolCallId === '2');
-    assert.equal(failed.isError, true);
-    assert.match(failed.result.error, new RegExp(`${stage} failed`));
+test('start events retain explicit arguments and execution failures preserve sibling results', async () => {
+  const events = [], executed = [];
+  const agent = new Agent('scheduler', createTestAgentOptions({ tools: {
+    getIdentity: () => ({}), getSchemas: () => [], getParallelReadTab,
+    async execute(_name, args) {
+      executed.push(args.tabRef);
+      if (args.tabRef === 2) throw new Error('execute failed');
+      return { value: args.tabRef };
+    },
+  } }));
+  agent._emit = event => events.push(event);
+  agent._dynamicContextSnapshot = { workingTab: { id: 10 }, userVisibleTab: { id: 20 } };
+  const messages = await agent._executeToolCalls([1, 2, 3].map(id => ({ id: String(id), function: {
+    name: 'read_article', arguments: JSON.stringify({ tabRef: id, limit: 10 }),
+  } })), new AbortController().signal);
+  assert.deepEqual(executed, [1, 2, 3]);
+  assert.deepEqual(messages.map(message => message.tool_call_id), ['1', '2', '3']);
+  for (const id of ['1', '2', '3']) {
+    const start = events.find(event => event.type === 'tool_execution_start' && event.toolCallId === id);
+    assert.deepEqual(start.args, { tabRef: Number(id), limit: 10 });
   }
+  const failed = events.find(event => event.type === 'tool_execution_end' && event.toolCallId === '2');
+  assert.equal(failed.isError, true);
+  assert.match(failed.result.message, /execute failed/);
 });

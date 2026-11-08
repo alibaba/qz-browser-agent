@@ -289,6 +289,22 @@ test("Skill export preserves canonical SKILL.md and exact UTF-8/binary asset byt
   assert.deepEqual(await zip.read(zip.entries[2], 10000), binary);
 });
 
+test("ambiguous Skill lookup prevents management export without downloading", async t => {
+  const { loadSkill } = await import("../../src/background/skills/runtime.js");
+  const { createMemoryStorage } = await import("../support/memory-storage.mjs");
+  const rows = ["rt1", "rt2"].map(name => normalizeModernSkill({ name, displayName: "Shared title", content: name }));
+  const previousChrome = globalThis.chrome;
+  t.after(() => { globalThis.chrome = previousChrome; });
+  globalThis.chrome = { storage: { local: createMemoryStorage({ _skills: Object.fromEntries(rows.map(row => [row.name, row])) }) } };
+  const { runtime, downloads } = harness({ loadSkill: () => loadSkill("Shared title") });
+  await assert.rejects(runtime.exportSkill({ name: "Shared title" }), error => {
+    assert.equal(error.code, "SKILL_NAME_AMBIGUOUS");
+    assert.deepEqual(error.details, { name: "Shared title", candidates: rows.map(({ name, displayName }) => ({ name, displayName })) });
+    return true;
+  });
+  assert.deepEqual(downloads, []);
+});
+
 test("Skill export errors never download missing, built-in or unsafe packages and preserve download failure codes", async () => {
   const skill = normalizeModernSkill({ name: "export-test", description: "Test", content: "Test" });
   const { runtime, downloads } = harness({ skill });

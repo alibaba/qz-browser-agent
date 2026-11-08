@@ -11,6 +11,7 @@ import {
 import { SKILL_SETTINGS_STORAGE_KEY } from "../../src/background/skills/skill-settings.js";
 
 const storageData = {};
+const consentRead = Promise.withResolvers();
 storageData._qingzhou_mcp_bridge = { enabled: false };
 const postedMessages = [];
 const COVERAGE_PLUGIN_SKILL_NAME = "coverage-plugin-skill";
@@ -40,6 +41,7 @@ const state = {
     },
   ],
   tabUpdates: [],
+  tabCreateGate: null,
   alarms: new Map(),
   llmFetches: [],
   networkRequests: [],
@@ -47,6 +49,7 @@ const state = {
   bridgeListToolsSessionId: "",
   bridgePolls: 0,
   bridgeResults: [],
+  bridgeRequests: [],
   skillStorageReads: 0,
   skillStorageGetFailures: 1,
   skillStorageGetGate: null,
@@ -136,6 +139,8 @@ console.log = (...args) => {
 };
 
 globalThis.chrome = createChromeMock();
+globalThis.chrome.webNavigation ||= {};
+globalThis.chrome.webNavigation.onCreatedNavigationTarget ||= { addListener() {}, removeListener() {} };
 globalThis.fetch = createFetchMock([
   openAiSse([
     {
@@ -148,11 +153,11 @@ globalThis.fetch = createFetchMock([
           role: "assistant",
           tool_calls: [{
             index: 0,
-            id: "call_use_tab",
+            id: "call_page_mode",
             type: "function",
             function: {
-              name: "use_tab",
-              arguments: "{\"tabId\":3}",
+              name: "set_page_mode",
+              arguments: "{\"tabRef\":3,\"mode\":\"desktop\"}",
             },
           }],
         },
@@ -193,13 +198,28 @@ try {
   await import("../../src/background/service-worker.js");
   const pluginRuntime = await import("../../src/background/skills/skill-tool-runtime.js");
 
+  const coldReplies = [];
+  const connectionSender = { id: chrome.runtime.id, frameId: 0, tab: state.tabs[0], url: "http://127.0.0.1:18765/qz-connect" };
+  const coldCalls = ["mcp_bridge_connect", "mcp_bridge_close", "mcp_connection_status"].map(type =>
+    invokeRuntimeMessage({ type }, connectionSender).then(reply => { coldReplies.push(reply); return reply; }));
+  await new Promise(setImmediate);
+  assert.deepEqual(coldReplies, [], "cold connection calls wait for consent storage hydration before applying the API gate");
+  consentRead.resolve();
+  for (const reply of await Promise.all(coldCalls)) assert.equal(reply.code, "DATA_CONSENT_REQUIRED", "missing consent still blocks connection after hydration");
+
   assert.equal(state.alarmsOnAlarm.length, 1, "only the automation alarm router should register before data consent");
+  const exportSender = { tab: { id: 3, windowId: 1, url: "file:///tmp/exported-session.html" } };
+  assert.deepEqual(await invokeRuntimeMessage({ type: "session_export_reveal_consent" }, exportSender),
+    { ok: true, needsConsent: true }, "an exported chat opens the panel and requires first-use consent");
+  assert.deepEqual(state.sidePanelOpens.at(-1), { windowId: 1 });
   const consentReply = await new Promise(resolve => state.runtimeOnMessage[0](
     { type: "accept_data_consent", version: 1 },
     { id: chrome.runtime.id, url: chrome.runtime.getURL("sidepanel/sidepanel.html") }, resolve,
   ));
   assert.equal(consentReply.ok, true);
   assert.equal(storageData.qz_data_consent.version, 1);
+  assert.deepEqual(await invokeRuntimeMessage({ type: "session_export_reveal_consent" }, exportSender),
+    { ok: true, needsConsent: false }, "the same import gesture proceeds after consent is accepted");
 
   assert.equal(state.alarmsOnAlarm.length, 2, "data consent should add the MCP reconnect listener alongside the automation router");
   for (const name of ["unrelated-alarm", "qingzhou-mcp-bridge-reconnect"]) {
@@ -604,7 +624,7 @@ try {
   const agentEndPromise = sendPortMessage(port, {
     type: "prompt",
     sessionId,
-    text: "Use tab 3, then finish.",
+    text: "Set tab 3 to desktop mode, then finish.",
     clientMessageId: "user-smoke",
   }, msg => msg.type === "agent_end" && msg.sessionId === sessionId);
   let nestedToolListBeforeLoad;
@@ -679,22 +699,23 @@ try {
     "agent_start should be broadcast for the smoke run",
   );
   assert.ok(
-    postedMessages.some(msg => msg.type === "tool_execution_start" && msg.sessionId === sessionId && msg.toolName === "use_tab"),
-    "agent should execute the mocked use_tab tool call",
+    postedMessages.some(msg => msg.type === "tool_execution_start" && msg.sessionId === sessionId && msg.toolName === "set_page_mode"),
+    "agent should execute the mocked explicit-page tool call",
   );
   assert.ok(
-    postedMessages.some(msg => msg.type === "tool_execution_end" && msg.sessionId === sessionId && msg.toolName === "use_tab" && msg.isError === false),
-    "use_tab tool execution should finish successfully",
+    postedMessages.some(msg => msg.type === "tool_execution_end" && msg.sessionId === sessionId && msg.toolName === "set_page_mode" && msg.isError === false),
+    "the explicit-page tool call should claim the existing page and finish successfully",
   );
+  assert.equal(state.tabUpdates.some(({ patch }) => patch.active === true), false,
+    "an explicit task page must not activate the user's tab");
 
   const runtimeState = await sendPortMessage(port, {
     type: "get_state",
     sessionId,
   }, msg => msg.type === "state" && msg.sessionId === sessionId);
-  assert.equal(runtimeState.runtime?.workingTabId, 3, "service worker runtime should record the working tab");
-  assert.equal(runtimeState.runtime?.workingUrl, "https://smoke.example/page");
-  assert.equal(runtimeState.runtime?.workingTitle, "Smoke Page");
-  assert.equal(runtimeState.runtime?.ownedTabIds?.includes(3), true, "use_tab should claim the tab for the session");
+  assert.equal(runtimeState.runtime?.status, "completed", "the public runtime should report task progress");
+  assert.doesNotMatch(JSON.stringify(runtimeState.runtime), /workingTab|workingUrl|workingTitle|ownedTabIds|sessionTabIds/,
+    "the public runtime observation excludes private page ownership");
 
   const stoppedState = await sendPortMessage(port, {
     type: "stop_session", sessionId, requestId: "stop-runtime-route",
@@ -702,6 +723,11 @@ try {
   assert.equal(stoppedState.type, "state", "the public stop route must resolve its business command");
   assert.equal(stoppedState.sessionId, sessionId);
   assert.equal(stoppedState.isStreaming, false);
+  assert.equal(stoppedState.runtime.status, stoppedState.status, 'the UI response reads current Session progress');
+  assert.equal(stoppedState.runtime.runId, stoppedState.runId);
+  assert.ok(Array.isArray(stoppedState.runtime.pendingFollowUpMessages), 'the UI state retains queued message recovery');
+  assert.doesNotMatch(JSON.stringify(stoppedState.runtime), /workingTab|workingUrl|workingTitle|ownedTabIds|sessionTabIds/,
+    'reading UI progress does not put private page ownership in the public stop receipt');
 
   state.bridgeListToolsSessionId = sessionId;
   await setMcpBridgeEnabled(true);
@@ -714,6 +740,63 @@ try {
       "MCP list_tools should refresh the registry and preserve the loaded Skill tool",
     );
     assert.equal(state.alarms.has("qingzhou-mcp-bridge-reconnect"), true, "a connected bridge should schedule its reconnect alarm");
+    const driveCall = async (method, params) => {
+      const id = `handoff-${state.bridgeResults.length}`;
+      state.bridgeRequests.push({ id, method, params });
+      await waitFor(() => state.bridgeResults.some(reply => reply.requestId === id), 5000);
+      const reply = state.bridgeResults.find(reply => reply.requestId === id);
+      assert.equal(reply.ok, true, JSON.stringify(reply.error));
+      return reply.result;
+    };
+    const drive = await driveCall("create_drive_session", { title: "Debugger handoff" });
+    assert.ok(drive.qz_skills?.some(skill => skill.name === COVERAGE_PLUGIN_SKILL_NAME && skill.scope === "global"),
+      "session creation returns the Global Skill summary");
+    assert.ok((await driveCall("list_tools", { sessionId: drive.sessionId })).tools.some(tool => tool.name === COVERAGE_PLUGIN_TOOL_NAME),
+      "a new drive session lists user Global Skill tools without load_skill");
+    assert.equal((await driveCall("list_plugins", { sessionId: drive.sessionId })).plugins
+      .find(plugin => plugin.skillName === COVERAGE_PLUGIN_SKILL_NAME)?.active, true,
+    "Skill contributions report the Global Skill as active in the new drive session");
+    const handoffTabs = {};
+    for (const name of ["idle", "canceled", "activated"]) {
+      const url = `https://smoke.example/handoff-${name}`;
+      const opened = await driveCall("execute_tool", {
+        sessionId: drive.sessionId, name: "open_tab", args: { url, tabAlias: name },
+      });
+      assert.equal(opened.result.tabRef, name);
+      handoffTabs[name] = state.tabs.find(tab => tab.url === url).id;
+    }
+    const creatingTab = deferred(), finishCreate = deferred();
+    state.tabCreateGate = { started: creatingTab.resolve, release: finishCreate.promise };
+    const pendingOpen = driveCall("execute_tool", {
+      sessionId: drive.sessionId, name: "open_tab", args: { url: "https://smoke.example/handoff-busy" },
+    });
+    await creatingTab.promise;
+    try {
+      for (const listener of chrome.tabs.onActivated._listeners) listener({ tabId: handoffTabs.idle });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(storageData[`_session_runtime_${drive.sessionId}`]?.driveHandoffTabIds || [], [],
+        "activation while a drive operation is busy does not hand its tab back to the user");
+    } finally { finishCreate.resolve(); }
+    await pendingOpen;
+    for (const listener of chrome.debugger.onDetach._listeners) {
+      listener({ tabId: handoffTabs.idle }, "target_closed");
+      listener({ tabId: 999999 }, "canceled_by_user");
+      listener({ tabId: 3 }, "canceled_by_user");
+      listener({ tabId: handoffTabs.canceled }, "canceled_by_user");
+    }
+    for (const listener of chrome.tabs.onActivated._listeners) {
+      listener({ tabId: 999999 });
+      listener({ tabId: 3 });
+      listener({ tabId: handoffTabs.activated });
+    }
+    await waitFor(() => storageData[`_session_runtime_${drive.sessionId}`]?.driveHandoffTabIds?.length === 2);
+    await driveCall("stop_session", { sessionId: drive.sessionId });
+    assert.equal(state.tabs.some(tab => tab.id === handoffTabs.idle), false,
+      "normal debugger release keeps a task-created tab eligible for task cleanup");
+    for (const name of ["canceled", "activated"]) assert.ok(state.tabs.some(tab => tab.id === handoffTabs[name]),
+      "a tab handed back to the user survives task cancellation");
+    assert.deepEqual(storageData[`_session_runtime_${sessionId}`]?.driveHandoffTabIds || [], [],
+      "ordinary Agent tabs never acquire external-drive handoff state");
   } finally {
     state.bridgeListToolsSessionId = "";
     await setMcpBridgeEnabled(false);
@@ -993,6 +1076,39 @@ try {
   assert.equal([...state.alarms.keys()].some(name => /telemetry|update/i.test(name)), false, "startup never schedules removed remote services");
   assert.equal(state.networkRequests.some(url => /analytics\.example\.test|\/v1\/telemetry|\/v1\/updates|\/v1\/public\/skills/.test(url)), false, "legacy stored settings never reactivate collection or a directory service");
 
+  const lifecycleVersion = pluginRuntime.getSkillToolRegistrySnapshot().version;
+  const lifecycleReads = state.skillStorageReads;
+  for (const event of [chrome.runtime.onStartup, chrome.runtime.onInstalled]) {
+    assert.equal(event._listeners.length, 1);
+    event._listeners[0]();
+  }
+  await waitFor(() => pluginRuntime.getSkillToolRegistrySnapshot().version === lifecycleVersion + 2);
+  assert.equal(state.skillStorageReads, lifecycleReads + 2,
+    "startup and install each reload the persisted Skill registry");
+  assert.equal(state.alarmsOnAlarm.length, 2, "repeated lifecycle events do not register duplicate alarm handlers");
+  assert.equal(state.alarms.has("qingzhou-mcp-bridge-reconnect"), false,
+    "startup and install must not reconnect a disabled bridge");
+  const previousIndexedDB = globalThis.indexedDB;
+  const previousWarn = console.warn;
+  const documentCleanupError = new Error("document storage unavailable during deletion");
+  const documentCleanupWarnings = [];
+  globalThis.indexedDB = { open() { throw documentCleanupError; } };
+  console.warn = (...args) => {
+    if (args[0] === "[轻舟] deleted Session document cleanup failed") documentCleanupWarnings.push(args[1]);
+    else previousWarn(...args);
+  };
+  try {
+    await sendPortMessage(reconnectedPort, {
+      type: "delete_session", requestId: "delete-completed-runtime", sessionId,
+    }, message => message.type === "delete_session_result" && message.requestId === "delete-completed-runtime");
+  } finally {
+    globalThis.indexedDB = previousIndexedDB;
+    console.warn = previousWarn;
+  }
+  assert.deepEqual(documentCleanupWarnings, [documentCleanupError]);
+  assert.equal(storageData[storedSessionKey(sessionId)], undefined,
+    "deleting a stopped Agent session still removes its stored record when document cleanup fails");
+
   console.log("service worker agent runtime smoke tests passed");
 } finally {
   console.log = originalConsoleLog;
@@ -1009,6 +1125,7 @@ function createChromeMock() {
       onChanged: makeEvent(state.storageOnChanged),
       local: {
         async get(key) {
+          if (key === "qz_data_consent") await consentRead.promise;
           if (key === "_skills" || (Array.isArray(key) && key.includes("_skills"))) {
             state.skillStorageReads += 1;
             if (state.skillStorageGetFailures > 0) {
@@ -1075,6 +1192,7 @@ function createChromeMock() {
     tabs: {
       onRemoved: makeEvent(state.tabsOnRemoved),
       onUpdated: makeEvent(state.tabsOnUpdated),
+      onActivated: makeEvent(),
       async query(query = {}) {
         let tabs = state.tabs.slice();
         if (query.active) tabs = tabs.filter(tab => tab.active);
@@ -1099,6 +1217,12 @@ function createChromeMock() {
         return { ...tab };
       },
       async create(props = {}) {
+        if (state.tabCreateGate) {
+          const gate = state.tabCreateGate;
+          state.tabCreateGate = null;
+          gate.started();
+          await gate.release;
+        }
         const nextId = Math.max(0, ...state.tabs.map(tab => Number(tab.id) || 0)) + 1;
         const tab = {
           id: nextId,
@@ -1174,7 +1298,11 @@ function createChromeMock() {
       onCommand: makeEvent(state.commandsOnCommand),
     },
     scripting: {
-      async executeScript() {
+      async executeScript({ target, injectImmediately } = {}) {
+        if (injectImmediately && target?.frameIds?.[0] === 0) return [{
+          documentId: `document-${target.tabId}-${state.tabs.find(tab => tab.id === target.tabId)?.url}`,
+          result: null,
+        }];
         return [];
       },
     },
@@ -1189,6 +1317,7 @@ function createChromeMock() {
     },
     offscreen: {},
     debugger: {
+      onDetach: makeEvent(),
       async attach() {},
       async detach() {},
       async sendCommand() {
@@ -1332,6 +1461,7 @@ function createFetchMock(responses = []) {
             },
           }]
         : [];
+      requests.push(...state.bridgeRequests.splice(0));
       return Response.json({ requests, ...bridgeIdentity });
     }
     if (href === "http://127.0.0.1:18765/v1/qingzhou/result") {

@@ -1,0 +1,51 @@
+name: dsh plugin
+
+on:
+  pull_request:
+    paths: [services/dsh-plugin/**, .github/workflows/dsh-plugin.yml]
+  push:
+    branches: [main]
+    paths: [services/dsh-plugin/**, .github/workflows/dsh-plugin.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-plugin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['24']
+        include:
+          - os: ubuntu-latest
+            node: '24.9.0'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/dsh-plugin
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: services/dsh-plugin/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run check:package
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: runner.os == 'Linux' && matrix.node == '24'
+        with:
+          name: dsh-browser-qz-${{ github.run_id }}
+          path: services/dsh-plugin/dist/*.tgz
+          if-no-files-found: error
+          retention-days: 7

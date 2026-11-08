@@ -6,6 +6,7 @@ import {
   createPageSkillImportService,
 } from "../../src/background/skills/page-skill-importer.js";
 import { createZip } from "../../src/shared/skills/skill-package.js";
+import { normalizeModernSkill } from "../../src/shared/skills/skill-utils.js";
 
 const ZIP_URL = "https://skills.example/download/private-package.zip";
 
@@ -112,6 +113,26 @@ test("page importer reports name conflicts without overwriting until explicitly 
   assert.equal(installed.content, "# New content");
   assert.equal(installed.createdAt, "2026-07-01 10:00:00");
   assert.equal(installed.updatedAt, "2026-07-14 15:30:00");
+});
+
+test("page imports preserve siblings with the same title or a title equal to the imported ID", async () => {
+  const neighbours = [
+    normalizeModernSkill({ name: "sibling", displayName: "target", content: "keep", createdAt: "sibling-only" }),
+    normalizeModernSkill({ name: "same-title", displayName: "Shared title", content: "keep too" }),
+  ];
+  const { repository } = createRepositoryState({ _skills: Object.fromEntries(neighbours.map(row => [row.name, row])) });
+  const service = createPageSkillImportService({
+    repository,
+    downloadFromTab: async () => new ArrayBuffer(0),
+    importZip: async () => [normalizeModernSkill({ name: "target", displayName: "Shared title", content: "new" })],
+  });
+  assert.equal((await service.import({ tabId: 73, url: ZIP_URL })).ok, true);
+  const created = (await repository.readSnapshot()).skills.target;
+  assert.notEqual(created.createdAt, "sibling-only");
+  assert.equal((await service.import({ tabId: 73, url: ZIP_URL, overwrite: true })).ok, true);
+  const { skills } = await repository.readSnapshot();
+  assert.equal(skills.target.createdAt, created.createdAt);
+  for (const row of neighbours) assert.deepEqual(skills[row.name], row);
 });
 
 test("page importer validates every Skill before committing any of them", async () => {

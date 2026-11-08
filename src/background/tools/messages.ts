@@ -4,8 +4,8 @@ import { createTranslator } from "../../shared/i18n/index.js";
 /** Shared model-facing documentation stays out of the panel's UI catalog. */
 const messages = defineMessages("tool-runtime", {
   tabRef: {
-    "zh-CN": "目标页面：浏览器数字 tabId（也接受数字字符串），或当前任务中由 open_tab 的 tabAlias 设置的别名。别名可跨轮复用，关闭页面后失效。新页面同批引用时将 open_tab 放在前面；同时传元素 UID 时必须指向同一页。",
-    en: "Target page: a numeric browser tabId (numeric strings also accepted), or a tabAlias assigned by open_tab in this Session. Aliases persist across turns until the tab closes. In one tool_calls array, place a new opening before its consumers. If an element UID is also supplied, both must target the same tab.",
+    "zh-CN": "目标页面：tabRef 是本会话的页面别名，或正整数标签页 id（也接受数字字符串）。别名可跨轮复用，关闭页面后失效。新页面同批引用时将 open_tab 放在前面；同时传元素 UID 时必须指向同一页。",
+    en: "Target page: tabRef is a page alias in this Session, or a positive integer tab id (numeric strings also accepted). Aliases persist across turns until the tab closes. In one tool_calls array, place a new opening before its consumers. If an element UID is also supplied, both must target the same tab.",
   },
   batchTabReferenceError: {
     "zh-CN": "标签页引用无法解析。请用 tabRef 指定已返回的浏览器数字 ID 或当前任务的页面别名；新页面的 open_tab 应放在引用它的调用之前。",
@@ -28,20 +28,24 @@ const messages = defineMessages("tool-runtime", {
     en: "tabAlias \"{tabRef}\" has an invalid format. Use 1\u201364 letters, digits, underscores, or hyphens; aliases cannot be entirely numeric.",
   },
   batchTabReferenceInvalidReference: {
-    "zh-CN": "tabRef「{tabRef}」无效或不适用于该调用。请使用浏览器正整数 ID 或当前任务的有效页面别名。",
-    en: "tabRef \"{tabRef}\" is invalid or not allowed on this call. Use a positive integer browser ID or a valid page alias in this Session.",
+    "zh-CN": "tabRef「{tabRef}」格式无效。请使用 open_tab / list_tabs 返回的 tabRef，或本会话的页面别名。",
+    en: "tabRef \"{tabRef}\" has an invalid format. Use a tabRef returned by open_tab / list_tabs, or a page alias in this session.",
   },
   batchTabReferenceAmbiguousTarget: {
     "zh-CN": "本批包含多个 open_tab，无法确定目标页面。请在页面调用中通过 tabRef 明确指定。",
     en: "This batch contains more than one open_tab, so the target page is ambiguous. Specify tabRef in the page call.",
   },
   tabReferenceConflict: {
-    "zh-CN": "tabRef「{tabRef}」与同时提供的 tabId 或元素 UID 指向不同页面。请只指定一个目标，或让两者指向同一页。",
-    en: "tabRef \"{tabRef}\" conflicts with the supplied tabId or element UID. Select one target, or make both refer to the same page.",
+    "zh-CN": "tabRef「{tabRef}」与同时提供的页面引用或元素 target 指向不同页面。请只指定一个目标，或让两者指向同一页。",
+    en: "tabRef \"{tabRef}\" conflicts with the supplied page reference or element target. Select one target, or make both refer to the same page.",
   },
   batchTabReferenceOutsideBatch: {
-    "zh-CN": "tabRef「{tabRef}」只能与对应的 open_tab 在同一批调用中使用。请改用 open_tab 返回的数字 tabId。",
-    en: "tabRef \"{tabRef}\" only works in the same batch of calls as its open_tab. Use the numeric tabId returned by open_tab instead.",
+    "zh-CN": "tabRef「{tabRef}」只能与对应的 open_tab 在同一批调用中使用。请改用 open_tab 返回的 tabRef。",
+    en: "tabRef \"{tabRef}\" only works in the same batch of calls as its open_tab. Use the tabRef returned by open_tab instead.",
+  },
+  batchTabReferenceNoAlias: {
+    "zh-CN": "本会话还没有页面别名。tabRef 可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。",
+    en: "This session has no page alias yet. tabRef can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs.",
   },
   batchTabDependencyFailed: {
     "zh-CN": "tabAlias「{tabRef}」对应的 open_tab 未能建立有效页面，已跳过此次调用。请先处理该 open_tab 的错误，再重试。",
@@ -50,6 +54,10 @@ const messages = defineMessages("tool-runtime", {
   actionTimeout: {
     "zh-CN": "操作可能已生效，最终状态尚待确认。系统保留本次尝试，请读取页面状态确认结果。",
     en: "The action may have taken effect; its final state is unconfirmed. The system preserves this attempt. Read the page state to confirm the outcome.",
+  },
+  readTimeout: {
+    "zh-CN": "读取未完成。请检查页面状态，缩小读取范围或延长超时后重试。",
+    en: "The read did not complete. Check the page state, then narrow the read or increase its timeout before retrying.",
   },
   timeout: {
     "zh-CN": "超时秒数；省略时用默认超时。",

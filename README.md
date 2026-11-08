@@ -12,7 +12,7 @@
 
 </div>
 
-qz is an open-source browser agent that runs in your own browser as a Chrome extension. Describe a task in one sentence, and it works across the sites you're already signed in to, extracts the data, and delivers tables, files, or reports with sources. Connect any model, including DeepSeek, OpenAI, and Claude, with your own API key; your data stays local and goes only to the model you choose. Agents like Grok Bot, Claude Code, and Codex can also hand web tasks to qz through its CLI and MCP.
+qz is an open-source browser agent that runs in your own browser as a Chrome extension. Describe a task in one sentence, and it works across the sites you're already signed in to, extracts the data, and delivers tables, files, or reports with sources. Connect any model, including DeepSeek, OpenAI, and Claude, with your own API key; your data stays local and goes only to the model you choose. Agents like Grok Bot, Claude Code, and Codex can also drive your browser or hand whole web tasks to qz through its CLI and MCP.
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm"><img src="docs/images/chrome-web-store-badge.png" alt="Available in the Chrome Web Store" height="58"></a>
@@ -34,7 +34,11 @@ General-purpose AI agents often break on real-world browsing: login walls, long 
 
 ### Visible to you, callable by your agent
 
-Other browser agents usually let you watch them work, but stepping in mid-task is hard, and each is built for either people or agents, not both. qz lives in the side panel, so you see every step and result, and you can step in or stop it at any time. Coding agents such as Claude Code and Codex can also send tasks to qz through the CLI or MCP.
+Other browser agents usually let you watch them work, but stepping in mid-task is hard, and each is built for either people or agents, not both. qz lives in the side panel, so you see every step and result, and you can step in or stop it at any time. Coding agents such as Claude Code and Codex can also drive the same browser or send tasks to qz through the CLI or MCP.
+
+<p align="center">
+  <img src="docs/images/agent-drive-en.png" width="800" alt="A coding agent runs one qz script from the terminal while the qz side panel shows each browser step and the saved table">
+</p>
 
 ### Parallel research, from web data to reusable Skills
 
@@ -110,9 +114,7 @@ In a coding agent such as pi, say:
 Use qz to find this week's hottest AI agent projects on GitHub and send me a weekly report.
 ```
 
-<p align="center">
-  <img src="docs/images/examples/en/pi-delegate-en.gif" width="800" alt="">
-</p>
+The agent opens a qz session in your browser, reads pages, and acts through `qz script`. It can also hand the whole task to qz's built-in agent with `qz create`.
 
 ## Quick start
 
@@ -125,7 +127,7 @@ Use qz to find this week's hottest AI agent projects on GitHub and send me a wee
    ```text
    Find this year's Nobel Prize winners in every category and put them in a table with source links.
    ```
-4. **(Optional) Connect external agents**: Run `npx --yes qz-browser-agent@latest connect` in your terminal to let other agents trigger qz. See [Make your agents actually good at browsing](#make-your-agents-actually-good-at-browsing) for details.
+4. **(Optional) Connect external agents**: CLI commands start the local service and connect the browser when needed. See [Make your agents actually good at browsing](#make-your-agents-actually-good-at-browsing) for the agent guide.
 
 <details id="manual-installation">
 <summary>Can't access the Chrome Web Store? Install manually</summary>
@@ -139,15 +141,15 @@ Use qz to find this week's hottest AI agent projects on GitHub and send me a wee
 
 ## Make your agents actually good at browsing
 
-Agents like Grok Bot, Claude Code, Codex, and pi can hand web tasks to qz. qz runs them in your browser's side panel, where you can watch every step, then returns the results so your agent can keep going.
+Agents like Grok Bot, Claude Code, Codex, and pi can drive your connected browser directly. This one Skill is the direct-drive guide: open a tab, read the page, and act with `qz script` or MCP. When you want qz's built-in agent to plan the task, that same Skill points at `references/create-task.md`.
 
-1. **Install the Skill** so your agent knows how to use qz.
+1. **Install this Skill.** It is the direct-drive guide.
    ```bash
    npx skills add alibaba/qz-browser-agent -g
    ```
-2. **Pair once.** Requires Node.js 22 or later. The command pairs automatically with your default browser.
+2. **Choose a browser (optional).** Requires Node.js 22 or later. The first CLI command opens a connection page in your default browser and connects automatically. If qz isn't installed there, the page links to the Chrome Web Store and shows a link to copy into the browser that has qz. To pair a particular browser profile, run this command and open the printed URL in that profile:
    ```bash
-   npx qz-browser-agent@latest connect
+   npx qz-browser-agent@latest connect uri
    ```
 3. **Just ask.** Tell your agent: "Use qz to compare open-weight LLMs released in the last 6 months and put them in a table with sources."
 
@@ -155,13 +157,19 @@ Agents like Grok Bot, Claude Code, Codex, and pi can hand web tasks to qz. qz ru
 <summary>Use the CLI or MCP directly</summary>
 
 ```bash
-npx qz-browser-agent@latest create "your task" --stream
+npm install --global qz-browser-agent
+qz session create --title "Compare models" --json
+qz script --session SESSION_ID task.js
+qz create "your task" --stream
 ```
 
-- `--stream` shows progress, any questions qz needs you to answer, and the final result.
-- For MCP clients, run `npx qz-browser-agent@latest mcp` after pairing and use the HTTP URL it returns.
-- For regular use, install globally with `npm install --global qz-browser-agent`, then use `qz` in place of `npx qz-browser-agent@latest`.
+- `session create` opens a browser session without starting a model. With `--json`, `result.qz_skills` lists the Skills the session can use right away.
+- `script` runs a JavaScript file in that session with the `qz` SDK and prints `{ok,result,trace}` as JSON. Run `qz skill` for the full guide.
+- `create` hands the whole task to qz's built-in agent. `--stream` shows progress, any questions qz needs you to answer, and the final result.
+- Without a global install, use `npx qz-browser-agent@latest` in place of `qz`.
+- For MCP clients, run `qz mcp` and use the HTTP URL it returns.
 - See the [CLI and MCP reference](docs/cli.md) for multi-browser pairing, follow-ups, and exports.
+- For DeepSeek Harness, see the [Qingzhou dsh plugin](services/dsh-plugin/README.md).
 
 </details>
 

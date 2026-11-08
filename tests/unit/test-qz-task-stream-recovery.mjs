@@ -12,6 +12,16 @@ const passed = snapshot("next-run", "completed", [
   user("requested-message", "target-run"), assistant("target-run", "Requested answer"),
   user("later-message", "next-run"), assistant("next-run", "Later answer"),
 ]);
+function preparedCall(clientId, execute) {
+  return async (endpoint, name, args) => {
+    assert.equal(args.clientId, clientId);
+    if (name === "qingzhou_call") {
+      assert.equal(args.method, "ping");
+      return { pong: true };
+    }
+    return execute(endpoint, name, args);
+  };
+}
 
 test("a run completed before the first poll includes its answer and every successor", async () => {
   for (const tracking of [{ expectedMessageId: "requested-message" }, { expectedRunId: "target-run" }]) {
@@ -45,12 +55,12 @@ test("CLI send follows later runs without resending its accepted message", async
     findDaemon: async () => ({ endpoint: "http://127.0.0.1:23456", health: { features: { browserPairing: 1 },
       status: { connected: true, clients: [{ clientId: "browser" }] },
     } }),
-    callTool: async (_endpoint, name) => {
+    callTool: preparedCall("browser", async (_endpoint, name) => {
       calls++;
       if (name === "qingzhou_send_message") return { accepted: true, clientMessageId: "requested-message" };
       assert.equal(name, "qingzhou_get_session_snapshot");
       return passed;
-    },
+    }),
   });
   assert.equal(result.snapshot, passed);
   assert.equal(result.clientMessageId, "requested-message");
@@ -61,12 +71,12 @@ test("CLI send finishes when its accepted queued follow-up was removed before ob
   const calls = [], updates = [];
   const { result } = await runCli(["send", "task", "Removed follow-up", "--stream"], {
     findDaemon: async () => cliHealth(),
-    callTool: async (_endpoint, name) => {
+    callTool: preparedCall(browserA, async (_endpoint, name) => {
       calls.push(name);
       if (name === "qingzhou_send_message") return { accepted: true, disposition: "queued", clientMessageId: "removed" };
       assert.equal(name, "qingzhou_get_session_snapshot");
       return passed;
-    },
+    }),
     onTaskUpdate: update => updates.push(update),
   });
   assert.equal(result.accepted, true);
@@ -83,11 +93,13 @@ test("CLI recovery commands preserve shell-sensitive IDs and option-like values"
         findDaemon: async () => ({ endpoint: "http://127.0.0.1:23456", health: { features: { browserPairing: 1 },
           status: { connected: true, clients: [{ clientId }] },
         } }),
-        callTool: async (_endpoint, name) => name === "qingzhou_send_message"
-          ? { accepted: true, ...(tracked ? { clientMessageId: "requested-message" } : {}) }
-          : passed,
+        callTool: preparedCall(clientId, async (_endpoint, name) => {
+          if (name === "qingzhou_send_message") return { accepted: true, ...(tracked ? { clientMessageId: "requested-message" } : {}) };
+          assert.equal(name, "qingzhou_get_session_snapshot");
+          return passed;
+        }),
       }), error => {
-        assert.equal(error.code, tracked ? "task_changed" : "invalid_response");
+        assert.equal(error.code, tracked ? "TASK_CHANGED" : "INVALID_RESPONSE");
         const shell = spawnSync("/bin/sh", ["-c", `qz() { printf '%s\\n' "$@"; }\n${error.details.command}`], { encoding: "utf8" });
         assert.equal(shell.status, 0, shell.stderr);
         const parsed = parseCommand(shell.stdout.trimEnd().split("\n"));
@@ -114,7 +126,7 @@ test("executing the CLI timeout recovery command follows the original task witho
   const calls = [];
   const deps = {
     findDaemon: async () => cliHealth(),
-    callTool: async (_endpoint, name, args) => {
+    callTool: preparedCall(browserA, async (_endpoint, name, args) => {
       assert.equal(args.sessionId, "task");
       assert.equal(args.clientId, browserA);
       calls.push(name);
@@ -124,10 +136,10 @@ test("executing the CLI timeout recovery command follows the original task witho
       return resumed && reads === 2 ? passed : {
         ...passed, status: "pending", runtime: { status: "pending", pendingStart: true },
       };
-    },
+    }),
   };
   await assert.rejects(runCli(["send", "task", "Requested message", "--wait", "--timeout", "0.01"], deps), error => {
-    assert.equal(error.code, "timeout");
+    assert.equal(error.code, "TIMEOUT");
     recovery = error.details.command;
     assert.equal(recovery, `qz watch task --client ${browserA} --stream`);
     return true;
@@ -148,27 +160,27 @@ for (const deleted of [false, true]) test(`CLI missing-task feedback handles ${d
     const exitCode = await main([command, sessionId, "--json"], {
       findDaemon: async () => cliHealth(),
       stdout: { write: text => { output += text; } }, stderr: { write: () => assert.fail("unexpected stderr") },
-      callTool: async (_endpoint, name, args) => {
+      callTool: preparedCall(browserA, async (_endpoint, name, args) => {
         assert.equal(name, "qingzhou_get_session_snapshot");
         assert.equal(args.sessionId, sessionId);
         assert.equal(args.clientId, browserA);
         reads.push(args);
         return deleted && command === "watch" && reads.length === 1
           ? snapshot("run", "running", []) : missingSnapshot(sessionId);
-      },
+      }),
     });
     assert.equal(exitCode, 1);
     const envelope = JSON.parse(output);
-    assert.equal(envelope.ok, false);
-    const error = envelope.error;
-    assert.equal(error.code, command === "show" ? "task_not_found" : "task_deleted");
+    assert.deepEqual(Object.keys(envelope).sort(), ["code", "details", "hint", "message"]);
+    const error = envelope;
+    assert.equal(error.code, command === "show" ? "TASK_NOT_FOUND" : "TASK_DELETED");
     assert.match(error.message, /not found in the selected browser/);
     assert.doesNotMatch(error.message, /was deleted/);
-    assert.equal(error.sessionId, sessionId);
-    assert.equal(error.clientId, browserA);
+    assert.equal(error.details.sessionId, sessionId);
+    assert.equal(error.details.clientId, browserA);
     assert.match(error.hint, /task ID and selected browser.*qz browsers/);
-    assert.equal(error.command, `qz tasks --client ${browserA}`);
-    assert.doesNotMatch(error.hint + error.command, /Continue watching|qz watch/);
+    assert.equal(error.details.command, `qz tasks --client ${browserA}`);
+    assert.doesNotMatch(error.hint + error.details.command, /Continue watching|qz watch/);
     assert.equal(reads.length, deleted && command === "watch" ? 2 : 1);
   }
 });
@@ -177,7 +189,13 @@ test("CLI wrong-browser recovery stays on the resolved UUID and leaves the ownin
   for (const command of ["show", "watch"]) {
     const running = cliHealth([{ clientId: browserA, name: "default" }, { clientId: browserB, name: "work" }]);
     const calls = [];
+    let selected = browserB;
     const deps = { findDaemon: async () => running, callTool: async (_endpoint, name, args) => {
+      assert.equal(args.clientId, selected);
+      if (name === "qingzhou_call") {
+        assert.equal(args.method, "ping");
+        return { pong: true };
+      }
       calls.push({ name, ...args });
       if (name === "qingzhou_list_sessions") return { sessions: args.clientId === browserB ? [] : [{ id: "task" }] };
       assert.equal(name, "qingzhou_get_session_snapshot");
@@ -190,7 +208,7 @@ test("CLI wrong-browser recovery stays on the resolved UUID and leaves the ownin
     let failure;
     await assert.rejects(runCli([command, "task", "--client", "work"], deps), error => {
       failure = error;
-      assert.equal(error.code, command === "show" ? "task_not_found" : "task_deleted");
+      assert.equal(error.code, command === "show" ? "TASK_NOT_FOUND" : "TASK_DELETED");
       assert.equal(error.details.clientId, browserB);
       assert.equal(error.details.command, `qz tasks --client ${browserB}`);
       return true;
@@ -198,6 +216,7 @@ test("CLI wrong-browser recovery stays on the resolved UUID and leaves the ownin
     const listed = await runCli(failure.details.command.split(" ").slice(1), deps);
     assert.deepEqual(listed.result, { sessions: [], clientId: browserB });
     assert.deepEqual(calls.map(call => call.clientId), [browserB, browserB]);
+    selected = browserA;
     const owning = await runCli(["show", "task", "--client", browserA], deps);
     assert.equal(owning.result.status, "completed");
     assert.equal(owning.result.clientId, browserA);

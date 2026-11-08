@@ -135,7 +135,7 @@ async function scenario(name, round, operation) {
   await delay(750);
 }
 function marker(round, type) { return `QZ_SOAK_${String(round).padStart(4, "0")}_${type}`; }
-function remember(created) { const id = created.session?.id || created.sessionId; assert.ok(id); sessions.add(id); return id; }
+function remember(created) { const id = created.session?.sessionId || created.sessionId; assert.ok(id); sessions.add(id); return id; }
 function text(snapshot) { return (snapshot.transcript || []).filter(entry => entry.type === "assistant").map(entry => contentText(entry.content)).join("\n"); }
 function contentText(value) { return typeof value === "string" ? value : Array.isArray(value) ? value.filter(part => part.type === "text").map(part => part.text).join("\n") : ""; }
 async function until(predicate, description, timeout = 25_000) {
@@ -231,7 +231,7 @@ async function simpleTasks(round) {
   const sent = await sending.finish();
   assert.equal(sent.snapshot.status, "completed"); assert.ok(sent.clientMessageId);
   assert.equal(sent.snapshot.transcript.filter(entry => entry.clientMessageId === sent.clientMessageId).length, 1);
-  assert.ok((await cli(["tasks", "--limit", "100"])).sessions.some(session => session.id === id));
+  assert.ok((await cli(["tasks", "--limit", "100"])).sessions.some(session => session.sessionId === id));
   assert.equal((await cli(["show", id])).sessionId, id);
   assert.equal(fixture.count(tag), 1); assert.equal(fixture.count(follow), 1);
   return { sessionId: id, clientMessageId: sent.clientMessageId };
@@ -325,25 +325,36 @@ async function browserTools(round) {
   return { sessionId: id, tabId, jobId: job.jobId };
 }
 async function completedTabs(round) {
-  const sessionId = report.scenarios.find(item => item.round === round && item.name === "task-wait-stream-followup").result.sessionId;
+  const tabIds = () => environment.page.evaluate(async () => (await chrome.tabs.query({})).map(tab => tab.id));
+  const priorTabs = new Set(await tabIds());
+  const tag = marker(round, "CLEANUP");
+  const sessionId = remember(await mcp("qingzhou_create_session", { title: tag,
+    firstMessage: `Open the cleanup fixture and finish. [${tag}]`, wait: true }));
   const before = await cli(["show", sessionId]);
-  const opened = await mcp("qingzhou_execute_tool", { sessionId, name: "open_tab", args: { url: `${fixture.baseUrl}/cleanup/${round}` } });
-  const protectedResult = await closeCompletedTaskTabs({ mcp, sessionIds: [sessionId], activeSessionIds: [sessionId] });
+  assert.equal(before.status, "completed");
+  const opened = (await tabIds()).filter(id => !priorTabs.has(id));
+  assert.equal(opened.length, 1, "the native task creates one owned page");
+  const [tabId] = opened;
+  const protectedResult = await closeCompletedTaskTabs({ mcp, page: environment.page, sessionIds: [sessionId], activeSessionIds: [sessionId] });
   assert.equal(protectedResult.closed.length, 0, "active task exclusion preserves its tabs");
-  assert.ok((await cli(["show", sessionId])).runtime.ownedTabIds.includes(opened.result.id));
-  const result = await closeCompletedTaskTabs({ mcp, sessionIds: [...sessions] });
+  assert.ok((await tabIds()).includes(tabId));
+  const result = await closeCompletedTaskTabs({ mcp, page: environment.page, sessionIds: [...sessions] });
   assert.deepEqual(result.errors, []);
-  assert.ok(result.closed.some(item => item.sessionId === sessionId && item.tabId === opened.result.id));
+  assert.ok(result.closed.some(item => item.sessionId === sessionId && item.tabId === tabId));
+  assert.ok(!(await tabIds()).includes(tabId));
+  await until(() => environment.page.evaluate(async ({ sessionId, tabId }) => {
+    const key = `_session_runtime_${sessionId}`;
+    return !(await chrome.storage.local.get(key))[key]?.ownedTabIds?.includes(tabId);
+  }, { sessionId, tabId }), "closed native tab ownership removal");
   const after = await cli(["show", sessionId]);
-  assert.ok(!after.runtime.ownedTabIds.includes(opened.result.id));
   assert.deepEqual(after.transcript, before.transcript, "tab cleanup preserves task history");
   return result;
 }
 async function cancellation(round) {
   const invalid = await mcp("qingzhou_create_session", { firstMesage: "must not create a task" }, { expectedError: true });
-  assert.equal(invalid.code, "invalid_arguments");
+  assert.equal(invalid.code, "INVALID_ARGUMENTS");
   const invalidCli = await cli(["send", "missing-session", "test", "--steeer"], { expectedError: true });
-  assert.equal(invalidCli.code, "invalid_arguments");
+  assert.equal(invalidCli.code, "INVALID_ARGUMENTS");
   const tag = marker(round, "CANCEL");
   const id = remember(await mcp("qingzhou_create_session", { title: tag, firstMessage: `Wait for my choice. [${tag}]` }));
   const form = await input(id, "form");
@@ -384,7 +395,12 @@ async function startFixture() {
       const send = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({ id: tag, object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
       const toolId = `${tag}_input`;
       const needsInput = /_(FORM|QUEUEDFORM|CANCEL|CONFIRM)$/.test(tag) && !results.some(result => result.id === toolId);
-      if (needsInput) {
+      if (tag.endsWith("_CLEANUP") && !results.some(result => result.id === `${tag}_open`)) {
+        send({ role: "assistant", tool_calls: [{ index: 0, id: `${tag}_open`, type: "function", function: {
+          name: "open_tab", arguments: JSON.stringify({ url: `${baseUrl}/cleanup/${tag}`, tabAlias: "cleanup" }),
+        } }] });
+        send({}, "tool_calls");
+      } else if (needsInput) {
         const confirmation = tag.endsWith("_CONFIRM");
         const args = confirmation ? { message: "Confirm preparing this synthetic report." } : { title: "Choose the research scope", message: "Select a city and output formats.", fields: [
           { id: "city", label: "City", type: "text", required: true },

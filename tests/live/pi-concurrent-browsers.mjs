@@ -127,7 +127,7 @@ async function runPi(browser, spec) {
   writeFileSync(join(config, "settings.json"), JSON.stringify({ defaultProvider: "deepseek", defaultModel: model, defaultThinkingLevel: "off", enableInstallTelemetry: false, enableAnalytics: false }), { mode: 0o600 });
   const binding = spec.shared
     ? `This Profile is already connected as ${browserName}, UUID ${browser.uuid}. Read browsers --json and verify this exact name/UUID. Reuse that connection without renaming, re-pairing or stopping it. Another Pi is working concurrently in the SAME Profile; create only your own task and follow up only your own task ID.`
-    : `First obtain a pairing URL with connect --no-open --name ${browserName} --json, then open that exact URL by launching the executable with --user-data-dir for your exact directory. Read browsers --json, match the exact identifier ${browserName}, and retain that entry's clientId UUID for every task command. Do not infer ownership from before/after list differences or select another online browser.`;
+    : `First obtain a pairing URL with connect uri --name ${browserName} --json, then open that exact URL by launching the executable with --user-data-dir for your exact directory. Read browsers --json, match the exact identifier ${browserName}, and retain that entry's clientId UUID for every task command. Do not infer ownership from before/after list differences or select another online browser.`;
   const prompt = `Use the qz-browser-agent Skill to delegate one browser research task and one follow-up. Your only selected Chrome data directory is ${JSON.stringify(browser.profile)}. Its browser identifier is ${JSON.stringify(browserName)}; that identifier belongs to this Profile, not to you. The extension, first-use notice and DeepSeek model are configured. qz and Node are on PATH; use qz instead of npx for this unpublished build. Browser executable: ${JSON.stringify(browser.launches[0].executable)}.
 ${binding} Check settings for this UUID and retain it on every task command.
 Create this task once: ${JSON.stringify(`${spec.task} Source: ${spec.source} Include ${spec.marker}_INITIAL in your final answer.`)}
@@ -178,13 +178,13 @@ async function validateAgent(browser, spec) {
   const selected = (await qz(["browsers"])).browsers.find(client => client.name === browserName);
   assert.ok(selected); assert.equal(selected.clientId, browser.uuid); assert.equal(selected.online, true);
   const commands = readFileSync(join(output, spec.name, "cli.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
-  if (!spec.shared) assert.ok(commands.some(item => item.args[0] === "connect" && item.code === 0
-    && item.args.includes("--no-open") && item.args[item.args.indexOf("--name") + 1] === browserName), "each Pi requests its assigned Profile's explicit named URL");
+  if (!spec.shared) assert.ok(commands.some(item => item.args[0] === "connect" && item.args[1] === "uri" && item.code === 0
+    && item.args[item.args.indexOf("--name") + 1] === browserName), "each Pi requests its assigned Profile's explicit named URL");
   else assert.ok(!commands.some(item => ["connect", "stop", "cancel"].includes(item.args[0])), "shared-Profile agents leave the connection and other tasks running");
   const created = commands.filter(item => item.args[0] === "create" && item.code === 0);
   const sent = commands.filter(item => item.args[0] === "send" && item.code === 0);
   assert.equal(created.length, 1, "one created task per Pi"); assert.equal(sent.length, 1, "one follow-up per Pi");
-  const id = JSON.parse(created[0].stdout).result.session.id;
+  const id = JSON.parse(created[0].stdout).result.session.sessionId;
   entry.initialTaskInterval = { createdAt: created[0].startedAt, followupStartedAt: sent[0].startedAt };
   assert.equal(sent[0].args[1], id, "follow-up uses the original task ID");
   for (const item of commands.filter(item => ["create", "show", "watch", "send", "settings"].includes(item.args[0]))) {
@@ -260,7 +260,7 @@ try {
   const initial = await runPhase("three-pi-three-profiles", browsers.map((browser, index) => ({ browser, spec: cases[index] })), async completed => {
     for (const [index, own] of completed.entries()) {
       const listed = await qz(["tasks", "--client", own.clientId, "--limit", "500"]);
-      assert.deepEqual(listed.sessions.filter(item => item.id !== "0").map(item => item.id), [own.sessionId]);
+      assert.deepEqual(listed.sessions.filter(item => item.sessionId !== "0").map(item => item.sessionId), [own.sessionId]);
       for (const other of browsers.filter(browser => browser.uuid !== own.clientId)) {
         const outside = await fullSnapshot(other.uuid, own.sessionId);
         assert.equal(outside.session, null); assert.equal(outside.transcript.length, 0); assert.equal(outside.hasHistory, false);
@@ -273,7 +273,7 @@ try {
     assert.notEqual(completed[0].sessionId, completed[1].sessionId);
     assert.equal(completed[0].clientId, completed[1].clientId);
     const listed = await qz(["tasks", "--client", browsers[0].uuid, "--limit", "500"]);
-    assert.deepEqual(listed.sessions.filter(item => item.id !== "0").map(item => item.id).sort(), [initial[0].sessionId, ...completed.map(item => item.sessionId)].sort());
+    assert.deepEqual(listed.sessions.filter(item => item.sessionId !== "0").map(item => item.sessionId).sort(), [initial[0].sessionId, ...completed.map(item => item.sessionId)].sort());
     for (const own of initial) {
       const after = await fullSnapshot(own.clientId, own.sessionId);
       assert.equal(after.status, "completed"); assert.deepEqual(after.transcript, own.snapshot.transcript, "shared work does not alter prior tasks or other Profiles");
@@ -294,7 +294,7 @@ finally {
     for (const line of readFileSync(path, "utf8").trim().split("\n")) {
       try {
         const item = JSON.parse(line); if (item.args[0] !== "create" || item.code !== 0) continue;
-        const id = JSON.parse(item.stdout).result.session.id;
+        const id = JSON.parse(item.stdout).result.session.sessionId;
         save(`${entry.name}/cleanup-snapshot-${id}.json`, await fullSnapshot(entry.expectedUuid, id));
       } catch (error) { entry.cleanupSnapshotError = clean(error.message); }
     }

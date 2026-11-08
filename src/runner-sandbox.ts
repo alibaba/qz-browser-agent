@@ -29,6 +29,9 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
       callId: data.callId,
       response: data.response,
     });
+  } else if (data.type === "trace_snapshot") {
+    const requestId = String(data.requestId || "");
+    workers.get(requestId)?.postMessage({ type: "trace_snapshot", requestId });
   } else if (data.type === "cancel") {
     cancelWorkerRun(String(data.requestId || ""));
   }
@@ -67,7 +70,7 @@ function startWorkerRun(data: Record<string, unknown>) {
         engine: "offscreen_inner",
         execution_world: "inner",
         error: errorMessage(err),
-        code: "INNER_RUNNER_WORKER_CREATE_FAILED",
+        code: "SCRIPT_CONTEXT_UNAVAILABLE",
         trace: [{ time: new Date().toISOString(), level: "error", message: errorMessage(err) }],
         elapsedMs: 0,
       },
@@ -80,6 +83,10 @@ function startWorkerRun(data: Record<string, unknown>) {
   worker.onmessage = (event: MessageEvent<InnerWorkerOutput>) => {
     if (workers.get(requestId) !== worker) return;
     const message = event.data || {};
+    if (message.type === "script_trace") {
+      parent.postMessage({ source: SANDBOX_SOURCE, type: "script_trace", requestId, row: message.row }, "*");
+      return;
+    }
     if (message.type === "tool_call") {
       traceInnerSandbox("worker.tool_call", {
         requestId,
@@ -112,6 +119,15 @@ function startWorkerRun(data: Record<string, unknown>) {
         type: "fetch_cancel",
         requestId,
         callId: message.callId,
+      }, "*");
+      return;
+    }
+    if (message.type === "trace_snapshot") {
+      parent.postMessage({
+        source: SANDBOX_SOURCE,
+        type: "trace_snapshot",
+        requestId,
+        trace: Array.isArray(message.trace) ? message.trace.slice(-5) : [],
       }, "*");
       return;
     }
@@ -152,8 +168,8 @@ function startWorkerRun(data: Record<string, unknown>) {
         resultType: "error",
         engine: "offscreen_inner",
         execution_world: "inner",
-        error: event.message || "Inner runner worker failed",
-        code: "INNER_RUNNER_WORKER_ERROR",
+        error: event.message || "Script execution failed",
+        code: "SCRIPT_CONTEXT_UNAVAILABLE",
         trace: [],
         elapsedMs: 0,
       },
@@ -163,9 +179,10 @@ function startWorkerRun(data: Record<string, unknown>) {
     type: "execute",
     requestId,
     source: String(data.scriptSource || ""),
-    scriptArgs: data.scriptArgs && typeof data.scriptArgs === "object" ? data.scriptArgs : {},
+    scriptArgs: data.scriptArgs,
     securityGuardrails: data.securityGuardrails && typeof data.securityGuardrails === "object" ? data.securityGuardrails : {},
     fetchBridge: data.fetchBridge === true,
+    strictResult: data.strictResult === true,
   });
 }
 

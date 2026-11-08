@@ -6,6 +6,7 @@ export interface ModelConfiguration extends Record<string, unknown> {
   provider: string; apiKey: string; model: string; modelLabel: string;
   modelParameters: Record<string, unknown>;
   customProtocol: string; customEndpoint: string; customPresetName: string;
+  maxOutputTokens?: number;
   contextWindow?: number; trimOldToolResults: boolean; vision: boolean;
 }
 export interface ModelPreset extends ModelConfiguration { id: string; name: string; updatedAt: string }
@@ -50,6 +51,9 @@ export interface ProviderSummary {
   endpoint?: string;
   /** Presentation only; the request URL remains available to Background and configuration tools. */
   hideEndpoint?: boolean;
+  editableEndpoint?: string;
+  protocol?: string;
+  modelsIncludeCapabilities?: boolean;
   group?: ProviderGroup;
   modelOptions?: readonly ProviderModelOption[];
 }

@@ -7,6 +7,21 @@
   border-radius: 0;
 }
 
+.external-drive-readonly {
+  margin: 0;
+  padding: 8px 14px 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+#app[data-external-drive="true"] .msg-user-actions,
+#app[data-external-drive="true"] [data-action="retry-user-message"],
+#app[data-external-drive="true"] [data-action="edit-user-message"],
+#app[data-external-drive="true"] [data-action="submit-user-edit"] {
+  display: none;
+}
+
 .input-composer-frame:has(.queued-followups:not(.hidden)) {
   overflow: hidden;
   border: 1px solid var(--border);

@@ -7,37 +7,51 @@ import fs, { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { runCli, main } from "../../services/mcp-bridge/src/cli.mjs";
-import { buildIdentity, daemonPaths, ensureDaemon, findDaemon, startManagedBridge, stopDaemon } from "../../services/mcp-bridge/src/daemon.mjs";
+import { buildIdentity, daemonPaths, ensureDaemon, findDaemon, restartDaemon, startManagedBridge, stopDaemon } from "../../services/mcp-bridge/src/daemon.mjs";
 import { GUIDE_URL, INSTALL_URL, QzError, callTool, localFetch, localUrl, readHealth } from "../../services/mcp-bridge/src/client.mjs";
 import { openBrowser } from "../../services/mcp-bridge/src/open-browser.mjs";
 import { startBridge } from "../../services/mcp-bridge/src/server.mjs";
 
 const endpoint = "http://127.0.0.1:23456";
 const health = { service: "qz-browser-agent", protocolVersion: 1, features: { browserPairing: 1 }, instanceId: "test", processId: process.pid,
-  scopeId: "test", status: { connected: true, clients: [{ clientId: "browser-1" }] } };
+  scopeId: "test", status: { connected: true, clients: [{ clientId: "browser-1", name: "default" }] } };
 const running = { endpoint, instanceId: "test", health };
 
-test("CLI status and MCP URL are read-only; commands explain missing connections", async () => {
-  const dependencies = { findDaemon: async () => null, ensureDaemon: () => assert.fail("read must not start service"), openBrowser: () => assert.fail("read must not open a browser") };
+async function pollOperation(state, client, options = { timeoutMs: 2000 }) {
+  const requests = await state.poll(client, options);
+  assert.equal(requests.length, 1, "the selected browser receives one request at a time");
+  if (requests[0].method !== "ping") return requests[0];
+  assert.equal(completeBrowser(state, requests[0].id, { clientId: client.id, ok: true, result: { pong: true } }), true);
+  const operations = await state.poll(client, options);
+  assert.equal(operations.length, 1, "a completed bootstrap probe precedes one operation");
+  assert.notEqual(operations[0].method, "ping", "bootstrap must not probe the selected browser twice");
+  return operations[0];
+}
+
+test("status is read-only and MCP URI ensures only the local service", async () => {
+  const dependencies = { findDaemon: async () => null, ensureDaemon: () => assert.fail("status must not start service"), openBrowser: () => assert.fail("read must not open a browser") };
   assert.deepEqual(await runCli(["status"], dependencies), { result: { running: false, connected: false } });
-  for (const args of [["mcp"], ["show", "one"], ["send", "one", "Continue"], ["tasks"]]) {
-    await assert.rejects(runCli(args, dependencies), error => error.code === "not_connected");
-  }
-  assert.deepEqual(await runCli(["mcp"], { findDaemon: async () => running }), { text: `${endpoint}/mcp\n` });
-  assert.deepEqual(await runCli(["mcp", "--json"], { findDaemon: async () => running }), { result: { url: `${endpoint}/mcp` } });
+  let starts = 0;
+  const mcp = { ...dependencies, ensureDaemon: async () => { starts++; return running; },
+    callTool: () => assert.fail("MCP URI must not probe or dispatch"),
+    openConnectionBrowser: () => assert.fail("MCP URI must not open a browser") };
+  assert.deepEqual(await runCli(["mcp"], mcp), { text: `${endpoint}/mcp\n` });
+  assert.deepEqual(await runCli(["mcp", "--json"], mcp), { result: { url: `${endpoint}/mcp` } });
+  assert.equal(starts, 2);
 });
 
 test("CLI maps task commands to current MCP methods", async () => {
   const calls = [];
   const dependencies = { findDaemon: async () => running,
-    callTool: async (...values) => { calls.push(values); return { sessionId: "task-1" }; } };
+    callTool: async (...values) => { calls.push(values); return values[1] === "qingzhou_call" ? { pong: true } : { sessionId: "task-1" }; } };
   for (const [args, method, parameters] of [
     [["tasks"], "qingzhou_list_sessions", {}],
+    [["session", "create", "--title", "Inspect example page"], "qingzhou_create_drive_session", { title: "Inspect example page" }],
     [["create", "Read this page", "--title", "A"], "qingzhou_create_session", { title: "A", firstMessage: "Read this page" }],
     [["show", "task-1"], "qingzhou_get_session_snapshot", { sessionId: "task-1" }],
     [["cancel", "task-1"], "qingzhou_stop_session", { sessionId: "task-1" }],
@@ -47,105 +61,134 @@ test("CLI maps task commands to current MCP methods", async () => {
     for (const [key, value] of Object.entries(parameters)) assert.deepEqual(calls.at(-1)[2][key], value);
     assert.equal(calls.at(-1)[2].clientId, "browser-1");
   }
-  assert.equal(calls.length, 4);
+  assert.equal(calls.filter(call => call[1] !== "qingzhou_call").length, 5);
+  assert.equal(calls.filter(call => call[1] === "qingzhou_call").length, 5, "each browser command verifies its selected connection before dispatch");
 });
 
 test("invalid arguments cannot open a connection or execute a tool", async () => {
   const dependencies = { findDaemon: () => assert.fail("must validate first") };
-  for (const args of [["call", "navigate"], ["call", "navigate", "--session", "one", "[]"],
+  for (const args of [["session", "create"], ["session", "create", "--title", "  "], ["call", "navigate"], ["call", "navigate", "--session", "one", "[]"],
     ["call", "navigate", "--session", "one", "bad"], ["cancel"], ["status", "extra"], ["tools", "--timeout", "NaN"]]) {
-    await assert.rejects(runCli(args, dependencies), error => error.code === "invalid_arguments");
+    await assert.rejects(runCli(args, dependencies), error => error.code === "INVALID_ARGUMENTS");
   }
   let output = "";
   const code = await main(["create"], {
     ...dependencies, stdout: { write(value) { output += value; } },
   });
   assert.equal(code, 2);
-  const error = JSON.parse(output).error;
-  assert.equal(error.code, "invalid_arguments");
+  const error = JSON.parse(output);
+  assert.equal(error.code, "INVALID_ARGUMENTS");
   assert.match(error.message, /prompt/i);
   assert.match(error.hint, /npm run qz --/);
   assert.equal(Object.hasOwn(error, "install"), false);
   assert.equal(Object.hasOwn(error, "guide"), false);
 });
 
-test("connect starts once and opens a browser only when needed; stop owns the shared service", async () => {
-  let starts = 0, opens = 0, stops = 0;
+test("session cancellation sends the keep set in the single stop request", async () => {
+  const calls = [];
   const dependencies = {
-    ensureDaemon: async () => { starts += 1; return { ...running, health: { ...health, status: { connected: false } } }; },
-    openBrowser: async url => { opens += 1; assert.equal(url, `${endpoint}/qz-connect`); },
-    readHealth: async () => health,
-    callTool: async (_endpoint, name, args) => { assert.equal(name, "qingzhou_call"); assert.equal(args.method, "ping"); },
-    stopDaemon: async () => { stops += 1; return { stopped: true }; },
+    findDaemon: async () => running,
+    callTool: async (_endpoint, name, args) => {
+      calls.push({ name, args });
+      return name === "qingzhou_call" ? { pong: true } : { sessionId: "drive", status: "aborted" };
+    },
   };
-  assert.equal((await runCli(["connect"], dependencies)).result.connected, true);
-  assert.equal(starts, 1); assert.equal(opens, 1);
-  dependencies.ensureDaemon = async () => running;
-  await runCli(["connect"], dependencies);
-  assert.equal(opens, 1);
-  assert.deepEqual((await runCli(["stop"], dependencies)).result, { stopped: true });
-  assert.equal(stops, 1);
+  await runCli(["session", "cancel", "drive", "--keep", "result", "--keep", "42", "--client", "browser-1"], dependencies);
+  assert.deepEqual(calls.filter(call => call.name !== "qingzhou_call"), [{
+    name: "qingzhou_stop_session", args: { sessionId: "drive", keepTabRefs: ["result", "42"], clientId: "browser-1", timeoutSeconds: 180 },
+  }]);
 });
 
-test("connect verifies browser replies, recovers an idle poller, and respects an explicit profile", async () => {
+test("connect uri starts once and only returns the binding URL", async () => {
+  let starts = 0;
+  const dependencies = {
+    findDaemon: async () => null,
+    ensureDaemon: async () => { starts++; return running; },
+    openBrowser: () => assert.fail("preparing a URI never opens the installer"),
+    openConnectionBrowser: () => assert.fail("preparing a URI never opens a browser"),
+    readHealth: () => assert.fail("preparing a URI never waits for a browser"),
+    callTool: () => assert.fail("preparing a URI never probes or dispatches"),
+    stopDaemon: () => assert.fail("the public CLI cannot stop the shared service"),
+  };
+  assert.equal((await runCli(["connect", "uri"], dependencies)).text, `${endpoint}/qz-connect\n`);
+  assert.equal(starts, 1);
+  await assert.rejects(runCli(["stop"], dependencies), error => error.code === "INVALID_ARGUMENTS");
+});
+
+test("session bootstrap verifies the default browser and never falls back from an explicit profile", async () => {
   let opened = false;
   const probes = [];
   const dependencies = {
+    findDaemon: async () => running,
     ensureDaemon: async () => running,
     readHealth: async () => health,
-    openBrowser: async url => { assert.equal(url, `${endpoint}/qz-connect`); opened = true; },
+    openBrowser: () => assert.fail("connection bootstrap never opens the installer"),
+    openConnectionBrowser: async url => { assert.equal(url, `${endpoint}/qz-connect`); opened = true; return { opened: true }; },
     callTool: async (_endpoint, name, args) => {
+      if (name === "qingzhou_create_drive_session") return { sessionId: "bootstrapped", title: args.title, status: "idle" };
       assert.equal(name, "qingzhou_call");
       assert.equal(args.method, "ping");
       probes.push(args.clientId);
       if (!opened) throw new QzError("BRIDGE_REQUEST_TIMEOUT", "The browser lease remains, but its poller is idle");
     },
   };
-  await assert.rejects(runCli(["connect", "--client", "browser-1"], dependencies), error => error.code === "client_offline");
+  const command = ["session", "create", "--title", "Connected task", "--json"];
+  await assert.rejects(runCli([...command, "--client", "browser-1", "--timeout", "0.03"], dependencies), error => error.code === "CLIENT_OFFLINE");
   assert.equal(opened, false);
   probes.length = 0;
-  assert.equal((await runCli(["connect"], dependencies)).result.connected, true);
+  assert.equal((await runCli(command, dependencies)).result.sessionId, "bootstrapped");
   assert.equal(opened, true);
   assert.deepEqual(probes, ["browser-1", "browser-1"]);
 
   probes.length = 0;
-  dependencies.ensureDaemon = async () => ({ ...running, health: { ...health, status: {
-    connected: true, clients: [{ clientId: "other-browser" }, { clientId: "browser-1" }],
-  } } });
-  dependencies.openBrowser = () => assert.fail("the selected responsive browser needs no connection page");
-  await runCli(["connect", "--client", "browser-1"], dependencies);
+  const multiple = { ...running, health: { ...health, status: {
+    connected: true, clients: [{ clientId: "other-browser", name: "default" }, { clientId: "browser-1", name: "work" }],
+  } } };
+  dependencies.findDaemon = dependencies.ensureDaemon = async () => multiple;
+  dependencies.openConnectionBrowser = () => assert.fail("the selected responsive browser needs no connection page");
+  await runCli([...command, "--client", "browser-1"], dependencies);
   assert.deepEqual(probes, ["browser-1"]);
 });
 
-test("connect never reports a stale lease as success and abort does not open a page", async () => {
+test("session bootstrap aborts before opening a browser or dispatching a mutation", async () => {
   let opens = 0;
   const dependencies = {
+    findDaemon: async () => running,
     ensureDaemon: async () => running, readHealth: async () => health,
-    openBrowser: async () => { opens++; },
-    callTool: async () => { throw new QzError("BRIDGE_REQUEST_TIMEOUT", "browser did not reply"); },
+    openConnectionBrowser: async () => { opens++; },
+    callTool: async () => assert.fail("an aborted command must not dispatch"),
   };
-  await assert.rejects(runCli(["connect", "--timeout", "0.05"], dependencies), error => error.code === "connection_pending");
-  assert.equal(opens, 1);
   const controller = new AbortController();
-  dependencies.callTool = async () => { controller.abort(); throw controller.signal.reason; };
-  await assert.rejects(runCli(["connect"], { ...dependencies, signal: controller.signal }), error => error.name === "AbortError");
-  assert.equal(opens, 1);
+  controller.abort();
+  const command = ["session", "create", "--title", "Aborted task"];
+  await assert.rejects(runCli(command, { ...dependencies, signal: controller.signal }), error => error.name === "AbortError");
+  assert.equal(opens, 0);
+  const duringProbe = new AbortController();
+  dependencies.callTool = async (_endpoint, name) => { assert.equal(name, "qingzhou_call"); duringProbe.abort(); throw duringProbe.signal.reason; };
+  await assert.rejects(runCli(command, { ...dependencies, signal: duringProbe.signal }), error => error.name === "AbortError");
+  assert.equal(opens, 0);
 });
 
-test("connect confirms a browser through the real MCP transport before reporting success", async t => {
+test("session creation confirms a browser through the real MCP transport before one mutation", async t => {
   const server = await startBridge({ port: 0, scopeId: "connect-probe-test" });
   t.after(() => server.close());
   const client = await pairBrowser(server.state, { id: "test-browser", pollTimeoutMs: 1000 });
   await server.state.poll(client, { timeoutMs: 1 });
-  const connected = runCli(["connect"], {
-    ensureDaemon: async () => ({ endpoint: server.endpoint, instanceId: server.instanceId, health: await readHealth(server.endpoint) }),
-    openBrowser: () => assert.fail("a responsive browser should be reused"),
+  const record = async () => ({ endpoint: server.endpoint, instanceId: server.instanceId, health: await readHealth(server.endpoint) });
+  const connected = runCli(["session", "create", "--title", "Verified task", "--json"], {
+    findDaemon: record, ensureDaemon: record,
+    openConnectionBrowser: () => assert.fail("a responsive browser should be reused"),
   });
   const [request] = await server.state.poll(client, { timeoutMs: 2000 });
   assert.equal(request.method, "ping");
   assert.deepEqual(request.params, {});
   completeBrowser(server.state, request.id, { clientId: client.id, ok: true, result: { pong: true } });
-  assert.equal((await connected).result.connected, true);
+  const [creation] = await server.state.poll(client, { timeoutMs: 2000 });
+  assert.equal(creation.method, "create_drive_session");
+  assert.equal(creation.params.title, "Verified task");
+  completeBrowser(server.state, creation.id, { clientId: client.id, ok: true,
+    result: { sessionId: "verified", title: "Verified task", status: "idle" } });
+  assert.deepEqual((await connected).result, { sessionId: "verified", title: "Verified task", status: "idle" });
   assert.equal(server.state.pending.size, 0);
   assert.equal(server.state.inflight.size, 0);
 });
@@ -156,11 +199,11 @@ test("install opens the Chrome Web Store and failures always include URL and set
   assert.deepEqual(opened, [INSTALL_URL]);
   assert.equal(result.result.opened, true);
   let output = "";
-  const code = await main(["install"], { stdout: { write(value) { output += value; } }, openBrowser: async url => { throw Object.assign(new Error("No browser"), { code: "browser_open_failed", details: { url } }); } });
+  const code = await main(["install"], { stdout: { write(value) { output += value; } }, openBrowser: async url => { throw Object.assign(new Error("No browser"), { code: "BROWSER_OPEN_FAILED", details: { url } }); } });
   assert.equal(code, 1);
-  const error = JSON.parse(output).error;
-  assert.equal(error.url, INSTALL_URL);
-  assert.equal(error.guide, GUIDE_URL);
+  const error = JSON.parse(output);
+  assert.equal(error.details.url, INSTALL_URL);
+  assert.equal(error.details.guide, GUIDE_URL);
   assert.match(error.hint, /qz install/);
   assert.doesNotMatch(error.hint, /qz install qz/);
 });
@@ -173,7 +216,7 @@ test("browser launcher uses argument arrays and reports spawn failures", async (
   assert.deepEqual(launch, { command: "open", args: [INSTALL_URL] });
   await assert.rejects(openBrowser(INSTALL_URL, { spawnProcess: () => {
     const child = new EventEmitter(); queueMicrotask(() => child.emit("error", new Error("missing"))); return child;
-  } }), error => error.code === "browser_open_failed" && error.details.url === INSTALL_URL);
+  } }), error => error.code === "BROWSER_OPEN_FAILED" && error.details.url === INSTALL_URL);
 });
 
 test("local transport rejects remote endpoints and redirects", async t => {
@@ -181,7 +224,7 @@ test("local transport rejects remote endpoints and redirects", async t => {
   const server = createServer((_req, res) => { res.writeHead(307, { location: "https://example.com" }); res.end(); });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  await assert.rejects(localFetch(`http://127.0.0.1:${server.address().port}/mcp`), error => error.code === "redirect_blocked");
+  await assert.rejects(localFetch(`http://127.0.0.1:${server.address().port}/mcp`), error => error.code === "REDIRECT_BLOCKED");
 });
 
 for (const action of ["cancel", "abort"]) for (const phase of ["between chunks", "pending first read", "pending second read"]) {
@@ -231,14 +274,14 @@ test("real SDK CLI submits a task once and preserves failure without retry", asy
   const record = { endpoint: server.endpoint, health: await readHealth(server.endpoint) };
   const dependencies = { findDaemon: async () => record };
   const call = runCli(["send", "task-a", "Visit the source."], dependencies);
-  const [request] = await server.state.poll(client, { timeoutMs: 2000 });
+  const request = await pollOperation(server.state, client);
   assert.equal(request.method, "send_message");
   assert.equal(request.params.sessionId, "task-a");
   completeBrowser(server.state, request.id, { clientId: client.id, ok: true, result: { accepted: true, sessionId: "task-a" } });
   assert.deepEqual((await call).result, { accepted: true, sessionId: "task-a", clientId: client.id });
   const failed = runCli(["send", "task-a", "Try the next source."], dependencies);
   const assertion = assert.rejects(failed, error => error.code === "BRIDGE_TOOL_ERROR" && /fixture failure/.test(error.message));
-  const [second] = await server.state.poll(client, { timeoutMs: 2000 });
+  const second = await pollOperation(server.state, client);
   completeBrowser(server.state, second.id, { clientId: client.id, ok: false, error: "fixture failure" });
   await assertion;
   assert.deepEqual(await server.state.poll(client, { timeoutMs: 10 }), []);
@@ -250,9 +293,9 @@ test("a timed-out task mutation is not submitted again", async t => {
   const client = await pairBrowser(server.state, { id: "test-browser", pollTimeoutMs: 1000 });
   await server.state.poll(client, { timeoutMs: 1 });
   const record = { endpoint: server.endpoint, health: await readHealth(server.endpoint) };
-  const assertion = assert.rejects(runCli(["send", "task-a", "Ask for a city.", "--timeout", "0.15"],
-    { findDaemon: async () => record }), error => error.code === -32001 || error.code === "tool_error");
-  const [request] = await server.state.poll(client, { timeoutMs: 2000 });
+  const assertion = assert.rejects(runCli(["send", "task-a", "Ask for a city.", "--timeout", "0.4"],
+    { findDaemon: async () => record }), error => error.code === -32001 || error.code === "TOOL_ERROR");
+  const request = await pollOperation(server.state, client);
   assert.equal(request.method, "send_message");
   assert.equal(request.params.text, "Ask for a city.");
   await assertion;
@@ -267,14 +310,14 @@ test("task creation and snapshot lookup work through the real MCP transport", as
   const record = { endpoint: server.endpoint, health: await readHealth(server.endpoint) };
   const dependencies = { findDaemon: async () => record };
   const creating = runCli(["create", "Read this page", "--title", "Research"], dependencies);
-  const [create] = await server.state.poll(client, { timeoutMs: 2000 });
+  const create = await pollOperation(server.state, client);
   assert.equal(create.method, "create_session");
   assert.equal(create.params.title, "Research");
   assert.equal(create.params.firstMessage, "Read this page");
   completeBrowser(server.state, create.id, { clientId: client.id, ok: true, result: { sessionId: "task-created" } });
   assert.equal((await creating).result.sessionId, "task-created");
   const showing = runCli(["show", "task-created"], dependencies);
-  const [read] = await server.state.poll(client, { timeoutMs: 2000 });
+  const read = await pollOperation(server.state, client);
   assert.equal(read.method, "get_session_snapshot");
   assert.equal(read.params.sessionId, "task-created");
   const snapshot = { sessionId: "task-created", status: "completed", transcript: [{ type: "assistant", content: "Sources checked." }] };
@@ -291,9 +334,7 @@ for (const caller of ["CLI", "MCP"]) test(`${caller} executes timeout recovery t
   const sessionId = "task-recovery";
   const methods = [];
   const reply = async (method, result) => {
-    const requests = await server.state.poll(client, { timeoutMs: 2000 });
-    assert.equal(requests.length, 1, `Expected ${method} for the selected browser`);
-    const [request] = requests;
+    const request = await pollOperation(server.state, client);
     methods.push(request.method);
     assert.equal(request.method, method);
     assert.equal(request.params.sessionId, sessionId);
@@ -315,7 +356,7 @@ for (const caller of ["CLI", "MCP"]) test(`${caller} executes timeout recovery t
   await reply("send_message", { accepted: true, clientMessageId: "accepted-message", disposition: "started" });
   await reply("get_session_snapshot", snapshot("run-1", "running"));
   const failure = await sending;
-  assert.equal(failure.code, "timeout");
+  assert.equal(failure.code, "TIMEOUT");
   assert.equal(failure.details.sessionId, sessionId);
   assert.equal(failure.details.clientId, client.id);
   assert.equal(server.state.pending.size, 0);
@@ -368,22 +409,22 @@ test("real MCP CLI binds form replies to the displayed wait and follows the resu
   const pending = { sessionId: "task-input", runId: "run-input", waitId: "wait-input", waiting: true, kind: "form",
     form: { fields: [{ id: "city", label: "City", type: "single_choice", required: true, options: [{ value: "hz", label: "Hangzhou" }] }] }, actions: ["submit", "reject"] };
   const input = runCli(["show", "task-input"], dependencies);
-  const [get] = await server.state.poll(client, { timeoutMs: 2000 });
+  const get = await pollOperation(server.state, client);
   assert.equal(get.method, "get_session_snapshot");
   completeBrowser(server.state, get.id, { clientId: client.id, ok: true, result: { sessionId: "task-input", status: "waiting_user", input: pending } });
   assert.deepEqual((await input).result.input, { ...pending, clientId: client.id });
   const submitting = runCli(["submit", "task-input", '{"city":"hz"}', "--wait", "--timeout", "5"], dependencies);
-  const [read] = await server.state.poll(client, { timeoutMs: 2000 });
+  const read = await pollOperation(server.state, client);
   assert.equal(read.method, "get_user_input");
   completeBrowser(server.state, read.id, { clientId: client.id, ok: true, result: pending });
-  const [reply] = await server.state.poll(client, { timeoutMs: 2000 });
+  const reply = await pollOperation(server.state, client);
   assert.equal(reply.method, "respond_to_user_input");
   assert.equal(reply.params.action, "submit");
   assert.equal(reply.params.waitId, "wait-input");
   assert.deepEqual(reply.params.answers, { city: "hz" });
   completeBrowser(server.state, reply.id, { clientId: client.id, ok: true, result: { accepted: true, sessionId: "task-input", runId: "run-input", waitId: "wait-input" } });
   for (const status of ["waiting_user", "completed"]) {
-    const [poll] = await server.state.poll(client, { timeoutMs: 2000 });
+    const poll = await pollOperation(server.state, client);
     assert.equal(poll.method, "get_session_snapshot");
     assert.equal(poll.params.sessionId, "task-input");
     completeBrowser(server.state, poll.id, { clientId: client.id, ok: true, result: { sessionId: "task-input", runId: "run-input", status,
@@ -400,13 +441,13 @@ test("real MCP preserves location consent versions and rejects malformed wait re
   await server.state.poll(client, { timeoutMs: 1 });
   const record = { endpoint: server.endpoint, health: await readHealth(server.endpoint) };
   const approval = runCli(["approve", "task-consent", "--wait-id", "location-1"], { findDaemon: async () => record });
-  const [read] = await server.state.poll(client, { timeoutMs: 2000 });
+  const read = await pollOperation(server.state, client);
   assert.equal(read.method, "get_user_input");
   completeBrowser(server.state, read.id, { clientId: client.id, ok: true, result: {
     sessionId: "task-consent", waitId: "location-1", waiting: true, kind: "location_consent", consentVersion: 2,
     title: "Location sharing", message: "Coordinates go to your chosen model provider.",
   } });
-  const [respond] = await server.state.poll(client, { timeoutMs: 2000 });
+  const respond = await pollOperation(server.state, client);
   assert.equal(respond.method, "respond_to_user_input");
   assert.equal(respond.params.consentVersion, 2);
   assert.equal(respond.params.waitId, "location-1");
@@ -483,6 +524,54 @@ test("concurrent starts reuse one scoped process; stale lock and wrong identitie
   assert.equal(await findDaemon(options), null);
 });
 
+test("a fenced daemon upgrade preserves its fallback endpoint and private browser registry", async t => {
+  const stateDir = await mkdtemp(join(tmpdir(), "qz-daemon-upgrade-"));
+  const occupied = createServer((_req, res) => res.end("another application"));
+  await new Promise(resolve => occupied.listen(0, "127.0.0.1", resolve));
+  const options = { stateDir, scopeId: `upgrade-${randomUUID()}`, buildId: "old-build", preferredPort: occupied.address().port };
+  t.after(async () => {
+    await stopDaemon(options);
+    await new Promise(resolve => occupied.close(resolve));
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  const first = await ensureDaemon(options);
+  assert.notEqual(Number(new URL(first.endpoint).port), options.preferredPort, "startup uses a free port when its preferred port belongs to another application");
+  const post = async (endpoint, path, body) => {
+    const response = await localFetch(`${endpoint}/v1/qingzhou/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const proof = randomBytes(32).toString("base64url");
+  const browser = await post(first.endpoint, "pair", { clientId: randomUUID(), connectionId: randomUUID(),
+    instanceId: first.instanceId, name: "work", pairingToken: proof });
+  assert.equal(browser.ok, true);
+  const registryPath = daemonPaths(options).state.replace(/\.json$/, "") + ".browsers.json";
+  const registry = JSON.parse(await readFile(registryPath, "utf8"));
+  assert.equal(registry.browsers[0].pairingToken, proof);
+  const next = { ...options, buildId: "new-build", preferredPort: Number(new URL(first.endpoint).port) };
+  for (const changed of [{ scopeId: "another-scope" }, { instanceId: randomUUID() }, { processId: 2147483647 }]) {
+    await assert.rejects(restartDaemon({ ...next, expected: { ...first, ...changed } }), error => error.code === "CONNECTION_CHANGED");
+    assert.equal((await findDaemon(options)).instanceId, first.instanceId, "a stale identity cannot stop a running service");
+  }
+  const upgraded = await restartDaemon({ ...next, expected: first });
+  assert.equal(upgraded.endpoint, first.endpoint, "an upgrade keeps the endpoint already stored in the browser, including a fallback port");
+  assert.equal(upgraded.scopeId, first.scopeId);
+  assert.equal(upgraded.health.buildId, "new-build");
+  assert.notEqual(upgraded.instanceId, first.instanceId);
+  assert.notEqual(upgraded.processId, first.processId);
+  assert.deepEqual(JSON.parse(await readFile(registryPath, "utf8")), registry, "upgrade retains names, UUIDs and private pairing proofs");
+  assert.deepEqual(upgraded.health.status.browsers, [{ clientId: browser.clientId, name: "work", online: false }]);
+  assert.equal(JSON.stringify(upgraded.health.status).includes(proof), false);
+  const reconnected = await post(upgraded.endpoint, "pair", { ...browser, instanceId: upgraded.instanceId,
+    connectionId: randomUUID(), pairingToken: proof });
+  assert.equal(reconnected.ok, true);
+  assert.equal(reconnected.clientId, browser.clientId);
+  assert.equal(reconnected.name, "work");
+  assert.equal(reconnected.pairingToken, proof);
+  await assert.rejects(restartDaemon({ ...next, expected: first }), error => error.code === "CONNECTION_CHANGED");
+  assert.equal((await findDaemon(next)).instanceId, upgraded.instanceId, "an old upgrade request cannot stop its replacement");
+});
+
 test("three independent CLI connect processes share one daemon and leave it running", async t => {
   const stateDir = await mkdtemp(join(tmpdir(), "qz-concurrent-cli-"));
   const options = { stateDir, scopeId: `cli-${randomUUID()}`, preferredPort: 0 };
@@ -497,12 +586,13 @@ test("three independent CLI connect processes share one daemon and leave it runn
     import { ensureDaemon } from ${JSON.stringify(new URL("../../services/mcp-bridge/src/daemon.mjs", import.meta.url).href)};
     let running;
     try {
-      await runCli(['connect', '--timeout', '0.1'], {
+      await runCli(['connect', 'uri'], {
+        findDaemon: async () => null,
         ensureDaemon: async () => running = await ensureDaemon(${JSON.stringify(options)}),
-        openBrowser: async () => {},
+        openConnectionBrowser: () => { throw new Error('A URI-only command must not open a browser'); },
       });
     } catch (error) {
-      if (error.code !== 'connection_pending') throw error;
+      throw error;
     }
     console.log(JSON.stringify({ processId: running.processId, instanceId: running.instanceId, endpoint: running.endpoint }));
   `;
@@ -572,8 +662,8 @@ test("failed startup releases its lock and active lock owners are never displace
   const ownerFile = join(paths.lock, `${process.pid}-${randomUUID()}.json`);
   const owner = { processId: process.pid, id: "test-owner" };
   await writeFile(ownerFile, JSON.stringify(owner));
-  await assert.rejects(ensureDaemon({ ...options, timeoutMs: 20 }), error => error.code === "connection_busy");
-  await assert.rejects(stopDaemon({ ...options, timeoutMs: 20 }), error => error.code === "connection_busy");
+  await assert.rejects(ensureDaemon({ ...options, timeoutMs: 20 }), error => error.code === "CONNECTION_BUSY");
+  await assert.rejects(stopDaemon({ ...options, timeoutMs: 20 }), error => error.code === "CONNECTION_BUSY");
   assert.deepEqual(JSON.parse(await readFile(ownerFile, "utf8")), owner);
   await rm(paths.lock, { recursive: true });
   const started = await ensureDaemon(options);
@@ -649,7 +739,7 @@ test("Windows EPERM contention preserves a live lock owner", async t => {
   mockLockFilesystem(t, { async rename() {
     throw Object.assign(new Error("Windows destination collision"), { code: "EPERM" });
   } });
-  await assert.rejects(stopDaemon(options), error => error.code === "connection_busy");
+  await assert.rejects(stopDaemon(options), error => error.code === "CONNECTION_BUSY");
   assert.deepEqual(JSON.parse(await readFile(ownerFile, "utf8")), owner);
   assert.deepEqual(await fs.readdir(stateDir), [basename(paths.lock)]);
 });
@@ -708,7 +798,7 @@ test("timed-out startup stops its delayed child before a retry can create anothe
       process.once("SIGTERM", () => { void running.close().then(() => process.exit(0)); });`;
     child = spawn(executable, ["--input-type=module", "-e", code], spawnOptions);
     return child;
-  } }), error => error.code === "start_failed");
+  } }), error => error.code === "START_FAILED");
   assert.ok(child.exitCode !== null || child.signalCode !== null, "startup must reap its child before releasing the lock");
   const retry = await ensureDaemon(options);
   await delay(450);
@@ -734,7 +824,7 @@ test("failed startup can force-stop its own unresponsive child and removes only 
       await startManagedBridge(${JSON.stringify({ stateFile: args[2], scopeId: args[3], buildId: args[5], instanceId: args[6], port: 0 })});`;
     child = spawn(executable, ["--input-type=module", "-e", code], spawnOptions);
     return child;
-  } }), error => error.code === "connection_unavailable");
+  } }), error => error.code === "CONNECTION_UNAVAILABLE");
   // Windows terminates on SIGTERM even when the child installs a signal handler.
   assert.equal(child.signalCode, process.platform === "win32" ? "SIGTERM" : "SIGKILL",
     "only the owned failed-startup child can be force-stopped");
@@ -759,7 +849,7 @@ test("startup cleanup preserves a different live service and its state record", 
     child = spawn(executable, ["-e", "setInterval(() => {}, 1000)"], spawnOptions);
     child.once("spawn", () => { restored = writeFile(paths.state, JSON.stringify(managed.record)); });
     return child;
-  } }), error => error.code === "start_failed" && /claimed the startup state/.test(error.message));
+  } }), error => error.code === "START_FAILED" && /claimed the startup state/.test(error.message));
   assert.ok(child.exitCode !== null || child.signalCode !== null);
   assert.equal((await readHealth(managed.endpoint)).instanceId, managed.record.instanceId);
   assert.deepEqual(JSON.parse(await readFile(paths.state, "utf8")), managed.record);
@@ -770,7 +860,7 @@ test("npm package includes the runtime catalog and excludes development runtimes
   const npmEntry = process.env.npm_execpath || (process.platform === "win32"
     ? join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js") : null);
   const [packed] = JSON.parse(execFileSync(npmEntry ? process.execPath : "npm",
-    [...(npmEntry ? [npmEntry] : []), "pack", directory, "--dry-run", "--json"], { encoding: "utf8" }));
+    [...(npmEntry ? [npmEntry] : []), "pack", directory, "--dry-run", "--ignore-scripts", "--json"], { encoding: "utf8" }));
   const files = packed.files.map(file => file.path);
   for (const path of ["src/cli.mjs", "src/daemon.mjs", "src/server.mjs", "src/catalog.json", "LICENSE"]) assert.ok(files.includes(path), path);
   assert.ok(files.every(path => !/\.py$|node_modules|\.env|uv\.lock/.test(path)));
@@ -793,7 +883,7 @@ test("a transient health failure preserves the running service and cannot start 
   await assert.rejects(ensureDaemon({ ...options,
     readHealth: async () => { throw new Error("injected unavailable health endpoint"); },
     spawnProcess: () => { starts += 1; assert.fail("a live unresponsive service must not be duplicated"); },
-  }), error => error.code === "connection_unavailable" && error.details.processId === process.pid);
+  }), error => error.code === "CONNECTION_UNAVAILABLE" && error.details.processId === process.pid);
   assert.equal(starts, 0);
   assert.equal((await findDaemon(options)).instanceId, managed.record.instanceId);
 });

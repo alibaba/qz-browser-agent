@@ -84,14 +84,18 @@ try {
     const health = await readHealth(bridge.endpoint);
     return { endpoint: bridge.endpoint, instanceId: health.instanceId, health };
   };
-  const dependencies = { findDaemon: locate, ensureDaemon: locate, openBrowser: () => assert.fail("a connected browser must be reused") };
-  assert.equal((await runCli(["connect", "--client", "work", "--timeout", "10"], dependencies)).result.connected, true);
+  const dependencies = { findDaemon: locate, ensureDaemon: locate,
+    openBrowser: () => assert.fail("connect uri must only print the URL"),
+    openConnectionBrowser: () => assert.fail("a connected browser must be reused") };
+  assert.equal((await runCli(["connect", "uri", "--client", "work", "--json"], dependencies)).result.url,
+    `${bridge.endpoint}/qz-connect?name=work`);
+  assert.equal((await runCli(["status", "--json"], dependencies)).result.connected, true);
   const marker = "QZ_MULTI_SETTINGS_0_BROWSE";
   const result = (await runCli(["create", `Read the fixture page. [${marker}]`, "--client", "work", "--wait", "--timeout", "45"], dependencies)).result;
   assert.equal(result.snapshot.status, "completed", JSON.stringify(result));
   assert.ok(JSON.stringify(result.snapshot.transcript).includes(marker));
   assert.ok(fixture.pages.some(request => request.marker === marker), "real browser must load the fixture page");
-  report.task = { sessionId: result.sessionId || result.session?.id, status: result.snapshot.status, marker };
+  report.task = { sessionId: result.sessionId || result.session?.sessionId, status: result.snapshot.status, marker };
 
   await page.locator("#cli-toggle").click();
   await until(async () => (await runtime("mcp_connection_status")).result.state === "disconnected", "settings disconnects immediately");

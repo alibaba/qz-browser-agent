@@ -82,6 +82,9 @@ test("read_article returns canonical Markdown with GFM tables, pagination, and o
 
   const full = await readArticle(page, { source: "selector", selector: "#story", limit: 20_000 });
   expect(Object.hasOwn(full, "format")).toBe(false);
+  expect(await page.evaluate(target => target.startsWith("css:") && document.querySelector(target.slice(4))?.id, full.target)).toBe("story");
+  expect(full.linkCount).toBe(1);
+  expect(["html", "links", "sourceSelector"].filter(key => Object.hasOwn(full, key))).toEqual([]);
   expect(full.text).toContain("# Structured article");
   expect(full.text).toContain("**important**");
   expect(full.text).toContain("[documentation](https://example.test/docs)");
@@ -144,7 +147,7 @@ test("read_article removes named and link-dense boilerplate while preserving art
 
   const result = await readArticle(page, { source: "article", limit: 20_000 });
   expect(result.mode).toBe("article");
-  expect(result.sourceSelector).toBe("#feature");
+  expect(result.target).toBe("css:#feature");
   expect(result.text).toContain("# Evidence report");
   expect(result.text).toContain("![System diagram](https://example.test/diagram.png)");
   expect(result.text).toContain("```\nconst stable = true;\n```");
@@ -354,7 +357,7 @@ test("article source selectors resolve to the visible copy of responsive duplica
 
   const result = await readArticle(page, { source: "article", limit: 20_000 });
   expect(result.text).toContain("complete evidence");
-  expect(result.sourceSelector).toBe("#visible-copy");
+  expect(result.target).toBe("css:#visible-copy");
 });
 
 test("auto reading falls back to the central collection when article heuristics select page chrome", async ({ page }) => {
@@ -390,7 +393,7 @@ test("auto reading falls back to the central collection when article heuristics 
   expect(automatic.mode).toBe("body");
   expect(await page.evaluate(selector => (
     document.querySelector(selector)?.classList.contains("main-content") || false
-  ), automatic.sourceSelector)).toBe(true);
+  ), automatic.target?.replace(/^css:/, ""))).toBe(true);
   expect(automatic.text).toContain("Useful result 0");
   expect(automatic.text).toContain("Useful result 7");
   expect(automatic.text).toContain("![Cover 0](https://example.test/images/0.jpg)");
@@ -527,7 +530,7 @@ test("auto reading keeps a dominant ordinary article beside repeated related lin
   expect(automatic.mode).toBe("article");
   expect(await page.evaluate(selector => (
     document.querySelector(selector)?.classList.contains("content") || false
-  ), automatic.sourceSelector)).toBe(true);
+  ), automatic.target?.replace(/^css:/, ""))).toBe(true);
   expect(automatic.text).toContain("Primary investigation");
   expect(automatic.text).toContain("chronology, and implications in full");
   expect(automatic.text).not.toContain("Related report 3");
@@ -612,7 +615,7 @@ test("auto reading treats duplicate semantic article roots as one responsive art
 
   const automatic = await readArticle(page, { source: "auto", limit: 20_000 });
   expect(automatic.mode).toBe("article");
-  expect(automatic.sourceSelector).toContain("article-content");
+  expect(automatic.target).toContain("article-content");
   expect(automatic.text).toContain("Primary report");
   expect(automatic.text).toContain("observed event");
 });
@@ -873,7 +876,7 @@ test("embedded JSON full text is the baseline when the rendered page has no arti
   const result = await readArticle(page, { source: "article", limit: 20_000 });
   expect(result.text).toContain("embedded article body");
   expect(result.text).not.toContain("&lt;p&gt;");
-  expect(result.sourceSelector).toBe("");
+  expect(result.target).toBeUndefined();
   expect(result.text).not.toContain("onerror");
   expect(await page.evaluate(() => window.__extractionProbe)).toBeUndefined();
 });
@@ -923,7 +926,7 @@ test("read_article converts the selected DOM fragment into the same Markdown con
   const result = await readArticle(page, { source: "selection", limit: 20_000 });
   expect(Object.hasOwn(result, "format")).toBe(false);
   expect(result.mode).toBe("selection");
-  expect(result.sourceSelector).toBe("#selected-section");
+  expect(result.target).toBe("css:#selected-section");
   expect(result.text).toContain("## Selected section");
   expect(result.text).toContain("**this structure**");
   expect(result.text).toContain("[its link](https://example.test/selected)");

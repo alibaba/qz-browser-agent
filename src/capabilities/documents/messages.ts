@@ -91,7 +91,7 @@ export default defineMessages("documents", {
   "failedToCreateTemporaryPdfRenderTab": { "zh-CN": "无法创建临时 PDF 渲染标签页。", en: "Could not open a temporary tab to create the PDF." },
   "temporaryPdfRenderingRequiresTheChromeDebuggerRuntime": { "zh-CN": "临时 PDF 渲染需要 Chrome 调试服务。", en: "Creating the PDF requires access to the Chrome debugger." },
   "chromePagePrinttopdfReturnedEmptyData": { "zh-CN": "Chrome 打印服务返回了空数据。", en: "Chrome Page.printToPDF returned no data." },
-  "temporaryTabDidNotFinishLoading": { "zh-CN": "临时标签页 {tabId} 未能完成加载。", en: "Temporary tab {tabId} did not finish loading." },
+  "temporaryTabDidNotFinishLoading": { "zh-CN": "临时标签页未能完成加载。", en: "The temporary tab did not finish loading." },
   "documentArtifactHasNoContent": { "zh-CN": "文档产物没有内容。", en: "The document artifact is empty." },
   "docxDocumentXmlNotFound": { "zh-CN": "DOCX 缺少 document.xml。", en: "The DOCX file is missing document.xml." },
   "xlsxWorkbookXmlNotFound": { "zh-CN": "XLSX 缺少 workbook.xml。", en: "The XLSX file is missing workbook.xml." },

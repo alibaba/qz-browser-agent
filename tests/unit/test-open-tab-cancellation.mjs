@@ -21,6 +21,7 @@ for (const phase of ["before", "create", "claim", "watch", "navigate", "claim-fa
     globalThis.chrome = {
       storage: { local: { async get() { return {}; } } },
       tabs: {
+        onUpdated: { addListener() {}, removeListener() {} },
         async get() { return { ...tab }; },
         async create(options) { events.push(["create", options]); abortAt("create"); return tab = { id: 42, windowId: 4, url: options.url }; },
         async update(id, options) { events.push(["navigate", id, options]); abortAt("navigate"); Object.assign(tab, options); navigation.commit(id); return { ...tab }; },
@@ -68,9 +69,9 @@ for (const phase of ["before", "create", "claim", "watch", "navigate", "claim-fa
       },
     });
     abortAt("before");
-    const operation = openTab.execute({ url: "https://example.com/target", mode, watchNetwork }, controller.signal, context);
+    const operation = openTab.execute({ url: "https://example.com/target", mode, watchNetwork, networkMaxRecords: 50 }, controller.signal, context);
     if (phase === "success") {
-      assert.deepEqual(await operation, { id: 42, url: "https://example.com/target", pageMode: mode, networkWatch: { watching: true } });
+      assert.deepEqual(await operation, { tabRef: 42, url: "https://example.com/target", title: "", active: false });
     } else {
       await assert.rejects(operation, error => phase === "claim-failure" ? error.message === "claim failed" : error.code === (phase === "emulate-failure" ? "PAGE_MODE_FAILED" : "OPERATION_ABORTED"));
     }
@@ -89,8 +90,12 @@ for (const phase of ["before", "create", "claim", "watch", "navigate", "claim-fa
     assert.deepEqual(events[1], ["create", { windowId: 4, url: "about:blank", active: false }]);
     assert.deepEqual(events.filter(event => event[0] === "remove"), phase === "success" ? [] : [["remove", 42]]);
     assert.equal(events.some(event => event[0] === "navigate"), phase === "navigate" || phase === "success");
-    if (phase === "success" && mode === "mobile") {
-      assert.deepEqual(events.map(event => event[0]), ["window", "create", "claim", "emulate", "watch", "navigate"]);
+    if (phase === "success") {
+      assert.deepEqual(events.map(event => event[0]), ["window", "create", "claim", ...(mode === "mobile" ? ["emulate"] : []), "watch", "navigate"]);
+      assert.deepEqual(events.find(event => event[0] === "watch"), ["watch", 42, {
+        resetNetwork: true, networkMaxRecords: 50, allowPreNavigationBlank: true,
+      }], "network setup remains active without adding fields to the tab observation");
+      assert.equal(pageModeStates.get(42)?.applied || "desktop", mode, "mobile emulation remains applied without a pageMode result field");
     }
   });
 }

@@ -23,9 +23,10 @@ function appendNavigationProfile(parent: HTMLElement, toolName: string, args: Da
 
 function navigationFallbackTitle(toolName: string, data: Data = {}) {
   if (data.closed) return t("pageClosed");
-  if (toolName === "use_tab") return t("pageSelected");
   if (toolName === "navigate") return t("pageNavigated");
   if (toolName === "set_page_mode") return data.changed ? t("modeChanged") : t("modeUnchanged");
+  // Legacy tool results remain readable in saved transcripts.
+  if (toolName === "use_tab") return t("pageSelected");
   if (toolName === "get_working_tab") return data.hasWorkingTab === false ? t("noWorkingPage") : t("workingPage");
   return t("pageOpened");
 }

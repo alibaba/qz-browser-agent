@@ -70,7 +70,7 @@ test("failed forced refresh retains prior options and succeeds on explicit retry
   assert.equal(requests.length, 3);
 });
 
-test("endpoint and account changes isolate both pending responses and cached models", async () => {
+test("endpoint, account and protocol changes isolate pending responses and cached models", async () => {
   const { controller, requests } = deferredLoader();
   const firstInput = { provider: "custom-service", endpoint: "https://one.example/v1", credentialVersion: "account-one" };
   const secondInput = { ...firstInput, credentialVersion: "account-two" };
@@ -87,7 +87,13 @@ test("endpoint and account changes isolate both pending responses and cached mod
   assert.equal(controller.peek(secondInput), null);
   assert.deepEqual(ids(await controller.load(firstInput)), ["one-account-one"]);
   assert.deepEqual(ids(await controller.load(thirdInput)), ["two-account-two"]);
-  assert.equal(requests.length, 3);
+  const fourthInput = { ...thirdInput, customProtocol: "anthropic" };
+  assert.equal(controller.peek(fourthInput), null);
+  const fourth = controller.load(fourthInput);
+  requests[3].resolve(["anthropic-model"]);
+  assert.deepEqual(ids(await fourth), ["anthropic-model"]);
+  assert.deepEqual(ids(await controller.load(thirdInput)), ["two-account-two"]);
+  assert.equal(requests.length, 4);
 });
 
 test("closing and clearing a panel ignores late failure and reopens with a fresh request", async () => {

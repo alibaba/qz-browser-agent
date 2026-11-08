@@ -1,0 +1,30 @@
+.qzv-rich-head { margin-bottom: 17px; min-width: 0; }
+.qzv-rich-head h3 { margin: 0 0 5px; font: inherit; font-size: 15px; font-weight: 550; line-height: 1.5; overflow-wrap: anywhere; }
+.qzv-rich-source { display: block; color: var(--dsw-alias-link, #54808d); font-size: 11px; text-decoration: none; overflow-wrap: anywhere; }
+a.qzv-rich-source:hover { text-decoration: underline; text-underline-offset: 3px; }
+.qzv-rich-meta { display: flex; flex-wrap: wrap; gap: 3px 14px; margin-top: 7px; color: var(--qzv-muted); font-size: 10.5px; }
+.qzv-article-body { overflow-wrap: anywhere; min-width: 0; }
+.qzv-article-body > div { color: var(--qzv-fg); font-size: 13px; line-height: 1.8; }
+.qzv-article-body :is(h1, h2, h3) { margin-top: 1.5em; line-height: 1.5; }
+.qzv-article-body > div > :first-child { margin-top: 0; }
+.qzv-article-body img { max-width: 100%; max-height: 260px; object-fit: contain; height: auto; border-radius: 6px; }
+.qzv-rich-foot { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--qzv-border); color: var(--qzv-muted); font-size: 11px; }
+.qzv-rich-extra { margin-top: 16px; color: var(--qzv-muted); font-size: 11px; }
+.qzv-rich-extra > summary { cursor: pointer; }
+.qzv-rich-extra[open] > summary { margin-bottom: 12px; }
+.qzv-ax-body { border-inline-start: 1px solid var(--qzv-border); padding: 3px 0; font: 11.5px/1.8 ui-monospace, monospace; }
+.qzv-ax-row { display: flex; align-items: baseline; padding: 3px 0 3px calc(5px + var(--qzv-depth) * 13px); min-width: 0; }
+.qzv-ax-row:hover { background: var(--qzv-soft); }
+.qzv-ax-toggle, .qzv-ax-spacer { width: 17px; flex: 0 0 17px; }
+.qzv-card .qzv-ax-toggle { padding: 0; background: none; border: 0; color: var(--qzv-muted); font: inherit; }
+.qzv-ax-content { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; }
+.qzv-ax-role { color: var(--dsw-alias-link, #54808d); }
+.qzv-ax-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.qzv-ax-target { color: var(--qzv-muted); font: 10px/1.8 ui-monospace, monospace; overflow-wrap: anywhere; }
+.qzv-card .qzv-rich-more { margin: 12px 0 0; border: 1px solid var(--qzv-border); border-radius: 6px; background: none; padding: 4px 10px; color: var(--qzv-muted); font-size: 11px; }
+.qzv-card .qzv-rich-more:hover { color: var(--qzv-fg); background: var(--qzv-soft); }
+@media (max-width: 600px) {
+  .qzv-rich-head h3 { font-size: 14px; }
+  .qzv-ax-row { padding-inline-start: calc(3px + var(--qzv-depth) * 9px); }
+  .qzv-ax-target { flex-basis: 100%; }
+}

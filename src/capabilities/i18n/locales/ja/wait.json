@@ -39,7 +39,7 @@
   "wait.waitNotContinued": "タスクは再開されませんでした",
   "wait.loginVerificationCompleted": "ログイン確認済み",
   "wait.userContinued": "タスクを再開しました",
-  "wait.waitForElementSelectorSupportsRawCssOrCss": "wait_for_element の selector はCSSまたは css:<selector> に対応します。uid:<element_uid> はスナップショット参照のため、将来のDOM状態を待機できません。",
+  "wait.waitForElementSelectorSupportsRawCssOrCss": "wait_for_element の target はCSSまたは css:<target> に対応します。uid:<element_uid> はスナップショット参照のため、将来のDOM状態を待機できません。",
   "wait.userWaitRuntimeIsUnavailable": "ユーザー入力サービスを利用できません。",
   "wait.currentTaskHasNoWorkingTab": "現在のタスクには作業用タブがありません。",
   "wait.waitUntilRequiresAValidAbsoluteTimeWithAn": "wait_until には、タイムゾーンを明示した有効な絶対時刻が必要です。",

@@ -53,6 +53,8 @@
       "properties": {
         "limit": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Limit"},
         "excludeSessionId": {"default": "", "title": "Excludesessionid", "type": "string"},
+        "scope": {"type": "string", "description": "session returns one session. Omit it to list tasks."},
+        "sessionId": {"type": "string", "description": "Session to return when scope is session."},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
@@ -228,7 +230,7 @@
   },
   {
     "name": "qingzhou_get_session_snapshot",
-    "description": "Read a task snapshot: session, runtime, current input, transcript, recent messages, artifacts, and optional trace/tools. Pending input includes field IDs, option values, instructions, and responseTemplate for answering directly. Tool transcript argsState/argsGenerating distinguish generating arguments from final empty arguments.",
+    "description": "Read a task snapshot: session, runtime, current input, transcript, recent messages, artifacts, cumulative usage, and optional trace/tools. usage sums recorded model calls (inputTokens, outputTokens, cachedTokens, costUsd, modelCalls) plus toolCalls, screenshots, and contextCompressions. Pending input includes field IDs, option values, instructions, and responseTemplate for answering directly. Tool transcript argsState/argsGenerating distinguish generating arguments from final empty arguments.",
     "inputSchema": {
       "properties": {
         "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
@@ -264,11 +266,13 @@
   },
   {
     "name": "qingzhou_stop_session",
-    "description": "停止轻舟会话运行。",
+    "description": "结束任务或直驱会话。直驱会话结束后不可再执行工具，也无需再调用 close_tab；默认自动关闭该会话创建的标签页，并保留用户原有或已交回给用户的标签页。keepTabRefs 指定要交还用户的会话标签，keepTabs:true 保留全部标签页。End a task or direct-drive session, closing its created tabs by default while preserving user tabs. Pass keepTabRefs to return selected session tabs to the user, or keepTabs:true to retain all tabs.",
     "inputSchema": {
       "properties": {
         "sessionId": {"title": "Sessionid", "type": "string"},
         "cascade": {"default": true, "title": "Cascade", "type": "boolean"},
+        "keepTabs": {"title": "Keeptabs", "type": "boolean"},
+        "keepTabRefs": {"type": "array", "items": {"anyOf": [{"type": "integer"}, {"type": "string"}]}, "description": "Session tabRef values to keep after ending the session. Validated before stopping."},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
@@ -279,10 +283,10 @@
   },
   {
     "name": "qingzhou_list_tools",
-    "description": "列出当前 session 可用的轻舟内置工具和插件工具 schema。",
+    "description": "List default direct-drive tool signatures; sessionId is optional. Query non-default or loaded Skill tools by exact name with qingzhou_get_tool (pass sessionId for loaded Skills). For full schemas, call tools.list_tools({names:[...]}) inside run_script. Never creates a session.",
     "inputSchema": {
       "properties": {
-        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
+        "sessionId": {"title": "Sessionid", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
@@ -338,19 +342,78 @@
     }
   },
   {
-    "name": "qingzhou_execute_tool",
-    "description": "直接执行轻舟工具，用于系统 skill/plugin 调试。依赖 Agent 生命周期的页面工具请传当前 runId；wait=false 时后台执行并立即返回 jobId。",
+    "name": "qingzhou_list_drive_sessions",
+    "description": "List direct-drive sessions as {sessionId,title,status} observations.",
     "inputSchema": {
       "properties": {
+        "timeoutSeconds": {"type": ["number", "null"], "default": null},
+        "clientId": {"type": "string", "default": "", "description": "Browser name or UUID."}
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_get_drive_session",
+    "description": "Read one direct-drive session as {sessionId,title,status}.",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"type": "string", "minLength": 1},
+        "timeoutSeconds": {"type": ["number", "null"], "default": null},
+        "clientId": {"type": "string", "default": "", "description": "Browser name or UUID."}
+      },
+      "required": ["sessionId"],
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_create_drive_session",
+    "description": "Create one direct-drive session with a readable title and return sessionId, title, status, and qz_skills (summaries of the user workflows available to the session). Pass that id on every tool execution. This does not start a model.",
+    "inputSchema": {
+      "required": ["title"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "pattern": "\\S", "description": "Readable task title."},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
+      },
+      "title": "qingzhou_create_drive_sessionArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_execute_tool",
+    "description": "在已连接的浏览器里执行现有工具。先调用 qingzhou_create_drive_session 创建会话，再传入该 sessionId（不会隐式创建会话）。单次调用传 name 与 args；已知参数的并发或顺序批次传 calls（每项含 id、name、args，id 仅用于关联结果，不支持跨项插值）；多步逻辑与条件编排可调用 name:\"run_script\"（页面外执行，支持顶层 await/return 与 tools.*，页面内 DOM 函数用 evaluate）。页面工具显式传 tabRef。逐项检查 isError，批次与脚本均非事务；run_script 的 result 为 {ok,result,trace} 回执，trace 按序记录报错与显式 trace()/console 输出。Execute browser tools in an explicitly created session (pass sessionId from qingzhou_create_drive_session). Supply name/args for one call, calls ([{id,name,args}]) for a static batch, or name:\"run_script\" for outer JS orchestration (use evaluate for in-page DOM functions). Page tools require an explicit tabRef. Check isError on each call; batches and scripts are not transactions. run_script returns {ok,result,trace}, where trace lists errors and explicit trace()/console diagnostics in order.",
+    "inputSchema": {
+      "properties": {
+        "scriptApiVersion": {"type": "integer", "minimum": 1, "description": "Script API protocol version; must match the extension before executing the request."},
         "name": {"title": "Name", "type": "string"},
         "args": {"anyOf": [{"additionalProperties": true, "type": "object"}, {"type": "null"}], "default": null, "title": "Args"},
-        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
-        "runId": {"default": "", "title": "Runid", "type": "string"},
+        "calls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "name"],
+            "properties": {
+              "id": {"type": "string"},
+              "name": {"type": "string"},
+              "args": {"type": "object", "additionalProperties": true}
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "timeoutSeconds": {"type": "number"},
+            "maxCalls": {"type": "number"}
+          }
+        },
+        "sessionId": {"title": "Sessionid", "type": "string"},
         "wait": {"default": true, "title": "Wait", "type": "boolean"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
-      "required": ["name"],
+      "required": ["sessionId"],
       "title": "qingzhou_execute_toolArguments",
       "type": "object"
     }
@@ -372,12 +435,12 @@
   },
   {
     "name": "qingzhou_get_tool",
-    "description": "Read one browser tool's description and input schema by exact name in the selected task's context.",
+    "description": "Read a tool by exact name without a session. Pass sessionId for a loaded Skill tool. Direct drive returns a compact signature and description; this call never creates a session.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "name": {"type": "string", "minLength": 1},
-        "sessionId": {"type": "string", "default": "default"},
+        "sessionId": {"type": "string"},
         "timeoutSeconds": {"type": ["number", "null"], "default": null},
         "clientId": {"type": "string", "default": ""}
       },

@@ -3,12 +3,13 @@ import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest, isJSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
 import { BridgeState, PROTOCOL_VERSION } from "./state.mjs";
-import { INSTALL_URL } from "./package-info.mjs";
+import { CONNECT_PAGE, CONNECT_PAGE_CSP, CONNECT_LOGOS } from "./connect-page.mjs";
 import { createMcpServer } from "./tools.mjs";
 import { BrowserRegistry } from "./browser-registry.mjs";
 
+import { SCRIPT_API_VERSION } from "./script-call.mjs";
+
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
-const CONNECT_PAGE = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect qz</title><style>body{font:16px/1.6 system-ui,sans-serif;max-width:38rem;margin:15vh auto;padding:24px;background:#fafafa;color:#202020}h1{font-size:28px;line-height:1.2}a{color:inherit}p{color:#555}</style><h1>Connect qz</h1><p data-qz-connection-status>Connecting to the qz browser extension…</p><p>Keep this page open while qz connects. If qz is not installed, <a href="${INSTALL_URL}" target="_blank" rel="noopener noreferrer">install qz from the Chrome Web Store</a>.</p></html>`;
 
 function sendJson(response, status, body, headers = {}) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers });
@@ -40,7 +41,7 @@ async function readJson(request) {
   }
 }
 
-export async function startBridge({ host = "127.0.0.1", port = 18765, instanceId = randomUUID(), scopeId = "", buildId = "", onClose,
+export async function startBridge({ host = "127.0.0.1", port = 18765, instanceId = randomUUID(), scopeId = "", buildId = "", pidNamespace = "", onClose,
   registryPath, registry, requestTimeoutSeconds = 180, connectWaitMs = 2000, mcpSessionIdleTimeoutMs = 30 * 60 * 1000 } = {}) {
   if (!["127.0.0.1", "localhost"].includes(host)) throw new Error("qz bridge must bind to loopback");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid bridge port");
@@ -108,15 +109,20 @@ export async function startBridge({ host = "127.0.0.1", port = 18765, instanceId
         return response.end();
       }
       if (request.method === "GET" && path === "/health") return sendJson(response, 200, {
-        ok: true, service: "qz-browser-agent", protocolVersion: PROTOCOL_VERSION, features: { browserPairing: 1 }, instanceId, scopeId, buildId, processId: process.pid, status: state.status(),
+        ok: true, service: "qz-browser-agent", protocolVersion: PROTOCOL_VERSION, features: { browserPairing: 1, scriptApiVersion: SCRIPT_API_VERSION }, instanceId, scopeId, buildId, processId: process.pid, status: state.status(),
+        ...(pidNamespace ? { pidNamespace } : {}),
       }, cors);
       if (request.method === "GET" && path === "/qz-connect") {
         response.writeHead(200, {
           "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
-          "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+          "content-security-policy": CONNECT_PAGE_CSP,
           "x-content-type-options": "nosniff",
         });
         return response.end(CONNECT_PAGE);
+      }
+      if (request.method === "GET" && CONNECT_LOGOS.has(path)) {
+        response.writeHead(200, { "content-type": "image/png", "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff" });
+        return response.end(CONNECT_LOGOS.get(path));
       }
       if (request.method === "POST" && String(request.headers["content-type"] || "").split(";")[0].trim().toLowerCase() !== "application/json") {
         return sendJson(response, 415, { error: "JSON content-type required" }, cors);
@@ -139,7 +145,9 @@ export async function startBridge({ host = "127.0.0.1", port = 18765, instanceId
         let session = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
         const body = request.method === "POST" ? await readJson(request) : undefined;
         if (!session && !sessionId && request.method === "POST" && isInitializeRequest(body)) {
-          const mcp = createMcpServer(state);
+          const clientName = typeof body?.params?.clientInfo?.name === "string" ? body.params.clientInfo.name : "";
+          const profile = new URL(request.url || "/", "http://127.0.0.1").searchParams.get("profile") || "";
+          const mcp = createMcpServer(state, { clientName, profile });
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: randomUUID,
             onsessioninitialized: id => sessions.set(id, session),

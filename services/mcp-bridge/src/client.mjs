@@ -11,17 +11,17 @@ export const PROTOCOL_VERSION = 1;
 export class QzError extends Error {
   constructor(code, message, details = {}) {
     super(message);
-    this.code = code;
+    this.code = String(code || "CONNECTION_ERROR").toUpperCase();
     this.details = details;
   }
 }
 
 export function localUrl(value) {
   let url;
-  try { url = new URL(value); } catch { throw new QzError("invalid_endpoint", "The local service URL is invalid."); }
+  try { url = new URL(value); } catch { throw new QzError("INVALID_ENDPOINT", "The local service URL is invalid."); }
   if (url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname)
     || url.username || url.password || url.hash || url.search || url.port === "0") {
-    throw new QzError("invalid_endpoint", "Use an HTTP local service URL on 127.0.0.1 or localhost.");
+    throw new QzError("INVALID_ENDPOINT", "Use an HTTP local service URL on 127.0.0.1 or localhost.");
   }
   return url;
 }
@@ -50,7 +50,7 @@ export async function localFetch(input, init) {
       headers: { ...Object.fromEntries(prepared.headers), host: url.host } }, res => {
       if (res.statusCode >= 300 && res.statusCode < 400) {
         res.resume();
-        reject(new QzError("redirect_blocked", "The local service returned a redirect."));
+        reject(new QzError("REDIRECT_BLOCKED", "The local service returned a redirect."));
         return;
       }
       try {
@@ -65,21 +65,58 @@ export async function localFetch(input, init) {
   });
 }
 
-export async function readHealth(endpoint, { timeoutMs = 1000, fetch = localFetch } = {}) {
+export async function readHealth(endpoint, { timeoutMs = 1000, fetch = localFetch, allowIncompatible = false, signal } = {}) {
+  signal?.throwIfAborted();
   const url = localUrl(endpoint);
-  const response = await fetch(`${url.origin}/health`, { signal: AbortSignal.timeout(timeoutMs) });
-  if (!response.ok) throw new QzError("connection_unavailable", `The qz connection health check failed (${response.status}).`);
-  const health = await response.json();
-  if (health.service !== SERVICE_NAME || health.protocolVersion !== PROTOCOL_VERSION || !health.instanceId) {
-    throw new QzError("incompatible_service", "The local service is not a compatible qz installation.");
+  const timeout = AbortSignal.timeout(timeoutMs);
+  try {
+    const response = await fetch(`${url.origin}/health`, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    if (!response.ok) throw new QzError("CONNECTION_UNAVAILABLE", `The qz connection health check failed (${response.status}).`);
+    const health = await response.json();
+    signal?.throwIfAborted();
+    if (health.service !== SERVICE_NAME || !health.instanceId || (!allowIncompatible && health.protocolVersion !== PROTOCOL_VERSION)) {
+      throw new QzError("INCOMPATIBLE_SERVICE", "The local service is not a compatible qz installation.");
+    }
+    return health;
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw error;
   }
-  return health;
+}
+
+function restoreCallImages(value, blocks) {
+  const tagged = blocks.map((block, position) => ({
+    mimeType: block.mimeType,
+    data: block.data,
+    id: String(block._meta?.id || ""),
+    index: Number.isInteger(block._meta?.index) ? block._meta.index : position,
+  }));
+  const bytes = image => ({ mimeType: image.mimeType, data: image.data });
+  if (!Array.isArray(value.results)) return { ...value, images: tagged.map(bytes) };
+  const used = new Set();
+  const results = value.results.map(item => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    const id = String(item.id || "");
+    const owned = tagged.filter(image => image.id && image.id === id);
+    for (const image of owned) used.add(image);
+    if (!owned.length) return item;
+    owned.sort((left, right) => left.index - right.index);
+    return { ...item, images: owned.map(bytes) };
+  });
+  const leftover = tagged.filter(image => !image.id || !used.has(image));
+  return { ...value, results, ...(leftover.length ? { images: leftover.map(bytes) } : {}) };
 }
 
 export function resultValue(result) {
   if (result.structuredContent != null) return result.structuredContent;
-  if (result.content?.length === 1 && result.content[0].type === "text") {
-    try { return JSON.parse(result.content[0].text); } catch { return result.content[0].text; }
+  const blocks = Array.isArray(result.content) ? result.content : [];
+  const texts = blocks.filter(block => block?.type === "text");
+  const images = blocks.filter(block => block?.type === "image" && typeof block.data === "string");
+  if (texts.length === 1 && images.length + texts.length === blocks.length) {
+    let value;
+    try { value = JSON.parse(texts[0].text); } catch { value = texts[0].text; }
+    if (images.length && value && typeof value === "object" && !Array.isArray(value)) return restoreCallImages(value, images);
+    if (!images.length) return value;
   }
   return { content: result.content || [] };
 }
@@ -88,7 +125,7 @@ function initialize(client, transport, timeoutMs, signal) {
   let timer, aborted;
   return new Promise((resolve, reject) => {
     const fail = error => {
-      const failure = new QzError("connection_error", `Could not initialize the MCP connection: ${error.message}`);
+      const failure = new QzError("CONNECTION_ERROR", `Could not initialize the MCP connection: ${error.message}`);
       if (error.name === "AbortError") failure.name = error.name;
       reject(failure);
     };
@@ -105,7 +142,7 @@ export async function withToolClient(operation) {
   const call = async (target, name, args, { timeoutMs = 180000, signal, fetch = localFetch } = {}) => {
     signal?.throwIfAborted();
     const origin = localUrl(target).origin;
-    if (endpoint && endpoint !== origin) throw new QzError("connection_changed", "The local service changed during the command.");
+    if (endpoint && endpoint !== origin) throw new QzError("CONNECTION_CHANGED", "The local service changed during the command.");
     if (!client) {
       endpoint = origin;
       client = new Client({ name: "qz-cli", version: PACKAGE_VERSION });
@@ -117,14 +154,19 @@ export async function withToolClient(operation) {
     }
     await connecting;
     signal?.throwIfAborted();
-    const result = await client.callTool({ name, arguments: args }, undefined, { timeout: timeoutMs, signal });
+    const result = await client.callTool({ name, arguments: args }, undefined, { timeout: timeoutMs, signal }).catch(error => {
+      // The MCP SDK wraps caller cancellation as RequestTimeout; retain the caller's reason.
+      signal?.throwIfAborted();
+      throw error;
+    });
     const value = resultValue(result);
     if (result.isError) {
       if (value && typeof value.code === "string" && typeof value.message === "string") {
-        throw new QzError(value.code, value.message,
-          value.details && typeof value.details === "object" && !Array.isArray(value.details) ? value.details : {});
+        throw Object.assign(new QzError(value.code, value.message,
+          value.details && typeof value.details === "object" && !Array.isArray(value.details) ? value.details : {}),
+          value.hint ? { hint: value.hint } : {});
       }
-      throw new QzError("tool_error", typeof value === "string" ? value : "The browser tool failed.", { result: value });
+      throw new QzError("TOOL_ERROR", typeof value === "string" ? value : "The browser tool failed.", { result: value });
     }
     return value;
   };

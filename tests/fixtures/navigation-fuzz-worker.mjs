@@ -80,6 +80,7 @@ globalThis.navigationFuzz = async request => {
   if (request.op === "tab") { try { return await chrome.tabs.get(request.tabId); } catch { return null; } }
   if (request.op === "close") { await chrome.tabs.remove(request.tabId); return true; }
   if (request.op === "update") return await chrome.tabs.update(request.tabId, { url: request.url });
+  if (request.op === "reload") { await chrome.tabs.reload(request.tabId); return true; }
   if (request.op === "state") return structuredClone(states.get(id) || null);
   if (request.op === "security") { await chrome.storage.local.set({ securityGuardrails: request.rules }); return true; }
   throw new Error(`Unknown fuzz operation: ${request.op}`);

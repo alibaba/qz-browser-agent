@@ -76,7 +76,7 @@ export function createCliConnection(qz: Host) {
       if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) return "";
       const port = Number(url.port || 80);
       const suffix = port === 18765 ? "" : ` --port ${port}`;
-      return `npx --yes qz-browser-agent@latest connect${suffix}`;
+      return `npx --yes qz-browser-agent@latest connect uri${suffix}`;
     } catch { return ""; }
   }
   function render() {
@@ -102,8 +102,7 @@ export function createCliConnection(qz: Host) {
     }
     const text = startErrors.has(code) ? startCommand() : "";
     start.classList.toggle("hidden", !text);
-    command.textContent = text && code === "MCP_CONNECTION_INCOMPATIBLE"
-      ? `npx --yes qz-browser-agent@latest stop\n${text}` : text;
+    command.textContent = text;
     if (opened) form.insertBefore(start, form.lastElementChild);
     else section.insertBefore(start, popup);
     position();

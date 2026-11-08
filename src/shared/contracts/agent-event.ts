@@ -44,7 +44,7 @@ export type AgentEvent = EventMeta & (
   // A streamed tool may not yet have an id; execution must always have one.
   | (ToolMeta & { type: 'tool_call_update'; toolCallId?: string; toolName: string; index?: number;
       delta?: string; argsText: string; argsComplete: boolean; phase: 'preparing' | 'running' })
-  | (ToolMeta & { type: 'tool_execution_start'; toolCallId: string; toolName: string; args: unknown })
+  | (ToolMeta & { type: 'tool_execution_start'; toolCallId: string; toolName: string; args: unknown; startedExecution?: boolean })
   | (ToolMeta & { type: 'tool_execution_end'; toolCallId: string; toolName: string; args: unknown;
       result: unknown; isError: boolean })
   | ({ type: 'llm_retry' } & AgentRetryDetails)

@@ -1,4 +1,14 @@
-# Workspace screenshot credits
+# Screenshot credits
+
+## Agent drive
+
+[English](agent-drive-en.png) and [Simplified Chinese](agent-drive-zh-CN.png) show the website's
+Drive the browser demo in light mode: the `#agent-mode-drive .agent-demo-grid` element with a
+24-pixel margin, captured at a 1280-pixel viewport with a 2× device scale (2300 × 1452 PNG). The
+terminal and Side Panel content come from the real CLI runs described in the
+[website screenshot sources](../../website/assets/screens/SOURCES.md).
+
+## Workspace
 
 The workspace screenshots show qz collecting Hangzhou photographs in real Chrome sessions:
 
@@ -10,12 +20,12 @@ The workspace screenshots show qz collecting Hangzhou photographs in real Chrome
 Both PNGs preserve the recordings' 2880-pixel width. The bottom model-selection footer is cropped,
 leaving 2880 × 1572 images. Browser and extension content retains its original appearance.
 
-## Wikipedia
+### Wikipedia
 
 [Hangzhou](https://en.wikipedia.org/wiki/Hangzhou) article text is by Wikipedia contributors,
 under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 
-## Photographs
+### Photographs
 
 The source recordings use the Wikimedia photographs listed below. Article images and gallery
 thumbnails retain their respective licenses.

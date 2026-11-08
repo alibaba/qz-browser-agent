@@ -36,8 +36,8 @@ assert.doesNotMatch(citationSection, /每条 footnote 必须|同一个来源网�
 
 assert.match(
   SYSTEM_PROMPT,
-  /当前任务工作标签页：当前 Session 的默认页面目标；页面工具省略 tabRef 时使用它。/,
-  "kernel should define the session working tab as the default page target",
+  /每次页面工具调用都必须传 tabRef[\s\S]*最近访问记录和 active 状态不决定工具操作哪个页面。/,
+  "kernel should require an explicit reference without recent or active defaults",
 );
 assert.match(
   SYSTEM_PROMPT,
@@ -56,11 +56,11 @@ assert.doesNotMatch(
 );
 
 assert.match(READING_CAPABILITY_PROTOCOL, /^### 视觉读取协议\n- 需要分析页面中的某张图片时/m, "visual reading protocol should include its title");
-assert.match(VISUAL_SCREEN_ACTION_RULE, /1\. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree\(\{root:"root"\}\)；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。/, "visual actions should select observation tools by tab ownership");
-assert.match(VISUAL_SCREEN_ACTION_RULE, /2\. 有可靠 target 时，使用 act_on_element。/, "visual actions should route reliable targets to element actions");
+assert.match(VISUAL_SCREEN_ACTION_RULE, /1\. 首次观察目标页面：用 get_ax_tree\(\{tabRef\}\) 总览[\s\S]*只读观察可访问其他任务拥有的页面，每次都显式传 tabRef。/, "visual observations should allow explicit read-only access across task ownership");
+assert.match(VISUAL_SCREEN_ACTION_RULE, /2\. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。动作派发前会等待目标可操作。成功返回 \{\}/, "element actions should require task ownership and describe compact success receipts");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /3\. 目标位于 Canvas 或没有可靠 target 时，调用 screenshot/, "visual actions should reserve screenshots for the screen-action branch");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /页面结构发生变化或 target 失效时，重新从第 1 步开始/, "visual actions should restart discovery after structural changes");
-assert.match(VISUAL_SCREEN_ACTION_RULE, /screenshot\(\{actionable:true\}\)/, "visual screen actions should start from an actionable screenshot");
+assert.match(VISUAL_SCREEN_ACTION_RULE, /screenshot\(\{tabRef,actionable:true\}\)/, "visual screen actions should start from an actionable screenshot");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /返回图片上的原始像素坐标/, "visual screen actions should use coordinates directly from the returned image");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /coordinateSpace\.width\/height/, "visual screen actions should expose the current image bounds");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /每次 act_on_screen 都必须显式填写 returnScreenshot/, "visual screen actions should require an explicit feedback choice");
@@ -68,11 +68,11 @@ assert.match(VISUAL_SCREEN_ACTION_RULE, /视觉动作序列遵循“验证后批
 assert.match(VISUAL_SCREEN_ACTION_RULE, /效果符合预期、后续坐标可预测且浏览器视口稳定/, "visual batches should require observable semantic and coordinate stability");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /viewportChange 只记录浏览器视口是否变化/, "visual actions should distinguish viewport facts from application effects");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /只有 true 才产生观察截图；false 在坐标空间仍有效时沿用原依据/, "visual actions should make observation capture explicit");
-assert.match(VISUAL_SCREEN_ACTION_RULE, /run_script 会返回内部最后一次 screenshot 或 act_on_screen\(returnScreenshot:true\) 的图片/, "visual batches should return the last explicit observation");
+assert.match(VISUAL_SCREEN_ACTION_RULE, /显式返回选定的截图或动作结果，才能带回其中的图片/, "visual batches should explicitly select the returned image evidence");
 assert.doesNotMatch(VISUAL_SCREEN_ACTION_RULE, /会滚动、缩放、改尺寸.*主 Agent 逐步执行/, "the prompt should not blanket-ban action kinds whose effects depend on the page");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /^### 文本读取协议\n- 当前模型不能看图/m, "text-only reading protocol should include its title");
-assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /1\. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree\(\{root:"root"\}\)；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。/, "text-only actions should select observation tools by tab ownership");
-assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /2\. 有可靠 target 时，使用 act_on_element。/, "text-only actions should use element actions for reliable targets");
+assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /1\. 首次观察目标页面：用 get_ax_tree\(\{tabRef\}\) 总览[\s\S]*只读观察可访问其他任务拥有的页面，每次都显式传 tabRef。/, "text-only observations should allow explicit read-only access across task ownership");
+assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /2\. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。动作派发前会等待目标可操作。成功返回 \{\}/, "text-only element actions should require task ownership and describe compact success receipts");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /3\. 没有可靠 target 时，使用 find_elements、inspect_element 或页面读取工具继续定位/, "text-only actions should keep locating without visual tools");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /仍无法定位就说明限制，不进行视觉猜测操作/, "text-only actions should fail clearly instead of guessing visually");
 assert.match(SYSTEM_PROMPT, /### 视觉读取协议\n- 需要分析页面中的某张图片时/, "system prompt should embed the visual reading protocol as one unit");
@@ -80,10 +80,10 @@ assert.doesNotMatch(SYSTEM_PROMPT, /### 文本读取协议/, "default system pro
 const textOnlyPrompt = SYSTEM_PROMPT.replace(READING_CAPABILITY_PROTOCOL, TEXT_ONLY_READING_CAPABILITY_PROTOCOL);
 assert.match(textOnlyPrompt, /### 文本读取协议\n- 当前模型不能看图/, "text-only replacement should swap the protocol title and body");
 assert.doesNotMatch(textOnlyPrompt, /### 视觉读取协议/, "text-only replacement should remove the visual protocol title");
-assert.match(SYSTEM_PROMPT, /属于其他任务且动态上下文标为可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef/, "kernel should route foreign tabs to the explicit read-only tool set");
+assert.match(SYSTEM_PROMPT, /首次观察目标页面：用 get_ax_tree\(\{tabRef\}\) 总览[\s\S]*每次观察都显式传 tabRef；其他任务拥有的页面保持只读。/, "kernel should preserve explicit targeting and read-only access for foreign tabs");
 assert.doesNotMatch(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /\b(?:screenshot|read_image|read_image_asset)\b/, "text-only reading protocol should not name hidden vision tools");
 assert.match(VISUAL_IMAGE_ASSET_PROTOCOL, /先通过 list_images 返回的 alt\/title、context、URL 和尺寸等元信息发现候选/, "visual image protocol should define one positive candidate-selection workflow");
-assert.match(VISUAL_IMAGE_ASSET_PROTOCOL, /用 read_image\(\{target\}\) 查看必要候选/, "visual image protocol should inspect visual candidates before saving");
+assert.match(VISUAL_IMAGE_ASSET_PROTOCOL, /用 read_image\(\{tabRef,target\}\) 查看必要候选/, "visual image protocol should inspect visual candidates before saving");
 assert.match(VISUAL_IMAGE_ASSET_PROTOCOL, /以当前 tab 为一个工作单元/, "visual image protocol should scope discovery and collection to one tab at a time");
 assert.match(VISUAL_IMAGE_ASSET_PROTOCOL, /候选一经确认，就在离开、跳转或切换当前 tab 之前调用 collect_images 采集/, "visual image protocol should collect accepted candidates before changing page context");
 assert.match(VISUAL_IMAGE_ASSET_PROTOCOL, /数量不足再进入下一个 tab，并继续写入同一个图集/, "visual image protocol should continue incrementally across tabs");

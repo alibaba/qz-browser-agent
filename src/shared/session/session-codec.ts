@@ -1,3 +1,4 @@
+import { isToolFailure } from "../contracts/tool-error.js";
 import { t } from "../i18n/backend.js";
 import { CURRENT_SESSION_VERSION, CURRENT_SESSION_RECORD_VERSION, SESSION_RECORD_TYPE, assertSessionRecordReadable, assertConversationReadable } from "./session-format.js";
 import { isBeijingDateTime, nowBeijingDateTime } from "../time-utils.js";
@@ -14,6 +15,7 @@ import {
   isHiddenContextUserMessage,
 } from "../message-blocks.js";
 import { normalizeMessageDocuments } from "../documents/document-attachments.js";
+import { normalizeRecordedUsage } from "./session-usage.js";
 
 import type { ModelToolCall } from '../contracts/model-message.js';
 import type { CompactMeta, Conversation, ConversationEntry, SessionMessage,
@@ -176,7 +178,7 @@ export function transcriptFromConversation(saved: unknown) {
         name: call?.name || "tool",
         args: call?.args || {},
         result,
-        isError: Boolean(result && typeof result === "object" && record(result).error),
+        isError: typeof msg._toolIsError === "boolean" ? msg._toolIsError : isToolFailure(result),
         image: null,
         ...normalizeTranscriptTiming({
           timestamp: call?.timestamp || entry.timestamp,
@@ -344,7 +346,9 @@ export function updateTranscriptWithAgentEvent(transcript: readonly TranscriptEn
         entry.argsGenerating = !argsComplete;
         entry.argsState = argsComplete ? "ready" : "generating";
         entry.phase = event.phase || "preparing";
+        entry.startedExecution = false;
       } else if (event.type === "tool_execution_start") {
+        entry.startedExecution = event.startedExecution ?? true;
         finalizeTranscriptEntry(history, "thinking");
       } else if (event.type === "tool_execution_update") {
         const idx = findToolTranscriptIndex(history, { toolCallId, runId: eventRunId(event) });
@@ -1093,10 +1097,11 @@ function normalizeTranscriptEvent(input: unknown): TranscriptEntry | null {
       argsGenerating: argsState === "generating",
       argsState,
       phase,
+      ...(typeof event.startedExecution === "boolean" ? { startedExecution: event.startedExecution } : {}),
       statusText: typeof event.statusText === "string" ? event.statusText : "",
       rateLimit: event.rateLimit == null ? null : cloneJsonValue(event.rateLimit),
       result: event.result == null ? null : cloneJsonValue(event.result),
-      isError: !!event.isError,
+      ...(typeof event.isError === "boolean" ? { isError: event.isError } : {}),
       isRunning,
       image: typeof event.image === "string" ? event.image : null,
       ...meta,
@@ -1382,6 +1387,10 @@ function normalizeMessage(input: unknown): SessionMessage | null {
     const documents = normalizeMessageDocuments(msg.documents);
     if (documents.length) out.documents = documents;
     if (typeof msg.trim === "boolean") out.trim = msg.trim;
+    if (out._kind === "compaction") {
+      const usage = normalizeRecordedUsage(msg._usage);
+      if (usage) out._usage = usage;
+    }
     return out;
   }
 
@@ -1395,7 +1404,7 @@ function normalizeMessage(input: unknown): SessionMessage | null {
         .map(normalizeToolCall)
         .filter((call): call is ModelToolCall => call !== null);
     }
-    const usage = normalizeProviderUsage(msg._usage);
+    const usage = normalizeRecordedUsage(msg._usage);
     if (usage) out._usage = usage;
     const providerState = normalizeProviderState(msg._providerState);
     if (providerState) out._providerState = providerState;
@@ -1416,6 +1425,7 @@ function normalizeMessage(input: unknown): SessionMessage | null {
       tool_call_id: toolCallId,
       content: truncate(contentToText(msg.content), MAX_TOOL_RESULT_CHARS),
     };
+    if (typeof msg._toolIsError === "boolean") out._toolIsError = msg._toolIsError;
     if (typeof msg.trim === "boolean") out.trim = msg.trim;
     return out;
   }
@@ -1539,36 +1549,8 @@ function normalizeToolCall(input: unknown): ModelToolCall | null {
   };
 }
 
-function normalizeProviderUsage(input: unknown): Record<string, number> | null {
-  if (!input || typeof input !== "object") return null;
-  const usage = record(input);
-  const out: Record<string, number> = {};
-  for (const key of [
-    "input_tokens",
-    "output_tokens",
-    "total_tokens",
-    "prompt_tokens",
-    "completion_tokens",
-    "total_prompt_tokens",
-    "total_completion_tokens",
-    "cache_read_input_tokens",
-    "cache_creation_input_tokens",
-    "cached_tokens",
-  ]) {
-    const value = finiteUsageNumber(usage[key]);
-    if (value != null) out[key] = value;
-  }
-  return Object.keys(out).length ? out : null;
-}
-
 function normalizeUsageContextMarker(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, 180) : "";
-}
-
-function finiteUsageNumber(value: unknown) {
-  const number = Number(value);
-  if (!Number.isFinite(number) || number < 0) return null;
-  return Math.ceil(number);
 }
 
 function isJsonObjectString(value: string) {

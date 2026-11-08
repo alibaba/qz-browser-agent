@@ -1,6 +1,52 @@
 import type { MessageValue, ScriptFailure } from "./contracts/inner-runner.js";
+export { createQzSdk } from "./qz-script-sdk.js";
 
 type ScriptWorld = "page" | "inner";
+
+/** Firefox stacks omit the error header; keep the diagnostic message in every trace. */
+export function formatScriptErrorTrace(error: Error): string {
+  const header = error.message ? `${error.name}: ${error.message}` : error.name;
+  const stack = error.stack || "";
+  if (!stack) return header;
+  return stack === header || stack.startsWith(`${header}\n`) ? stack : `${header}\n${stack}`;
+}
+
+/** Public scripts exchange JSON values without truncating or renaming business fields. */
+export function scriptValue(value: unknown, seen = new Set<object>()): MessageValue {
+  if (value === undefined || value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const invalid = () => Object.assign(new TypeError('Pass or return JSON values; DOM nodes, functions, cycles and non-finite numbers cannot cross script contexts.'), {
+    code: 'SCRIPT_VALUE_NOT_SERIALIZABLE',
+  });
+  if (!value || typeof value !== 'object' || seen.has(value)) throw invalid();
+  if (!Array.isArray(value) && Object.prototype.toString.call(value) !== '[object Object]') throw invalid();
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) return value.map(item => scriptValue(item, seen));
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, scriptValue(item, seen)]));
+  } finally { seen.delete(value); }
+}
+
+/** Only code-bearing tools serialize functions; ordinary tool arguments remain data. */
+export function scriptToolArguments(name: string, args: unknown): MessageValue {
+  const value = args && typeof args === 'object' && !Array.isArray(args) ? { ...args } as Record<string, unknown> : {};
+  if (['evaluate', 'wait_for_function'].includes(name) && typeof value.code === 'function') {
+    const code = Function.prototype.toString.call(value.code);
+    if (/\[native code\]/.test(code)) throw Object.assign(new TypeError('Pass a self-contained function to code.'), {
+      code: 'INVALID_SCRIPT_FUNCTION', hint: 'Use an ordinary or arrow function and pass captured values through args.',
+    });
+    value.code = code;
+  }
+  if (['wait_for_navigation', 'wait_for_popup', 'wait_for_response'].includes(name)
+    && value.trigger && typeof value.trigger === 'object' && !Array.isArray(value.trigger)) {
+    const trigger = value.trigger as Record<string, unknown>;
+    if (['evaluate', 'wait_for_function'].includes(String(trigger.name))) {
+      value.trigger = { ...trigger, args: scriptToolArguments(String(trigger.name), trigger.args) };
+    }
+  }
+  return scriptValue(value);
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object");
 function scriptErrorText(value: unknown, world: ScriptWorld): string {
   if (world === "page") return ((value as { message?: string })?.message || String(value));
@@ -34,6 +80,7 @@ export function safeValueForMessage(value: unknown, world: ScriptWorld = "inner"
       stack: value.stack || "",
     };
     const details: ScriptFailure = value;
+    if (details.hint != null) out.hint = details.hint;
     if (details.code != null) out.code = safeValueForMessage(details.code, world, seen, depth + 1);
     if (details.details != null) out.details = safeValueForMessage(details.details, world, seen, depth + 1);
     if (details.diagnostic != null) out.diagnostic = safeValueForMessage(details.diagnostic, world, seen, depth + 1);
@@ -156,14 +203,14 @@ export function installSecurityGuards(guardrails: unknown, world: ScriptWorld = 
     if (!rule || rule.action === "allow") return null;
     return { type: rule.type, domain: rule.type === "domain" ? rule.value : undefined, pattern: rule.type === "pattern" ? rule.value : undefined, host };
   }
-  function assertAllowed(input: unknown, source: string) {
+  function assertAllowed(input: unknown, action: string) {
     const match = matchUrl(input);
     if (!match) return;
     const label = match.type === "pattern" ? ("模糊匹配 " + match.pattern) : (match.domain + " 及其子域名");
-    const error: ScriptFailure = new Error("安全护栏已阻止 run_script" + (world === "inner" ? " inner" : "") + " 访问 " + label + "。");
+    const error: ScriptFailure = new Error("安全护栏已阻止 run_script 访问 " + label + "。");
     error.code = "SECURITY_GUARDRAIL_BLOCKED";
     error.details = {
-      source,
+      action,
       blockedType: match.type,
       blockedDomain: match.domain,
       blockedPattern: match.pattern,

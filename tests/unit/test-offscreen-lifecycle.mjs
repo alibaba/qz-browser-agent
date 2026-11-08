@@ -48,7 +48,7 @@ test("concurrent sandbox startup shares one deadline and all callers recover aft
   f.send(execute("two"));
   assert.equal(f.frames.length, 1);
   f.expire(); await tick();
-  assert.deepEqual(results(f).map(message => [message.requestId, message.result.code]), [["one", "INNER_RUNNER_SANDBOX_NOT_READY"], ["two", "INNER_RUNNER_SANDBOX_NOT_READY"]]);
+  assert.deepEqual(results(f).map(message => [message.requestId, message.result.code]), [["one", "SCRIPT_CONTEXT_UNAVAILABLE"], ["two", "SCRIPT_CONTEXT_UNAVAILABLE"]]);
   assert.equal(f.frames[0].removed, true);
   f.send(execute("retry")); f.sandbox({ type: "ready" }); await tick();
   assert.equal(f.frames.length, 2);
@@ -69,13 +69,32 @@ test("cancelling before ready settles once and never starts the late script", as
   assert.equal(results(f).length, 1);
 });
 
+test("a timeout snapshot asks the live worker and leaves the run pending", async () => {
+  const f = fixture();
+  f.send(execute("snap"));
+  f.sandbox({ type: "ready" });
+  await tick();
+  const ack = f.send({ type: "run_script_inner_trace_snapshot", requestId: "snap" });
+  assert.equal(ack.accepted, true);
+  assert.equal(f.posted.some(message => message.type === "trace_snapshot" && message.requestId === "snap"), true);
+  f.sandbox({ type: "trace_snapshot", requestId: "snap", trace: [{ level: "trace", message: "row" }] });
+  await tick();
+  const snapshot = f.sent.find(message => message.type === "run_script_inner_trace_snapshot_result");
+  assert.equal(snapshot.requestId, "snap");
+  assert.equal(snapshot.trace[0].message, "row");
+  assert.equal(results(f).length, 0);
+  const missing = f.send({ type: "run_script_inner_trace_snapshot", requestId: "missing" });
+  assert.equal(missing.accepted, false);
+});
+
 test("tool relay preserves identity and drops responses after run cancellation", async () => {
   const f = fixture(); let release;
   f.setTool(() => new Promise(resolve => { release = resolve; }));
-  f.send(execute("tool")); f.sandbox({ type: "ready" }); await tick();
+  f.send({ ...execute("tool"), parentCallId: "parent-call" }); f.sandbox({ type: "ready" }); await tick();
   f.sandbox({ type: "tool_call", requestId: "tool", callId: "call", toolName: "read", args: {} }); await tick();
   const call = f.sent.find(message => message.type === "run_script_tool_call");
   assert.equal(call.sessionId, "s"); assert.equal(call.runId, "r"); assert.equal(call.depth, 1);
+  assert.equal(call.parentCallId, "parent-call");
   f.send({ type: "run_script_inner_cancel", requestId: "tool" });
   release({ ok: true, result: "late" }); await tick();
   assert.equal(f.posted.some(message => message.type === "tool_response"), false);
@@ -88,7 +107,7 @@ test("foreign windows cannot mark the owned sandbox ready or complete a run", as
   f.sandbox({ type: "result", requestId: "owned", result: { ok: true } }, {}); await tick();
   assert.equal(results(f).length, 0);
   f.expire(); await tick();
-  assert.equal(results(f)[0].result.code, "INNER_RUNNER_SANDBOX_NOT_READY");
+  assert.equal(results(f)[0].result.code, "SCRIPT_CONTEXT_UNAVAILABLE");
 });
 
 test("native script results retain the original payload above the Port chunk threshold", async () => {

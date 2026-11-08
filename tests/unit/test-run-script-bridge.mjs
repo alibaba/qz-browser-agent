@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import { assertScriptPageLifecycle } from "../../src/background/tools/behavior.js";
+import { withToolCallLifecycle } from "../../src/background/tools/call-lifecycle.js";
+import { createToolOperation, withToolOperationFailure } from "../../src/background/tools/tool-operation.js";
+import { registerMediaTools } from "../../src/capabilities/media/tools.js";
 import {
   createRunScriptArtifactCollector,
   createRunScriptBridge,
@@ -14,6 +18,9 @@ let readyCount = 0;
 const controller = new AbortController();
 const toolRegistrySnapshot = Object.freeze({ language: "en", marker: "frozen core declarations" });
 const skillToolRegistrySnapshot = { version: 7, plugins: [], toolIndex: new Map() };
+// Exercise the production declarations: a missing image observation flag must fail this test.
+const mediaDefinitions = new Map();
+registerMediaTools({ registerTool: definition => mediaDefinitions.set(definition.name, definition) });
 const collector = createRunScriptArtifactCollector({
   getToolIdentity: name => ({ capabilityId: name === "store_alias" ? "data_store" : name }),
 });
@@ -24,10 +31,7 @@ const supervisor = {
 };
 const toolRuntime = {
   resolveDefinition(name) {
-    return { name, behavior: {
-      mayUnloadPage: name === "navigate",
-      nestedObservation: name === "screenshot" || (name === "act_on_screen" ? args => args.returnScreenshot === true : false),
-    } };
+    return mediaDefinitions.get(name) || { name, behavior: { mayUnloadPage: name === "navigate" } };
   },
   getSchemas: context => {
     schemaContexts.push(context);
@@ -40,13 +44,14 @@ const toolRuntime = {
     }];
   },
   async execute(name, args, _signal, context) {
+    if (name === "list_tools") return { tools: this.getSchemas(context).map(schema => schema.function) };
     assertScriptPageLifecycle(this.resolveDefinition(name), args, context);
     executions.push({ name, args, context });
     if (name === "returns_error") return { ok: false, code: "EXPECTED_FAILURE", error: "failed" };
     if (name === "throws") throw Object.assign(new Error("exploded"), { code: "EXPLODED" });
     if (name === "store_alias") return { table: args.table, inserted: 2, totalRows: 2 };
     if (name === "act_on_screen") {
-      return {
+      return bindToolResultPresentation({
         feedbackAvailable: args.returnScreenshot === true,
         coordinateBasisReady: true,
         returnScreenshot: args.returnScreenshot,
@@ -54,12 +59,13 @@ const toolRuntime = {
           _image: "data:image/jpeg;base64,YWN0aW9u",
           _imageDetail: "high",
         } : {}),
+      }, {
         _display: {
           type: "imageWithAction",
           beforeImage: "data:image/jpeg;base64,YmVmb3Jl",
           afterImage: "data:image/jpeg;base64,YWZ0ZXI=",
         },
-      };
+      });
     }
     if (name === "screenshot") {
       return {
@@ -68,10 +74,11 @@ const toolRuntime = {
         screenshotId: "screen-latest",
       };
     }
-    if (name === "read_image") {
+    if (name === "read_image" || name === "read_image_asset") {
       return {
         _image: "data:image/png;base64,cmVhZC1pbWFnZQ==",
-        description: "image payload owned by read_image",
+        _imageDetail: "high",
+        description: "image payload owned by " + name,
       };
     }
     return { value: 1 };
@@ -87,8 +94,8 @@ const bridge = createRunScriptBridge({
     workingUrl: "https://example.test/current",
     workingTab: { id: 31, url: "https://example.test/current" },
     visitedTaskSites: [{ id: 31, url: "https://example.test/current" }],
-    loadedPluginSkillNames: ["runtime-skill"],
   }),
+  loadedSkillNames: () => ["runtime-skill"],
   isTerminalRuntimeForRun: runtime => runtime.status === "aborted",
   canManageSessions: async () => true,
   buildRunProfile: async input => ({ session: input }),
@@ -128,7 +135,7 @@ assert.equal(schemaContexts.at(-1).runProfile.id, "frozen-profile");
 assert.equal(schemaContexts.at(-1).skillToolRegistrySnapshot, skillToolRegistrySnapshot);
 assert.equal(schemaContexts.at(-1).toolRegistrySnapshot, toolRegistrySnapshot);
 assert.equal(schemaContexts.at(-1).language, "en");
-assert.equal(schemaContexts.at(-1).dynamicContext.pageUrl, "https://example.test/current");
+assert.equal(schemaContexts.at(-1).dynamicContext.pageUrl, "https://stale.test/");
 assert.deepEqual(schemaContexts.at(-1).loadedPluginSkillNames, ["agent-skill", "runtime-skill"]);
 
 const tooDeep = await bridge.handleToolCall({
@@ -184,14 +191,19 @@ assert.deepEqual(screenshot.observation, {
 assert.equal(screenshot.result._image, undefined, "promoted screenshot bytes should cross the bridge only once");
 assert.equal(screenshot.result.screenshotId, "screen-latest");
 
-const readImage = await bridge.handleToolCall({
-  toolName: "read_image",
-  sessionId: "s1",
-  runId: "run-current",
-  args: { tabId: 31, target: "uid:image" },
-}, { tab: { id: 31 } });
-assert.equal(readImage.observation, undefined, "only screenshot and observed screen actions update the run_script observation slot");
-assert.match(readImage.result._image, /^data:image\/png;base64,/, "unrelated nested image tools must keep their existing result contract");
+for (const name of ["read_image", "read_image_asset"]) {
+  const readImage = await bridge.handleToolCall({
+    toolName: name,
+    sessionId: "s1",
+    runId: "run-current",
+    args: name === "read_image" ? { tabId: 31, target: "uid:image" } : { assetId: "image-1" },
+  }, { tab: { id: 31 } });
+  assert.deepEqual(readImage.observation, {
+    _image: "data:image/png;base64,cmVhZC1pbWFnZQ==", _imageDetail: "high",
+  }, `${name} must attach image bytes through the same channel as screenshots`);
+  assert.deepEqual(readImage.result, { description: "image payload owned by " + name },
+    `${name} must retain business metadata without serializing image bytes into script JSON`);
+}
 
 const stale = await bridge.handleToolCall({
   toolName: "read_dom",
@@ -229,15 +241,15 @@ assert.equal(stored.artifacts[0].table, "rows");
 assert.equal(appended.length, 1);
 assert.equal(appended[0].artifacts[0].totalRows, 2);
 assert.deepEqual(refreshes[0], ["s1", { action: "artifacts", touchSession: true, delay: 400 }]);
-assert.equal(executions.at(-1).context.workingTabId, 31);
+assert.equal(executions.at(-1).context.workingTabId, undefined);
 assert.equal(executions.at(-1).context.senderTabId, 9);
 assert.equal(executions.at(-1).context.runScriptToolDepth, 2);
 assert.equal(executions.at(-1).context.skillToolRegistrySnapshot, skillToolRegistrySnapshot);
-assert.equal(executions.at(-1).context.dynamicContext.pageUrl, "https://example.test/current");
+assert.equal(executions.at(-1).context.dynamicContext.pageUrl, "https://stale.test/");
 assert.deepEqual(executions.at(-1).context.loadedPluginSkillNames, ["agent-skill", "runtime-skill"]);
 assert.equal(nestedResults.at(-1).toolName, "store_alias");
 assert.equal(nestedResults.at(-1).runId, "run-current");
-assert.equal(readyCount, 11);
+assert.equal(readyCount, 12);
 
 assert.deepEqual(
   collector("download_url", { url: "https://example.test/report%20final.csv" }, {}),
@@ -275,7 +287,7 @@ assert.deepEqual(collector("document_download", {}, {}), []);
 const activatedSkills = [];
 const activationBridge = createRunScriptBridge({
   supervisor,
-  getRuntime: () => ({ status: "running", loadedPluginSkillNames: activatedSkills }),
+  getRuntime: () => ({ status: "running" }),
   isTerminalRuntimeForRun: () => false,
   canManageSessions: async () => true,
   buildRunProfile: async () => ({}),
@@ -291,6 +303,7 @@ const activationBridge = createRunScriptBridge({
         : []),
     ],
     async execute(name, _args, _signal, context) {
+      if (name === "list_tools") return { tools: this.getSchemas(context).map(schema => schema.function) };
       if (name === "load_skill") return { name: "fresh-skill" };
       if (name === "fresh_plugin__run" && context.loadedPluginSkillNames.includes("fresh-skill")) return { ok: true };
       throw Object.assign(new Error(`Unknown tool: ${name}`), { code: "UNKNOWN_TOOL" });
@@ -319,5 +332,222 @@ assert.equal((await activationBridge.handleToolCall({
   sessionId: "s1",
   runId: "run-current",
 })).ok, true);
+
+const sessionSkills = [];
+const sessionRecordBridge = createRunScriptBridge({
+  supervisor,
+  getRuntime: () => ({ status: "running" }),
+  loadedSkillNames: () => sessionSkills,
+  canManageSessions: async () => true,
+  buildRunProfile: async () => ({}),
+  getRunToolContext: async () => ({ externalDrive: true }),
+  recordNestedTool: async ({ name, phase, result }) => {
+    if (name === "load_skill" && phase === "end") sessionSkills.push(result.name);
+  },
+  toolRuntime: {
+    resolveDefinition: () => null,
+    getSchemas: () => [],
+    async execute(name, _args, _signal, context) {
+      return name === "load_skill" ? { name: "fresh-skill" } : { loaded: context.loadedPluginSkillNames };
+    },
+  },
+  collectArtifacts: () => [],
+});
+const callSessionRecord = toolName => sessionRecordBridge.handleToolCall({ toolName, sessionId: "s1", runId: "run-current" });
+await callSessionRecord("load_skill");
+assert.deepEqual((await callSessionRecord("read_loaded")).result.loaded, ["fresh-skill"],
+  "a run without a live Agent reads the Session's loaded Skills on its next nested call");
+
+const driveExecutions = [];
+const driveBridge = createRunScriptBridge({
+  supervisor: {
+    isRunCurrent: (_sessionId, runId) => ["run-current", "opaque-direct-run", "drive-native-looking-run"].includes(runId),
+    hasAgent: () => false,
+    getAbortSignal: () => controller.signal,
+  },
+  getRuntime: () => ({ status: "running" }),
+  isTerminalRuntimeForRun: () => false,
+  canManageSessions: async () => true,
+  buildRunProfile: async () => ({}),
+  getRunToolContext: async (_sessionId, runId) => ({ externalDrive: runId === "opaque-direct-run" }),
+  toolRuntime: {
+    resolveDefinition: () => ({ behavior: {} }),
+    getSchemas: () => [
+      { function: { name: "open_tab", description: "Open a tab\nsecond", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } } },
+      { function: { name: "read_dom", description: "Read", parameters: { type: "object" } } },
+      { function: { name: "ask_llm", description: "Ask", parameters: { type: "object" } } },
+    ],
+    getTabAliases: () => ({ page: 7 }),
+    async execute(name, args, _signal, context) {
+      if (name === "list_tools") return { tools: [{ name: "open_tab", signature: "open_tab({url:string})", description: "Open a tab" }] };
+      if (name === "get_ax_tree") {
+        const error = new Error("built-in alias");
+        error.code = "BATCH_TAB_REFERENCE_ERROR";
+        error.details = { reason: "no_alias", tabRef: "page" };
+        throw error;
+      }
+      driveExecutions.push(name);
+      if (name === "list_tabs") {
+        if (context.externalDrive === true && args.scope !== "all") return {
+          tabs: [{ tabRef: "page", title: "Owned", url: "https://httpbin.org/html", active: false }], count: 1, foreign: 1,
+        };
+        return [
+          { tabRef: "page", title: "Owned", url: "https://httpbin.org/html", active: false },
+          { tabRef: 8, title: "Other", url: "https://httpbin.org/robots.txt", active: false },
+        ];
+      }
+      return { ok: true };
+    },
+  },
+  collectArtifacts: () => [],
+});
+const blockedAsk = await driveBridge.handleToolCall({
+  toolName: "ask_llm",
+  args: { prompt: "hi" },
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.equal(blockedAsk.ok, false);
+assert.equal(blockedAsk.code, "DRIVE_TOOL_FORBIDDEN");
+assert.deepEqual(driveExecutions, []);
+const blockedUseTab = await driveBridge.handleToolCall({
+  toolName: "use_tab", args: { tabRef: "page" }, sessionId: "s1", runId: "opaque-direct-run",
+});
+const outerOperation = createToolOperation();
+outerOperation.prepare({ tool: "run_script" });
+outerOperation.dispatch();
+const blockedReceipt = withToolOperationFailure(blockedUseTab.result, outerOperation);
+assert.equal(blockedReceipt.code, "DRIVE_TOOL_FORBIDDEN");
+assert.deepEqual(blockedReceipt.details, { tool: "use_tab", status: "not_started", executed: false,
+  mayHaveTakenEffect: false, automaticReplay: false });
+assert.deepEqual(driveExecutions, [], "forbidden calls retain their identity without executing");
+const driveList = await driveBridge.handleToolCall({
+  toolName: "__list_tools__",
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.deepEqual(driveList.result.tools, [{ name: "open_tab", signature: "open_tab({url:string})", description: "Open a tab" }]);
+const missingPage = await driveBridge.handleToolCall({
+  toolName: "read_dom",
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.equal(missingPage.ok, false);
+assert.equal(missingPage.code, "TAB_REF_REQUIRED");
+assert.deepEqual(driveExecutions, []);
+assert.equal((await driveBridge.handleToolCall({
+  toolName: "read_dom",
+  args: { tabRef: "page" },
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+})).ok, true);
+assert.deepEqual(driveExecutions, ["read_dom"]);
+const driveTabs = await driveBridge.handleToolCall({
+  toolName: "list_tabs",
+  args: {},
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.deepEqual(driveTabs.result, {
+  tabs: [{ tabRef: "page", title: "Owned", url: "https://httpbin.org/html", active: false }],
+  count: 1,
+  foreign: 1,
+});
+assert.equal("width" in driveTabs.result, false);
+const allTabs = await driveBridge.handleToolCall({
+  toolName: "list_tabs",
+  args: { scope: "all" },
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.equal(Array.isArray(allTabs.result), true);
+assert.equal(allTabs.result.length, 2);
+assert.equal(allTabs.result[0].tabRef, "page");
+const plainTabs = await driveBridge.handleToolCall({
+  toolName: "list_tabs",
+  args: {},
+  sessionId: "s1",
+  runId: "drive-native-looking-run",
+});
+assert.equal(Array.isArray(plainTabs.result), true);
+assert.equal(plainTabs.result[1].tabRef, 8);
+const driveAlias = await driveBridge.handleToolCall({
+  toolName: "get_ax_tree",
+  args: { tabRef: "page" },
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.equal(driveAlias.ok, false);
+assert.equal(driveAlias.code, "BATCH_TAB_REFERENCE_ERROR");
+assert.match(driveAlias.message, /list_tabs/);
+assert.match(driveAlias.message, /list_tabs/);
+assert.doesNotMatch(driveAlias.message, /省略 tabRef|omit tabRef/i);
+const builtInAlias = await driveBridge.handleToolCall({
+  toolName: "get_ax_tree",
+  args: { tabRef: "page" },
+  sessionId: "s1",
+  runId: "drive-native-looking-run",
+});
+assert.equal(builtInAlias.code, "BATCH_TAB_REFERENCE_ERROR");
+assert.doesNotMatch(builtInAlias.message, /省略 tabRef|omit tabRef/i);
+assert.match(builtInAlias.message, /no page alias yet|还没有页面别名/);
+
+{
+  const recorded = [], holders = [], parentPresentation = { _display: { parent: true } };
+  const values = [null, undefined, 'primitive'];
+  const collectorBridge = createRunScriptBridge({
+    supervisor, getRuntime: () => ({ status: 'running' }), canManageSessions: async () => true,
+    buildRunProfile: async () => ({}),
+    getRunToolContext: async () => ({ externalDrive: true, resultPresentation: parentPresentation }),
+    recordNestedTool: async input => { if (input.phase === 'end') recorded.push(input); },
+    toolRuntime: {
+      resolveDefinition: () => ({ model: { preserveResult: true } }), getSchemas: () => [],
+      async execute(_name, { index }, _signal, context) {
+        assert.deepEqual(context.resultPresentation, {});
+        holders.push(context.resultPresentation);
+        Object.assign(context.resultPresentation, { _display: { script: { valueOnly: true, trace: [index] } } });
+        return values[index];
+      },
+    },
+    collectArtifacts: () => [],
+  });
+  for (const [index, value] of values.entries()) {
+    const response = await collectorBridge.handleToolCall({ toolName: 'run_script', args: { index, code: 'async () => null' },
+      sessionId: 's1', runId: 'run-current' });
+    assert.equal(response.ok, true);
+    assert.equal(response.result, value);
+    assert.equal(recorded[index].result, value);
+    assert.deepEqual(recorded[index].resultPresentation._display.script.trace, [index]);
+  }
+  assert.equal(new Set(holders).size, values.length);
+  assert.deepEqual(parentPresentation, { _display: { parent: true } });
+}
+
+const parentDeadline = Date.now() + 5_000;
+await withToolCallLifecycle({ sessionId: "s1", runId: "run-current", deadlineAt: parentDeadline }, async parent => {
+  const child = await bridge.handleToolCall({ toolName: "read_dom", sessionId: "s1", runId: "run-current",
+    parentCallId: parent.toolExecutionId, deadlineAt: parentDeadline + 60_000 });
+  assert.equal(child.ok, true);
+  assert.equal(executions.at(-1).context.deadlineAt, parentDeadline, "the child inherits the host deadline, never a message-supplied budget");
+});
+await bridge.handleToolCall({ toolName: "read_dom", sessionId: "s1", runId: "run-current", deadlineAt: parentDeadline });
+assert.equal(executions.at(-1).context.deadlineAt, undefined, "an unrelated call must not inherit another parent's deadline");
+
+const operation = createToolOperation();
+operation.prepare({ tabRef: 'checkout', action: 'click' });
+await withToolCallLifecycle({ sessionId: 's1', runId: 'run-current', operation }, async parent => {
+  await bridge.invokeTool(parent, 'read_dom', {});
+  assert.equal(executions.at(-1).context.operation, operation,
+    'the host can explicitly pass one action record to its triggering child');
+
+  const response = await bridge.handleToolCall({ toolName: 'read_dom', sessionId: 's1', runId: 'run-current',
+    parentCallId: parent.toolExecutionId, operation });
+  assert.equal(response.ok, true);
+  assert.equal(executions.at(-1).context.operation, undefined,
+    'ordinary script children cannot inherit or forge the parent action record');
+});
+await bridge.handleToolCall({ toolName: 'read_dom', sessionId: 's1', runId: 'run-current', operation });
+assert.equal(executions.at(-1).context.operation, undefined, 'unrelated calls have no shared execution evidence');
+assert.equal(operation.snapshot().executed, false);
 
 console.log("run_script bridge tests passed");

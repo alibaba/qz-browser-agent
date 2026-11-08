@@ -9,7 +9,7 @@ class ToolExecutionError extends Error {
   }
 }
 
-function createHarness({ confirmUserReattach = null } = {}) {
+function createHarness({ confirmUserReattach = null, isReadOnlyAccess = () => false } = {}) {
   const detachListeners = [];
   const calls = [];
   const allowedTabs = [];
@@ -30,6 +30,7 @@ function createHarness({ confirmUserReattach = null } = {}) {
   };
   const runtime = createCdpRuntime({
     ToolExecutionError,
+    isReadOnlyAccess,
     debuggerApi,
     isRunCurrent(input) {
       livenessChecks.push(input);
@@ -96,11 +97,15 @@ await Promise.all([
 ]);
 assert.equal(calls.filter(call => call[0] === "attach" && call[1] === 8).length, 1, "concurrent first use must coalesce attach");
 
+const commandsBeforeConflict = calls.filter(call => call[0] === "command").length;
 await assert.rejects(
-  runtime.sendCdp(7, "Page.enable", {}, runB),
-  error => error?.code === "CDP_TAB_LEASE_CONFLICT" && error?.details?.currentRunId === "run-a",
+  runtime.sendCdp(7, "Page.enable", {}, { ...runB, requestedTabRef: "claimed-page" }),
+  error => error?.code === "CDP_TAB_LEASE_CONFLICT"
+    && JSON.stringify(error.details) === JSON.stringify({ tabRef: "claimed-page" }),
   "another run must not steal an attached tab",
 );
+assert.equal(calls.filter(call => call[0] === "command").length, commandsBeforeConflict);
+assert.deepEqual(runtime.getDebuggerRun(7), { ...runA, connectionId: firstConnection });
 await assert.rejects(
   runtime.sendCdp(99, "Page.enable", {}, runA),
   error => error?.code === "SESSION_TAB_FOREIGN",
@@ -151,10 +156,12 @@ assert.ok(calls.some(call => call[1] === 12 && call[2] === "Runtime.terminateExe
 
 harness.setCommandHandler(async () => { throw new Error("boom"); });
 await assert.rejects(
-  runtime.sendCdp(13, "Page.crash", {}, runA),
-  error => error?.code === "CDP_COMMAND_FAILED" && error?.details?.method === "Page.crash",
+  runtime.sendCdp(13, "Page.crash", {}, { ...runA, requestedTabRef: "broken-page" }),
+  error => error?.code === "CDP_COMMAND_FAILED"
+    && JSON.stringify(error.details) === JSON.stringify({ tabRef: "broken-page" }),
 );
 
+assert.ok(calls.some(call => call[0] === "command" && call[1] === 13 && call[2] === "Page.crash"));
 harness.setCommandHandler(async (_target, method) => ({ method }));
 const temporary = await runtime.withTemporaryDebugger(20, async (_target, send) => send("Page.enable"), "pdf");
 assert.equal(temporary.method, "Page.enable");
@@ -579,6 +586,78 @@ for (const closeBoth of [false, true]) {
   await f.runtime.sendCdp(65, "Runtime.enable", {}, runA);
   assert.equal(f.calls.filter(call => call[0] === "attach" && call[1] === 65).length, 2, "a prompt-less host re-attaches silently");
   await f.runtime.releaseRun(runA.sessionId, runA.runId);
+}
+
+{
+  const grants = new WeakSet();
+  const f = createHarness({ isReadOnlyAccess: (_tabId, context) => grants.has(context) });
+  f.activateRun(runA); f.activateRun(runB);
+  await f.runtime.sendCdp(71, 'Page.enable', {}, runA);
+  const connection = f.runtime.getDebuggerRun(71);
+  await assert.rejects(f.runtime.sendCdp(71, 'Runtime.enable', {}, runB), { code: 'CDP_TAB_LEASE_CONFLICT' });
+  const reader = { ...runB };
+  grants.add(reader);
+  await f.runtime.withDebugger(71, async (_target, send) => {
+    await send('Accessibility.getFullAXTree');
+    assert.deepEqual(f.runtime.getDebuggerRun(71), connection, 'a read grant must not transfer the existing debugger lease');
+  }, reader);
+  await f.runtime.releaseRun(runB.sessionId, runB.runId);
+  assert.deepEqual(f.runtime.getDebuggerRun(71), connection, 'reader cleanup must not detach the owner');
+  assert.equal(f.calls.filter(call => call[0] === 'attach' && call[1] === 71).length, 1);
+  f.retireRun(runB);
+  await assert.rejects(f.runtime.sendCdp(71, 'Accessibility.getFullAXTree', {}, reader), { code: 'CDP_RUN_RELEASED' });
+  await f.runtime.sendCdp(71, 'Runtime.enable', {}, runA);
+  await f.runtime.releaseRun(runA.sessionId, runA.runId);
+}
+
+{
+  const f = createHarness(); f.activateRun(runA);
+  f.setCommandHandler(async () => { throw new Error('No tab with id: 8222.'); });
+  await assert.rejects(f.runtime.sendCdp(72, 'Page.getFrameTree', {}, { ...runA, requestedTabRef: 'checkout' }), error => {
+    assert.equal(error.code, 'SESSION_TAB_UNAVAILABLE');
+    assert.deepEqual(error.details, { tabRef: 'checkout' });
+    assert.doesNotMatch(error.message, /8222|No tab with id/);
+    assert.match(error.hint, /list_tabs/);
+    return true;
+  });
+}
+
+{
+  const grants = new WeakSet();
+  const f = createHarness({ isReadOnlyAccess: (_tabId, context) => grants.has(context) });
+  f.activateRun(runA); f.activateRun(runB);
+  const reader = { ...runB }; grants.add(reader);
+  await f.runtime.sendCdp(73, 'Accessibility.getFullAXTree', {}, reader);
+  let readerSend;
+  await f.runtime.withDebugger(73, async (_target, send) => { readerSend = send; }, reader);
+  await assert.rejects(readerSend.cancelPointer(), { code: 'CDP_RUN_RELEASED' }, 'observation grants never authorize pointer cleanup');
+  await f.runtime.sendCdp(73, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape' }, runA);
+  assert.equal(f.runtime.getDebuggerRun(73).sessionId, runA.sessionId,
+    'a first reader cannot reserve the connection against the next authorized writer');
+  await f.runtime.releaseRun(runB.sessionId, runB.runId);
+  assert.equal(f.runtime.getDebuggerRun(73).sessionId, runA.sessionId);
+  assert.equal(f.calls.filter(call => call[0] === 'attach' && call[1] === 73).length, 1);
+  await f.runtime.releaseRun(runA.sessionId, runA.runId);
+}
+
+{
+  const f = createHarness();
+  f.activateRun(runA); f.activateRun(runB);
+  const abort = new AbortController();
+  let captured;
+  await f.runtime.withDebugger(74, async (_target, send) => { captured = send; }, { ...runA, signal: abort.signal });
+  abort.abort();
+  await assert.rejects(captured("Input.dispatchMouseEvent", { type: "mouseMoved", x: 10, y: 10 }), { code: "OPERATION_ABORTED" });
+  await captured.cancelPointer();
+  const releases = () => f.calls.filter(call => call[0] === "command" && call[2] === "Input.dispatchMouseEvent");
+  assert.deepEqual(releases().map(call => call[3]), [{ type: "mouseReleased", x: -1, y: -1, button: "left", buttons: 0, clickCount: 1 }],
+    "only a non-clicking release may outlive cancellation");
+  await f.runtime.releaseRun(runA.sessionId, runA.runId);
+  await f.runtime.sendCdp(74, "Page.enable", {}, runB);
+  const before = f.calls.length;
+  await assert.rejects(captured.cancelPointer(), { code: "CDP_RUN_RELEASED" });
+  assert.equal(f.calls.length, before, "old cleanup cannot affect a replacement connection or reacquire one");
+  await f.runtime.releaseRun(runB.sessionId, runB.runId);
 }
 
 console.log("CDP run/tab lifecycle tests passed");

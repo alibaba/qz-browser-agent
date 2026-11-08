@@ -42,7 +42,7 @@ test("isolated content bridge messages use the extension language instead of the
   assert.equal(await inLanguage("fr-FR", () => contentText("noStableSelector")), "Could not generate a stable selector for this element");
 });
 
-test("tool errors translate at the boundary and retain machine identity and original evidence", async () => {
+test("tool errors translate at the boundary and retain machine identity and public recovery data", async () => {
   const input = { ok: false, code: "DATA_ROW_CONFLICT", error: "changed revision 7", details: { rowId: "row:abc", revision: 7 } };
   const english = await inLanguage("en-GB", () => localizeToolFailurePayload(input));
   const chinese = await inLanguage("zh-CN", () => localizeToolFailurePayload(input));
@@ -51,7 +51,7 @@ test("tool errors translate at the boundary and retain machine identity and orig
   assert.equal(english.code, input.code);
   assert.equal(english.details.rowId, "row:abc");
   assert.equal(english.details.revision, 7);
-  assert.equal(english.details.originalError, input.error);
+  assert.equal(english.details.originalError, undefined);
   assert.equal(input.error, "changed revision 7");
   assert.equal(await inLanguage("de-DE", () => localizeToolFailureCode("TOOL_NOT_EXECUTED")), "Tool did not run");
 });
@@ -107,8 +107,7 @@ test("location failures keep stable codes and short recovery text", async () => 
         assert.equal(payload.code, code);
         assert.equal(payload.error, message);
         assert.equal(payload.codeLabel, label);
-        assert.equal(payload.details.originalCode, code);
-        assert.equal(payload.details.originalError, "The side panel did not return a location result");
+        assert.equal(payload.details, undefined, "localization adds no internal diagnostics");
         assert.equal(message.includes(code), false);
         assert.equal(/Chrome|Firefox/.test(message), false);
         assert.equal(label.includes("_"), false);
@@ -125,6 +124,44 @@ test("location failures keep stable codes and short recovery text", async () => 
         assert.equal(html.includes(code), false);
       }
     }
+  } finally {
+    if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+    else delete globalThis.document;
+  }
+});
+
+test("script error rendering preserves canonical messages, recovery hints and traces while translating legacy errors", async () => {
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { createElement: () => ({
+      innerHTML: "",
+      set textContent(value) {
+        this.innerHTML = String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      },
+    }) },
+  });
+  try {
+    for (const language of ["en", "zh-CN"]) await inLanguage(language, () => {
+      const native = { code: "SCRIPT_EVALUATION_FAILED", message: "Could not save form <report>.",
+        hint: "Reopen the form before retrying.", details: { trace: [{ level: "debug", message: "filled name" }] } };
+      const original = structuredClone(native);
+      const render = value => {
+        const sections = [], parent = { appendChild: section => sections.push(section) };
+        appendErrorSection(parent, value);
+        return sections.map(section => section.innerHTML).join("");
+      };
+      const html = render(native);
+      assert.match(html, /Could not save form &lt;report&gt;\./);
+      assert.equal(html.match(/Reopen the form before retrying\./g)?.length, 1);
+      assert.equal(html.match(/filled name/g)?.length, 1);
+      assert.deepEqual(native, original, "rendering does not rewrite the canonical error or recovery data");
+      const legacy = render({ ok: false, code: "SCRIPT_EVALUATION_FAILED", error: "legacy runtime detail",
+        trace: [{ message: "legacy trace" }] });
+      assert.ok(legacy.includes(backendMessages.messages["toolError.SCRIPT_EVALUATION_FAILED.message"][language]));
+      assert.match(legacy, /legacy trace/);
+      assert.doesNotMatch(legacy, /legacy runtime detail/);
+    });
   } finally {
     if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
     else delete globalThis.document;

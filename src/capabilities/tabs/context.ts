@@ -10,7 +10,7 @@ export default ((host) => [{
     if (!tab?.id) return null;
     const pageMode = readPageMode(tab.id);
     const saved = pageModeStates.get(tab.id);
-    return JSON.stringify({ tabId: tab.id, ...(pageMode ? { pageMode } : { note: toolT("modeChanging") }),
+    return JSON.stringify({ tabRef: tab.tabAlias || tab.id, ...(pageMode ? { pageMode } : { note: toolT("modeChanging") }),
       ...(saved?.sessionId === sessionId && pageMode === "desktop"
         ? { note: toolT("modeResume") } : {}) });
   },

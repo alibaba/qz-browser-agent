@@ -10,7 +10,7 @@
         "_uiKey": "esr-t1",
         "toolCallId": "esr-t1",
         "name": "read_dom",
-        "args": { "selector": "button", "depth": 2 },
+        "args": { "target": "button", "depth": 2 },
         "result": { "matched": 3, "text": "保存草稿 / 发布 / 取消" }
       },
       {
@@ -19,7 +19,7 @@
         "toolCallId": "esr-t2",
         "name": "act_on_element",
         "args": { "target": "uid:btn-save", "action": "click" },
-        "result": { "message": "element is detached from DOM", "code": "stale-element", "retryable": true },
+        "result": { "code": "STALE_ELEMENT_UID", "message": "Element target is stale or unknown.", "hint": "Take a fresh get_ax_tree snapshot, then retry.", "details": { "target": "uid:btn-save" } },
         "isError": true
       },
       {
@@ -38,7 +38,14 @@
     { "action": "assert", "expect": "expandedLane", "lane": "tool" },
     { "action": "assert", "expect": "navText", "equals": "2/3" },
     { "action": "assert", "expect": "activeText", "includes": "操作元素" },
-    { "action": "assert", "expect": "selectorText", "selector": ".tool-timeline-slot", "includes": "stale-element" },
+    { "action": "assert", "expect": "selectorText", "selector": ".tool-timeline-slot", "includes": "元素引用已过期" },
+    { "action": "assert", "expect": "selectorText", "selector": ".tool-error-message", "includes": "Element target is stale or unknown." },
+    { "action": "assert", "expect": "selectorText", "selector": ".tool-timeline-slot", "includes": "uid:btn-save" },
+    { "action": "click", "selector": ".tool-timeline-raw-btn:not(.hidden)", "label": "查看标准错误与恢复提示" },
+    { "action": "assert", "expect": "selectorText", "selector": ".tool-timeline-raw-panel:not(.hidden)", "includes": "元素引用已过期" },
+    { "action": "assert", "expect": "selectorText", "selector": ".tool-timeline-raw-panel:not(.hidden)", "includes": "Take a fresh get_ax_tree snapshot, then retry." },
+    { "action": "assert", "expect": "selectorText", "selector": ".tool-timeline-raw-panel:not(.hidden)", "includes": "uid:btn-save" },
+    { "action": "click", "selector": ".tool-timeline-raw-btn:not(.hidden)", "label": "收起原始错误数据" },
     { "action": "assert", "expect": "selectorCount", "selector": ".tool-timeline-step.error", "equals": 1 },
     { "action": "click", "selector": ".tool-timeline-nav-btn[data-timeline-nav-direction=\"1\"]", "label": "切到后续画面证据" },
     { "action": "assert", "expect": "navText", "equals": "3/3" },

@@ -36,7 +36,7 @@
   "page.highlightElement": "要素を強調表示",
   "page.injectStyles": "スタイルを追加",
   "page.modifyDom": "DOMを変更",
-  "page.readArticleRequiresASelectorWhenSourceSelector": "source=selector の場合、read_article には selector が必要です。",
+  "page.readArticleRequiresASelectorWhenSourceSelector": "source=target の場合、read_article には target が必要です。",
   "page.searchTerms": "検索語",
   "page.argumentCharacters": "（引数：{count} 文字）",
   "page.contentScriptReturnedAnInvalidResponse": "コンテンツスクリプト {action} が無効な応答を返しました。",
@@ -62,5 +62,5 @@
   "page.elementNotCheckable": "対象はネイティブのチェックボックスまたはラジオボタンではありません。別の要素を選んでください。",
   "page.radioCannotBeUnchecked": "選択済みのラジオボタンはクリックして解除できません。同じグループの別の選択肢を選んでください。",
   "page.elementCheckStateMismatch": "指定した選択状態になりませんでした。要素を確認してから続けてください。",
-  "page.inputNotDelivered": "入力が届きませんでした。ページはこのクリックを受け取っていません。タブのレイアウト完了後にもう一度試してください。"
+  "page.inputNotDelivered": "入力が届きませんでした。ページはこのクリックまたはキー入力を受け取っていません。タブのレイアウト完了後にもう一度試してください。"
 }

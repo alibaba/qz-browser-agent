@@ -1,7 +1,7 @@
 {
   "tabs.tabs": "Pestañas",
-  "tabs.tab": "Pestaña {tabId}",
-  "tabs.current": "Actual",
+  "tabs.tab": "Pestaña {tabRef}",
+  "tabs.current": "Visible para el usuario",
   "tabs.window": "Ventana {windowId}",
   "tabs.qingzhouTask": "Tarea de qz",
   "tabs.organizedInto": "Organizadas en «{name}»",
@@ -38,8 +38,6 @@
   "tabs.usePage": "Establecer pestaña de trabajo",
   "tabs.navigatePage": "Ir a URL",
   "tabs.organizeTabsTool": "Organizar pestañas",
-  "tabs.currentSessionWorkingTabIsNotAWebPage": "La pestaña de trabajo de esta tarea no es una página web normal.",
-  "tabs.tabIsNotAWebPageAndCannotBe": "La pestaña {tabId} no es una página web normal y no puede usarse como pestaña de trabajo.",
   "tabs.openingAnAgentOwnedTabRequiresTheCurrentSession": "Para abrir una pestaña propia se necesita el servicio de pestañas de la tarea actual.",
   "tabs.viewWorkingPageShort": "Pestaña de trabajo",
   "tabs.usePageShort": "Usar pestaña",

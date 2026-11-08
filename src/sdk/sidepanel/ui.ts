@@ -80,6 +80,7 @@ export interface UiChatPort {
   refreshReferences(): void;
   isGoalClearPending(id: string): boolean;
   renderGoal(): void;
+  syncExternalDriveChrome?(): void;
 }
 
 export interface UiActivation {

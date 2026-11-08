@@ -92,10 +92,14 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
           if(await summary.getAttribute('aria-expanded')!=='true') await summary.click();
           await page.waitForFunction(()=>[...document.querySelectorAll('#messages .msg-assistant[data-markdown-mode="stream"]')].some(el=>(el.dataset.content?.length||0)>180),null,{timeout:180000});
           if (scenario.images) {
-            const steps = page.locator('#messages [data-tool-timeline-index]');
-            for (let i=0;i<await steps.count();i++) {
-              if(/采集图片|Collect images/i.test(await steps.nth(i).innerText())) { await steps.nth(i).click(); record.interactions.push({action:'show-image-result',running:!finished}); break; }
-            }
+            const step = page.locator('#messages .tool-family-batch, #messages .tool-timeline-step')
+              .filter({hasText:/采集图片|Collect images/i}).first();
+            await step.waitFor({state:'attached'});
+            const familyId = await step.getAttribute('data-tool-family-id');
+            if (familyId) await page.locator(`#messages .tool-family-row[data-tool-family-id="${familyId}"]`).click();
+            await step.click();
+            record.interactions.push({action:'show-image-result',running:!finished});
+            await page.locator('#messages .tool-image-grid-scroll img').first().waitFor({state:'visible'});
             await page.screenshot({path:join(output,`${scenario.id}-gallery.png`)});
           }
           const box=await page.locator('#messages').boundingBox();
@@ -140,18 +144,18 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
         await writeFile(join(output,`${scenario.id}-trajectory.json`),JSON.stringify({sessionId,prompt:scenario.prompt,messages,events},null,2));
         await writeFile(join(output,`${scenario.id}-frames.json`),JSON.stringify(frames));
         await page.screenshot({path:join(output,`${scenario.id}-completed.png`)});
-        if (scenario.table) {
-          const tableProbe = await page.evaluate(() => window.__liveTables.stop());
-          await writeFile(join(output,`${scenario.id}-table-frames.json`),JSON.stringify(tableProbe));
-          record.tableReveal = checkLiveTableReveal(tableProbe);
-        }
+        const tableProbe = scenario.table ? await page.evaluate(() => window.__liveTables.stop()) : null;
+        if (tableProbe) await writeFile(join(output,`${scenario.id}-table-frames.json`),JSON.stringify(tableProbe));
         for(const term of scenario.required) assert.ok(result.assistantText.toLowerCase().includes(term.toLowerCase()),`Missing ${term}`);
         for(const tool of scenario.tools) assert.ok(record.toolNames.includes(tool),`Required tool ${tool} was not used`);
         assert.equal(record.toolErrors.length,scenario.expectedErrors?.length||0,JSON.stringify(record.toolErrors));
         for(const [i,reason] of (scenario.expectedErrors||[]).entries()) assert.equal(record.toolErrors[i].result.details?.reason,reason);
         assert.equal(toolStarts.length,toolEnds.length,'every tool start has one completion');
         for(const end of toolEnds) assert.equal(toolStarts.filter(start=>start.toolCallId===end.toolCallId).length,1);
-        assert.deepEqual(messages.filter(m=>m.role==='tool').map(m=>m.tool_call_id),toolEnds.map(e=>e.toolCallId),'model tool results retain completion publication order');
+        const modelCallIds = new Set(messages.flatMap(message => (message.tool_calls || []).map(call => call.id)));
+        const modelEnds = toolEnds.filter(event => modelCallIds.has(event.toolCallId));
+        assert.equal(modelEnds.length, modelCallIds.size, 'every model call has a published completion');
+        assert.deepEqual(messages.filter(m=>m.role==='tool').map(m=>m.tool_call_id),modelEnds.map(e=>e.toolCallId),'model tool results retain completion publication order');
         if(scenario.tools.includes('data_store')) assert.ok(toolEnds.some(e=>e.toolName==='data_store'&&e.result?.rows?.length===3),'read back all three persisted records');
         if(scenario.images) assert.ok(toolEnds.some(e=>e.toolName==='collect_images'&&e.result?.collected===3&&e.result?.failed===0),'all three image assets were collected');
         assert.equal(record.dom.loading,0,'final answer is no longer streaming');
@@ -161,6 +165,7 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
         if(scenario.check) await scenario.check({events,messages,record,page,sessionId});
         assert.equal(stability.failures.length,0,JSON.stringify(stability.failures.slice(0,3)));
         if(!scenario.timeout) assert.ok(stability.coverage.tailContentChanges>0,'tail was observed during real content updates');
+        if (tableProbe) record.tableReveal = checkLiveTableReveal(tableProbe);
         record.ok=true; console.log(`PASS live UI ${scenario.id}: ${record.toolCount} tools, ${frames.length} frames`);
       } catch(error) {
         record.error=String(error.stack||error);

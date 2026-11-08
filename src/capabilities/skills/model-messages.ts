@@ -4,8 +4,8 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model documentation is separate from the eager UI translation catalog. */
 const messages = defineMessages("skills-model", {
   askLlm: {
-    "zh-CN": "在 run_script 内部通过 await tools.ask_llm({prompt, system, data}) 调用 LLM 完成分析、总结、翻译、分类或对比，返回纯文本字符串（data 最长 300,000 字符）。",
-    en: "Call the LLM from inside run_script via await tools.ask_llm({prompt, system, data}) for analysis, summarization, translation, classification, or comparison, returning a plain-text string (data up to 300,000 chars).",
+    "zh-CN": "在 run_script 内部通过 await qz.call(\"ask_llm\", {prompt, system, data}) 调用 LLM 完成分析、总结、翻译、分类或对比，返回纯文本字符串（data 最长 300,000 字符）。",
+    en: "Call the LLM from inside run_script via await qz.call(\"ask_llm\", {prompt, system, data}) for analysis, summarization, translation, classification, or comparison, returning a plain-text string (data up to 300,000 chars).",
   },
   analysisPrompt: {
     "zh-CN": "必填。分析提示词或问题。",
@@ -19,9 +19,21 @@ const messages = defineMessages("skills-model", {
     "zh-CN": "可选待分析数据文本（追加在 prompt 之后，最长 300,000 字符）。",
     en: "Optional data text to analyze (appended after prompt, up to 300,000 chars).",
   },
+  listSkills: {
+    "zh-CN": "列出可加载 Skill 的名称、描述和范围；可传 url 筛选匹配的站点 Skill，全局和常驻 Skill 仍保留。用 load_skill({name}) 加载指令并激活工具。",
+    en: "List available Skills with their names, descriptions and scopes. An optional url filters site Skills while keeping global and resident Skills. Use load_skill({name}) to load instructions and activate tools.",
+  },
+  listSkillsScope: {
+    "zh-CN": "技能范围，默认 all。",
+    en: "Skill scope. Default: all.",
+  },
+  listSkillsUrl: {
+    "zh-CN": "可选页面 URL，用于筛选匹配的站点 Skill；全局和常驻 Skill 不受影响。",
+    en: "Optional page URL for matching site Skills; global and resident Skills remain available.",
+  },
   loadSkill: {
-    "zh-CN": "加载指定 Skill 的完整 Markdown 指令（content）、资源索引（resources，含 plugin.json、scripts、references 等）及运行环境说明，并在当前会话激活该 Skill 声明的扩展工具。需要读取单个资源文件内容时，调用 load_skill_resource(name, path)。",
-    en: "Load a Skill's full Markdown instructions (content), resource index (resources, including plugin.json, scripts, and references), and runtime guidance, and activate its declared Skill tools for the current session. Call load_skill_resource(name, path) to read an individual resource file.",
+    "zh-CN": "加载指定 Skill 的完整 Markdown 指令（content）、资源索引（resources，含 plugin.json、scripts、references 等）、完整工具契约（tools：调用名、说明、参数及已声明的 outputSchema 和样例）及运行环境说明，并在当前会话激活这些工具。需要读取单个资源文件内容时，调用 load_skill_resource(name, path)。",
+    en: "Load a Skill's full Markdown instructions (content), resource index (resources, including plugin.json, scripts, and references), full tool contracts (tools: calling names, descriptions, parameters, and declared outputSchema with examples), and runtime guidance, and activate those tools for the current session. Call load_skill_resource(name, path) to read an individual resource file.",
   },
   skillName: {
     "zh-CN": "必填。Skill 名称。",
@@ -32,8 +44,8 @@ const messages = defineMessages("skills-model", {
     en: "Include full content of all text resources. Default: false (prefer load_skill_resource for individual files).",
   },
   loadSkillResource: {
-    "zh-CN": "读取 Skill 包内单个资源文件（path）：文本资源按 start/maxChars 分段返回；DOCX、XLSX、PDF 自动解析并返回首块预览与 docModelId（续读长文档请先 load_skill(\"qingzhou-documents\") 再调 document_read_chunk）。读取 Skill 正文请用 load_skill。",
-    en: "Read a single resource file (path) from a Skill package: text resources return character slices via start/maxChars; DOCX, XLSX, and PDF resources are parsed automatically and return an initial preview plus docModelId (load qingzhou-documents and call document_read_chunk to read further). Use load_skill for the Skill Markdown body.",
+    "zh-CN": "读取 Skill 包内单个资源文件（path）：文本资源按 start/maxChars 分段返回；DOCX、XLSX、PDF 自动解析并返回首块预览与 docModelId（续读长文档请先 load_skill(\"qingzhou-documents\") 再调 qingzhou_documents__document_read_chunk）。读取 Skill 正文请用 load_skill。",
+    en: "Read a single resource file (path) from a Skill package: text resources return character slices via start/maxChars; DOCX, XLSX, and PDF resources are parsed automatically and return an initial preview plus docModelId (load qingzhou-documents and call qingzhou_documents__document_read_chunk to read further). Use load_skill for the Skill Markdown body.",
   },
   skillResourcePath: {
     "zh-CN": "必填。Skill 包内资源相对路径，如 plugin.json、scripts/collect.js、references/checklist.md、references/report.xlsx。",
@@ -68,8 +80,8 @@ const messages = defineMessages("skills-model", {
     en: "Skill ZIP download URL from the page.",
   },
   skillPageTabId: {
-    "zh-CN": "当前任务拥有的页面标签页 ID。",
-    en: "Web tab ID owned by the current task.",
+    "zh-CN": "当前任务拥有的页面 tabRef：标签页别名或 open_tab、list_tabs 返回的引用。",
+    en: "Task-owned page tabRef: a tab alias or the reference returned by open_tab or list_tabs.",
   },
   skillZipOverwrite: {
     "zh-CN": "是否覆盖本地同名 Skill，默认 false。",
@@ -84,8 +96,8 @@ const messages = defineMessages("skills-model", {
     en: "Supported Git repository or directory page URL.",
   },
   skillRepositoryTabId: {
-    "zh-CN": "当前任务拥有的仓库标签页 ID。",
-    en: "Repository tab ID owned by the current task.",
+    "zh-CN": "当前任务拥有的仓库页面 tabRef。",
+    en: "Repository-page tabRef owned by the current task.",
   },
   skillGitOverwrite: {
     "zh-CN": "是否覆盖同名或本地修改的 Skill，默认 false。",
@@ -100,8 +112,8 @@ const messages = defineMessages("skills-model", {
     en: "Local Skill name to commit.",
   },
   skillInstallTabId: {
-    "zh-CN": "当前任务拥有的受支持 Git 仓库根页或目录页标签页 ID。",
-    en: "Tab ID of a supported repository root or directory page owned by this task.",
+    "zh-CN": "当前任务拥有的受支持 Git 仓库根页或目录页 tabRef。",
+    en: "Task-owned tabRef for a supported repository root or directory page.",
   },
   skillCommitMessage: {
     "zh-CN": "可选 Git commit message。",
@@ -109,13 +121,13 @@ const messages = defineMessages("skills-model", {
   },
   runtimeGuidance: {
     "zh-CN": `Skill 运行在轻舟浏览器扩展中（非 Node.js 或服务器）：
-- content 编写浏览器 SOP；读取 references/模板/脚本等单文件用 load_skill_resource(name, path)（DOCX/XLSX/PDF 自动返回预览与 docModelId，截断时加载 qingzhou-documents 用 document_read_chunk 续读）。
-- 页面工具用 tabRef 声明和传入页面目标（当前任务拥有的标签页别名或正整数 ID，也可用数字字符串）；省略时使用当前任务工作标签页，未知别名报错。
-- 脚本采用单个 async () => { ... } 函数表达式：runtime:"page" 可用 document/window/Web APIs、input/args、宿主解析后的数字 tabId、tools/tool；runtime:"inner" 在无 DOM Worker 中运行，可用 $plugin.config 和 manifest 允许来源的 fetch；禁止使用 fs/path/process/require/npm/shell，也不要在页面脚本内直接触发导致当前 frame 卸载的点击或提交。`,
+- content 编写浏览器 SOP；读取 references/模板/脚本等单文件用 load_skill_resource(name, path)（DOCX/XLSX/PDF 自动返回预览与 docModelId，续读长文档先加载 qingzhou-documents 再调用 qingzhou_documents__document_read_chunk）。
+- 按 content 的流程和页面前置条件操作；从 tools 读取调用名、参数及返回值契约，再通过 qz.call(name,args) 调用。页面工具必须用 tabRef 声明并显式传入目标页面（当前任务拥有的标签页别名，或 open_tab、list_tabs 返回的引用；未知别名直接报错）。
+- 新建脚本统一使用 runtime:"script" 外层模式（支持顶层 await/return，提供 args、$plugin、qz、trace()；用 qz.tab(tabRef) 绑定页面，定位与动作使用 page.locator(query)，页面内 DOM 与登录态请求通过 page.evaluate(code,args) 执行）。按已加载 Skill 声明的参数和网络权限调用，保留存量脚本原有执行模式。新脚本中 await 工具调用（含 Skill 工具）成功直接返回业务值，失败抛错；宿主向模型返回 {ok,result,trace}（trace 仅按序记录报错与显式 trace()/console 输出）。不支持 fs/path/process/require/npm/shell；导航与点击通过外层 SDK 执行，扩展工具用 qz.call(name,args)。`,
     en: `Skills run in the qz browser extension (not Node.js or a server):
-- Content describes browser SOPs; read individual references, templates, or scripts with load_skill_resource(name, path) (DOCX/XLSX/PDF automatically return a preview and docModelId; load qingzhou-documents and call document_read_chunk if truncated).
-- Declare and pass page targets as tabRef (a task-owned tab alias or positive integer ID; numeric strings also work). Omit it to use the current task's working tab; unknown aliases fail.
-- Write scripts as a single async () => { ... } function expression: runtime:"page" provides document/window/Web APIs, input/args, the host-resolved numeric tabId, and tools/tool; runtime:"inner" runs in a DOM-free Worker with $plugin.config and fetch for manifest-allowed origins. Do not use fs/path/process/require/npm/shell, and do not click or submit inside a page script if it unloads the frame.`,
+- Content describes browser SOPs; read individual references, templates, or scripts with load_skill_resource(name, path) (DOCX/XLSX/PDF automatically return a preview and docModelId; load qingzhou-documents and call qingzhou_documents__document_read_chunk if truncated).
+- Follow the workflow and page prerequisites in content; read calling names, arguments, and output contracts from tools, then invoke qz.call(name,args). Declare and pass page targets explicitly as tabRef, using a task-owned tab alias or the reference returned by open_tab or list_tabs (unknown aliases fail).
+- New scripts use the outer runtime:"script" mode (top-level await/return with args, $plugin, qz, and trace(); bind qz.tab(tabRef), use page.locator(query) for element actions, and page.evaluate(code,args) for in-page DOM and authenticated requests). Follow the loaded Skill's declared arguments and network permissions while preserving existing scripts' execution modes. Awaited tool calls inside new scripts (including Skill calls) return business values directly and throw on failure; the host returns {ok,result,trace} to the model (trace contains only errors and explicit trace()/console output in order). Scripts cannot use fs/path/process/require/npm/shell; perform navigation and clicks through the outer SDK and call extension tools with qz.call(name,args).`,
   },
 });
 

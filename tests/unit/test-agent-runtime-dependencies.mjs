@@ -59,32 +59,14 @@ const agent = new Agent("session-child", {
 });
 
 assert.equal(await agent._canManageSessions(), false);
-agent.setDynamicContextProvider(async () => ({ workingTab: { id: 9 } }));
+agent.setDynamicContextProvider(async () => ({ userVisibleTab: { id: 9 } }));
 assert.equal((await agent._collectDynamicContext()).selectionText, "selected text");
-assert.deepEqual(
-  await agent._enrichToolCallArgsWithPageContext("read_dom", {}, {
-    workingTab: { id: 9 },
-    workingTabId: 9,
-  }),
-  {
-    tabId: 9,
-    _tabId: 9,
-    _pageTitle: "Page",
-    _pageUrl: "https://example.test/page",
-  },
-);
-assert.deepEqual(
-  await agent._enrichToolCallArgsWithPageContext("wait_for_network_idle", {}, {
-    workingTab: { id: 10 },
-    workingTabId: 10,
-  }),
-  {
-    tabId: 10,
-    _tabId: 10,
-    _pageUrl: "https://example.test/loading",
-  },
-  "tool args should describe the pending web target without leaking its temporary blank-page title",
-);
+const explicitCalls = [];
+agent._toolRuntime.execute = async (_name, args) => { explicitCalls.push(args); return { text: 'page' }; };
+agent._dynamicContextSnapshot = { workingTab: { id: 10 }, userVisibleTab: { id: 9 } };
+await agent._executeToolCalls([{ id: 'explicit', function: { name: 'read_dom', arguments: '{"tabRef":9}' } },
+  { id: 'missing', function: { name: 'read_dom', arguments: '{}' } }], new AbortController().signal);
+assert.deepEqual(explicitCalls, [{ tabRef: 9 }, {}], 'Agent forwards caller targets without a context-derived default');
 assert.ok(calls.some(call => call[0] === "selection" && call[1] === 9));
 assert.ok(calls.some(call => call[0] === "tab" && call[1] === 9));
 

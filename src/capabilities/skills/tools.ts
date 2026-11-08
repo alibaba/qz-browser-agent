@@ -8,10 +8,10 @@ type AnalysisSkillsHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampNumber" | "getToolRuntimeDependencies"
   | "publishSkillRegistryChange" | "summarizeToolArgsForTrace" | "models" | "skills">;
 type ManageSkillInput = Omit<Partial<ToolArguments<typeof SKILL_AUTHOR_TOOL_PARAMETERS.update> & ToolArguments<typeof SKILL_AUTHOR_TOOL_PARAMETERS.create>>, "scope"> & { action?: string; operation?: string; scope?: string; contentEdits?: ToolArguments<typeof SKILL_CONTENT_EDIT_SCHEMA>[]; resourceEdits?: ToolArguments<typeof SKILL_RESOURCE_EDIT_SCHEMA>[] };
-import { requireToolFields } from "#sdk/background/tools";
+import { requireToolFields, toolError } from "#sdk/background/tools";
 import { isBuiltinSkillName } from "#sdk/shared/skills";
 import { SKILL_AUTHOR_TOOL_PARAMETERS, SKILL_CONTENT_EDIT_SCHEMA, SKILL_RESOURCE_EDIT_SCHEMA } from "./workbench.js";
-import { getSkillDisplayName, isBase64SkillResource, isSkillDocumentResource, skillResourceByteSize } from "#sdk/shared/skills";
+import { getSkillDisplayName, isBase64SkillResource, isDiscoverableUserSkill, isSkillDocumentResource, matchSkillUrl, skillResourceByteSize, summarizeSkill } from "#sdk/shared/skills";
 
 import { findSkillManifestResource, parseSkillManifest } from "#sdk/shared/skills";
 
@@ -26,7 +26,7 @@ export function registerAnalysisSkillsTools({
   publishSkillRegistryChange,
   summarizeToolArgsForTrace,
   models: { chat: llmChat },
-  skills: { list: listSkills, load: loadSkill, save: saveSkill, update: updateSkill, delete: deleteSkill, loadResource: loadSkillResource },
+  skills: { list: listSkills, load: loadSkill, loadByIdentity: loadSkillByIdentity, save: saveSkill, update: updateSkill, delete: deleteSkill, loadResource: loadSkillResource },
 }: AnalysisSkillsHost) {
 registerTool({
   name: "ask_llm",
@@ -66,7 +66,18 @@ registerTool({
 // Skills
 // ===========================================================================
 
-const getSkillRuntimeGuidance = () => (modelT("runtimeGuidance"));
+registerTool({
+  name: "list_skills",
+  get description() { return modelT("listSkills"); },
+  get parameters() { return {
+    type: "object",
+    properties: {
+      scope: { type: "string", enum: ["all", "global", "site", "resident"], description: modelT("listSkillsScope") },
+      url: { type: "string", description: modelT("listSkillsUrl") },
+    },
+  } as const; },
+  execute: (args, _signal, context = {}) => executeListSkillsAction(args, context),
+});
 
 registerTool({
   name: "load_skill",
@@ -94,12 +105,9 @@ registerTool({
     const skill = await loadSkill(name, context.language);
     if (!skill) {
       const all = await listSkills(context.language);
-      return {
-        error: t("skillNotFound", { name: String(name) }),
-        code: "SKILL_NOT_FOUND",
-        details: { name },
-        available: all.map(s => s.name),
-      };
+      return toolError("SKILL_NOT_FOUND", t("skillNotFound", { name: String(name) }), {
+        hint: "Use list_skills to choose an available name, then retry.", details: { name, available: all.map(s => s.name) },
+      });
     }
     return {
       name: skill.name,
@@ -114,8 +122,9 @@ registerTool({
       builtin: skill.builtin === true,
       readOnly: skill.readOnly === true,
       updatedAt: skill.updatedAt,
-      runtime: getSkillRuntimeGuidance(),
+      runtime: modelT("runtimeGuidance"),
       content: skill.content,
+      tools: context.listTools?.(undefined, { skillName: skill.name }).tools ?? [],
       resources: summarizeSkillResources(skill.resources, { includeContent: includeResources }),
       ...summarizeSkillMcpFields(skill),
     };
@@ -139,21 +148,16 @@ registerTool({
     const loaded = await loadSkillResource(name, path, context.language);
     if (!loaded) {
       const all = await listSkills(context.language);
-      return {
-        error: t("skillNotFound", { name: String(name) }),
-        code: "SKILL_NOT_FOUND",
-        details: { name },
-        available: all.map(s => s.name),
-      };
+      return toolError("SKILL_NOT_FOUND", t("skillNotFound", { name: String(name) }), {
+        hint: "Use list_skills to choose an available name, then retry.", details: { name, available: all.map(s => s.name) },
+      });
     }
     const { skill, resource, path: cleanPath } = loaded;
     if (!resource) {
-      return {
-        error: t("resourceNotFound", { path: cleanPath }),
-        code: "SKILL_RESOURCE_NOT_FOUND",
-        details: { name: skill.name, path: cleanPath },
-        resources: summarizeSkillResources(skill.resources, { includeContent: false }),
-      };
+      return toolError("SKILL_RESOURCE_NOT_FOUND", t("resourceNotFound", { path: cleanPath }), {
+        hint: "Use load_skill with includeResources to choose a resource path, then retry.",
+        details: { name: skill.name, path: cleanPath, resources: summarizeSkillResources(skill.resources, { includeContent: false }) },
+      });
     }
     if (isSkillDocumentResource(resource) || isBase64SkillResource(resource)) {
       const loadDocumentResource = getToolRuntimeDependencies(context)?.skills?.loadDocumentResource;
@@ -238,19 +242,24 @@ function assertManageSkillName(input: ManageSkillInput = {}, action = "") {
   });
 }
 
-async function executeListSkillsAction({ scope = "all" } = {}, context: ToolContext = {}) {
+async function executeListSkillsAction({ scope = "all", url = "" } = {}, context: ToolContext = {}) {
   const normalizedScope = normalizeListSkillsScope(scope);
   const skills = await listSkills(context.language);
-  const filtered = normalizedScope === "all"
-    ? skills
-    : skills.filter(skill => String(skill.scope || "global") === normalizedScope);
-  const names = filtered.map(skill => skill.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const filtered = skills
+    .filter(skill => !context.externalDrive || isDiscoverableUserSkill(skill))
+    .filter(skill => normalizedScope === "all" || skill.scope === normalizedScope)
+    .filter(skill => !url || skill.scope !== "site"
+      || ((skill.domains.length > 0 || skill.urlPatterns.length > 0) && matchSkillUrl(skill, url)));
+  const items = filtered
+    .map(summarizeSkill)
+    .filter(item => item.name)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.displayName.localeCompare(b.displayName));
   return {
     action: "list_skills",
     scope: normalizedScope,
-    count: names.length,
-    names,
-    items: names.map(name => ({ name })),
+    count: items.length,
+    names: items.map(item => item.name),
+    items,
   };
 }
 
@@ -278,7 +287,7 @@ async function executeCreateSkillAction({ name, displayName, description, conten
       details: { name },
     };
   }
-  const existing = await loadSkill(name, context.language);
+  const existing = await loadSkillByIdentity(name);
   toolTrace(`[skill] create existing name=${name || ""} exists=${existing ? 1 : 0} elapsedMs=${Date.now() - startedAt}`);
   if (existing) {
     return {
@@ -326,7 +335,7 @@ async function executeCreateSkillAction({ name, displayName, description, conten
     urlPatterns: skill.urlPatterns,
     resources: summarizeSkillResources(skill.resources, { includeContent: false }),
     ...summarizeSkillMcpFields(skill),
-    runtime: getSkillRuntimeGuidance(),
+    runtime: modelT("runtimeGuidance"),
     updatedAt: skill.updatedAt,
   };
 }
@@ -404,7 +413,7 @@ async function executeUpdateSkillAction({
     diagnostics: result.diagnostics || [],
     resources: summarizeSkillResources(skill.resources, { includeContent: false }),
     ...summarizeSkillMcpFields(skill),
-    runtime: getSkillRuntimeGuidance(),
+    runtime: modelT("runtimeGuidance"),
     updatedAt: skill.updatedAt,
   };
 }
@@ -496,10 +505,10 @@ registerTool({
     type: "object",
     properties: {
       url: { type: "string", description: modelT("skillZipUrl") },
-      tabId: { type: "number", description: modelT("skillPageTabId") },
+      tabRef: { type: ["integer", "string"], description: modelT("skillPageTabId") },
       overwrite: { type: "boolean", description: modelT("skillZipOverwrite") },
     },
-    required: ["url", "tabId"],
+    required: ["url", "tabRef"],
   } as const; },
   hidden: true,
   page: "owned",
@@ -520,10 +529,10 @@ registerTool({
     type: "object",
     properties: {
       repositoryUrl: { type: "string", description: modelT("skillRepositoryUrl") },
-      tabId: { type: "number", description: modelT("skillRepositoryTabId") },
+      tabRef: { type: ["integer", "string"], description: modelT("skillRepositoryTabId") },
       overwrite: { type: "boolean", description: modelT("skillGitOverwrite") },
     },
-    required: ["repositoryUrl", "tabId"],
+    required: ["repositoryUrl", "tabRef"],
   } as const; },
   hidden: true,
   page: "owned",
@@ -544,10 +553,10 @@ registerTool({
     type: "object",
     properties: {
       name: { type: "string", description: modelT("skillInstallName") },
-      tabId: { type: "number", description: modelT("skillInstallTabId") },
+      tabRef: { type: ["integer", "string"], description: modelT("skillInstallTabId") },
       commitMessage: { type: "string", description: modelT("skillCommitMessage") },
     },
-    required: ["name", "tabId"],
+    required: ["name", "tabRef"],
   } as const; },
   hidden: true,
   page: "owned",
