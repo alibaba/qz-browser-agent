@@ -787,7 +787,7 @@ function providerErrorEnvelopeFromAssistantContent(value: unknown) {
   const directEnvelope = providerErrorEnvelope(parseJsonObject(text));
   if (directEnvelope) return directEnvelope;
 
-  for (let index = value.lastIndexOf("\n{"); index >= 0; index = value.lastIndexOf("\n{", index - 1)) {
+  for (let index = value.lastIndexOf("\n{"); index >= 0; index = index > 0 ? value.lastIndexOf("\n{", index - 1) : -1) {
     const suffix = value.slice(index + 1).trim();
     const envelope = providerErrorEnvelope(parseJsonObject(suffix));
     if (envelope) return envelope;
