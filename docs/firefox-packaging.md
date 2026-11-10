@@ -51,7 +51,7 @@ and rewrites only that output:
 
 | Rewrite | Result in `dist/extension-firefox/` |
 | --- | --- |
-| `firefoxManifest` | Drops `key` and `side_panel`. Drops `debugger`, `desktopCapture`, `offscreen`, and `sidePanel`. Adds `webNavigation`, `webRequest`, and `webRequestBlocking`. Sets `sidebar_action`, moves the suggested key to `_execute_sidebar_action`, and sets `background.scripts` to `background/firefox-boot.js` without `service_worker` (Firefox ignores that key). Points `action.default_icon` and `sidebar_action.default_icon` at `icons/firefox/qz-glyph.svg` and keeps the brand `icons` for about:addons. Sets `browser_specific_settings.gecko`. |
+| `firefoxManifest` | Drops `key` and `side_panel`. Drops `debugger`, `desktopCapture`, `offscreen`, and `sidePanel`. Adds `webRequest` and `webRequestBlocking`, and keeps `webNavigation` from the Chrome manifest. Sets `sidebar_action`, moves the suggested key to `_execute_sidebar_action`, and sets `background.scripts` to `background/firefox-boot.js` without `service_worker` (Firefox ignores that key). Points `action.default_icon` and `sidebar_action.default_icon` at `icons/firefox/qz-glyph.svg` and keeps the brand `icons` for about:addons. Sets `browser_specific_settings.gecko`. |
 | `rewriteFirefoxSidepanelHtml` | The sidebar document loads `firefox-boot.js` and `firefox-sidebar.css`. |
 | `writeFirefoxSidebarSkin` | Writes `sidepanel/firefox-sidebar.css`. That file has no twin under `src/`. |
 | `rewriteFirefoxLocaleFiles` | Rewrites catalog sentences in the Firefox copy. `src/` locale sources stay on the Chrome wording. |

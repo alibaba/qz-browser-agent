@@ -30,8 +30,8 @@ starts the event page from `background.scripts`. This checkout was not loaded th
 | Session automations | Disabled. The boot sets `qzSessionAutomationsEnabled` to false and clears `qingzhou.automation.scheduler`. The sidebar omits the automations controls. Stored records stay in `storage.local` and do not run. |
 | MCP keepalive | While the CLI connection is enabled, the event page calls `runtime.getPlatformInfo` every 10 seconds and keeps `qingzhou-mcp-bridge-reconnect` armed. Firefox stores the bridge `connectionId` so a wake pairs the same lease. The boundary is in [MCP keepalive and reconnect](firefox-differences.md#mcp-keepalive-and-reconnect). |
 | Content scripts | The same three registrations: MCP connect on loopback, session export at `document_start`, and the page tools at `document_idle`. |
-| Permissions kept | `activeTab`, `alarms`, `tabs`, `tabGroups`, `scripting`, `storage`, `downloads`, `geolocation`, `clipboardWrite`, `notifications`, `declarativeNetRequest`, `unlimitedStorage`, and optional `history`, `bookmarks`, `downloads.open`. |
-| Permissions added in this package only | `webNavigation`, `webRequest`, and `webRequestBlocking`, used by the page and network approximations. |
+| Permissions kept | `activeTab`, `alarms`, `tabs`, `webNavigation`, `tabGroups`, `scripting`, `storage`, `downloads`, `geolocation`, `clipboardWrite`, `notifications`, `declarativeNetRequest`, `unlimitedStorage`, and optional `history`, `bookmarks`, `downloads.open`. |
+| Permissions added in this package only | `webRequest` and `webRequestBlocking`, used by the network approximations. |
 | Permissions removed from this package only | `sidePanel`, `debugger`, `offscreen`, and optional `desktopCapture`. Firefox rejects these names. They remain in [`src/manifest.json`](../src/manifest.json). |
 | Data collection | `websiteContent` and `browsingActivity` are required. `locationInfo` and `bookmarksInfo` are optional. `none` is not declared. |
 | Minimum version | `browser_specific_settings.gecko.strict_min_version` is `154.0`, because `sandbox` and `content_security_policy.sandbox` require Firefox 154 (`data_collection_permissions` needs 140). |
