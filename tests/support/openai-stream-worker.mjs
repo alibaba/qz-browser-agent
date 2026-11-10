@@ -15,9 +15,14 @@ const options = { config: { provider, apiKey: "fixture-key", model: "fixture-mod
 let text = "";
 let thinking = "";
 let message = null;
-for await (const event of gateway.chatStream([{ role: "user", content: "Hello" }], [], undefined, options)) {
-  if (event.type === "text_delta") text += event.delta;
-  if (event.type === "thinking_delta") thinking += event.delta;
-  if (event.type === "done") message = event.message;
+let error = null;
+try {
+  for await (const event of gateway.chatStream([{ role: "user", content: "Hello" }], [], undefined, options)) {
+    if (event.type === "text_delta") text += event.delta;
+    if (event.type === "thinking_delta") thinking += event.delta;
+    if (event.type === "done") message = event.message;
+  }
+} catch (caught) {
+  error = { name: caught?.name, code: caught?.code, message: String(caught?.message || caught) };
 }
-parentPort.postMessage({ text, thinking, content: message?.content ?? null, messageThinking: message?._thinking ?? "" });
+parentPort.postMessage({ text, thinking, content: message?.content ?? null, messageThinking: message?._thinking ?? "", error });

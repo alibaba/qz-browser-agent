@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Worker } from "node:worker_threads";
+import { streamInWorker } from "../support/openai-stream.mjs";
 
 const TABLE = `| PROPERTY | TEST METHOD | TYPICAL VALUE* | SPECIFICATION** |
 | :--- | :--- | :--- | :--- |
@@ -28,7 +28,6 @@ const TABLE = `| PROPERTY | TEST METHOD | TYPICAL VALUE* | SPECIFICATION** |
 `;
 const THINKING = "先核对表格，再原样输出。";
 const SOURCE = `<think>${THINKING}</think>${TABLE}`;
-const STREAM_DEADLINE_MS = 10_000;
 
 function cycleChunks(text, sizes) {
   const points = Array.from(text);
@@ -50,22 +49,11 @@ const chunkings = {
   "deltas split before markup": SOURCE.split(/(?=<|\*\*|\|)/),
 };
 
-function streamInWorker(provider, deltas) {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL("../support/openai-stream-worker.mjs", import.meta.url), { workerData: { provider, deltas } });
-    const timer = setTimeout(() => {
-      void worker.terminate();
-      reject(new Error(`stream did not finish within ${STREAM_DEADLINE_MS}ms`));
-    }, STREAM_DEADLINE_MS);
-    worker.once("message", result => { clearTimeout(timer); void worker.terminate(); resolve(result); });
-    worker.once("error", error => { clearTimeout(timer); reject(error); });
-  });
-}
-
 for (const [name, deltas] of Object.entries(chunkings)) {
   test(`OpenCode think-tag stream completes a table with ${name}`, async () => {
     assert.equal(deltas.join(""), SOURCE);
     const result = await streamInWorker("opencodego", deltas);
+    assert.equal(result.error, null);
     assert.equal(result.text, TABLE);
     assert.equal(result.content, TABLE);
     assert.equal(result.thinking, THINKING);
