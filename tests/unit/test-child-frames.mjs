@@ -131,6 +131,7 @@ registerAccessibilityTools({
   elementTargetForUid: element.elementTargetForUid,
   registerElementBinding: element.registerElementBinding,
   resolveElementReference: element.resolveElementReference,
+  resolveElementInput: element.resolveElementInput,
   backendNodeIdForSelector: async () => 0,
   bindElementReferences: async (_tabId, refs, _context, scope) => {
     bindings.push({ selectors: refs.map(ref => ref.selector), scope });

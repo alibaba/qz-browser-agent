@@ -4,8 +4,8 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model-facing documentation stays with the tool contribution, outside the UI catalog. */
 const messages = defineMessages("media-tools", {
   screenshotDescription: {
-    "zh-CN": "在 tabRef 指定页面截视口时不传 target；截元素传 uid: 或 css: 目标。始终以图片形式返回。需随后用 act_on_screen 按坐标操作时传 actionable=true（不可与 target 同用），返回的 coordinateSpace 给出原始像素宽高，可直接将图上坐标传给 act_on_screen。传 destination 时额外把截图保存为该图集表的 image asset；传 target 时截取该元素区域。{targetGrammar}。",
-    en: "On the page specified by tabRef, omit target to capture the viewport; pass a uid: or css: target for an element. Always returns an image. Pass actionable=true (cannot be combined with target) when you will act by coordinates with act_on_screen; the returned coordinateSpace gives the original pixel width and height. Pass destination to also save the capture as an image asset in that gallery table; pass target to capture a specific element. {targetGrammar}.",
+    "zh-CN": "在 tabRef 指定页面截视口时不传 target；截元素传 target（uid: 或 css:）或 locator。始终以图片形式返回。需随后用 act_on_screen 按坐标操作时传 actionable=true（不可与 target/locator 同用），返回的 coordinateSpace 给出原始像素宽高，可直接将图上坐标传给 act_on_screen。传 destination 时额外把截图保存为该图集表的 image asset。{targetGrammar}。",
+    en: "On the page specified by tabRef, omit target to capture the viewport; pass a target (uid: or css:) or a locator for an element. Always returns an image. Pass actionable=true (cannot be combined with target or locator) when you will act by coordinates with act_on_screen; the returned coordinateSpace gives the original pixel width and height. Pass destination to also save the capture as an image asset in that gallery table. {targetGrammar}.",
   },
   screenshotTabId: {
     "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",
@@ -22,10 +22,6 @@ const messages = defineMessages("media-tools", {
   actOnScreenTab: {
     "zh-CN": "要操作的页面 tabRef：别名或 open_tab/list_tabs 返回的 tabRef；坐标必须来自该页的可操作截图。",
     en: "Page tabRef to operate: an alias or the tabRef returned by open_tab/list_tabs. Coordinates must come from an actionable screenshot of this page.",
-  },
-  screenshotIndex: {
-    "zh-CN": "target 为 css:... 且匹配多个元素时的 0-based 序号，默认 0。",
-    en: "0-based match index when a css:... target matches multiple elements. Default: 0.",
   },
   screenshotDestination: {
     "zh-CN": "可选图集表名；传入时将截图保存为该图集的 image asset。",
@@ -119,9 +115,9 @@ const messages = defineMessages("media-tools", {
     "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",
     en: "Target tabRef: an alias or the tabRef returned by open_tab/list_tabs.",
   },
-  listImagesSelector: {
-    "zh-CN": "可选容器或图片 target，优先 uid:，css: 兜底，省略时扫描整页。",
-    en: "Optional container or image target: prefer uid:, with css: as fallback; scans the page when omitted.",
+  listImagesWithin: {
+    "zh-CN": "只在此容器或图片元素内扫描，优先 uid:，css: 兜底，省略时扫描整页。",
+    en: "Scan only inside this container or image element: prefer uid:, with css: as fallback; scans the page when omitted.",
   },
   listImagesMinWidth: {
     "zh-CN": "最小宽度（按显示宽度与 naturalWidth 较大值判断），默认 1。",
@@ -131,9 +127,9 @@ const messages = defineMessages("media-tools", {
     "zh-CN": "最小高度（按显示高度与 naturalHeight 较大值判断），默认 1。",
     en: "Minimum height (checked against the larger of displayed height and naturalHeight). Default: 1.",
   },
-  listImagesVisibleOnly: {
-    "zh-CN": "是否只列出可见图片，默认 true。",
-    en: "List visible images only. Default: true.",
+  listImagesIncludeHidden: {
+    "zh-CN": "是否包含不可见图片，默认 false。",
+    en: "Include hidden images. Default: false.",
   },
   listImagesLimit: {
     "zh-CN": "最多返回图片数，默认 100，范围 1–1000。",
@@ -204,8 +200,8 @@ const messages = defineMessages("media-tools", {
     en: "Vision detail level (low/auto/high). Default: auto.",
   },
   readImageDescription: {
-    "zh-CN": "读取单张图片并作为图片消息返回给 LLM，url 或 target 二选一：传 tabRef 和 target 读取页面已加载的 img/图片容器（满足采集条件时，在页面导航前将同一 tabRef 和 target 传给 collect_images）；传 url 读取 http/https/data:image 图片地址，无需 tabRef。{targetGrammar}。",
-    en: "Read an individual image and return it to the model as an image message. Provide either url or target: pass tabRef and target to inspect a loaded page img/container (if selected for collection, pass the same tabRef and target to collect_images before navigating), or pass url to read an http/https/data:image resource without tabRef. {targetGrammar}.",
+    "zh-CN": "读取单张图片并作为图片消息返回给 LLM，url 或页面元素二选一：传 tabRef 和 target（或 locator）读取页面已加载的 img/图片容器（满足采集条件时，在页面导航前将同一 tabRef 和 target 传给 collect_images）；传 url 读取 http/https/data:image 图片地址，无需 tabRef。{targetGrammar}。",
+    en: "Read an individual image and return it to the model as an image message. Provide either url or a page element: pass tabRef and target (or locator) to inspect a loaded page img/container (if selected for collection, pass the same tabRef and target to collect_images before navigating), or pass url to read an http/https/data:image resource without tabRef. {targetGrammar}.",
   },
   readImageUrl: {
     "zh-CN": "图片 URL（支持 http/https/data:image）；传 url 时无需 tabRef/target。",

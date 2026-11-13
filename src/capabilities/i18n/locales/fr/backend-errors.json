@@ -12,6 +12,7 @@
   "backend.toolError.ABORTED.label": "Arrêté",
   "backend.toolError.ABORTED.message": "L’utilisateur a arrêté l’appel d’outil ; aucun résultat n’a été renvoyé.",
   "backend.toolError.AMBIGUOUS_ELEMENT.label": "Plusieurs éléments correspondent",
+  "backend.toolError.ELEMENT_NOT_FOUND.label": "Aucun élément correspondant",
   "backend.toolError.AGENT_ALREADY_RUNNING.label": "Tâche en cours",
   "backend.toolError.SESSION_PERSIST_FAILED.label": "Impossible d’enregistrer la tâche",
   "backend.toolError.STALE_AGENT_LEASE.label": "Cette exécution ne peut plus effectuer de modifications",

@@ -97,14 +97,14 @@ test("discovery shares matching and returns observations without leaking backend
 
 test("CSS scopes are resolved in the same query, while UID scopes use their bound root", async () => {
   const f = fixture({ matched: 1, element: { backendNodeId: 74, role: "button" } });
-  const result = await f.resolve({ scope: "css:#form", role: "button" });
+  const result = await f.resolve({ within: "css:#form", role: "button" });
   assert.equal(result.ref.backendNodeId, 74);
   assert.equal(f.calls.length, 1);
-  assert.deepEqual(f.calls[0].locator, { scope: "css:#form", role: "button" });
+  assert.deepEqual(f.calls[0].locator, { within: "css:#form", role: "button" });
   assert.equal(f.calls[0].bound, false);
   assert.equal(f.debuggerCalls(), 0);
-  const scope = f.pin();
-  assert.equal((await f.resolve({ scope, role: "button" })).ref.backendNodeId, 74);
+  const within = f.pin();
+  assert.equal((await f.resolve({ within, role: "button" })).ref.backendNodeId, 74);
   assert.deepEqual(f.calls[1].locator, { role: "button" });
   assert.equal(f.calls[1].bound, true);
 });
@@ -118,7 +118,7 @@ test("UID queries retain identity and only filter the bound node", async () => {
   assert.equal(f.calls[0].bound, true);
   assert.equal(Object.hasOwn(f.calls[0].locator, "target"), false);
   await assert.rejects(f.resolve({ target: "uid:t999.000000.1" }), { code: "STALE_ELEMENT_UID" });
-  await assert.rejects(f.resolve({ target, scope: "css:main" }), { code: "INVALID_ELEMENT_LOCATOR" });
+  await assert.rejects(f.resolve({ target, within: "css:main" }), { code: "INVALID_ELEMENT_LOCATOR" });
 });
 
 test("a removed pinned target is absent, while a removed search scope stays stale", async () => {
@@ -126,7 +126,7 @@ test("a removed pinned target is absent, while a removed search scope stays stal
   const target = f.pin();
   assert.equal(await f.count({ target }), 0);
   assert.equal(await f.resolve({ target, role: "button" }), null);
-  await assert.rejects(f.count({ scope: target, role: "button" }), error =>
+  await assert.rejects(f.count({ within: target, role: "button" }), error =>
     error.code === "STALE_ELEMENT_UID" && error.details.target === target && error.details.reason === "node_unavailable");
 });
 
@@ -174,7 +174,7 @@ test("malformed binding replies do not masquerade as a disappearing node", async
 
 test("invalid queries and aborted contexts stop before page observation", async () => {
   const f = fixture({ matched: 1 });
-  await assert.rejects(f.resolve({ scope: "css:main" }), { code: "INVALID_ELEMENT_LOCATOR" });
+  await assert.rejects(f.resolve({ within: "css:main" }), { code: "INVALID_ELEMENT_LOCATOR" });
   await assert.rejects(f.resolve({ role: "button", nth: -1 }), { code: "INVALID_ELEMENT_LOCATOR" });
   const stop = new Error("cancelled");
   await assert.rejects(f.runtime.countLocatorMatches(f.tabId, { role: "button" }, { ...f.context, signal: AbortSignal.abort(stop) }), stop);
@@ -185,7 +185,7 @@ test("CSS syntax failures preserve the offending target without an invented reco
   const target = "css:form input[type=submit], css:form button";
   const failure = { code: "INVALID_SELECTOR", error: "SyntaxError: Invalid CSS query", details: { target } };
   const f = fixture(failure);
-  for (const locator of [{ target }, { target: "css:button", scope: target }]) {
+  for (const locator of [{ target }, { target: "css:button", within: target }]) {
     await assert.rejects(f.resolve(locator), error => {
       assert.equal(error.code, failure.code);
       assert.equal(error.message, failure.error);

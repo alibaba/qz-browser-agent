@@ -12,6 +12,7 @@
   "backend.toolError.ABORTED.label": "Gestoppt",
   "backend.toolError.ABORTED.message": "Der Nutzer hat den Werkzeugaufruf gestoppt; es wurde kein Ergebnis zurückgegeben.",
   "backend.toolError.AMBIGUOUS_ELEMENT.label": "Mehrere passende Elemente",
+  "backend.toolError.ELEMENT_NOT_FOUND.label": "Kein passendes Element",
   "backend.toolError.AGENT_ALREADY_RUNNING.label": "Aufgabe läuft",
   "backend.toolError.SESSION_PERSIST_FAILED.label": "Aufgabe konnte nicht gespeichert werden",
   "backend.toolError.STALE_AGENT_LEASE.label": "Dieser Lauf darf keine Änderungen mehr vornehmen",

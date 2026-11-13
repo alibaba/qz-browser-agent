@@ -91,7 +91,7 @@ test("one-level iframe elements have uids and accept click and fill", async () =
       });
       globalThis.elementHarness = {
         async call(name, args) {
-          try { return await runtime.execute(name, { tabId, ...args }, undefined, { ...context, workingTabId: tabId, source: "run_script" }); }
+          try { return await runtime.execute(name, name === "open_tab" ? args : { tabId, ...args }, undefined, { ...context, workingTabId: tabId, source: "run_script" }); }
           catch (error) { return { error: error.message, code: error.code, details: error.details }; }
         },
       };

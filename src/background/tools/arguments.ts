@@ -39,7 +39,10 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-/** Open schemas retain extension fields; declared values are never coerced. */
+/**
+ * An object schema with declared properties is closed unless it sets additionalProperties; free-form
+ * objects declare no properties. Declared values are never coerced.
+ */
 export function validateToolSchema(name: string, value: unknown, schema: unknown, path = "$"): void {
   if (!record(schema)) return;
   const types = typeof schema.type === "string" ? [schema.type] : Array.isArray(schema.type) ? schema.type : [];
@@ -64,7 +67,7 @@ export function validateToolSchema(name: string, value: unknown, schema: unknown
   const properties = record(schema.properties) ? schema.properties : {};
   const patterns = Object.entries(record(schema.patternProperties) ? schema.patternProperties : {})
     .map(([pattern, property]) => ({ pattern: new RegExp(pattern), property }));
-  if (schema.additionalProperties === false) {
+  if (schema.additionalProperties === false || schema.additionalProperties === undefined && record(schema.properties)) {
     const allowedFields = [...Object.keys(properties), ...patterns.map(({ pattern }) => pattern.toString())];
     const invalidFields = Object.keys(value).filter(key => !Object.hasOwn(properties, key)
       && !patterns.some(({ pattern }) => pattern.test(key)));

@@ -12,6 +12,7 @@
   "backend.toolError.ABORTED.label": "停止済み",
   "backend.toolError.ABORTED.message": "ユーザーがツール呼び出しを停止したため、結果は返されませんでした。",
   "backend.toolError.AMBIGUOUS_ELEMENT.label": "複数の要素が一致",
+  "backend.toolError.ELEMENT_NOT_FOUND.label": "一致する要素がありません",
   "backend.toolError.AGENT_ALREADY_RUNNING.label": "タスクは実行中です",
   "backend.toolError.SESSION_PERSIST_FAILED.label": "タスクを保存できませんでした",
   "backend.toolError.STALE_AGENT_LEASE.label": "この実行では変更できなくなりました",

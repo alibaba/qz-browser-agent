@@ -179,6 +179,7 @@
   "backend.toolFailure.longPress": "يجب أن تتراوح مدة الضغط المطوّل بين {min} و{max} مللي ثانية.",
   "backend.toolFailure.scrollRepeat": "يجب أن يكون عدد مرات التمرير عددًا صحيحًا بين {min} و{max}.",
   "backend.toolFailure.timeoutArgument": "مهلة غير صالحة للأداة {tool}: تُحدّد مهلة السكربت بالثواني؛ والقيمة <= 0 تعني الانتظار بلا حد.",
+  "backend.toolFailure.timeoutRange": "مهلة {tool} بالثواني ويجب أن تكون أكبر من 0 وألا تتجاوز {maximum}.",
   "backend.toolFailure.requiredArguments": "وسائط مطلوبة للأداة {tool} مفقودة{suffix}",
   "backend.toolFailure.missingFields": "وسائط مطلوبة للأداة {tool} مفقودة: {fields}",
   "backend.toolFailure.notWebTab": "{tab} ليست صفحة ويب عادية ولا يمكن استخدامها هدفًا للمتصفح.",

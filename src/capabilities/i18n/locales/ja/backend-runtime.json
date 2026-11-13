@@ -179,6 +179,7 @@
   "backend.toolFailure.longPress": "長押し時間は {min}～{max} ミリ秒にしてください。",
   "backend.toolFailure.scrollRepeat": "スクロール回数は {min}～{max} の整数にしてください。",
   "backend.toolFailure.timeoutArgument": "{tool} のタイムアウトが無効です。スクリプトのタイムアウトは秒単位です。<= 0 は無期限の待機を意味します。",
+  "backend.toolFailure.timeoutRange": "{tool} のタイムアウトは秒単位で、0 より大きく {maximum} 以下である必要があります。",
   "backend.toolFailure.requiredArguments": "{tool} の必須引数がありません{suffix}",
   "backend.toolFailure.missingFields": "{tool} の必須引数がありません: {fields}",
   "backend.toolFailure.notWebTab": "{tab} は通常のウェブページではないため、ブラウザー操作の対象にできません。",

@@ -50,7 +50,8 @@ test('all element readers share node UIDs, consumers accept target/legacy select
     await page.frameLocator('#cross').locator('#frame-action').waitFor();
     for (const name of ['read_article', 'read_dom', 'find_elements', 'list_images', 'wait_for_element']) {
       const schema = await callTool(endpoint, 'qingzhou_get_tool', { sessionId, name });
-      expect(schema.signature).toMatch(/\btarget\??:string/);
+      const field = name === 'find_elements' || name === 'list_images' ? 'within' : 'target';
+      expect(schema.signature).toMatch(new RegExp(`\\b${field}\\??:string`));
       expect(schema.signature).not.toMatch(/\bselector\??:/);
     }
     const controls = await invoke('get_ax_tree', { scope: 'full', depth: 12, limit: 100 });
@@ -88,7 +89,7 @@ test('all element readers share node UIDs, consumers accept target/legacy select
     const cssClick = await invoke('act_on_element', { target: 'css:#alpha', action: 'click' });
     expect(cssClick).toEqual({});
     expect(await script("return document.querySelector('#alpha').dataset.clicked;")).toBe('yes');
-    const inspected = await invoke('inspect_element', { target: '#alpha', verbose: true });
+    const inspected = await invoke('inspect_element', { target: '#alpha' });
     expect(inspected.target).toMatch(uidPattern);
     expect(inspected).not.toHaveProperty('selector');
     expect(inspected).not.toHaveProperty('uid');
@@ -149,7 +150,7 @@ test('all element readers share node UIDs, consumers accept target/legacy select
       const target = axTarget(tree, `Frame ${kind}`, 'button');
       expect(target || '', `${kind}: ${tree.snapshot}`).toMatch(uidPattern);
       const scope = axTarget(tree, `Child document ${kind}`, 'RootWebArea');
-      const frameFind = await invoke('find_elements', { target: scope, roles: ['button'], limit: 5 });
+      const frameFind = await invoke('find_elements', { within: scope, roles: ['button'], limit: 5 });
       let diagnostic;
       if (frameFind.message) diagnostic = await environment.context.serviceWorkers()[0].evaluate(async ({ tabId, target, sessionId }) => {
         const binding = await referenceTestTools.createToolRuntime({}).element.resolveElementReference(tabId, { target }, { sessionId });
@@ -159,6 +160,9 @@ test('all element readers share node UIDs, consumers accept target/legacy select
       }, { tabId: nativeTabId, target: scope, sessionId });
       expect(frameFind.message, `${kind}: ${JSON.stringify({ frameFind, diagnostic })}`).toBeUndefined();
       expect(frameFind.results[0].target).toMatch(uidPattern);
+      const named = await invoke('find_elements', { within: scope, name: `Frame ${kind}`, limit: 5 });
+      expect(named.message, JSON.stringify(named)).toBeUndefined();
+      expect(named.results.map(item => item.name)).toEqual([`Frame ${kind}`]);
       const action = await invoke('act_on_element', { target: frameFind.results[0].target, action: 'click' });
       expect(action.message, JSON.stringify(action)).toBeUndefined();
       await expect(page.frameLocator(`#${kind}`).locator('body')).toHaveAttribute('data-clicked', 'yes');

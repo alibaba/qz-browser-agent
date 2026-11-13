@@ -101,6 +101,9 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
       expect(root || '', tree.snapshot).toMatch(uidPattern);
       const candidates = await call('find_elements', { target: root, roles: ['button'], limit: 5 });
       expect(candidates.message, JSON.stringify(candidates)).toBeUndefined();
+      const named = await call('find_elements', { target: root, name: `Frame ${kind}`, limit: 5 });
+      expect(named.message, JSON.stringify(named)).toBeUndefined();
+      expect(named.results.map(item => item.name)).toEqual([`Frame ${kind}`]);
       await waitForIdleDetach();
       const clicked = await call('act_on_element', { target: candidates.results[0].target, action: 'click' });
       expect(clicked.message, JSON.stringify(clicked)).toBeUndefined();

@@ -13,7 +13,7 @@
   "script.theScriptHasAnUnsupportedShapeOrInvalidSyntax": "スクリプトの構造が未対応か、構文が無効です。関数外の return、IIFE、トップレベルの await や式の境界を確認してください。",
   "script.theExecutionEnvironmentDoesNotMatchTheScriptPage": "スクリプトが実行環境に合っていません。ブラウザーの JavaScript と document/window を使ってください。",
   "script.theTargetDomIsEmptyOrThePageHas": "対象の DOM が空か、ページの描画が完了していません。セレクター、仮想リスト、遅延読み込み、実行タイミングを確認してください。",
-  "script.aToolsCallInsideRunScriptFailedCheckBridge": "run_script 内の tools.* 呼び出しが失敗しました。ブリッジのタイムアウト、入れ子の深さ、引数、ページのライフサイクルを確認してください。",
+  "script.aToolsCallInsideRunScriptFailedCheckBridge": "run_script 内の qz SDK 呼び出しが失敗しました。ブリッジのタイムアウト、入れ子の深さ、引数、ページのライフサイクルを確認してください。",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "ブラウザーがこのページへのスクリプト注入をブロックしています。chrome://、拡張機能ストア、組み込みページ、必要な権限のないページなどで発生します。",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "スクリプトの実行に失敗しました。エラーとトレースを確認し、最後に成功した段階を特定してください。",
   "script.useTargetPageWithAWorkingTabForPage": "tabRef で指定したページでスクリプトを実行し、ブラウザーの JavaScript、input/args、tools/tool を使ってください。",

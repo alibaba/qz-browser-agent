@@ -1,5 +1,6 @@
 /** Public tools contracts and operations, independent of extension implementation paths. */
 export { ToolExecutionError, requireToolFields, throwMissingToolArgs } from "../../background/tools/arguments.js";
+export { validateElementInput } from "../../background/tools/element-input.js";
 export { delayTimeout, pageWaitTimeout, scriptTimeout, orchestrationTimeout, sessionWaitTimeout } from "../../background/tools/timing.js";
 export { publishTimeoutTrace } from "../../background/tools/script-timeout-trace.js";
 export { beginScriptTrace, acceptScriptTrace } from "../../background/tools/script-trace.js";

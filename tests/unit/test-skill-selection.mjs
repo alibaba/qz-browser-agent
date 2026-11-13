@@ -158,7 +158,7 @@ test('real tool runtime stops collection timeout before human wait, isolates Ses
     import waits from ${JSON.stringify(waitModule)};
     export default [{id:'selection-fixture', setup:qz => {
       waits(qz);
-      qz.registerTool({ name:'run_skill_script', parameters:{type:'object',properties:{}}, timeout:0,
+      qz.registerTool({ name:'run_skill_script', parameters:{type:'object',properties:{},additionalProperties:true}, timeout:0,
         execute: async args => { if(args.args.slow) await new Promise(resolve=>setTimeout(resolve,200));
           const jobs = ${JSON.stringify(jobs)};
           if(args.args.badOutput) jobs[0].role = 42;

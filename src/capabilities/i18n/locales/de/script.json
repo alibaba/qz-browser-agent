@@ -13,7 +13,7 @@
   "script.theScriptHasAnUnsupportedShapeOrInvalidSyntax": "Das Skript hat eine nicht unterstützte Struktur oder ungültige Syntax. Prüfe return außerhalb von Funktionen, IIFEs sowie die Grenzen von await und Ausdrücken auf oberster Ebene.",
   "script.theExecutionEnvironmentDoesNotMatchTheScriptPage": "Das Skript passt nicht zur Ausführungsumgebung. Verwende Browser-JavaScript und document/window.",
   "script.theTargetDomIsEmptyOrThePageHas": "Das Ziel-DOM ist leer oder die Seite noch nicht fertig gerendert. Prüfe Selektoren, virtuelle Listen, verzögertes Laden und den Ausführungszeitpunkt.",
-  "script.aToolsCallInsideRunScriptFailedCheckBridge": "Ein tools.*-Aufruf in run_script ist fehlgeschlagen. Prüfe Bridge-Zeitüberschreitungen, Verschachtelungstiefe, Argumente und den Seitenlebenszyklus.",
+  "script.aToolsCallInsideRunScriptFailedCheckBridge": "Ein qz-SDK-Aufruf in run_script ist fehlgeschlagen. Prüfe Bridge-Zeitüberschreitungen, Verschachtelungstiefe, Argumente und den Seitenlebenszyklus.",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "Der Browser blockiert Skript-Injektionen auf dieser Seite. Das kann bei chrome://-Seiten, dem Erweiterungsstore, integrierten Seiten oder fehlenden Berechtigungen passieren.",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "Skriptausführung fehlgeschlagen. Ermittle anhand des Fehlers und des Traces die letzte erfolgreiche Phase.",
   "script.useTargetPageWithAWorkingTabForPage": "Führe das Skript auf der mit tabRef angegebenen Seite mit Browser-JavaScript, input/args und tools/tool aus.",

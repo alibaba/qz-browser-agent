@@ -29,7 +29,8 @@ test("script help describes one outer runtime and schema discovery", async () =>
   const deps = setup();
   assert.equal(await main(["script", "--help"], deps), 0);
   assert.match(deps.stdout.text, /qz script --session ID \[FILE\|-\]/);
-  assert.match(deps.stdout.text, /tools\.list_tools/);
+  assert.match(deps.stdout.text, /qz\.listTools\(\)[\s\S]*qz\.call\(name,args\)/);
+  assert.doesNotMatch(deps.stdout.text, /tools\.list_tools|tools\.<name>/);
   assert.doesNotMatch(deps.stdout.text, /--tab|qz exec|qz tools/);
 });
 

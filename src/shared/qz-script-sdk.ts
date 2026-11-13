@@ -1,11 +1,19 @@
-import { validateElementLocator, type ElementLocator } from "./contracts/element-locator.js";
+import { normalizeElementLocator, validateElementLocator, type ElementLocator } from "./contracts/element-locator.js";
 import type { ElementObservation } from "./contracts/element-observation.js";
 
 type Arguments = Record<string, unknown>;
 type TabRef = string | number;
 type PageFunction = string | ((...args: never[]) => unknown);
 type CallTool = (name: string, args?: Arguments) => Promise<unknown>;
-type ActionOptions = Arguments & { waitFor?: "navigation" | "popup"; waitOptions?: Arguments };
+/** expect waits for the navigation or popup the action causes; tabAlias names that popup. */
+type ActionOptions = { expect?: "navigation" | "popup"; timeout?: number; tabAlias?: string; submit?: boolean };
+/**
+ * page.find(query): role, name, text, exact, and within match as in page.locator(query);
+ * pattern (string or RegExp) is the regex alternative to name/text.
+ */
+type FindQuery = Arguments & Pick<ElementLocator, "role" | "name" | "text" | "exact" | "within"> & {
+  pattern?: string | RegExp; flags?: string; limit?: number; includeHidden?: boolean; waitForMatch?: boolean; timeout?: number;
+};
 
 /** Stateless script bindings. Every operation uses the host's normal tool execution path. */
 export function createQzSdk(callTool: CallTool) {
@@ -36,7 +44,7 @@ export function createQzSdk(callTool: CallTool) {
       ...options(args, ["tabRef", "tabId"]), tabRef,
     });
     function locator(input: string | (ElementLocator & { css?: string })) {
-      const query = typeof input === "string" ? { target: input } : { ...input };
+      const query: ElementLocator & { css?: string } = typeof input === "string" ? { target: input } : normalizeElementLocator({ ...input });
       if (Object.hasOwn(query, "css")) {
         if (Object.hasOwn(query, "target")) return invalid("Pass locator css or target, not both.");
         if (typeof query.css !== "string" || !query.css.trim()) return invalid("Locator css must be a non-empty string.");
@@ -48,25 +56,29 @@ export function createQzSdk(callTool: CallTool) {
         throw Object.assign(new TypeError(error instanceof Error ? error.message : String(error)), error, { code: "INVALID_ARGUMENTS" });
       }
       Object.freeze(query);
-      const bindingKeys = ["target", "css", "selector", "locator", "index"];
+      const bindingKeys = ["target", "css", "selector", "locator", "index", "nth"];
       const boundCall = (name: string, args: Arguments = {}) => call(name, {
         ...options(args, bindingKeys), locator: { ...query },
       });
       function action(name: string, params: Arguments = {}, inputOptions: ActionOptions = {}) {
-        const { waitFor, waitOptions, ...rest } = options(inputOptions,
-          ["tabRef", "tabId", ...bindingKeys, "action", ...Object.keys(params)]);
-        if (waitFor !== undefined && waitFor !== "navigation" && waitFor !== "popup") {
-          return invalid("Action waitFor must be navigation or popup.");
-        }
-        if (waitOptions !== undefined && waitFor === undefined) return invalid("waitOptions requires waitFor.");
-        const args = { ...rest, ...params, locator: { ...query }, action: name };
-        if (!waitFor) return call("act_on_element", args);
-        return call(`wait_for_${waitFor}`, {
-          ...(rest.timeout !== undefined ? { timeout: rest.timeout } : {}),
-          ...options(waitOptions as Arguments | undefined, ["tabRef", "tabId", "trigger"]),
+        // Hidden compatibility: waitFor and waitOptions are the retired spelling of expect.
+        const { waitFor, waitOptions, ...given } = options(inputOptions);
+        if (waitOptions !== undefined && waitFor === undefined) return invalid(`${name} does not accept waitOptions. Options: expect, timeout.`);
+        const legacyWait = waitOptions === undefined ? {} : options(waitOptions as Arguments);
+        const { expect = waitFor, timeout, tabAlias, ...rest } = { ...legacyWait, ...given };
+        if (expect !== undefined && expect !== "navigation" && expect !== "popup") return invalid("Action expect must be navigation or popup.");
+        const allowed = ["expect", "timeout", ...(name === "fill" ? ["submit"] : []), ...(expect === "popup" ? ["tabAlias"] : [])];
+        const unknown = [...Object.keys(rest).filter(key => !allowed.includes(key)), ...(tabAlias !== undefined && expect !== "popup" ? ["tabAlias"] : [])];
+        if (unknown.length) return invalid(`${name} does not accept ${unknown.join(", ")}. Options: ${allowed.join(", ")}.`);
+        const args = { ...rest, ...params, locator: { ...query }, action: name, ...(timeout !== undefined ? { timeout } : {}) };
+        if (!expect) return call("act_on_element", args);
+        return call(`wait_for_${expect}`, {
+          ...(timeout !== undefined ? { timeout } : {}), ...(tabAlias !== undefined ? { tabAlias } : {}),
           trigger: { name: "act_on_element", args: { ...args, tabRef } },
         });
       }
+      const text = (method: string, field: string, value: unknown) => typeof value === "string" ? { [field]: value }
+        : invalid(`${method} requires a string ${field}.`);
       const element = Object.freeze({
         nth(index: number) { return locator({ ...query, nth: index }); },
         async count() {
@@ -76,11 +88,13 @@ export function createQzSdk(callTool: CallTool) {
         click(opts?: ActionOptions) { return action("click", {}, opts); },
         doubleClick(opts?: ActionOptions) { return action("double_click", {}, opts); },
         hover(opts?: ActionOptions) { return action("hover", {}, opts); },
-        fill(value: string, opts?: ActionOptions) { return action("fill", { value }, opts); },
-        press(key: string, opts?: ActionOptions) { return action("press", { key }, opts); },
-        select(value: string, opts?: ActionOptions) { return action("select", { value }, opts); },
+        fill(value: string, opts?: ActionOptions) { return action("fill", text("fill", "value", value), opts); },
+        press(key: string, opts?: ActionOptions) { return action("press", text("press", "key", key), opts); },
+        select(value: string, opts?: ActionOptions) { return action("select", text("select", "value", value), opts); },
         check(opts?: ActionOptions) { return action("check", {}, opts); },
         uncheck(opts?: ActionOptions) { return action("uncheck", {}, opts); },
+        scrollIntoView(opts?: ActionOptions) { return action("scroll", {}, opts); },
+        /** Hidden compatibility for scrollIntoView. */
         scroll(opts?: ActionOptions) { return action("scroll", {}, opts); },
         dragTo(destination: object, opts?: ActionOptions) {
           const end = locators.get(destination);
@@ -89,6 +103,8 @@ export function createQzSdk(callTool: CallTool) {
         },
         wait(opts: Arguments = {}) { return boundCall("wait_for_element", opts); },
         inspect(opts: Arguments = {}) { return boundCall("inspect_element", opts); },
+        screenshot(opts: Arguments = {}) { return boundCall("screenshot", opts); },
+        axTree(opts: Arguments = {}) { return boundCall("get_ax_tree", opts); },
         read(opts: Arguments = {}) {
           return boundCall("read_article", { limit: 4000, ...options(opts, ["source"]), source: "target" });
         },
@@ -101,14 +117,18 @@ export function createQzSdk(callTool: CallTool) {
       locator,
       goto(url: string, opts: Arguments = {}) { return call("navigate", { ...options(opts, ["url"]), url }); },
       read(opts: Arguments = {}) { return call("read_article", { limit: 4000, ...opts }); },
-      find(opts: Arguments = {}): Promise<ElementObservation[]> {
+      /** Every match as an Array, in the order of page.locator({...query, nth}). */
+      find(opts: FindQuery = {}): Promise<ElementObservation[]> {
         const args = options(opts);
         if (Object.hasOwn(args, "countOnly")) return invalid("Use page.locator(query).count() to count matches.");
-        return call("find_elements", serializePattern(args, "pattern"))
+        return call("find_all_elements", serializePattern(args, "pattern"))
           .then(result => (result as { results: ElementObservation[] }).results);
       },
       axTree(opts: Arguments = {}) { return call("get_ax_tree", opts); },
       screenshot(opts: Arguments = {}) { return call("screenshot", opts); },
+      scroll(opts: { direction?: "up" | "down" | "top" | "bottom"; pixels?: number; timeout?: number } = {}) {
+        return call("scroll_page", options(opts, ["target", "locator", "nth", "index", "selector"]));
+      },
       evaluate(code: PageFunction, args?: unknown, opts: Arguments = {}) {
         return call("evaluate", { ...options(opts, ["code", "args"]), code, ...(args !== undefined ? { args } : {}) });
       },

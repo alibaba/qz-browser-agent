@@ -20,7 +20,7 @@ export interface ElementObservation {
   form?: ElementObservation | null; parent?: ElementObservation | null; nearbyText?: string;
   accept?: string; multiple?: boolean; selectedFileCount?: number;
   line?: number; lineRange?: number[]; index?: number; matched?: number;
-  match?: string; matchKind?: string; score?: number;
+  match?: string; matchKind?: string;
   action?: string; method?: string;
 }
 
@@ -46,7 +46,7 @@ export function createElementObservation(source: Omit<Partial<ElementObservation
     'tag', 'role', 'type', 'name', 'text', 'value', 'placeholder', 'href', 'visible', 'disabled', 'editable',
     'checked', 'selected', 'readOnly', 'focused', 'actionable', 'inViewport', 'clickablePointInViewport',
     'obscuredAtCenter', 'clickablePoint', 'attrs', 'state', 'nearbyText', 'accept', 'multiple',
-    'selectedFileCount', 'line', 'lineRange', 'index', 'matched', 'match', 'matchKind', 'score', 'action', 'method',
+    'selectedFileCount', 'line', 'lineRange', 'index', 'matched', 'match', 'matchKind', 'action', 'method',
   ] as const satisfies readonly (keyof ElementObservation)[];
   for (const key of business) if (source[key] !== undefined) Object.assign(result, { [key]: source[key] });
   if (source.rect && typeof source.rect === 'object') result.rect = toRect(source.rect);

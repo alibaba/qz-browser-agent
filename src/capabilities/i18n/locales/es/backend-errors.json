@@ -12,6 +12,7 @@
   "backend.toolError.ABORTED.label": "Detenido",
   "backend.toolError.ABORTED.message": "El usuario detuvo la llamada; no se devolvió ningún resultado.",
   "backend.toolError.AMBIGUOUS_ELEMENT.label": "Coinciden varios elementos",
+  "backend.toolError.ELEMENT_NOT_FOUND.label": "Ningún elemento coincide",
   "backend.toolError.AGENT_ALREADY_RUNNING.label": "La tarea está en ejecución",
   "backend.toolError.SESSION_PERSIST_FAILED.label": "No se pudo guardar la tarea",
   "backend.toolError.STALE_AGENT_LEASE.label": "Esta ejecución ya no puede hacer cambios",

@@ -475,10 +475,10 @@ qz session cancel SESSION_ID
 
 stdout is JSON `{ok,result,trace}` on success and failure. `ok` reports execution success; `trace` is an ordered string array of errors and explicit `trace()`/`console` diagnostics without levels. `result` is the returned business value, `null` for `undefined`, or a failure in `{code,message,hint?,details?}` form. Business `trace`/`traces` fields stay inside `result`. Script locations are in `details`. Exit codes are `0` for success, `1` for execution or connection failure, and `2` for invalid arguments. `--timeout` defaults to `120` seconds, accepts `>0` through `3600`, and the request waits 60 seconds longer. The caller's deadline must allow that request to finish. A timeout does not undo completed browser actions.
 
-For action-dependent navigation or popups, use `locator.click({waitFor:"navigation"})` or
-`locator.click({waitFor:"popup"})`. The wait listens before dispatching the action once; failure
+For action-dependent navigation or popups, use `locator.click({expect:"navigation"})` or
+`locator.click({expect:"popup"})`. The wait listens before dispatching the action once; failure
 never replays it. For current element state, use `locator.wait({state:"visible"})`; for an exact
-attached match count, use `locator.wait({count:3})`. `locator.count()` reads the current count.
+match count, use `locator.wait({count:3})`. `locator.count()` reads the current count.
 Use `page.waitForFunction(code,args?,options?)` for application-specific completion conditions.
 
 MCP clients can call `qingzhou_execute_tool` directly. Its single-call transport returns

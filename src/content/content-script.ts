@@ -11,7 +11,7 @@ import type { ArticleExtractor, ExtractedArticle } from './article-types.js';
 import { eachElementWithinOpenShadow, firstElementMatchingOpenShadow, graftOpenShadows, openShadowRoot } from './open-shadow.js';
 import type { PageOverview, PageAction, PagePoint } from '../shared/contracts/page-content.js';
 import type { ElementLocator } from '../shared/contracts/element-locator.js';
-import { invalidCssTargetError, resolveElementLocator } from './element-locator.js';
+import { invalidCssTargetError, matchElementQuery, matchTier, orderElementMatches, resolveElementLocator } from './element-locator.js';
 
 interface Article { mode: string; title: string; byline: string; siteName: string; publishedTime: string; excerpt: string; content: string; text: string; sourceSelector: string }
 interface ElementSummary extends PageAction {
@@ -23,6 +23,7 @@ interface ContentRequest {
   scroll?: boolean;
   action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRefs?: string[]; retainRef?: boolean; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
+  name?: string; text?: string; exact?: boolean;
   locator?: ElementLocator; matchSelf?: boolean; countOnly?: boolean; all?: boolean;
   index?: number; block?: ScrollLogicalPosition; clickTarget?: boolean; includeShadow?: boolean; queryOnly?: boolean; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
@@ -55,7 +56,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-11-06-element-outcomes";
+  const QZ_CONTENT_VERSION = "2026-11-13-dom-line-batch";
   const elementRefs = new Map<string, WeakRef<Element>>();
   const elementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let elementRefSequence = 0;
@@ -130,12 +131,16 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     if (rootResult.error) return rootResult;
     const root = rootResult.element;
     const clone = root.cloneNode(true) as Element;
-    clone.querySelectorAll("script, style, noscript, svg").forEach(el => el.remove());
+    removeDomReadExclusions(clone);
     // Put each tag or text segment on its own line for paginated reads.
     return clone.innerHTML
       .replace(/>[\s]*</g, ">\n<")  // Separate adjacent tags.
       .split("\n")
       .filter(line => line.trim());  // Remove empty lines.
+  }
+
+  function removeDomReadExclusions(clone: Element) {
+    clone.querySelectorAll("script, style, noscript, svg").forEach(el => el.remove());
   }
 
   function extractReadableArticle({ complete = false } = {}): Article | null {
@@ -1744,7 +1749,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const scope: unknown = selector;
       const root = scope instanceof Element ? scope : document;
       try {
-        const result = resolveElementLocator(root, locator!, { role: getElementRole, name: getAccessibleName }, { matchSelf, all, limit });
+        const result = resolveElementLocator(root, locator!, elementSemantics, { matchSelf, all, limit });
         const observe = (element: Element) => ({ ...getElementSummary(element, { selector: false }), _elementRef: rememberElement(element) });
         if (countOnly) return { matched: result.matched };
         if (all) return { matched: result.matched, results: (result.elements || []).map(observe) };
@@ -1758,10 +1763,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       }
     },
 
-    findElements({ pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], limit = 20, includeHidden = false }) {
+    findElements({ pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], name, text, exact, limit, includeHidden = false, all = false }) {
       const rootResult = queryOpenShadowScope(selector);
       if (rootResult.error || !rootResult.element) return rootResult.error;
-      const maxResults = clampNumber(limit, 1, 100, 20);
+      // Background validates an all-mode limit as a positive integer.
+      const maxResults = !all ? clampNumber(limit, 1, 100, 20) : limit ?? Infinity;
 
       const patternText = String(pattern || "");
       let regex = null;
@@ -1780,39 +1786,32 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const candidates: Element[] = [];
       // A light-DOM scope still includes descendants inside nested open shadows.
       eachElementWithinOpenShadow(scope, (element) => { candidates.push(element); });
+      const filtered = candidates.filter(el => (!roleSet.size || roleSet.has(getElementRole(el)))
+        && (!tagSet.size || tagSet.has(el.tagName.toLowerCase()))
+        && (!typeSet.size || typeSet.has((el.getAttribute("type") || "").toLowerCase())));
+      const queried = matchElementQuery(filtered, { name, text, exact, includeHidden: includeHidden === true },
+        elementSemantics, Boolean(roleSet.size || tagSet.size || typeSet.size));
       const matches = [];
-
-      for (let order = 0; order < candidates.length; order += 1) {
-        const el = candidates[order];
-        if (roleSet.size && !roleSet.has(getElementRole(el))) continue;
-        if (tagSet.size && !tagSet.has(el.tagName.toLowerCase())) continue;
-        if (typeSet.size && !typeSet.has((el.getAttribute("type") || "").toLowerCase())) continue;
-        const summary = getElementSummary(el);
-        if (!includeHidden && !summary.visible) continue;
-
-        const matchInfo = matchElementSearch(regex, getElementSearchParts(el, summary));
+      const selectorCache = createSelectorCache();
+      for (const el of queried) {
+        const summary = getElementSummary(el, { selectorCache });
+        const matchInfo = matchElementSearch(regex, regex ? getElementSearchParts(el, summary) : []);
         if (regex && !matchInfo.matched) continue;
-        matches.push({
-          el,
-          summary,
-          order,
-          ...matchInfo,
-          score: scoreElementCandidate(el, summary, matchInfo),
-        });
+        matches.push({ el, summary, ...matchInfo });
       }
 
-      const results = matches
-        .sort(compareElementCandidates)
-        .slice(0, maxResults)
-        .map(({ el, summary, match = "", matchKind = "none", score = 0 }) => ({
+      const ordered = orderElementMatches(matches, item => item.tier).slice(0, maxResults);
+      const locations = getDomLocations(ordered.map(item => item.el), selector);
+      const results = ordered
+        .map(({ el, summary, match, matchKind }) => ({
           ...summary,
           _elementRef: rememberElement(el),
-          ...getElementDomLocation(el, selector),
+          ...locations.get(el),
           match,
           matchKind,
-          score: Math.round(score),
           obscuredAtCenter: summary.visible ? isObscuredAtCenter(el) : false,
         }));
+      if (all) return { results };
 
       return {
         pattern: patternText,
@@ -2766,13 +2765,13 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return getElementReadiness(el);
   }
 
-  function getElementSummary(el: Element, { selector = true, labels = true } = {}) {
+  function getElementSummary(el: Element, { selector = true, labels = true, selectorCache = undefined as SelectorCache | undefined } = {}) {
     const rect = elementBounds(el);
     const tag = el.tagName.toLowerCase();
     const isFileInput = el instanceof HTMLInputElement
       && String(el.type || el.getAttribute("type") || "").toLowerCase() === "file";
     const summary: ElementSummary = {
-      selector: selector ? getAbsoluteSelector(el) : "",
+      selector: selector ? getAbsoluteSelector(el, selectorCache) : "",
       tag,
       role: getElementRole(el),
       type: el.getAttribute("type") || "",
@@ -2826,106 +2825,44 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function getElementSearchParts(el: Element, summary = getElementSummary(el)) {
     const attrs = getElementAttrs(el);
+    // Equal-tier matches report the first matching kind in this list.
     return [
-      { kind: "tag", value: summary.tag },
-      { kind: "role", value: summary.role },
       { kind: "name", value: summary.name },
+      { kind: "text", value: summary.text },
       { kind: "aria", value: attrs["aria-label"] },
       { kind: "placeholder", value: summary.placeholder },
       { kind: "value", value: summary.value },
-      { kind: "text", value: summary.text },
-      { kind: "href", value: summary.href },
       { kind: "id", value: attrs.id },
-      { kind: "class", value: attrs.class },
       { kind: "attr", value: attrs.name },
       { kind: "attr", value: attrs.title },
       { kind: "attr", value: attrs["data-testid"] },
+      { kind: "href", value: summary.href },
+      { kind: "role", value: summary.role },
+      { kind: "tag", value: summary.tag },
+      { kind: "class", value: attrs.class },
     ].map(part => ({
       kind: part.kind,
       value: normalizeSearchField(part.value, part.kind),
     })).filter(part => part.value);
   }
 
+  /** A pattern match in the name or text takes its matchTier; a match only in another field ranks after them. */
   function matchElementSearch(regex: RegExp | null, parts: { kind: string; value: string }[]) {
-    if (!regex) return { matched: true, match: "", matchKind: "none", matchScore: 0 };
-    let best = { matched: false, match: "", matchKind: "none", matchScore: 0 };
+    if (!regex) return { matched: true, match: "", matchKind: "none", tier: 0 };
+    let best = { matched: false, match: "", matchKind: "none", tier: 4 };
     for (const part of parts) {
       regex.lastIndex = 0;
-      const match = regex.exec(part.value);
-      if (!match) continue;
-      const weight = matchKindWeight(part.kind);
-      const exactBonus = normalizeText(match[0]).length === part.value.length ? 24 : 0;
-      const prefixBonus = part.value.startsWith(normalizeText(match[0])) ? 8 : 0;
-      const lengthPenalty = part.kind === "text" ? Math.min(28, Math.max(0, part.value.length - 80) / 10) : 0;
-      const score = weight + exactBonus + prefixBonus - lengthPenalty;
-      if (score > best.matchScore) {
-        best = {
-          matched: true,
-          match: match[0],
-          matchKind: part.kind,
-          matchScore: score,
-        };
-      }
+      const found = regex.exec(part.value);
+      if (!found) continue;
+      const tier = part.kind === "name" || part.kind === "text" ? matchTier(part.value, found.index, found[0].length) : 3;
+      if (tier < best.tier) best = { matched: true, match: found[0], matchKind: part.kind, tier };
     }
     return best;
-  }
-
-  function scoreElementCandidate(el: Element, summary: ReturnType<typeof getElementSummary>, matchInfo: ReturnType<typeof matchElementSearch>) {
-    const rect = summary.rect || {};
-    const area = Math.max(1, Math.max(0, rect.w || 0) * Math.max(0, rect.h || 0));
-    const depth = elementDepth(el);
-    let score = Number(matchInfo?.matchScore || 0);
-    if (summary.actionable) score += 70;
-    if (summary.inViewport) score += 22;
-    if (summary.editable) score += 18;
-    if (summary.href) score += 10;
-    if (summary.disabled) score -= 45;
-    if (!summary.visible) score -= 80;
-    score += Math.min(26, depth * 1.4);
-    score -= Math.min(38, Math.log2(area + 1) * 3.2);
-    if (summary.text && summary.text.length > 120 && !summary.actionable) score -= 18;
-    return score;
-  }
-
-  function compareElementCandidates(a: { score: number; summary: ReturnType<typeof getElementSummary>; order: number }, b: typeof a) {
-    return (b.score - a.score)
-      || (Number(b.summary?.inViewport) - Number(a.summary?.inViewport))
-      || (Number(b.summary?.actionable) - Number(a.summary?.actionable))
-      || ((a.summary?.rect?.y || 0) - (b.summary?.rect?.y || 0))
-      || ((a.summary?.rect?.x || 0) - (b.summary?.rect?.x || 0))
-      || (a.order - b.order);
-  }
-
-  function matchKindWeight(kind: string) {
-    const weights: Record<string, number> = {
-      name: 130,
-      aria: 126,
-      placeholder: 118,
-      value: 112,
-      id: 104,
-      attr: 96,
-      href: 86,
-      text: 72,
-      role: 42,
-      tag: 18,
-      class: 14,
-    };
-    return weights[kind] || 30;
   }
 
   function normalizeSearchField(value: unknown, kind = "") {
     const max = kind === "text" ? 600 : 240;
     return normalizeText(value).slice(0, max);
-  }
-
-  function elementDepth(el: Element) {
-    let depth = 0;
-    let current: Element | null = el;
-    while (current && current !== document.documentElement) {
-      depth += 1;
-      current = current.parentElement;
-    }
-    return depth;
   }
 
   function rememberElement(el: Element) {
@@ -2940,60 +2877,94 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return { found, element: found && element ? { ...getElementSummary(element), _elementRef: rememberElement(element) } : null };
   }
 
-  function getElementDomLocation(el: Element, rootSelector = "body") {
-    // read_dom's HTML snapshot does not contain shadow trees, even when their
-    // markup happens to match a light-DOM element.
-    if (el.getRootNode() instanceof ShadowRoot) return {};
-    const lines = getDomLines(rootSelector);
-    if (!Array.isArray(lines)) return {};
-    const ownLines = normalizeHtmlForLines(el.outerHTML);
-    const first = ownLines[0]?.trim();
-    if (!first) return {};
+  function getElementDomLocation(el: Element, rootSelector: unknown = "body") {
+    return getDomLocations([el], rootSelector).get(el) || {};
+  }
 
-    let start = lines.findIndex(line => line.trim() === first);
-    if (start < 0) {
-      const compactFirst = compactHtml(first);
-      start = lines.findIndex(line => compactHtml(line).includes(compactFirst));
+  /**
+   * read_dom line numbers of elements, from one snapshot of the root. Markers placed around each
+   * element's own copy locate it, so identical markup elsewhere cannot lend it a line.
+   * Elements outside the snapshot (the root itself, shadow trees, read_dom's removed tags) have no line.
+   */
+  function getDomLocations(elements: readonly Element[], rootSelector: unknown = "body") {
+    const locations = new Map<Element, { line: number; lineRange: [number, number] }>();
+    const rootResult = queryOne(rootSelector);
+    if (rootResult.error) return locations;
+    const root = rootResult.element;
+    const wanted = new Set(elements.filter(el => el !== root && root.contains(el)));
+    if (!wanted.size) return locations;
+    const clone = root.cloneNode(true) as Element;
+    const originals = root.getElementsByTagName("*");
+    const copies = clone.getElementsByTagName("*");
+    // Custom element constructors may run during cloning; a changed tree has no reliable pairing.
+    if (originals.length !== copies.length) return locations;
+    const pairs: [Element, Element][] = [];
+    for (let index = 0; index < originals.length; index++) {
+      const original = originals[index]!;
+      if (!wanted.has(original)) continue;
+      if (copies[index]!.tagName !== original.tagName) return locations;
+      pairs.push([original, copies[index]!]);
     }
-    if (start < 0) {
-      const selector = getAbsoluteSelector(el).split(" > ").pop();
-      const id = el.id ? `id="${el.id}"` : "";
-      const cls = el.className && typeof el.className === "string"
-        ? el.className.split(/\s+/).filter(Boolean)[0]
-        : "";
-      start = lines.findIndex(line =>
-        (id && line.includes(id)) ||
-        (cls && line.includes(cls)) ||
-        (selector && line.includes(selector)),
-      );
+    removeDomReadExclusions(clone);
+    // crypto.randomUUID() is unavailable on insecure pages; the nonce only has to differ from page comments.
+    const nonce = `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+    pairs.forEach(([, copy], index) => {
+      if (!clone.contains(copy)) return;
+      copy.before(document.createComment(`qz-${nonce}-${index}s`));
+      copy.after(document.createComment(`qz-${nonce}-${index}e`));
+    });
+    const marked = clone.innerHTML;
+    const starts: number[] = [];
+    const ends: number[] = [];
+    const parts: string[] = [];
+    let from = 0;
+    let length = 0;
+    for (const match of marked.matchAll(new RegExp(`<!--qz-${nonce}-(\\d+)([se])-->`, "g"))) {
+      parts.push(marked.slice(from, match.index));
+      length += match.index - from;
+      from = match.index + match[0].length;
+      (match[2] === "s" ? starts : ends)[Number(match[1])] = length;
     }
-    if (start < 0) return {};
+    parts.push(marked.slice(from));
+    const lineAt = domLineNumbers(parts.join(""), [...starts, ...ends.map(end => end - 1)].filter(offset => offset >= 0));
+    pairs.forEach(([original], index) => {
+      if (starts[index] === undefined) return;
+      const line = lineAt.get(starts[index])!;
+      locations.set(original, { line, lineRange: [line, lineAt.get(ends[index]! - 1)!] });
+    });
+    return locations;
+  }
 
-    const end = Math.min(lines.length, start + Math.max(1, ownLines.length)) - 1;
-    return {
-      line: start + 1,
-      lineRange: [start + 1, end + 1],
+  /** The 1-based getDomLines line containing each offset of html; offsets point at markup characters. */
+  function domLineNumbers(html: string, offsets: number[]) {
+    const lines = new Map<number, number>();
+    const pending = [...new Set(offsets)].sort((a, b) => a - b);
+    let next = 0;
+    let line = 0;
+    let segmentStart = 0;
+    const endSegment = (segmentEnd: number) => {
+      if (/\S/.test(html.slice(segmentStart, segmentEnd))) line++;
+      while (next < pending.length && pending[next]! < segmentEnd) lines.set(pending[next++]!, line);
     };
-  }
-
-  function normalizeHtmlForLines(html: string) {
-    return String(html || "")
-      .replace(/>[\s]*</g, ">\n<")
-      .split("\n")
-      .filter(line => line.trim());
-  }
-
-  function compactHtml(value: unknown) {
-    return String(value || "").replace(/\s+/g, " ").trim();
+    // getDomLines breaks at newlines and replaces whitespace between ">" and "<" with one break.
+    for (const match of html.matchAll(/>\s*(?=<)|\n/g)) {
+      const tagBreak = match[0] !== "\n";
+      endSegment(match.index + (tagBreak ? 1 : 0));
+      segmentStart = match.index + match[0].length;
+    }
+    endSegment(html.length);
+    return lines;
   }
 
   function getElementRole(el: Element) {
     return elementAriaRole(el);
   }
 
-  function getAccessibleName(el: Element) {
-    return elementAccessibleName(el);
+  function getAccessibleName(el: Element, includeHidden = false) {
+    return elementAccessibleName(el, includeHidden);
   }
+
+  const elementSemantics = { role: getElementRole, name: getAccessibleName, visible: isVisible };
 
   function getElementValue(el: Element, full = false) {
     if (el instanceof HTMLInputElement && String(el.type || "").toLowerCase() === "file") return "";
@@ -3151,26 +3122,29 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
    * Build an absolute CSS selector for an element.
    * Example: "#app > div.container:nth-child(1) > div.list:nth-child(3) > span.list-title"
    */
-  function getAbsoluteSelector(el: Element) {
+  function getAbsoluteSelector(el: Element, cache?: SelectorCache) {
     const parts = [];
     let current: Element | null = el;
+    // Set when the top part matches one element and every lower part is the only child of its
+    // parent that its type selector can match, so a selector el matches can match nothing else.
+    let anchored = false;
+    let childStepsUnique = true;
     while (current && current !== document.documentElement) {
       if (current.id) {
         const idSelector = `#${cssEscapeIdent(current.id)}`;
         // A repeated id does not identify the element. Keep walking a unique path.
-        if (current.ownerDocument.querySelectorAll(idSelector).length === 1) {
+        if (documentMatchCount(current.ownerDocument, idSelector, cache) === 1) {
           parts.unshift(idSelector);
+          anchored = true;
           break; // A unique id completes the selector.
         }
       }
       let tag = current.tagName.toLowerCase();
       const parent: Element | null = current.parentElement;
       if (parent) {
-        const siblings = [...parent.children].filter(c => c.tagName === current!.tagName);
-        if (siblings.length > 1) {
-          const idx = siblings.indexOf(current) + 1;
-          tag += `:nth-of-type(${idx})`;
-        }
+        const { sameTag, position, typeSelectorMatches } = siblingStep(parent, current, cache);
+        if (sameTag > 1) tag += `:nth-of-type(${position})`;
+        if (typeSelectorMatches !== sameTag) childStepsUnique = false;
       }
       // Include the first class for readability.
       if (current.className && typeof current.className === 'string') {
@@ -3178,16 +3152,73 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         if (cls) tag = tag.split(':')[0] + `.${cssEscapeIdent(cls)}` + (tag.includes(':') ? ':' + tag.split(':').slice(1).join(':') : '');
       }
       parts.unshift(tag);
+      if (parent === document.documentElement) anchored = documentMatchCount(current.ownerDocument, tag, cache) === 1;
       current = parent;
     }
     const selector = parts.join(" > ");
     if (!selector) return "";
     try {
+      if (anchored && childStepsUnique && el.getRootNode() === el.ownerDocument) return el.matches(selector) ? selector : "";
       const matches = el.ownerDocument.querySelectorAll(selector);
       return matches.length === 1 && matches[0] === el ? selector : "";
     } catch {
       return "";
     }
+  }
+
+  type SelectorCache = {
+    siblings: Map<Element, { tagCount: Map<string, number>; typeSelectorCount: Map<string, number>; position: Map<Element, number> }>;
+    matches: Map<Document, Map<string, number>>;
+  };
+
+  /** One cache serves selectors built while the DOM does not change. */
+  function createSelectorCache(): SelectorCache {
+    return { siblings: new Map(), matches: new Map() };
+  }
+
+  /**
+   * Siblings sharing current's tag name, current's position among them, and the siblings that
+   * current's lower-case type selector can match: those whose lower-cased local name equals it.
+   */
+  function siblingStep(parent: Element, current: Element, cache?: SelectorCache) {
+    const type = current.tagName.toLowerCase();
+    if (!cache) {
+      let sameTag = 0, position = 0, typeSelectorMatches = 0;
+      for (const child of parent.children) {
+        if (child.tagName === current.tagName) sameTag++;
+        if (child === current) position = sameTag;
+        if (child.localName.toLowerCase() === type) typeSelectorMatches++;
+      }
+      return { sameTag, position, typeSelectorMatches };
+    }
+    let index = cache.siblings.get(parent);
+    if (!index) {
+      index = { tagCount: new Map(), typeSelectorCount: new Map(), position: new Map() };
+      for (const child of parent.children) {
+        const position = (index.tagCount.get(child.tagName) || 0) + 1;
+        index.tagCount.set(child.tagName, position);
+        index.position.set(child, position);
+        const childType = child.localName.toLowerCase();
+        index.typeSelectorCount.set(childType, (index.typeSelectorCount.get(childType) || 0) + 1);
+      }
+      cache.siblings.set(parent, index);
+    }
+    return { sameTag: index.tagCount.get(current.tagName)!, position: index.position.get(current)!,
+      typeSelectorMatches: index.typeSelectorCount.get(type) || 0 };
+  }
+
+  function documentMatchCount(doc: Document, selector: string, cache?: SelectorCache) {
+    if (!cache) {
+      try { return doc.querySelectorAll(selector).length; } catch { return -1; }
+    }
+    let counts = cache.matches.get(doc);
+    if (!counts) cache.matches.set(doc, counts = new Map());
+    let count = counts.get(selector);
+    if (count === undefined) {
+      try { count = doc.querySelectorAll(selector).length; } catch { count = -1; }
+      counts.set(selector, count);
+    }
+    return count;
   }
 
   function cssEscapeIdent(value: unknown) {

@@ -191,7 +191,7 @@ test("mobile tabs use mobile headers from the first request, persist across runs
     expect(await inspect(tabId)).toMatchObject({ touch: 0, mobile: false });
     expect((await inspect(tabId)).ua).not.toContain("Android");
     await expect.poll(() => worker.evaluate(tabId => modeHarness.detached.includes(tabId), tabId)).toBe(true);
-    const stale = await call("act_on_screen", { tabRef: tabId, action: "click", screenshotId: shot.screenshotId, x: 20, y: 20, returnScreenshot: false });
+    const stale = await call("act_on_screen", { tabRef: tabId, action: "click", x: 20, y: 20, returnScreenshot: false });
     expect(stale.code).toMatch(/STALE|SCREENSHOT/);
     expect((await call("set_page_mode", { tabRef: tabId, mode: "mobile" }, "foreign-task")).code).toBe("SESSION_TAB_FOREIGN");
     expect(await call("set_page_mode", { tabRef: tabId, mode: "mobile" })).toMatchObject({ pageMode: "mobile" });

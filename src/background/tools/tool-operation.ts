@@ -33,6 +33,16 @@ export function createToolOperation(): ToolOperationEvidence {
   };
 }
 
+/**
+ * Argument validation precedes execution. The rejected call reports its own not-started facts, which
+ * the facts of an enclosing script or wait do not overwrite.
+ */
+export function notStartedToolFailure<T>(failure: T, tool: string): T {
+  const operation = createToolOperation();
+  operation.prepare({ tool });
+  return withToolOperationFailure(failure, operation);
+}
+
 /** Preserve the original failure and presentation without mutating a shared abort reason. */
 export function withToolOperationFailure<T>(failure: T, operation?: ToolOperationEvidence): T {
   const facts = operation?.snapshot();

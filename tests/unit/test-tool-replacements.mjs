@@ -86,6 +86,7 @@ test("replacement schema, execution, ownership, cancellation and effects use the
   let executions = 0, resolutions = 0;
   registry.forCapability("original")(base);
   registry.forCapability("custom")({ ...replacement, get description() { return replacement.description; },
+    parameters: { ...replacement.parameters, properties: { tabRef: { type: ["integer", "string"] }, ...replacement.parameters.properties } },
     page: "owned", effects: () => [{ type: "context.siteChanged" }],
     execute: (args, signal, context) => { executions++; assert.ok(signal); return { value: args.value, session: context.sessionId }; } });
   const context = { sessionId: "own", runId: "run", workingTabId: 7, toolRegistrySnapshot: registry.snapshot("en") };

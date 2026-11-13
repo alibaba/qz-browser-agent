@@ -283,21 +283,22 @@ async function exerciseElementMatchWait({ page, call, expect }) {
     document.body.append(button);
   });
   const query = { roles: ['button'], pattern: '^Async match$' };
-  expect(await call('find_elements', query)).toMatchObject({ matches: 0, results: [] });
+  expect(await call('find_elements', query)).toMatchObject({ total: 0, truncated: false, results: [] });
   let settled = false;
-  const pending = call('find_elements', { ...query, waitFor: 'match', timeout: 5 })
+  const pending = call('find_elements', { ...query, waitForMatch: true, timeout: 5 })
     .then(result => { settled = true; return result; });
   await page.waitForTimeout(150);
   expect(settled, 'a matching role/name must be visible before the wait resolves').toBe(false);
   await page.locator('#async-match').evaluate(button => { button.hidden = false; });
   const found = await pending;
-  expect(found, JSON.stringify(found)).toMatchObject({ matches: 1, results: [
+  expect(found, JSON.stringify(found)).toMatchObject({ total: 1, truncated: false, results: [
     { target: expect.stringMatching(/^uid:t\d+\.[0-9a-z]{6}\.\d+$/), role: 'button', text: 'Async match' },
   ] });
   expect(found).not.toHaveProperty('tabRef');
   expect(await call('act_on_element', { target: found.results[0].target, action: 'click' })).toEqual({});
   await expect(page.locator('#async-match')).toHaveAttribute('data-clicked', 'yes');
 
+  // Retired target/waitFor spellings remain hidden aliases for within/waitForMatch.
   const timeout = await call('find_elements', { target: 'css:#missing-match', waitFor: 'match', timeout: 0.3 });
   expect(timeout, JSON.stringify(timeout)).toMatchObject({ code: 'TOOL_TIMEOUT' });
   expect(timeout).not.toHaveProperty('incomplete');
@@ -307,7 +308,7 @@ async function exerciseElementMatchWait({ page, call, expect }) {
   expect(roots, JSON.stringify(tree)).toHaveLength(2);
   const frame = roots[1].match(/target=(uid:\S+)/)?.[1];
   expect(frame || '', JSON.stringify(tree)).toMatch(/^uid:/);
-  const framed = call('find_elements', { target: frame, roles: ['button'], pattern: '^Async frame match$', waitFor: 'match', timeout: 5 });
+  const framed = call('find_elements', { within: frame, roles: ['button'], pattern: '^Async frame match$', waitForMatch: true, timeout: 5 });
   await page.waitForTimeout(150);
   await page.frameLocator('iframe').locator('body').evaluate(body => {
     const button = document.createElement('button');
@@ -316,7 +317,7 @@ async function exerciseElementMatchWait({ page, call, expect }) {
     body.append(button);
   });
   const frameFound = await framed;
-  expect(frameFound, JSON.stringify(frameFound)).toMatchObject({ matches: 1, results: [{ target: expect.stringMatching(/^uid:/) }] });
+  expect(frameFound, JSON.stringify(frameFound)).toMatchObject({ total: 1, results: [{ target: expect.stringMatching(/^uid:/) }] });
   expect(await call('act_on_element', { target: frameFound.results[0].target, action: 'click' })).toEqual({});
   await expect(page.frameLocator('iframe').locator('#async-frame-match')).toHaveAttribute('data-clicked', 'yes');
 }

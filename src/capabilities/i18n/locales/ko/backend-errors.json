@@ -12,6 +12,7 @@
   "backend.toolError.ABORTED.label": "중지됨",
   "backend.toolError.ABORTED.message": "사용자가 도구 호출을 중지하여 결과가 반환되지 않았습니다.",
   "backend.toolError.AMBIGUOUS_ELEMENT.label": "여러 요소가 일치함",
+  "backend.toolError.ELEMENT_NOT_FOUND.label": "일치하는 요소 없음",
   "backend.toolError.AGENT_ALREADY_RUNNING.label": "작업 실행 중",
   "backend.toolError.SESSION_PERSIST_FAILED.label": "작업을 저장하지 못했습니다",
   "backend.toolError.STALE_AGENT_LEASE.label": "이 실행은 더 이상 변경할 수 없습니다",

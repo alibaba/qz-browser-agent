@@ -3,7 +3,8 @@ import { eachElementWithinOpenShadow, openShadowRoot } from "./open-shadow.js";
 
 interface ElementSemantics {
   role(element: Element): string;
-  name(element: Element): string;
+  name(element: Element, includeHidden: boolean): string;
+  visible(element: Element): boolean;
 }
 
 function failure(code: string, message: string, matched?: number): Error {
@@ -48,7 +49,68 @@ function cssMatches(root: Element | Document, elements: Element[], target: strin
   }
 }
 
-/** Strict queries keep tree order and hidden nodes; discovery ranking is deliberately separate. */
+/** How a match covers a field value: 0 the whole value, 1 its start, 2 elsewhere. */
+export function matchTier(value: string, index: number, length: number): number {
+  if (index !== 0) return 2;
+  return length === value.length ? 0 : 1;
+}
+
+/**
+ * The one match order shared by locator nth and find_elements: ascending tier, ties in tree order.
+ * Only fuzzy matches (exact: false or a find pattern) carry a nonzero tier.
+ */
+export function orderElementMatches<T>(matches: T[], tier: (match: T) => number): T[] {
+  return matches.map((match, order) => ({ match, order, tier: tier(match) }))
+    .sort((a, b) => a.tier - b.tier || a.order - b.order)
+    .map(entry => entry.match);
+}
+
+/**
+ * The match list shared by locators and find_elements. Hidden elements are dropped unless includeHidden is
+ * true, before any other rule, so a hidden node never displaces a visible one; with includeHidden, names
+ * also count hidden content. name and text compare
+ * whitespace-normalized values exactly (case-sensitive) unless exact is false, which matches a substring.
+ * Unless the caller has already narrowed candidates, a text-only query keeps the smallest matching nodes
+ * rather than every ancestor whose aggregate text contains the phrase. Matches are returned in
+ * orderElementMatches order.
+ */
+export function matchElementQuery(
+  candidates: Element[], query: Pick<ElementLocator, "role" | "name" | "text" | "exact" | "includeHidden">,
+  semantics: ElementSemantics, narrowed = false,
+): Element[] {
+  const fieldTier = (actual: string, expected: string) => {
+    const value = normalize(actual);
+    const wanted = normalize(expected);
+    if (query.exact !== false) return value === wanted ? 0 : -1;
+    const index = value.indexOf(wanted);
+    return index < 0 ? -1 : matchTier(value, index, wanted.length);
+  };
+  const tiers = new Map<Element, number>();
+  const matches = candidates.filter(element => {
+    if (!element.isConnected || query.role !== undefined && semantics.role(element) !== query.role) return false;
+    if (query.includeHidden !== true && !semantics.visible(element)) return false;
+    const name = query.name === undefined ? 0 : fieldTier(semantics.name(element, query.includeHidden === true), query.name);
+    if (name < 0) return false;
+    const text = query.text === undefined ? 0 : fieldTier(element.textContent || "", query.text);
+    if (text < 0) return false;
+    tiers.set(element, Math.max(name, text));
+    return true;
+  });
+  const byTier = (element: Element) => tiers.get(element) ?? 0;
+  if (query.text === undefined || narrowed || query.role !== undefined || query.name !== undefined) {
+    return orderElementMatches(matches, byTier);
+  }
+  const ancestors = new Set<Element>();
+  for (const element of matches) {
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) ancestors.add(parent);
+  }
+  return orderElementMatches(matches.filter(element => !ancestors.has(element)), byTier);
+}
+
+/**
+ * nth indexes the shared match list and ambiguity counts it. A target names its nodes explicitly, so with a
+ * target (css, or a pinned uid via matchSelf) hidden nodes always match; role/name/text only narrow them.
+ */
 export function resolveElementLocator(
   root: Element | Document, locator: ElementLocator, semantics: ElementSemantics,
   { matchSelf = false, all = false, limit = 20 }: { matchSelf?: boolean; all?: boolean; limit?: number } = {},
@@ -57,28 +119,15 @@ export function resolveElementLocator(
   catch (error) { throw failure("INVALID_ELEMENT_LOCATOR", error instanceof Error ? error.message : String(error)); }
   let queryRoot = root;
   let candidates = matchSelf && root.nodeType === 1 ? [root as Element] : allElements(root);
-  if (locator.scope) {
-    const roots = cssMatches(queryRoot, candidates, locator.scope);
-    if (roots.length > 1) throw failure("AMBIGUOUS_ELEMENT", "The locator scope matches multiple elements.", roots.length);
+  if (locator.within) {
+    const roots = cssMatches(queryRoot, candidates, locator.within);
+    if (roots.length > 1) throw failure("AMBIGUOUS_ELEMENT", "The locator within matches multiple elements.", roots.length);
     if (roots[0]) queryRoot = roots[0];
     candidates = roots.length ? allElements(roots[0]!) : [];
   }
   if (locator.target) candidates = cssMatches(queryRoot, candidates, locator.target);
-  const matchesText = (actual: string, expected: string) => locator.exact === false
-    ? normalize(actual).includes(normalize(expected)) : normalize(actual) === normalize(expected);
-  let matches = candidates.filter(element => element.isConnected
-    && (locator.role === undefined || semantics.role(element) === locator.role)
-    && (locator.name === undefined || matchesText(semantics.name(element), locator.name))
-    && (locator.text === undefined || matchesText(element.textContent || "", locator.text)));
-  // Text-only queries identify the smallest matching nodes, rather than every
-  // ancestor whose aggregate text happens to contain the same phrase.
-  if (locator.text !== undefined && locator.target === undefined && locator.role === undefined && locator.name === undefined) {
-    const ancestors = new Set<Element>();
-    for (const element of matches) {
-      for (let parent = element.parentElement; parent; parent = parent.parentElement) ancestors.add(parent);
-    }
-    matches = matches.filter(element => !ancestors.has(element));
-  }
+  const query = matchSelf || locator.target !== undefined ? { ...locator, includeHidden: true } : locator;
+  const matches = matchElementQuery(candidates, query, semantics, locator.target !== undefined);
   const selected = locator.nth === undefined
     ? matches.length === 1 ? matches[0] : undefined
     : matches[locator.nth];

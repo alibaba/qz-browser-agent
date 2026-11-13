@@ -135,6 +135,8 @@ export interface ToolDefinition<S extends ToolSchema, Result, Context, Signal> {
   argumentAliases?: Readonly<Record<string, string>>;
   /** Hidden compatibility for retired enum values, normalized before validation. */
   argumentValueAliases?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /** Hidden compatibility for retired argument shapes, rewritten to canonical fields after aliases. */
+  compatArgs?(args: Record<string, unknown>): Record<string, unknown>;
   page?: ToolPageAccess | ((args: Record<string, unknown>) => ToolPageAccess);
   timeout?: ToolTimeout | ((args: ToolArguments<S>, name: string) => ToolTimeout);
   /** Compatibility for an established millisecond input alias; model schemas remain in seconds. */

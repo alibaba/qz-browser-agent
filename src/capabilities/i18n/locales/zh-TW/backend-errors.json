@@ -12,6 +12,7 @@
   "backend.toolError.ABORTED.label": "已中止",
   "backend.toolError.ABORTED.message": "工具呼叫已被使用者終止，未返回結果。",
   "backend.toolError.AMBIGUOUS_ELEMENT.label": "找到多個符合條件的元素",
+  "backend.toolError.ELEMENT_NOT_FOUND.label": "找不到符合條件的元素",
   "backend.toolError.AGENT_ALREADY_RUNNING.label": "任務正在執行",
   "backend.toolError.AGENT_RUN_FAILED.label": "任務執行失敗",
   "backend.toolError.AUTOMATION_RUNTIME_UNAVAILABLE.label": "定時任務執行環境不可用",

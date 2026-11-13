@@ -63,8 +63,8 @@ function assertElementToolSchemasUseTarget() {
   assertToolUsesTargetOnly("scroll_page");
   assertToolUsesTargetOnly("screenshot");
   assertToolUsesTargetOnly("read_image");
-  assert.match(resolveToolDefinition("read_image").description, /url 或 target 二选一/, "read_image should state its simple alternative-input contract");
-  assert.deepEqual(resolveToolDefinition("read_image").parameters.anyOf, [{ required: ["url"] }, { required: ["tabRef", "target"] }], "image URLs are page-free, while element reads require an explicit page and target");
+  assert.match(resolveToolDefinition("read_image").description, /url 或页面元素二选一/, "read_image should state its simple alternative-input contract");
+  assert.deepEqual(resolveToolDefinition("read_image").parameters.anyOf, [{ required: ["url"] }, { required: ["tabRef", "target"] }, { required: ["tabRef", "locator"] }], "image URLs are page-free, while element reads require an explicit page and element");
 }
 
 function assertToolUsesTargetOnly(name, { required = null, locator = false } = {}) {
@@ -93,10 +93,11 @@ function assertToolUsesTargetOnly(name, { required = null, locator = false } = {
 function assertSelectorFieldsAcceptTargetSyntax() {
   for (const name of ["read_article", "read_dom", "find_elements", "list_images", "wait_for_element"]) {
     const definition = resolveToolDefinition(name);
+    const field = name === "find_elements" || name === "list_images" ? "within" : "target";
     assert.equal(definition.parameters.properties.selector, undefined);
-    assert.match(definition.parameters.properties.target.description, /uid:.*css:/, `${name} target documents explicit references`);
-    assert.doesNotMatch(definition.parameters.properties.target.description, /bare CSS|raw CSS|裸 CSS/, `${name} must not document unprefixed CSS`);
-    assert.equal(definition.argumentAliases.selector, 'target');
+    assert.match(definition.parameters.properties[field].description, /uid:.*css:/, `${name} ${field} documents explicit references`);
+    assert.doesNotMatch(definition.parameters.properties[field].description, /bare CSS|raw CSS|裸 CSS/, `${name} must not document unprefixed CSS`);
+    assert.equal(definition.argumentAliases.selector, field);
   }
 }
 
@@ -173,7 +174,7 @@ function assertAxTreeCompactContract() {
   assert.match(resolveToolDefinition("get_ax_tree").description, /省略 target 查看整页/, "get_ax_tree should document omission for whole-page reads");
   assert.match(resolveToolDefinition("get_ax_tree").description, /limit 使用 BFS 分配节点预算/, "get_ax_tree should document BFS budget semantics");
   assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated, N more\)/, "get_ax_tree should document truncated branch markers");
-  assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot, readOnly: true \}/, "get_ax_tree should resolve uid/css roots through the read-only target resolver");
+  assert.match(block, /resolveElementInput\(tabId, \{ target: requestedRoot, locator, readOnly: true \}/, "get_ax_tree should resolve uid/css roots through the read-only target resolver");
   assert.match(block, /backendNodeIdForSelector\(targetTabId, overviewSelector, context\)/, "get_ax_tree should resolve css roots to backend nodes within the current run context");
   assert.match(block, /rootBackendNodeId/, "get_ax_tree should pass the resolved AX root into snapshot construction");
   assert.match(block, /const fetchDepth = snapshotScope === "viewport" \? (?:undefined|void 0) : rootBackendNodeId \? 40 : axDepth/, "get_ax_tree should search deep enough to find requested roots");
@@ -240,19 +241,21 @@ function assertFileInputHandoffContract() {
 
 function assertFindElementsFilterContract() {
   const block = toolBlock("find_elements");
-  assert.doesNotMatch(block, /required: \["pattern"\]/, "find_elements should not require pattern when target/tags/roles can list candidates");
+  assert.doesNotMatch(block, /required: \["pattern"\]/, "find_elements should not require pattern when within/tags/roles can list candidates");
   assert.doesNotMatch(resolveToolDefinition("find_elements").description, /可操作候选元素/, "find_elements should not describe the candidate set as action-only");
-  assert.match(resolveToolDefinition("find_elements").description, /pattern 是可选过滤条件：不传 pattern 时会列出 target\/role\/roles\/tag\/tags\/type\/types 命中的候选/, "find_elements should explain target-scoped candidate discovery");
+  assert.match(resolveToolDefinition("find_elements").description, /不传 name、text 或 pattern 时会列出 within\/role\/roles\/tag\/tags\/type\/types 命中的候选/, "find_elements should explain container-scoped candidate discovery");
   assert.match(resolveToolDefinition("find_elements").description, /actionable\/inViewport/, "find_elements should document rank signals returned in summaries");
-  assert.match(block, /pattern = ""/, "find_elements runtime should default pattern to an empty filter");
+  assert.match(block, /findElements\(args, signal, context, false\)/, "find_elements runs the shared scan with its result limit");
+  assert.match(toolBlock("find_all_elements"), /findElements\(args, signal, context, true\)/, "the SDK find tool runs the same scan for every match");
+  assert.match(pageElementTools, /async function findElements\(\{[^)]*pattern = ""/, "the shared find scan should default pattern to an empty filter");
   assert.doesNotMatch(contentScript, /MISSING_PATTERN/, "content findElements should not reject empty pattern");
   assert.match(contentScript, /const patternText = String\(pattern \|\| ""\);/, "content findElements should preserve literal whitespace in a pattern");
-  assert.match(contentScript, /const maxResults = clampNumber\(limit, 1, 100, 20\)/, "content findElements should clamp result limit");
+  assert.match(contentScript, /const maxResults = !all \? clampNumber\(limit, 1, 100, 20\)/, "content findElements should clamp the find_elements result limit");
   assert.match(contentScript, /eachElementWithinOpenShadow\(scope,\s*\(element\)\s*=>\s*\{\s*candidates\.push\(element\);\s*\}\)/, "content findElements should keep a broad DOM candidate set");
-  assert.match(contentScript, /matchElementSearch\(regex, getElementSearchParts\(el, summary\)\)/, "content findElements should classify field-level matches");
-  assert.match(contentScript, /\.sort\(compareElementCandidates\)/, "content findElements should rank candidates before returning");
+  assert.match(contentScript, /matchElementSearch\(regex, regex \? getElementSearchParts\(el, summary\) : \[\]\)/, "content findElements should classify field-level matches");
+  assert.match(contentScript, /orderElementMatches\(matches, \(?item\)? => item\.tier\)/, "content findElements should use the shared locator match order");
   assert.match(contentScript, /matchKind/, "content findElements should expose matchKind");
-  assert.match(contentScript, /score: Math\.round\(score\)/, "content findElements should expose a rounded score");
+  assert.doesNotMatch(contentScript, /scoreElementCandidate|compareElementCandidates/, "content findElements should not rank by layout heuristics");
   assert.match(contentScript, /cssEscapeIdent\(current\.id\)/, "absolute selectors should escape element ids");
   assert.match(contentScript, /cssEscapeIdent\(cls\)/, "absolute selectors should escape class names");
   assert.match(contentScript, /summary\.actionable = isActionableElement\(el\)/, "find element summaries should expose actionability");

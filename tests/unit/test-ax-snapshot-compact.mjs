@@ -38,7 +38,7 @@ registerAccessibilityTools({
     if (bound.uid) { generatedUids.push(bound.uid); registeredRefs.push(bound); }
     return bound;
   },
-  resolveElementReference: element.resolveElementReference,
+  resolveElementInput: element.resolveElementInput,
   backendNodeIdForSelector: async () => 0,
   bindElementReferences: async (_tabId, refs) => refs.map((ref, index) => ({ ...ref, backendNodeId: scenario.bound.ids[index] || 0, target: ref.selector ? `css:${ref.selector}` : '' })),
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),

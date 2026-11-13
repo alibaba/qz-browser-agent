@@ -12,6 +12,7 @@
   "backend.toolError.ABORTED.label": "रोका गया",
   "backend.toolError.ABORTED.message": "उपयोगकर्ता ने टूल कॉल रोक दी; कोई परिणाम नहीं लौटा।",
   "backend.toolError.AMBIGUOUS_ELEMENT.label": "कई मेल खाते तत्व मिले",
+  "backend.toolError.ELEMENT_NOT_FOUND.label": "कोई मेल खाता तत्व नहीं",
   "backend.toolError.AGENT_ALREADY_RUNNING.label": "कार्य चल रहा है",
   "backend.toolError.SESSION_PERSIST_FAILED.label": "कार्य सहेजा नहीं जा सका",
   "backend.toolError.STALE_AGENT_LEASE.label": "यह रन अब बदलाव नहीं कर सकता",

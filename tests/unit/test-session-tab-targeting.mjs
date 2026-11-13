@@ -337,6 +337,9 @@ assert.deepEqual(state.workingTabUpdates, []);
 assert.equal(tabOwners.get(2), "session-b", "a coordinate observation does not grant write ownership");
 await assertRejectsWithCode(tools.executeTool("act_on_screen", {
   tabRef: 2, action: "press", key: "Escape", returnScreenshot: false, _readOnlyTabAccess: true,
+}, null, sessionA()), "INVALID_ARGUMENTS");
+await assertRejectsWithCode(tools.executeTool("act_on_screen", {
+  tabRef: 2, action: "press", key: "Escape", returnScreenshot: false,
 }, null, sessionA()), "SESSION_TAB_FOREIGN");
 
 resetCalls();

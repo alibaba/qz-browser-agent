@@ -1,15 +1,15 @@
-import { toolError, type ToolError } from "#sdk/background/tools";
+import { toolError, validateElementInput, type ToolError } from "#sdk/background/tools";
 import { mapConcurrent } from "./concurrent.js";
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import { filterViewportNodes, isViewportStructure, readViewportBands, verticalBand } from "./viewport.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import { waitForParsedDocument, directChildFrames, openChildFrame, isCdpFallbackForbiddenError, type CdpCommand } from "#sdk/background/browser";
-import { isPageOverview, createElementObservation, toRect, type CanvasObservation, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
+import { isPageOverview, createElementObservation, elementLocatorSchema, locatorReferences, toRect, type CanvasObservation, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
 type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
   | "sendToContent" | "withDebugger"> & Pick<ToolExtensionAPI["element"],
-  "makeSnapshotId" | "elementTargetForUid" | "registerElementBinding" | "resolveElementReference"
+  "makeSnapshotId" | "elementTargetForUid" | "registerElementBinding" | "resolveElementInput"
   | "backendNodeIdForSelector" | "bindElementReferences" | "callElement" | "readMainDocumentId" | "elementTargetGrammar">;
 interface AxValue { value?: unknown }
 interface AxNode {
@@ -30,7 +30,7 @@ export function registerAccessibilityTools({
   makeSnapshotId,
   elementTargetForUid,
   registerElementBinding,
-  resolveElementReference,
+  resolveElementInput,
   backendNodeIdForSelector,
   bindElementReferences,
   callElement,
@@ -765,13 +765,15 @@ async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: n
 
 registerTool({
   name: "get_ax_tree",
-  behavior: { parallelRead: true, timeoutResult: { kind: "read", pending: "main document accessibility tree" } },
+  behavior: { parallelRead: true, uidTargets: args => locatorReferences(args.locator),
+    timeoutResult: { kind: "read", pending: "main document accessibility tree" } },
   get description() { return toolT("getAxTreeDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
   get parameters() { return {
     type: "object",
     properties: {
       tabRef: { type: ["integer", "string"], description: toolT("getAxTreeTabId") },
       target: { type: "string", description: toolT("getAxTreeRoot") },
+      locator: elementLocatorSchema,
       scope: { type: "string", enum: ["viewport", "full"], description: toolT("getAxTreeScope") },
       depth: { type: "number", description: toolT("getAxTreeDepth") },
       limit: { type: "number", description: toolT("getAxTreeLimit") },
@@ -782,22 +784,24 @@ registerTool({
   argumentAliases: { root: "target", selector: "target" },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, target = "root", scope, depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
+  validateArgs: args => validateElementInput(args, { required: false }),
+  execute: async ({ tabId, target = "root", locator, scope, depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
     const axDepth = Number.isFinite(Number(depth)) ? clampLimit(depth, 1, 40) : 16;
     const snapshotLimit = Number.isFinite(Number(limit)) ? clampLimit(limit, 20, 300) : 120;
     const actionMax = Number.isFinite(Number(actionsLimit)) ? clampLimit(actionsLimit, 5, 80) : 40;
     let snapshotId = "";
     const sessionId = String(context.sessionId || "").trim();
     const requestedRoot = String(target || "root").trim() || "root";
-    const snapshotScope = scope || (requestedRoot === "root" ? "viewport" : "full");
+    const wholePage = !locator && requestedRoot === "root";
+    const snapshotScope = scope || (wholePage ? "viewport" : "full");
     let targetTabId: number | undefined = tabId;
     let resolvedRoot = requestedRoot;
     let overviewSelector = "body";
     let rootBackendNodeId = 0;
-    let rootRef: Awaited<ReturnType<typeof resolveElementReference>> | null = null;
+    let rootRef: Awaited<ReturnType<typeof resolveElementInput>> | null = null;
 
-    if (requestedRoot !== "root") {
-      rootRef = await resolveElementReference(tabId, { target: requestedRoot, readOnly: true }, context);
+    if (!wholePage) {
+      rootRef = await resolveElementInput(tabId, { target: requestedRoot, locator, readOnly: true }, context);
       targetTabId = rootRef.tabId;
       resolvedRoot = rootRef.target || requestedRoot;
       overviewSelector = rootRef.selector || "";
@@ -819,7 +823,7 @@ registerTool({
       target: requestedRoot,
     });
 
-    if (requestedRoot === "root") await waitForParsedDocument(targetTabId, context);
+    if (wholePage) await waitForParsedDocument(targetTabId, context);
     snapshotId = makeSnapshotId(targetTabId, context);
     let overview: PageOverview;
     let overviewError: ToolError | undefined;

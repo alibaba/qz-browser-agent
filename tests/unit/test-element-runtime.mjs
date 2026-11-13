@@ -718,4 +718,19 @@ await runtime.callElement(5, resolved, "inspectElement", {}, context);
 assert.ok(commands.slice(mainAfterOopif).some(command => command.method === "DOM.resolveNode" && command.params.executionContextId === 7 && command.sessionId === ""));
 
 assert.equal(commands.some(command => command.method === "Runtime.disable"), false, "uid resolution must leave Runtime enabled");
+
+{
+  const batch = (offset, length) => ({ results: Array.from({ length }, (_, index) => ({ _elementRef: `batch-${offset + index}` })) });
+  const large = (await runtime.addElementTargetsToFindResult(batch(0, 6000), 5, context)).results;
+  assert.equal(large.length, 6000);
+  assert.equal(new Set(large.map(item => item.target)).size, 6000, "every match receives its own uid");
+  await assert.rejects(runtime.resolveElementReference(5, { target: large[999].target }, context), { code: "STALE_ELEMENT_UID" },
+    "a batch larger than the registry keeps only its newest 5000 uids");
+  assert.equal((await runtime.resolveElementReference(5, { target: large[1000].target }, context)).ref.backendNodeId, 2000);
+  assert.equal((await runtime.resolveElementReference(5, { target: large[5999].target }, context)).ref.backendNodeId, 6999);
+  const next = (await runtime.addElementTargetsToFindResult(batch(6000, 5000), 5, context)).results;
+  await assert.rejects(runtime.resolveElementReference(5, { target: large[5999].target }, context), { code: "STALE_ELEMENT_UID" },
+    "a later batch evicts the oldest uids instead of growing the registry");
+  assert.equal((await runtime.resolveElementReference(5, { target: next[0].target }, context)).ref.backendNodeId, 7000);
+}
 console.log("element runtime ownership tests passed");

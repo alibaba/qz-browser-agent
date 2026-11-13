@@ -191,6 +191,12 @@ const runtime = registerMediaTools({
     return {};
   },
   async resolveSelectorTarget(tabId, selector) { return { tabId, selector }; },
+  async resolveElementInput(tabId, { target }) {
+    const uid = String(target || "").startsWith("uid:") ? String(target).slice(4) : "";
+    const stored = uid ? elementRefs.get(uid) : null;
+    if (stored) return { tabId: stored.tabId, target, selector: stored.selector, index: 0, uid, ref: stored };
+    return { tabId, target, selector: String(target || "").replace(/^css:/, "") || "img", index: 0 };
+  },
   async resolveElementReference(tabId, { target }) {
     const uid = String(target || "").startsWith("uid:") ? String(target).slice(4) : "";
     const stored = uid ? elementRefs.get(uid) : null;
@@ -1580,10 +1586,10 @@ measurementUnavailable = false;
 cdpFailure = true;
 
 listImageResults = [{ code: "INVALID_ELEMENT_TARGET", error: "Invalid target syntax", selector: "[", details: { selector: "[", tabId: 3 } }];
-const invalidImageTarget = await definitions.get("list_images").execute({ tabId: 3, target: "[" }, undefined, { sessionId: "session-a" });
+const invalidImageTarget = await definitions.get("list_images").execute({ tabId: 3, within: "[" }, undefined, { sessionId: "session-a" });
 assert.deepEqual(Object.keys(invalidImageTarget).sort(), ["code", "details", "hint", "message"]);
-assert.deepEqual(invalidImageTarget.details, { target: "css:[" });
-assert.match(invalidImageTarget.hint, /target/);
+assert.deepEqual(invalidImageTarget.details, { within: "css:[" });
+assert.match(invalidImageTarget.hint, /within/);
 assert.doesNotMatch(JSON.stringify(invalidImageTarget), /selector|tabId/);
 
 const validImages = listedImages;
@@ -1607,7 +1613,7 @@ assert.deepEqual(collectImagesSchema.anyOf, [
   { required: ["urls"], properties: { urls: { minItems: 1 }, targets: { maxItems: 0 } } },
   { required: ["tabRef", "targets"], properties: { targets: { minItems: 1 } } },
 ]);
-assert.deepEqual(readImageSchema.anyOf, [{ required: ["url"] }, { required: ["tabRef", "target"] }]);
+assert.deepEqual(readImageSchema.anyOf, [{ required: ["url"] }, { required: ["tabRef", "target"] }, { required: ["tabRef", "locator"] }]);
 assert.equal(collectImagesSchema.properties.targets.items.type, "string");
 assert.equal(collectImagesSchema.properties.urls.items.type, "string");
 assert.equal(readImageSchema.properties.target.type, "string");
@@ -2110,6 +2116,7 @@ registerMediaTools({
   sendToContent: fallbackContent,
   resolveSelectorTarget: fallbackElements.resolveSelectorTarget,
   resolveElementReference: fallbackElements.resolveElementReference,
+  resolveElementInput: fallbackElements.resolveElementInput,
   bindElementReferences: fallbackElements.bindElementReferences,
   elementTargetForUid: fallbackElements.elementTargetForUid,
   elementTargetForSelector: fallbackElements.elementTargetForSelector,
@@ -2139,6 +2146,7 @@ registerPageElementTools({
   sendToContent: fallbackContent,
   resolveSelectorTarget: fallbackElements.resolveSelectorTarget,
   resolveElementReference: fallbackElements.resolveElementReference,
+  resolveElementInput: fallbackElements.resolveElementInput,
   useElement: fallbackElements.useElement,
   addElementTargetsToFindResult: fallbackElements.addElementTargetsToFindResult,
   elementTargetForRef: fallbackElements.elementTargetForRef,

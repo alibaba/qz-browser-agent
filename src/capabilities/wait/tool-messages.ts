@@ -135,12 +135,12 @@ const messages = defineMessages("wait-tools", {
     en: "Optional pre-action title to compute titleChanged.",
   },
   waitForElementDescription: {
-    "zh-CN": "等待 tabRef 指定页的 target 或 locator 达到 state：attached、visible（默认）、hidden 或 detached；locator 每轮重新查询。locator 也可传 count 等待连接节点数精确匹配（含隐藏节点），此时不传 state。hidden 包括移除或不可见，detached 仅表示移除；uid 始终观察原节点，不重匹配替代节点。",
-    en: "Wait for target or locator in tabRef to reach attached, visible (default), hidden, or detached; locators are queried on every poll. Alternatively pass locator and count for an exact connected-node count, including hidden nodes; omit state. Hidden includes removal or invisibility; detached requires removal. A uid observes its original node, never a replacement.",
+    "zh-CN": "等待 tabRef 指定页的 target 或 locator 达到 state：attached、visible（默认）、hidden 或 detached；locator 每轮重新查询。locator 也可传 count 等待匹配数精确等于该值，此时不传 state。hidden 包括移除或不可见，detached 仅表示移除；uid 始终观察原节点，不重匹配替代节点。",
+    en: "Wait for target or locator in tabRef to reach attached, visible (default), hidden, or detached; locators are queried on every poll. Alternatively pass locator and count for an exact match count; omit state. Hidden includes removal or invisibility; detached requires removal. A uid observes its original node, never a replacement.",
   },
   waitForElementCount: {
-    "zh-CN": "等待 locator 的连接节点数等于此值，包含隐藏节点，允许 0；与 state 互斥。",
-    en: "Wait for exactly this many connected locator matches, including hidden nodes; zero is allowed. Mutually exclusive with state.",
+    "zh-CN": "等待 locator 的匹配数等于此值（role/name/text 查询仅在 includeHidden 时计入隐藏元素，target 始终计入），允许 0；与 state 互斥。",
+    en: "Wait for exactly this many locator matches (role/name/text queries count hidden elements only with includeHidden; a target always counts them); zero is allowed. Mutually exclusive with state.",
   },
   waitForElementTabId: {
     "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",

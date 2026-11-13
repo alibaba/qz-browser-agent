@@ -75,7 +75,7 @@ const innerSchema = schemas.find(item => item.function.name === "runtime_example
 assert.ok(innerSchema);
 assert.deepEqual(innerSchema.function.parameters.properties.tabId, manifest.tools[0].parameters.properties.tabId);
 assert.equal(Object.hasOwn(innerSchema.function.parameters.properties, "tabRef"), false);
-assert.match(innerSchema.function.description, /脚本在页面外执行[\s\S]*显式传 tabRef[\s\S]*DOM 求值使用 tools\.evaluate/);
+assert.match(innerSchema.function.description, /脚本在页面外执行[\s\S]*显式传 tabRef[\s\S]*DOM 求值使用 qz\.tab\(tabRef\)\.evaluate/);
 assert.doesNotMatch(innerSchema.function.description, /内部 Worker|\$plugin|runtime:/);
 const pageSchema = schemas.find(item => item.function.name === "runtime_example__page_check");
 assert.ok(pageSchema.function.parameters.required.includes("tabRef"), "page Skill tools require an explicit public page reference");

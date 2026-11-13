@@ -2,18 +2,18 @@ import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import { sameElementGeometry, waitForElementReady } from "./element-readiness.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
-import { isElementReply, elementLocatorSchema, locatorReferences, validateElementLocator, type ElementLocator, type ElementReply } from "#sdk/shared/browser";
+import { isElementReply, elementLocatorSchema, elementNthSchema, locatorReferences, validateElementLocator, type ElementLocator, type ElementReply } from "#sdk/shared/browser";
 import type { SecurityGuardrails } from "#sdk/shared/security";
 import type { CdpCommand, ElementTarget, PageState, PreparedNavigation } from "#sdk/background/browser";
 import type { ToolContext } from "#sdk/background";
-import { bindToolResultPresentation, requireToolFields, toolError, pageWaitTimeout, pollState, runWaitWithTrigger, waitDelay } from "#sdk/background/tools";
+import { bindToolResultPresentation, requireToolFields, toolError, pageWaitTimeout, pollState, runWaitWithTrigger, validateElementInput, waitDelay } from "#sdk/background/tools";
 export type { PageState, PreparedNavigation, PageNavigationHost } from "#sdk/background/browser";
 type PageElementHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "sendToContent" | "clickPointReady"
   | "clickNotReadyResult" | "sendCdp" | "withDebugger"
   | "getPageContext" | "getTabPageState"
   | "prepareKnownPageNavigation" | "commitObservedPageNavigation"> & Pick<ToolExtensionAPI["element"],
-  "resolveSelectorTarget" | "resolveElementReference" | "resolveLocatorTarget" | "findLocatorElements" | "countLocatorMatches" | "addElementTargetsToFindResult"
+  "resolveSelectorTarget" | "resolveElementReference" | "resolveElementInput" | "resolveLocatorTarget" | "findLocatorElements" | "countLocatorMatches" | "addElementTargetsToFindResult"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement" | "readMainDocumentId">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
 import { waitForParsedDocument, armPageInputReceipt, beginPageNavigationObservation, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, openChildFrame, pageInputDelivered, readPageInputReceipt } from "#sdk/background/browser";
@@ -105,6 +105,7 @@ export function registerPageElementTools({
   sendToContent: sendContent,
   resolveSelectorTarget,
   resolveElementReference,
+  resolveElementInput,
   resolveLocatorTarget,
   findLocatorElements,
   countLocatorMatches,
@@ -127,21 +128,6 @@ async function sendToContent(tabId: number | undefined, action: string, params: 
   const result = await (call ? call(action, params) : sendContent(tabId, action, params, context));
   if (!isElementReply(result)) throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED", t("contentScriptReturnedAnInvalidResponse", { action: String(action) }), { action });
   return result;
-}
-function validateElementInput(input: Record<string, unknown>): undefined {
-  const located = input.locator !== undefined;
-  if (located === (input.target !== undefined)) throw new ToolExecutionError("INVALID_ELEMENT_TARGET", "Pass exactly one of target or locator.");
-  if (!located) return;
-  if (input.index !== undefined) throw new ToolExecutionError("INVALID_ELEMENT_TARGET", "Use locator.nth instead of index with a locator.");
-  try { validateElementLocator(input.locator); }
-  catch (error) { throw new ToolExecutionError("INVALID_ELEMENT_LOCATOR", error instanceof Error ? error.message : String(error)); }
-}
-async function locateForRead(tabId: number | undefined, locator: ElementLocator, context: ToolContext) {
-  const binding = await resolveLocatorTarget(tabId, locator, context);
-  if (!binding) throw Object.assign(new ToolExecutionError("ELEMENT_NOT_FOUND", "No element matches the locator."), {
-    hint: "Inspect the page or refine the locator before reading it.",
-  });
-  return binding;
 }
 const elementInputChoice = [{ required: ["target"], not: { required: ["locator"] } }, { required: ["locator"], not: { required: ["target"] } }];
 function inputNotDelivered(details: Record<string, unknown>) {
@@ -209,7 +195,7 @@ registerTool({
     if (args.source === "target") validateElementInput(args);
   },
   execute: async ({ tabId, source = "auto", target: selector = "", locator, offset = 0, limit }, _signal, context = {}) => {
-    const target = locator ? await locateForRead(tabId, locator, context)
+    const target = locator ? await resolveElementInput(tabId, { locator }, context)
       : selector ? await resolveSelectorTarget(tabId, selector, 0, context) : { tabId, selector };
     if (!selector && !locator && target.tabId) await waitForParsedDocument(target.tabId, context);
     const mode = source === "target" || (source === "auto" && selector) ? "selector" : source;
@@ -227,7 +213,7 @@ registerTool({
 registerTool({
   name: "read_dom",
   argumentAliases: { selector: "target" },
-  behavior: { targetLookup: "light", timeoutResult: { kind: "read", pending: "DOM extraction" } },
+  behavior: { targetLookup: "light", uidTargets: args => locatorReferences(args.locator), timeoutResult: args => args.locator ? undefined : { kind: "read", pending: "DOM extraction" } },
   get description() { return toolT("readDomDescription"); },
   get parameters() { return {
     type: "object",
@@ -236,14 +222,16 @@ registerTool({
       offset: { type: "number", description: toolT("readDomOffset") },
       limit: { type: "number", description: toolT("readDomLimit") },
       target: { type: "string", description: toolT("readDomSelector") },
+      locator: elementLocatorSchema,
     },
     required: ["tabRef"],
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, offset = 1, limit = 200, target: selector = "" }, _signal, context = {}) => {
-    const target = await resolveSelectorTarget(tabId, selector || "body", 0, context);
-    if (!selector && target.tabId) await waitForParsedDocument(target.tabId, context);
+  validateArgs: args => validateElementInput(args, { required: false }),
+  execute: async ({ tabId, offset = 1, limit = 200, target: selector = "", locator }, _signal, context = {}) => {
+    const target = locator ? await resolveElementInput(tabId, { locator }, context) : await resolveSelectorTarget(tabId, selector || "body", 0, context);
+    if (!selector && !locator && target.tabId) await waitForParsedDocument(target.tabId, context);
     return readBound(target, context, async call => {
       const result = await sendToContent(target.tabId, "readDom", { offset, limit, selector: scopedSelector(target) }, call, context);
       if (result.error) return { ...toolError(String(result.code || "DOM_READ_FAILED"), String(result.error), {
@@ -254,113 +242,170 @@ registerTool({
   },
 });
 
+const findElementsAliases = { target: "within", selector: "within", scope: "within" };
+const findElementsCompatArgs = ({ waitFor, ...args }: Record<string, unknown>) => waitFor === "match" && args.waitForMatch === undefined ? { ...args, waitForMatch: true } : waitFor === undefined ? args : { ...args, waitFor };
+const findElementsBehavior = { parallelRead: true, targetLookup: "openShadow", passiveWait: (args: Readonly<Record<string, unknown>>) => args.waitForMatch === true,
+  uidTargets: (args: Readonly<Record<string, unknown>>) => locatorReferences(args.locator),
+  timeoutResult: (args: Readonly<Record<string, unknown>>) => args.waitForMatch === true || args.locator ? undefined : { kind: "read" as const, pending: "element scan" } } as const;
+const findElementsParameters = () => ({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    tabRef: { type: ["integer", "string"], description: toolT("readArticleTabId") },
+    name: elementLocatorSchema.properties.name,
+    text: elementLocatorSchema.properties.text,
+    exact: elementLocatorSchema.properties.exact,
+    pattern: { type: "string", description: toolT("findElementsPattern") },
+    flags: { type: "string", description: toolT("findElementsFlags") },
+    within: { type: "string", description: toolT("findElementsWithin") },
+    locator: elementLocatorSchema,
+    countOnly: { type: "boolean", description: "With locator, return only the current match count." },
+    role: { type: "string", description: toolT("findElementsRole") },
+    roles: { type: "array", items: { type: "string" }, description: toolT("findElementsRoles") },
+    tag: { type: "string", description: toolT("findElementsTag") },
+    tags: { type: "array", items: { type: "string" }, description: toolT("findElementsTags") },
+    type: { type: "string", description: toolT("findElementsType") },
+    types: { type: "array", items: { type: "string" }, description: toolT("findElementsTypes") },
+    limit: { type: "number", description: toolT("findElementsLimit") },
+    includeHidden: { type: "boolean", description: toolT("findElementsIncludeHidden") },
+    waitForMatch: { type: "boolean", description: toolT("findElementsWaitForMatch") },
+    timeout: { type: "number", exclusiveMinimum: 0, maximum: 300, description: toolT("findElementsTimeout") },
+  },
+  required: ["tabRef"],
+} as const);
+const findElementsTimeout = (args: Record<string, unknown>) => args.waitForMatch === true ? { ...pageWaitTimeout(args), maxMs: 300000 } : { defaultMs: 30000, maxMs: 300000 };
+function validateFindElementsArgs(args: Record<string, unknown>): undefined {
+  for (const [single, plural] of [["role", "roles"], ["tag", "tags"], ["type", "types"]]) {
+    if (args[single] !== undefined && args[plural] !== undefined) {
+      throw toolError("INVALID_ARGUMENTS", toolT("findElementsFilterConflict", { single, plural }),
+        { details: { invalidFields: [single, plural] } });
+    }
+  }
+  const literal = ["name", "text", "exact"].filter(key => args[key] !== undefined);
+  const regex = ["pattern", "flags"].filter(key => args[key] !== undefined);
+  if (literal.length && regex.length) {
+    throw toolError("INVALID_ARGUMENTS", toolT("findElementsMatchConflict"), { details: { invalidFields: [...literal, ...regex] } });
+  }
+  for (const field of ["name", "text"]) {
+    if (typeof args[field] === "string" && !args[field].trim()) {
+      throw toolError("INVALID_ARGUMENTS", toolT("findElementsEmptyQuery", { field }), { details: { invalidFields: [field] } });
+    }
+  }
+  if (args.locator !== undefined) {
+    try { validateElementLocator(args.locator); }
+    catch (error) { throw new ToolExecutionError("INVALID_ELEMENT_LOCATOR", String((error as Error).message)); }
+    if (["within", "name", "text", "exact", "pattern", "flags", "role", "roles", "tag", "tags", "type", "types", "includeHidden"].some(key => Object.hasOwn(args, key))) {
+      throw toolError("INVALID_ARGUMENTS", toolT("findElementsLocatorConflict"));
+    }
+  } else if (args.countOnly === true) {
+    throw new ToolExecutionError("INVALID_ARGUMENTS", "countOnly requires locator.");
+  }
+}
+interface FindElementsInput {
+  tabId: number; name?: string; text?: string; exact?: boolean; pattern?: string; flags?: string; within?: string;
+  locator?: unknown; countOnly?: boolean; role?: string; roles?: readonly string[]; tag?: string; tags?: readonly string[];
+  type?: string; types?: readonly string[]; limit?: number; includeHidden?: boolean; waitForMatch?: boolean; timeout?: number;
+}
+/** all returns every match as {results}, capped only by an explicit limit; otherwise the find_elements result. */
+async function findElements({ tabId, name, text, exact, pattern = "", flags = "i", within: selector = "", locator, countOnly = false, role, roles = [], tag, tags = [], type, types = [], limit, includeHidden = false, waitForMatch = false, timeout = 10 }: FindElementsInput,
+  signal: AbortSignal | undefined, context: ToolContext, all: boolean) {
+  const waiting = waitForMatch === true;
+  if (waiting && pattern) {
+    try { new RegExp(pattern, flags); }
+    catch { throw Object.assign(new ToolExecutionError("INVALID_REGEX", toolT("findElementsInvalidRegex"), { pattern, flags }),
+      { hint: toolT("findElementsInvalidRegexHint") }); }
+  }
+  const scan = async (observing: ToolContext) => {
+    observing.signal?.throwIfAborted();
+    if (locator) {
+      const query = locator as ElementLocator;
+      if (countOnly) {
+        const count = await countLocatorMatches(tabId, query, observing);
+        observing.signal?.throwIfAborted();
+        return waiting && count === 0 ? undefined : { count };
+      }
+      const { count, results } = await findLocatorElements(tabId, query, observing, Math.max(1, Math.min(100, Number(limit) || 20)));
+      observing.signal?.throwIfAborted();
+      return waiting && count === 0 ? undefined : { results, total: count, truncated: count > results.length };
+    }
+    const target = await resolveSelectorTarget(tabId, selector || "body", 0, observing);
+    if (!selector && target.tabId) await waitForParsedDocument(target.tabId, observing);
+    const result = await readBound(target, observing, call => sendToContent(target.tabId, "findElements", {
+      ...Object.fromEntries(Object.entries({ name, text, exact }).filter(([, value]) => value !== undefined)),
+      pattern, flags, selector: scopedSelector(target), roles: role === undefined ? roles : [role],
+      tags: tag === undefined ? tags : [tag], types: type === undefined ? types : [type], includeHidden,
+      ...(all ? { all, ...(limit === undefined ? {} : { limit }) } : { limit: limit ?? 20 }),
+    }, call, observing));
+    observing.signal?.throwIfAborted();
+    if (waiting) {
+      if (result.code || result.error) throw result;
+      if (!Array.isArray(result.results)) throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Invalid element search response.");
+      if (!result.results.length) return undefined;
+    }
+    const { matches, resultTruncated, ...found } = asRecord(await addElementTargetsToFindResult(result, target.tabId, observing, target.ref));
+    if (all) return found;
+    return Array.isArray(found.results) ? { ...found, total: Number(matches) || found.results.length, truncated: resultTruncated === true } : found;
+  };
+  if (!waiting) return scan(context);
+  return runWaitWithTrigger({ tool: all ? "find_all_elements" : "find_elements", timeoutMs: timeout * 1000, signal, context,
+    details: { ...(context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef }),
+      ...(selector ? { within: selector } : {}), ...(pattern ? { pattern } : {}) },
+  }, current => {
+    const observing = Object.assign(Object.create(context), { signal: current });
+    return pollState(current, async () => {
+      try { return await scan(observing); }
+      catch (error) {
+        if (current.aborted || isCdpFallbackForbiddenError(error)) throw error;
+        const code = String(asRecord(error).code || "");
+        if ((code === "ELEMENT_NOT_FOUND" && !selector.trim().startsWith("uid:"))
+          || ["CONTENT_SCRIPT_NOT_READY", "CONTENT_SCRIPT_MESSAGE_FAILED", "EMPTY_CONTENT_RESPONSE"].includes(code)) return undefined;
+        throw error;
+      }
+    });
+  });
+}
+
 registerTool({
   name: "find_elements",
-  argumentAliases: { selector: "target" },
-  behavior: { parallelRead: true, targetLookup: "openShadow", passiveWait: args => args.waitFor === "match",
-    uidTargets: args => locatorReferences(args.locator),
-    timeoutResult: args => args.waitFor === "match" || args.locator ? undefined : { kind: "read", pending: "element scan" } },
+  argumentAliases: findElementsAliases,
+  compatArgs: findElementsCompatArgs,
+  behavior: findElementsBehavior,
   get description() { return toolT("findElementsDescription"); },
-  get parameters() { return {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      tabRef: { type: ["integer", "string"], description: toolT("readArticleTabId") },
-      pattern: { type: "string", description: toolT("findElementsPattern") },
-      flags: { type: "string", description: toolT("findElementsFlags") },
-      target: { type: "string", description: toolT("findElementsSelector") },
-      locator: elementLocatorSchema,
-      countOnly: { type: "boolean", description: "With locator, return only the current attached match count, including hidden elements." },
-      role: { type: "string", description: toolT("findElementsRole") },
-      roles: { type: "array", items: { type: "string" }, description: toolT("findElementsRoles") },
-      tag: { type: "string", description: toolT("findElementsTag") },
-      tags: { type: "array", items: { type: "string" }, description: toolT("findElementsTags") },
-      type: { type: "string", description: toolT("findElementsType") },
-      types: { type: "array", items: { type: "string" }, description: toolT("findElementsTypes") },
-      limit: { type: "number", description: toolT("findElementsLimit") },
-      includeHidden: { type: "boolean", description: toolT("findElementsIncludeHidden") },
-      waitFor: { type: "string", enum: ["match"], description: toolT("findElementsWaitFor") },
-      timeout: { type: "number", exclusiveMinimum: 0, maximum: 300, description: toolT("findElementsTimeout") },
-    },
-    required: ["tabRef"],
-  } as const; },
+  get parameters() { return findElementsParameters(); },
   page: "readOnly",
-  timeout: args => args.waitFor === "match" ? pageWaitTimeout(args) : { defaultMs: 30000, maxMs: 300000 },
+  timeout: findElementsTimeout,
+  validateArgs: validateFindElementsArgs,
+  execute: (args, signal, context = {}) => findElements(args, signal, context, false),
+});
+
+// The script SDK's page.find: the find_elements query without its result limit or count fields.
+registerTool({
+  name: "find_all_elements",
+  hidden: true,
+  requires: { tools: ["find_elements"] },
+  argumentAliases: findElementsAliases,
+  compatArgs: findElementsCompatArgs,
+  behavior: findElementsBehavior,
+  description: "Return every element matching a find_elements query, in locator nth order, as {results}. limit optionally caps the list.",
+  get parameters() {
+    const { locator: _locator, countOnly: _countOnly, limit: _limit, ...properties } = findElementsParameters().properties;
+    return { type: "object", additionalProperties: false, properties: { ...properties,
+      limit: { type: "integer", minimum: 1, description: "Optional maximum number of matches to return." } }, required: ["tabRef"] } as const;
+  },
+  page: "readOnly",
+  timeout: findElementsTimeout,
   validateArgs: args => {
-    for (const [single, plural] of [["role", "roles"], ["tag", "tags"], ["type", "types"]]) {
-      if (args[single] !== undefined && args[plural] !== undefined) {
-        throw toolError("INVALID_ARGUMENTS", toolT("findElementsFilterConflict", { single, plural }),
-          { details: { invalidFields: [single, plural] } });
-      }
+    if (args.limit !== undefined && !(Number.isInteger(args.limit) && Number(args.limit) >= 1)) {
+      throw toolError("INVALID_ARGUMENTS", toolT("findAllElementsLimit"), { details: { invalidFields: ["limit"] } });
     }
-    if (args.locator !== undefined) {
-      try { validateElementLocator(args.locator); }
-      catch (error) { throw new ToolExecutionError("INVALID_ELEMENT_LOCATOR", String((error as Error).message)); }
-      if (["target", "pattern", "flags", "role", "roles", "tag", "tags", "type", "types", "includeHidden"].some(key => Object.hasOwn(args, key))) {
-        throw toolError("INVALID_ARGUMENTS", toolT("findElementsLocatorConflict"));
-      }
-    } else if (args.countOnly === true) {
-      throw new ToolExecutionError("INVALID_ARGUMENTS", "countOnly requires locator.");
-    }
-    if (args.waitFor === "match" && args.timeout !== undefined
-      && !(typeof args.timeout === "number" && args.timeout > 0 && args.timeout <= 300)) {
-      throw new ToolExecutionError("INVALID_TIMEOUT", toolT("findElementsTimeout"), { timeout: args.timeout });
-    }
+    return validateFindElementsArgs(args);
   },
-  execute: async ({ tabId, pattern = "", flags = "i", target: selector = "", locator, countOnly = false, role, roles = [], tag, tags = [], type, types = [], limit = 20, includeHidden = false, waitFor, timeout = 10 }, signal, context = {}) => {
-    const waiting = waitFor === "match";
-    if (waiting && pattern) {
-      try { new RegExp(pattern, flags); }
-      catch { throw Object.assign(new ToolExecutionError("INVALID_REGEX", toolT("findElementsInvalidRegex"), { pattern, flags }),
-        { hint: toolT("findElementsInvalidRegexHint") }); }
-    }
-    const scan = async (observing: ToolContext) => {
-      observing.signal?.throwIfAborted();
-      if (locator) {
-        const query = locator as ElementLocator;
-        const result = countOnly
-          ? { count: await countLocatorMatches(tabId, query, observing) }
-          : await findLocatorElements(tabId, query, observing, Math.max(1, Math.min(100, Number(limit) || 20)));
-        observing.signal?.throwIfAborted();
-        return waiting && result.count === 0 ? undefined : result;
-      }
-      const target = await resolveSelectorTarget(tabId, selector || "body", 0, observing);
-      if (!selector && target.tabId) await waitForParsedDocument(target.tabId, observing);
-      const result = await readBound(target, observing, call => sendToContent(target.tabId, "findElements", {
-        pattern, flags, selector: scopedSelector(target), roles: role === undefined ? roles : [role],
-        tags: tag === undefined ? tags : [tag], types: type === undefined ? types : [type], limit, includeHidden,
-      }, call, observing));
-      observing.signal?.throwIfAborted();
-      if (waiting) {
-        if (result.code || result.error) throw result;
-        if (!Array.isArray(result.results)) throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Invalid element search response.");
-        if (!result.results.length) return undefined;
-      }
-      return addElementTargetsToFindResult(result, target.tabId, observing, target.ref);
-    };
-    if (!waiting) return scan(context);
-    return runWaitWithTrigger({ tool: "find_elements", timeoutMs: timeout * 1000, signal, context,
-      details: { ...(context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef }),
-        ...(selector ? { target: selector } : {}), ...(pattern ? { pattern } : {}) },
-    }, current => {
-      const observing = Object.assign(Object.create(context), { signal: current });
-      return pollState(current, async () => {
-        try { return await scan(observing); }
-        catch (error) {
-          if (current.aborted || isCdpFallbackForbiddenError(error)) throw error;
-          const code = String(asRecord(error).code || "");
-          if ((code === "ELEMENT_NOT_FOUND" && !selector.trim().startsWith("uid:"))
-            || ["CONTENT_SCRIPT_NOT_READY", "CONTENT_SCRIPT_MESSAGE_FAILED", "EMPTY_CONTENT_RESPONSE"].includes(code)) return undefined;
-          throw error;
-        }
-      });
-    });
-  },
+  execute: (args, signal, context = {}) => findElements(args, signal, context, true),
 });
 
 registerTool({
   name: "inspect_element",
-  argumentAliases: { selector: "target" },
+  argumentAliases: { selector: "target", index: "nth" },
   behavior: { targetLookup: "light", uidTargets: args => locatorReferences(args.locator), timeoutResult: args => args.locator ? undefined : { kind: "read", pending: "element inspection" } },
   get description() { return toolT("inspectElementDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
   get parameters() { return {
@@ -369,15 +414,15 @@ registerTool({
       tabRef: { type: ["integer", "string"], description: toolT("readArticleTabId") },
       target: { type: "string", description: getElementTargetDescription() },
       locator: elementLocatorSchema,
-      index: { type: "number", description: toolT("inspectElementIndex") },
+      nth: elementNthSchema,
     },
     required: ["tabRef"], oneOf: elementInputChoice,
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  validateArgs: validateElementInput,
-  execute: async ({ tabId, target = "", locator, index = 0 }, _signal, context = {}) => {
-    const ref = locator ? await locateForRead(tabId, locator, context) : await resolveElementReference(tabId, { target, index }, context);
+  validateArgs: args => validateElementInput(args),
+  execute: async ({ tabId, target = "", locator, nth = 0 }, _signal, context = {}) => {
+    const ref = await resolveElementInput(tabId, { target, locator, nth }, context);
     return readBound(ref, context, async call => {
       const inspection = await sendToContent(ref.tabId, "inspectElement", { selector: ref.selector, index: ref.index }, call, context);
       const frameId = String(ref.ref?.frameId || "");
@@ -402,7 +447,9 @@ registerTool({
 
 registerTool({
   name: "act_on_element",
-  argumentAliases: { selector: "target" },
+  argumentAliases: { selector: "target", index: "nth" },
+  compatArgs: args => args.action === "press" && args.key === undefined && typeof args.value === "string"
+    ? Object.fromEntries(Object.entries({ ...args, key: args.value }).filter(([field]) => field !== "value")) : args,
   behavior: { targetLookup: "light", parallelTab: true,
     uidTargets: args => [args.target, ...locatorReferences(args.locator), ...(args.action === "drag"
       ? [asRecord(args.destination).target, ...locatorReferences(asRecord(args.destination).locator)] : [])],
@@ -421,7 +468,7 @@ registerTool({
       tabRef: { type: ["integer", "string"], description: toolT("readArticleTabId") },
       target: { type: "string", description: getElementTargetDescription() },
       locator: elementLocatorSchema,
-      index: { type: "number", description: toolT("inspectElementIndex") },
+      nth: elementNthSchema,
       action: { type: "string", enum: ["click", "double_click", "hover", "drag", "fill", "press", "select", "check", "uncheck", "scroll"] },
       destination: { type: "object", properties: { target: { type: "string", description: getElementTargetDescription() }, locator: elementLocatorSchema }, oneOf: elementInputChoice, description: toolT("actOnElementDestination") },
       value: { type: "string", description: toolT("actOnElementValue") },
@@ -438,9 +485,14 @@ registerTool({
       requireToolFields("act_on_element", args, ["destination"], { action: "drag" });
       validateElementInput(asRecord(args.destination));
     }
+    const field = args.action === "fill" || args.action === "select" ? "value" : args.action === "press" ? "key" : "";
+    if (field && typeof args[field] !== "string") {
+      throw toolError("MISSING_REQUIRED_ARGUMENTS", toolT("actOnElementMissingField", { action: String(args.action), field }),
+        { details: { missing: [field], action: args.action } });
+    }
   },
   execute: async (input, _signal, context = {}) => {
-    let { tabId, target = "", index = 0, action, destination, value = "", key = "", submit = false } = input;
+    let { tabId, target = "", nth: index = 0, action, destination, value = "", key = "", submit = false } = input;
     const locator = input.locator, requestedTabId = tabId, requestedIndex = index;
     let actionDispatched = false;
     const timeout = Number(asRecord(input).timeout);
@@ -846,7 +898,7 @@ registerTool({
         receiptId = "";
         if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { target: resolvedTarget });
         if (!pageInputDelivered({ receipt, committed: navigation.navigated === true })) {
-          return inputNotDelivered({ action: "click", target: resolvedTarget, index });
+          return inputNotDelivered({ action: "click", target: resolvedTarget, nth: index });
         }
         return complete(navigation);
       } catch (err) {
@@ -865,7 +917,7 @@ registerTool({
       }
     }
 
-    const identity = { action: normalizedAction, target: resolvedTarget, index };
+    const identity = { action: normalizedAction, target: resolvedTarget, nth: index };
     const assertActive = () => {
       if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), identity);
     };
@@ -1072,8 +1124,8 @@ function withElementActionHelp(result: ElementReply, action: string, target: str
 
 registerTool({
   name: "scroll_page",
-  argumentAliases: { selector: "target" },
-  behavior: { targetLookup: "light", timeoutResult: { kind: "action", pending: "scroll outcome confirmation" } },
+  argumentAliases: { selector: "target", index: "nth" },
+  behavior: { targetLookup: "light", uidTargets: args => locatorReferences(args.locator), timeoutResult: { kind: "action", pending: "scroll outcome confirmation" } },
   get description() { return toolT("scrollPageDescription"); },
   get parameters() { return {
     type: "object",
@@ -1082,21 +1134,23 @@ registerTool({
       direction: { type: "string", enum: ["up", "down", "top", "bottom"] },
       pixels: { type: "number", description: toolT("scrollPagePixels") },
       target: { type: "string", description: toolT("scrollPageTarget", { targetDescription: getElementTargetDescription() }) },
-      index: { type: "number", description: toolT("scrollPageIndex") },
+      locator: elementLocatorSchema,
+      nth: elementNthSchema,
     },
     required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 20000, maxMs: 120000 },
-  execute: async ({ tabId, direction = "down", pixels = 500, target = "", index = 0 }, _signal, context = {}) => {
-    const ref = String(target || "").trim() ? await resolveElementReference(tabId, { target, index }, context) : null;
+  validateArgs: args => validateElementInput(args, { required: false }),
+  execute: async ({ tabId, direction = "down", pixels = 500, target = "", locator, nth = 0 }, _signal, context = {}) => {
+    const ref = locator || String(target || "").trim() ? await resolveElementInput(tabId, { target, locator, nth }, context) : null;
     const scrolled = ref
       ? await readBound(ref, context, call => sendToContent(ref.tabId, "scrollPage", { direction, pixels, selector: ref.selector }, call, context))
       : await sendToContent(tabId, "scrollPage", { direction, pixels }, undefined, context);
     if (scrolled.error) return { ...toolError(String(scrolled.code || "SCROLL_FAILED"), String(scrolled.error), {
       hint: "Use find_elements to refresh the target, then retry scroll_page.", details: ref ? { target: ref.target } : undefined,
     }) };
-    return ref ? { ...scrolled, target: ref.target, index: ref.index } : scrolled;
+    return ref ? { ...scrolled, target: ref.target, ...(ref.index ? { nth: ref.index } : {}) } : scrolled;
   },
 });
 

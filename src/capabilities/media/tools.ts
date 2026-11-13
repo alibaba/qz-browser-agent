@@ -1,4 +1,4 @@
-import { createElementObservation, toRect, type ImageObservation } from "#sdk/shared/browser";
+import { createElementObservation, elementLocatorSchema, elementNthSchema, locatorReferences, toRect, type ImageObservation } from "#sdk/shared/browser";
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
@@ -14,7 +14,7 @@ type MediaHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "getToolRuntimeDependencies" | "makeSessionTabTargetError"
   | "sendToContent" | "assertTabAllowed" | "assertUrlAllowed" | "clampNumber"
   | "sendCdp" | "withDebugger" | "getPageContext"> & Pick<ToolExtensionAPI["element"],
-  "resolveSelectorTarget" | "resolveElementReference" | "bindElementReferences"
+  "resolveSelectorTarget" | "resolveElementReference" | "resolveElementInput" | "bindElementReferences"
   | "elementTargetForSelector" | "elementTargetForRef" | "elementTargetGrammar"
   | "getElementTargetDescription" | "callElement"> & PageObservationHost & {
   queryDataRows?: typeof queryDataRows; updateDataTableMetadata?: typeof updateDataTableMetadata;
@@ -39,7 +39,7 @@ const record = (value: unknown): Fields => value && typeof value === "object" &&
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || record(error).error || error || "");
 import { elementPageFunction } from "#sdk/background/browser";
-import { requireToolFields, toolError } from "#sdk/background/tools";
+import { requireToolFields, toolError, validateElementInput } from "#sdk/background/tools";
 import { rasterizeSvg } from "./image-conversion.js";
 import {
   queryDataRows,
@@ -68,6 +68,7 @@ export function registerMediaTools({
   sendToContent: contentRequest,
   resolveSelectorTarget,
   resolveElementReference,
+  resolveElementInput,
   bindElementReferences,
   elementTargetForSelector,
   elementTargetForRef,
@@ -171,8 +172,9 @@ function emitDataChanged(payload: Fields, context: ToolContext = {}) {
 
 registerTool({
   name: "screenshot",
-  argumentAliases: { selector: "target" },
+  argumentAliases: { selector: "target", index: "nth" },
   behavior: { targetLookup: "light", nestedObservation: true, parallelRead: args => args.actionable !== true && !String(args.destination || "").trim(),
+    uidTargets: args => locatorReferences(args.locator),
     timeoutResult: { kind: "read", pending: "screenshot capture" } },
   requires: { images: true },
   get description() { return toolT("screenshotDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
@@ -181,7 +183,8 @@ registerTool({
     properties: {
       tabRef: { type: ["integer", "string"], description: toolT("screenshotTabId") },
       target: { type: "string", description: toolT("screenshotTarget", { targetDescription: getElementTargetDescription() }) },
-      index: { type: "number", description: toolT("screenshotIndex") },
+      locator: elementLocatorSchema,
+      nth: elementNthSchema,
       destination: { type: "string", description: toolT("screenshotDestination") },
       format: { type: "string", enum: ["png", "jpeg"], description: toolT("screenshotFormat") },
       quality: { type: "number", description: toolT("screenshotQuality") },
@@ -194,14 +197,14 @@ registerTool({
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, target = "", index = 0, destination = "", format = "jpeg", quality = 70, padding = 0, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE, actionable = false }, signal, context = {}) => {
-    const hasElementTarget = !!String(target || "").trim();
+  execute: async ({ tabId, target = "", locator, nth = 0, destination = "", format = "jpeg", quality = 70, padding = 0, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE, actionable = false }, signal, context = {}) => {
+    const hasElementTarget = locator !== undefined || !!String(target || "").trim();
     let shot: ElementScreenshot;
     let ref = null;
     let screenCapture = null;
 
     if (hasElementTarget) {
-      ref = await resolveElementReference(tabId, { target, index, readOnly: true }, context);
+      ref = await resolveElementInput(tabId, { target, locator, nth, readOnly: true }, context);
       shot = await captureElementScreenshot(ref.tabId!, ref, {
         format,
         quality,
@@ -243,7 +246,7 @@ registerTool({
       ...(String(destination || "").trim() ? { destination: normalizeImageCollectionTableName(destination) } : {}),
       saved: Boolean(collection?.assetId),
       ...createElementObservation({}, ref?.target),
-      index: ref?.index,
+      ...(ref?.index ? { nth: ref.index } : {}),
       clip: shot.clip || undefined,
       clipped: shot.clipped || undefined,
       ...(screenCapture ? {
@@ -268,11 +271,13 @@ registerTool({
             : t("screenshotCaptured"))),
     };
   },
-  validateArgs: ({ target = "", actionable = false }) => {
+  validateArgs: args => {
+    const { target = "", locator, actionable = false } = args;
     if (String(target).trim() === "viewport") {
       throw new ToolExecutionError("SCREENSHOT_TARGET_INVALID", toolT("screenshotViewportTarget"));
     }
-    if (!String(target || "").trim() || !actionable) return;
+    validateElementInput(args, { required: false });
+    if (locator === undefined && !String(target || "").trim() || !actionable) return;
     throw new ToolExecutionError(
       "SCREENSHOT_COORDINATES_UNAVAILABLE",
       t("actionableTrueIsOnlyAvailableForCurrentViewportScreenshots"),
@@ -325,23 +330,26 @@ registerTool({
 registerTool({
   name: "list_images",
   behavior: { targetLookup: "light" },
-  argumentAliases: { selector: "target" },
+  argumentAliases: { target: "within", selector: "within" },
+  compatArgs: ({ visibleOnly, ...args }) => typeof visibleOnly === "boolean" && args.includeHidden === undefined
+    ? { ...args, includeHidden: !visibleOnly } : visibleOnly === undefined ? args : { ...args, visibleOnly },
   get description() { return toolT("listImagesDescription"); },
   get parameters() { return {
     type: "object",
     properties: {
       tabRef: { type: ["integer", "string"], description: toolT("listImagesTabId") },
-      target: { type: "string", description: toolT("listImagesSelector") },
+      within: { type: "string", description: toolT("listImagesWithin") },
       minWidth: { type: "number", description: toolT("listImagesMinWidth") },
       minHeight: { type: "number", description: toolT("listImagesMinHeight") },
-      visibleOnly: { type: "boolean", description: toolT("listImagesVisibleOnly") },
+      includeHidden: { type: "boolean", description: toolT("listImagesIncludeHidden") },
       limit: { type: "number", description: toolT("listImagesLimit") },
     },
     required: ["tabRef"],
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, target: selector = "", minWidth = 1, minHeight = 1, visibleOnly = true, limit = 100 }, _signal, context = {}) => {
+  execute: async ({ tabId, within: selector = "", minWidth = 1, minHeight = 1, includeHidden = false, limit = 100 }, _signal, context = {}) => {
+    const visibleOnly = includeHidden !== true;
     const target = await resolveSelectorTarget(tabId, selector, 0, context);
     if (!target.tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "list_images" });
     if (!selector) await waitForParsedDocument(target.tabId, context);
@@ -349,8 +357,8 @@ registerTool({
       ? imageMetadata(await callElement(target.tabId, target, "listImageElements", { minWidth, minHeight, visibleOnly, limit }, context))
       : await sendToContent(target.tabId, "listImageElements", { selector: target.selector, minWidth, minHeight, visibleOnly, limit }, context);
     if (result?.error) return toolError(result.code || "LIST_IMAGES_FAILED", errorMessage(result), {
-      hint: "Pass a valid target, or use get_ax_tree to find the image region before retrying list_images.",
-      details: { target: target.target || elementTargetForSelector(target.selector || selector) },
+      hint: "Pass a valid within element, or use get_ax_tree to find the image region before retrying list_images.",
+      details: { within: target.target || elementTargetForSelector(target.selector || selector) },
     });
     const listed = (result.images || []).slice(0, clampNumber(limit, 1, 1000, 100));
     const bindings = await bindElementReferences(target.tabId, listed.map(item => ({
@@ -670,8 +678,8 @@ registerTool({
 
 registerTool({
   name: "read_image",
-  behavior: { targetLookup: "light", nestedObservation: true },
-  argumentAliases: { selector: "target" },
+  behavior: { targetLookup: "light", nestedObservation: true, uidTargets: args => locatorReferences(args.locator) },
+  argumentAliases: { selector: "target", index: "nth" },
   requires: { images: true },
   model: { get imagePrompt() { return toolT("readImagePrompt"); } },
   get description() { return toolT("readImageDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
@@ -681,7 +689,8 @@ registerTool({
       url: { type: "string", description: toolT("readImageUrl") },
       tabRef: { type: ["integer", "string"], description: toolT("screenshotTabId") },
       target: { type: "string", description: toolT("readImageTarget", { targetDescription: getElementTargetDescription() }) },
-      index: { type: "number", description: toolT("screenshotIndex") },
+      locator: elementLocatorSchema,
+      nth: elementNthSchema,
       detail: { type: "string", enum: ["low", "auto", "high"], description: toolT("readImageDetail") },
       maxWidth: { type: "number", description: toolT("screenshotMaxWidth") },
       maxHeight: { type: "number", description: toolT("screenshotMaxHeight") },
@@ -689,16 +698,17 @@ registerTool({
       format: { type: "string", enum: ["jpeg", "png", "webp"], description: toolT("readImageFormat") },
       quality: { type: "number", description: toolT("readImageQuality") },
     },
-    anyOf: [{ required: ["url"] }, { required: ["tabRef", "target"] }],
+    anyOf: [{ required: ["url"] }, { required: ["tabRef", "target"] }, { required: ["tabRef", "locator"] }],
   } as const; },
   page: args => String(args.url || "").trim() ? false : "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ url = "", tabId, target = "", index = 0, detail = "auto", maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE, maxBytes = 20 * 1024 * 1024, format = "png", quality = 0.88 }, signal, context = {}) => {
+  validateArgs: args => { if (!String(args.url || "").trim()) validateElementInput(args); },
+  execute: async ({ url = "", tabId, target = "", locator, nth = 0, detail = "auto", maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE, maxBytes = 20 * 1024 * 1024, format = "png", quality = 0.88 }, signal, context = {}) => {
     if (String(url || "").trim()) {
       return await readImageUrlAsResult(url, { detail, maxBytes, maxWidth, maxHeight, format, quality, signal });
     }
 
-    const ref = await resolveElementReference(tabId, { target, index, readOnly: true }, context);
+    const ref = await resolveElementInput(tabId, { target, locator, nth, readOnly: true }, context);
     let canvasResult: ImageMetadata;
     try {
       canvasResult = imageMetadata(await callElement(ref.tabId!, ref, "readImageElement", {

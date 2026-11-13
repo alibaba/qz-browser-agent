@@ -12,6 +12,7 @@
   "backend.toolError.ABORTED.label": "Остановлено",
   "backend.toolError.ABORTED.message": "Пользователь остановил вызов инструмента; результат не возвращён.",
   "backend.toolError.AMBIGUOUS_ELEMENT.label": "Найдено несколько элементов",
+  "backend.toolError.ELEMENT_NOT_FOUND.label": "Подходящий элемент не найден",
   "backend.toolError.AGENT_ALREADY_RUNNING.label": "Задача выполняется",
   "backend.toolError.SESSION_PERSIST_FAILED.label": "Не удалось сохранить задачу",
   "backend.toolError.STALE_AGENT_LEASE.label": "Этот запуск больше не может вносить изменения",

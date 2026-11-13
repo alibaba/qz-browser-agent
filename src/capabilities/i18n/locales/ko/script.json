@@ -13,7 +13,7 @@
   "script.theScriptHasAnUnsupportedShapeOrInvalidSyntax": "스크립트 구조가 지원되지 않거나 문법이 올바르지 않습니다. 함수 밖의 return, IIFE, 최상위 await 및 표현식 경계를 확인하세요.",
   "script.theExecutionEnvironmentDoesNotMatchTheScriptPage": "스크립트가 실행 환경과 맞지 않습니다. 브라우저 JavaScript와 document/window를 사용하세요.",
   "script.theTargetDomIsEmptyOrThePageHas": "대상 DOM이 비어 있거나 페이지 렌더링이 완료되지 않았습니다. 선택자, 가상 목록, 지연 로딩, 실행 시점을 확인하세요.",
-  "script.aToolsCallInsideRunScriptFailedCheckBridge": "run_script 안의 tools.* 호출이 실패했습니다. 브리지 시간 초과, 중첩 깊이, 인수, 페이지 생명주기를 확인하세요.",
+  "script.aToolsCallInsideRunScriptFailedCheckBridge": "run_script 안의 qz SDK 호출이 실패했습니다. 브리지 시간 초과, 중첩 깊이, 인수, 페이지 생명주기를 확인하세요.",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "브라우저가 이 페이지의 스크립트 삽입을 차단합니다. chrome:// 페이지, 확장 프로그램 스토어, 내장 페이지 또는 필요한 권한이 없는 페이지에서 발생할 수 있습니다.",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "스크립트 실행이 실패했습니다. 오류와 추적 기록에서 마지막으로 성공한 단계를 확인하세요.",
   "script.useTargetPageWithAWorkingTabForPage": "tabRef로 지정한 페이지에서 스크립트를 실행하고 브라우저 JavaScript, input/args, tools/tool을 사용하세요.",

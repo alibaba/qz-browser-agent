@@ -12,6 +12,7 @@
   "backend.toolError.ABORTED.label": "Interrompido",
   "backend.toolError.ABORTED.message": "O usuário interrompeu a chamada; nenhum resultado foi retornado.",
   "backend.toolError.AMBIGUOUS_ELEMENT.label": "Vários elementos correspondentes",
+  "backend.toolError.ELEMENT_NOT_FOUND.label": "Nenhum elemento correspondente",
   "backend.toolError.AGENT_ALREADY_RUNNING.label": "Tarefa em execução",
   "backend.toolError.SESSION_PERSIST_FAILED.label": "Não foi possível salvar a tarefa",
   "backend.toolError.STALE_AGENT_LEASE.label": "Esta execução não pode mais fazer alterações",

@@ -40,6 +40,8 @@ export interface ElementAccess {
   isUidElementTarget(value: unknown): boolean;
   resolveSelectorTarget(tabId?: number, selector?: string, index?: number, context?: ToolContext): Promise<ElementTarget>;
   resolveElementReference(tabId: number | undefined, options?: { target?: string; index?: number; readOnly?: boolean }, context?: ToolContext): Promise<ElementTarget & { index: number }>;
+  /** One element input: a target string with an optional nth, or a locator; a locator with no match throws ELEMENT_NOT_FOUND. */
+  resolveElementInput(tabId: number | undefined, options?: { target?: string; locator?: ElementLocator; nth?: number; readOnly?: boolean }, context?: ToolContext): Promise<ElementTarget & { index?: number }>;
   resolveLocatorTarget(tabId: number | undefined, locator: ElementLocator, context?: ToolContext): Promise<ElementTarget | null>;
   countLocatorMatches(tabId: number | undefined, locator: ElementLocator, context?: ToolContext): Promise<number>;
   findLocatorElements(tabId: number | undefined, locator: ElementLocator, context?: ToolContext, limit?: number): Promise<{ results: unknown[]; count: number }>;

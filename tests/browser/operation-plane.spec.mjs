@@ -26,7 +26,7 @@ test('direct-drive tools discover capabilities and act on ready element targets'
 
     const concurrent = (await callTool(environment.bridge.endpoint, 'qingzhou_execute_tool', buildScriptRequest({ sessionId, code: `
       const [found] = await Promise.all([
-        qz.tab('page').find({ role: 'button', pattern: '^Pipeline ready$', waitFor: 'match', timeout: 5 }),
+        qz.tab('page').find({ role: 'button', pattern: '^Pipeline ready$', waitForMatch: true, timeout: 5 }),
         qz.tab('page').evaluate(() => {
           const button = document.createElement('button');
           const link = document.createElement('a'); link.href = '#pipeline';
@@ -43,7 +43,7 @@ test('direct-drive tools discover capabilities and act on ready element targets'
     ` }))).result;
     expect(concurrent, JSON.stringify(concurrent)).toMatchObject({ ok: true, result: [{ role: 'button', target: expect.stringMatching(/^uid:/) }] });
     const multiple = await call('find_elements', { roles: ['button', 'link'], pattern: '^Pipeline ready$' });
-    expect(multiple.matches).toBe(2);
+    expect(multiple.total).toBe(2);
     expect(multiple.results.map(element => element.role).sort()).toEqual(['button', 'link']);
     const input = (await callTool(environment.bridge.endpoint, 'qingzhou_execute_tool', buildScriptRequest({ sessionId, code: `
       return qz.tab('page').find({tag:'input', type:'search', pattern:/^pipeline ready$/i});

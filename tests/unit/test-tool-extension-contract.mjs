@@ -62,7 +62,9 @@ assert.throws(() => validateToolSchema("query", { filters: { role: "link" } }, {
 assert.throws(() => validateToolSchema("empty", { extra: true }, { type: "object", additionalProperties: false }),
   error => error.code === "INVALID_ARGUMENTS" && error.details.allowedFields.length === 0);
 validateToolSchema("open", { roles: ["link"], extensionOption: true }, { ...closed, additionalProperties: true });
-validateToolSchema("open-default", { extensionOption: true }, { type: "object", properties: {} });
+assert.throws(() => validateToolSchema("closed-default", { extensionOption: true }, { type: "object", properties: {} }),
+  error => error.code === "INVALID_ARGUMENTS" && error.details.invalidFields[0] === "extensionOption");
+validateToolSchema("free-form", { extensionOption: true }, { type: "object" });
 const patterned = { ...closed, patternProperties: { "^x-": { type: "string" } } };
 validateToolSchema("patterned", { roles: ["link"], "x-filter": "active" }, patterned);
 assert.throws(() => validateToolSchema("patterned", { "x-filter": 1 }, patterned),
