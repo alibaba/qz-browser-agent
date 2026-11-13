@@ -77,8 +77,8 @@ test('page overview ranks every candidate but resolves selectors only for retain
     `<a id="link-${i}" href="/item/${i}">Item ${i}</a>`).join('')}`);
   const result = await page.evaluate(async () => {
     const original = document.querySelectorAll.bind(document);
-    let selectorReads = 0;
-    document.querySelectorAll = selector => { if (selector.startsWith('#link-')) selectorReads++; return original(selector); };
+    const selectorReads = [];
+    document.querySelectorAll = selector => { if (selector.startsWith('#link-')) selectorReads.push(selector); return original(selector); };
     try {
       const overview = await __callQingzhouContent('pageOverview', { limit: 5 });
       return { actions: overview.actions, selectorReads };
@@ -86,7 +86,13 @@ test('page overview ranks every candidate but resolves selectors only for retain
   });
   expect(result.actions.map(item => item.selector)).toEqual(['#link-0', '#link-1', '#link-2', '#link-3', '#link-4']);
   expect(result.actions.map(item => item.text)).toEqual(['Item 0', 'Item 1', 'Item 2', 'Item 3', 'Item 4']);
-  expect(result.selectorReads).toBe(10, 'unique-ID and final-selector checks are bounded by output size');
+  expect(result.selectorReads).toEqual(result.actions.map(item => item.selector));
+  // A unique ID anchors the selector; el.matches validates it without a second
+  // document scan. No discarded candidate should trigger an ID lookup.
+  expect(await page.evaluate(actions => actions.map(item => {
+    const nodes = document.querySelectorAll(item.selector);
+    return nodes.length === 1 && nodes[0].textContent === item.text;
+  }), result.actions)).toEqual([true, true, true, true, true]);
 });
 
 test("page overview bounds Canvas hints for model context", async ({ page }) => {

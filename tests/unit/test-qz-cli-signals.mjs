@@ -41,6 +41,33 @@ for (const firstSignal of ["SIGINT", "SIGTERM"]) {
   });
 }
 
+for (const signal of [null, "SIGINT", "SIGTERM"]) {
+  test(`stdin EOF preserves ${signal || "ordinary empty-input validation"} before CLI settlement`, async t => {
+    // npm can close its child's stdin as it forwards a process-group signal.
+    // Queue that notification at EOF, before the CLI's own end listener runs.
+    const preload = signal ? `process.stdin.prependOnceListener('end', () => {
+      setImmediate(() => process.emit(${JSON.stringify(signal)}));
+    });` : "";
+    const child = spawn(process.execPath, [bin, "create", "-", "--json"], {
+      cwd: root, env: { ...process.env, NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(preload)}` },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", chunk => { stdout += chunk; });
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    const closed = new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    const killGroup = () => { if (child.exitCode === null) child.kill("SIGKILL"); };
+    t.after(async () => { killGroup(); await closed; });
+    child.stdin.end();
+    const exited = await waitForExit({ closed, killGroup });
+    assert.equal(exited.code, signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 2, stderr);
+    assert.equal(JSON.parse(stdout).code, signal ? "INTERRUPTED" : "INVALID_ARGUMENTS", stdout);
+  });
+}
+
 async function npmEntry() {
   const candidates = [process.env.npm_execpath];
   for (const directory of (process.env.PATH || "").split(delimiter)) {

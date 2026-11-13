@@ -663,15 +663,90 @@ test('image filtering preserves rounded sizes, natural sizes, scan order and per
   assert.equal((await scan({ limit: 1 })).images[0].alt, 'hidden');
 });
 
+test('regex discovery classifies individual semantic fields and preserves their bounds', async () => {
+  const cases = [
+    ['name', '<button aria-label="Needle">Other</button>'],
+    ['text', '<button aria-label="Other">Needle</button>'],
+    ['aria', '<button aria-labelledby="label" aria-label="Needle"><span id="label">Other</span></button>'],
+    ['placeholder', '<input aria-label="Other" placeholder="Needle">'],
+    ['value', '<input aria-label="Other" value="Needle">'],
+    ['id', '<div id="Needle">Other</div>'],
+    ['attr', '<input aria-label="Other" name="Needle">'],
+    ['attr', '<button aria-label="Other" title="Needle">Other</button>'],
+    ['attr', '<div data-testid="Needle">Other</div>'],
+    ['href', '<a href="https://example.test/Needle">Other</a>'],
+    ['role', '<div role="note">Other</div>', '^note$'],
+    ['tag', '<needle-tag>Other</needle-tag>', '^needle-tag$'],
+    ['class', '<div class="Needle">Other</div>'],
+  ];
+  for (const [kind, html, pattern = 'Needle'] of cases) {
+    await page.setContent(`<main>${html}</main>`);
+    const result = await page.evaluate(pattern => callContent('findElements', { selector: 'main > *', pattern, flags: 'g' }), pattern);
+    assert.equal(result.matches, 1, `${kind}: ${html}`);
+    assert.equal(result.results[0].matchKind, kind, html);
+    assert.equal(result.results[0].match, pattern.replace(/^\^|\$$/g, ''), html);
+  }
+  await page.setContent(`<main>
+    <button aria-label="Alpha">Beta</button>
+    <button aria-label="Other">${'x'.repeat(160)}Needle</button>
+    <input aria-label="Other" value="${'x'.repeat(160)}Needle">
+    <div data-testid="${'x'.repeat(240)}Needle">Other</div>
+    <button aria-label="${'x'.repeat(240)}Needle">Other</button>
+  </main>`);
+  for (const pattern of ['^Alpha Beta$', 'Needle']) {
+    const result = await page.evaluate(pattern => callContent('findElements', { pattern }), pattern);
+    assert.equal(result.matches, 0, 'fields are neither concatenated nor searched past their existing bounds');
+  }
+  await page.setContent('<button aria-label="  Needle  \n value  ">Needle value</button><button>Needle value</button>');
+  const normalized = await page.evaluate(() => callContent('findElements', { tags: ['button'], pattern: '^Needle value$', flags: 'gy' }));
+  assert.deepEqual(normalized.results.map(item => [item.match, item.matchKind]), [['Needle value', 'name'], ['Needle value', 'name']],
+    'whitespace normalization, first-field ties and stateful regex reset apply to every candidate');
+});
+
 test('limited regex discovery retains exact totals and ranking without summarizing discarded candidates', async () => {
-  await page.setContent('<main>' + Array.from({ length: 60 }, (_, i) => `<button data-testid="needle-${i}">${i % 2 ? 'prefix Needle' : 'Needle'}</button>`).join('') + '</main>');
-  const scan = args => page.evaluate(args => callContent('findElements', args), args);
-  const full = await scan({ tags: ['button'], pattern: 'Needle', flags: 'ig', all: true });
-  const limited = await scan({ tags: ['button'], pattern: 'Needle', flags: 'ig', limit: 20 });
+  await page.setContent('<main>' + Array.from({ length: 150 }, (_, i) => `<button id="b${i}">${i % 2 ? 'prefix Needle' : 'Needle'}</button>`).join('')
+    + '<button id="hidden" hidden>Needle</button><button id="unmatched">Other</button></main>');
+  await page.evaluate(() => {
+    window.summaryReads = new Set();
+    for (const button of document.querySelectorAll('button')) {
+      const native = button.getClientRects;
+      // Visibility filtering uses bounding boxes; client rects belong to the
+      // summary's clickable-point calculation. Observe without changing geometry.
+      button.getClientRects = function () { window.summaryReads.add(this.id); return native.call(this); };
+    }
+  });
+  const scan = args => page.evaluate(async args => {
+    window.summaryReads.clear();
+    const result = await callContent('findElements', { tags: ['button'], pattern: 'Needle', flags: 'ig', ...args });
+    return { ...result, summaryReads: [...window.summaryReads] };
+  }, args);
+  const expected = Array.from({ length: 150 }, (_, i) => `b${i < 75 ? i * 2 : (i - 75) * 2 + 1}`);
+  const full = await scan({ all: true });
+  assert.equal(full.results.length, 150, 'all mode is not capped at 100');
+  assert.deepEqual(full.results.map(item => item.selector), expected.map(id => `#${id}`));
+  assert.deepEqual(full.summaryReads, expected);
   const strip = ({ _elementRef, ...rest }) => rest;
-  assert.equal(limited.matches, 60);
-  assert.equal(limited.resultTruncated, true);
-  assert.deepEqual(limited.results.map(strip), full.results.slice(0, 20).map(strip));
+  for (const [limit, count] of [[undefined, 20], [0, 1], [20, 20], [200, 100]]) {
+    const limited = await scan({ limit });
+    assert.equal(limited.matches, 150);
+    assert.equal(limited.searched, 154, 'all candidates count, including scope, hidden and unmatched nodes');
+    assert.equal(limited.limit, count);
+    assert.equal(limited.resultTruncated, true);
+    assert.deepEqual(limited.results.map(strip), full.results.slice(0, count).map(strip));
+    assert.deepEqual(limited.summaryReads, expected.slice(0, count), 'only returned nodes receive summary geometry');
+  }
+  const cappedAll = await scan({ all: true, limit: 120 });
+  assert.deepEqual(cappedAll.results.map(strip), full.results.slice(0, 120).map(strip));
+  assert.deepEqual(cappedAll.summaryReads, expected.slice(0, 120));
+  const hidden = await scan({ all: true, includeHidden: true });
+  assert.equal(hidden.results.length, 151);
+  assert.equal(hidden.results[75].selector, '#hidden', 'hidden whole matches retain tree order within their tier');
+  assert.equal(hidden.results[75].visible, false);
+  const empty = await scan({ pattern: 'Missing' });
+  assert.equal(empty.matches, 0);
+  assert.equal(empty.resultTruncated, false);
+  assert.deepEqual(empty.results, []);
+  assert.deepEqual(empty.summaryReads, []);
   await page.evaluate(() => { document.querySelector('button').setAttribute('aria-label', 'Changed'); });
-  assert.equal((await scan({ roles: ['button'], name: 'Changed' })).results[0].name, 'Changed', 'ARIA cache ends at the call boundary');
+  assert.equal((await scan({ pattern: '', roles: ['button'], name: 'Changed' })).results[0].name, 'Changed', 'ARIA cache ends at the call boundary');
 });

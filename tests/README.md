@@ -59,7 +59,8 @@ and `npm run check:package` in `services/dsh-plugin`. Its separate workflow chec
 adapter lifecycle and installs the packed artifact on Linux, macOS, and Windows with Node 24;
 Linux also covers Node 24.9.0. These checks use isolated CLI fixtures and require no model key.
 
-The service suite checks repeated SIGINT/SIGTERM handling and listener cleanup on every platform.
+The service suite checks repeated SIGINT/SIGTERM handling, EOF arriving before a forwarded signal,
+ordinary empty-input validation, and listener cleanup on every platform.
 On Linux and macOS it exercises the real CLI and npm's default shell during stdin input and
 streaming, signaling the process group or the CLI PID and verifying that delegated tasks and the service
 remain running. Direct-drive script interruption cancels only the current request; shared Chrome/Firefox
@@ -248,7 +249,11 @@ Keep expected results with the test.
 
 Shared facilities in `support/` build isolated extensions, serve compiled assets and manage local
 services. `/extension/*` serves compiled assets. The runner shares a temporary build through
-`QINGZHOU_TEST_EXTENSION_DIR`; tests own and clean up extra resources they create. When bypassing
+`QINGZHOU_TEST_EXTENSION_DIR`. Chromium Playwright global setup builds the capability variants in
+`support/capability-build-setup.mjs` sequentially, once per graph, before starting browser workers.
+Workers reuse those read-only builds through `QINGZHOU_TEST_CAPABILITY_BUILDS`; add new variant
+requests to that setup catalog. The coordinator removes the builds on exit. Tests own and clean up
+extra resources they create. When bypassing
 the runner for a Node test, load both its bootstrap and TypeScript loader:
 
 ```bash

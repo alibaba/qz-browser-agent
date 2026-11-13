@@ -252,7 +252,8 @@ function assertFindElementsFilterContract() {
   assert.match(contentScript, /const patternText = String\(pattern \|\| ""\);/, "content findElements should preserve literal whitespace in a pattern");
   assert.match(contentScript, /const maxResults = !all \? clampNumber\(limit, 1, 100, 20\)/, "content findElements should clamp the find_elements result limit");
   assert.match(contentScript, /eachElementWithinOpenShadow\(scope,\s*\(element\)\s*=>\s*\{\s*candidates\.push\(element\);\s*\}\)/, "content findElements should keep a broad DOM candidate set");
-  assert.match(contentScript, /matchElementSearch\(regex, regex \? getElementSearchParts\(el, summary\) : \[\]\)/, "content findElements should classify field-level matches");
+  // Field classification and summary-after-limit behavior are exercised against the
+  // actual content handler in test-content-locator.mjs, not a helper's parameter list.
   assert.match(contentScript, /orderElementMatches\(matches, \(?item\)? => item\.tier\)/, "content findElements should use the shared locator match order");
   assert.match(contentScript, /matchKind/, "content findElements should expose matchKind");
   assert.doesNotMatch(contentScript, /scoreElementCandidate|compareElementCandidates/, "content findElements should not rank by layout heuristics");

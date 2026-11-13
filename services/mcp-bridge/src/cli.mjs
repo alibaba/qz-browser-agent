@@ -22,10 +22,11 @@ export const HELP = renderHelp();
 async function stdinText({ signal } = {}) {
   signal?.throwIfAborted();
   const input = process.stdin;
-  if (input.readableEnded) return "";
   return new Promise((resolve, reject) => {
     const chunks = [];
+    let eof;
     const cleanup = () => {
+      clearImmediate(eof);
       input.removeListener("data", data);
       input.removeListener("end", end);
       input.removeListener("error", fail);
@@ -33,14 +34,21 @@ async function stdinText({ signal } = {}) {
       input.pause();
     };
     const data = chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    const end = () => { cleanup(); resolve(Buffer.concat(chunks).toString("utf8")); };
+    // npm may close this pipe before its forwarded signal callback runs. Keep
+    // cancellation live through that I/O turn instead of reporting empty input.
+    const end = () => { eof = setImmediate(() => {
+      cleanup();
+      if (signal?.aborted) reject(signal.reason);
+      else resolve(Buffer.concat(chunks).toString("utf8"));
+    }); };
     const fail = error => { cleanup(); reject(error); };
     const abort = () => fail(signal.reason);
     input.on("data", data);
     input.once("end", end);
     input.once("error", fail);
     signal?.addEventListener("abort", abort, { once: true });
-    input.resume();
+    if (input.readableEnded) end();
+    else input.resume();
   });
 }
 

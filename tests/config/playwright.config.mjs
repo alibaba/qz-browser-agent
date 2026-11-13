@@ -30,6 +30,7 @@ export default defineConfig({
   // One TS transform keeps Node and Playwright coverage offsets compatible.
   build: { external: ["**/src/**"] },
   testDir: testsRoot,
+  globalSetup: resolve(testsRoot, "support/capability-build-setup.mjs"),
   testIgnore: ignoredArtifacts,
   testMatch: ["browser/**/*.spec.mjs"],
   outputDir: resolve(testsRoot, "results/playwright"),
