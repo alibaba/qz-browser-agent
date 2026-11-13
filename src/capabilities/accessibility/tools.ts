@@ -668,30 +668,100 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 /** Chrome can retain disabled on options after their select is enabled. Only clear confirmed stale flags. */
-async function clearStaleOptionDisabled(send: CdpCommand, nodes: AxNode[]) {
+async function clearStaleOptionDisabled(send: CdpCommand, nodes: AxNode[], signal?: AbortSignal) {
   const candidates = nodes.filter(node => (node.role?.value === "option" || node.role?.value === "optgroup")
     && node.properties?.some(prop => prop.name === "disabled" && prop.value?.value === true));
-  if (!candidates.length) return;
+  if (!candidates.length || signal?.aborted) return;
+  const documentId = nodes.find(node => node.role?.value === "RootWebArea")?.backendDOMNodeId;
+  if (!documentId) return;
   const objectGroup = `qz-ax-option-disabled-${crypto.randomUUID()}`;
+  const pending = new Set(candidates.map(node => node.backendDOMNodeId).filter((id): id is number => Number.isInteger(id) && Number(id) > 0));
+  const enabled = new Set<number>();
+  const roots = new Set<number>();
+  let loaderId = "";
   try {
-    for (const node of candidates) {
-      if (!node.backendDOMNodeId) continue;
-      try {
-        const resolved = record(await send("DOM.resolveNode", { backendNodeId: node.backendDOMNodeId, objectGroup }));
-        const objectId = record(resolved.object).objectId;
-        if (typeof objectId !== "string" || !objectId) continue;
-        const result = record(await send("Runtime.callFunctionOn", {
-          objectId,
-          functionDeclaration: `function() { return this.matches(':disabled') || !!this.closest('select:disabled, optgroup:disabled, [aria-disabled="true"]'); }`,
-          returnByValue: true,
-        }));
-        if (!result.exceptionDetails && record(result.result).value === false) {
-          node.properties = node.properties?.filter(prop => prop.name !== "disabled");
-        }
-      } catch {
-        // Detached nodes and hosts without these CDP methods keep their AX state.
+    const resolved = record(await send("DOM.resolveNode", { backendNodeId: documentId, objectGroup }));
+    const documentObjectId = record(resolved.object).objectId;
+    if (typeof documentObjectId !== "string" || !documentObjectId) return;
+    let objectId = documentObjectId;
+    let seed = documentId;
+    while (pending.size) {
+      if (signal?.aborted) return;
+      const result = record(await send("Runtime.callFunctionOn", {
+        objectId, objectGroup, arguments: [{ objectId: documentObjectId }],
+        // Batch observations within each document/shadow root. Deep serialization supplies
+        // native backend IDs; neither selectors nor tree positions establish identity.
+        // Using the native predicate also covers custom controls and legend rules.
+        functionDeclaration: `function(doc) {
+          if (!this.isConnected || !doc.defaultView || doc.defaultView.document !== doc
+            || (this !== doc && this.ownerDocument !== doc)) return null;
+          const root = this.getRootNode();
+          const rows = [root];
+          const walker = doc.createTreeWalker(root, 1);
+          for (let element = walker.nextNode(); element; element = walker.nextNode()) {
+            let disabled = null;
+            try {
+              if (element.isConnected && element.ownerDocument === doc) {
+                disabled = element.matches(':disabled') || !!element.closest('select:disabled, optgroup:disabled, [aria-disabled="true"]');
+              }
+            } catch {}
+            rows.push([element, disabled]);
+          }
+          return rows;
+        }`,
+        serializationOptions: { serialization: "deep", maxDepth: 3, additionalParameters: { maxNodeDepth: 0 } },
+      }));
+      if (signal?.aborted || result.exceptionDetails) return;
+      const serialized = record(record(result.result).deepSerializedValue);
+      if (serialized.type !== "array" || !Array.isArray(serialized.value)) return;
+      const root = record(record(serialized.value[0]).value);
+      if (![9, 11].includes(Number(root.nodeType)) || !Number.isInteger(root.backendNodeId)
+        || typeof root.loaderId !== "string" || !root.loaderId) return;
+      if (!loaderId) {
+        if (root.backendNodeId !== documentId || root.nodeType !== 9) return;
+        loaderId = root.loaderId;
       }
+      if (root.loaderId !== loaderId) return;
+      if (!roots.has(Number(root.backendNodeId))) {
+        roots.add(Number(root.backendNodeId));
+        for (const row of serialized.value.slice(1)) {
+          const pair = record(row);
+          if (pair.type !== "array" || !Array.isArray(pair.value) || pair.value.length !== 2) continue;
+          const element = record(pair.value[0]), state = record(pair.value[1]), identity = record(element.value);
+          const id = Number(identity.backendNodeId);
+          if (element.type !== "node" || identity.nodeType !== 1 || !Number.isInteger(identity.backendNodeId)
+            || identity.loaderId !== loaderId || !pending.has(id)) continue;
+          pending.delete(id);
+          if (state.type === "boolean" && state.value === false) enabled.add(id);
+        }
+      } else break; // A moved/unreported node in an observed root stays unknown; never rescan per candidate.
+      // Closed and nested shadow roots are reached through an original AX node,
+      // not through page-visible shadowRoot access. Missing/detached nodes stay disabled.
+      pending.delete(seed);
+      objectId = "";
+      for (const id of pending) {
+        if (signal?.aborted) return;
+        pending.delete(id);
+        try {
+          const next = record(record(await send("DOM.resolveNode", { backendNodeId: id, objectGroup })).object).objectId;
+          if (typeof next === "string" && next) { pending.add(id); seed = id; objectId = next; break; }
+        } catch (error) {
+          if (isCdpFallbackForbiddenError(error)) return;
+        }
+      }
+      if (!objectId) break;
     }
+    if (signal?.aborted) return;
+    // Keep all corrections staged until the original frame document is still live.
+    const current = record(await send("Runtime.callFunctionOn", { objectId: documentObjectId,
+      functionDeclaration: "function() { return !!this.defaultView && this.defaultView.document === this; }", returnByValue: true }));
+    if (signal?.aborted || current.exceptionDetails || record(current.result).value !== true) return;
+    for (const node of candidates) if (enabled.has(Number(node.backendDOMNodeId))) {
+      node.properties = node.properties?.filter(prop => prop.name !== "disabled");
+    }
+  } catch {
+    // Unsupported serialization (including Firefox), revoked access and navigation
+    // never turn an unknown state into an enabled option.
   } finally {
     try { await send("Runtime.releaseObjectGroup", { objectGroup }); } catch { /* Best-effort cleanup. */ }
   }
@@ -699,7 +769,7 @@ async function clearStaleOptionDisabled(send: CdpCommand, nodes: AxNode[]) {
 
 /** Graft one direct child document under its iframe. A frame that echoes the main tree, or has no owner, is left out. */
 async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: number,
-  progress?: (nodes: AxNode[], pending: string[]) => void): Promise<AxNode[]> {
+  progress?: (nodes: AxNode[], pending: string[]) => void, signal?: AbortSignal): Promise<AxNode[]> {
   try {
     const frames = await directChildFrames(send);
     if (!frames.length) return nodes;
@@ -731,7 +801,7 @@ async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: n
         if (!backendNodeId) return null;
         const ownerNode = combined.find(node => !node.documentFrameId && Number(node.backendDOMNodeId || 0) === backendNodeId);
         if (!ownerNode?.nodeId) return null;
-        await clearStaleOptionDisabled(frame.send, fetched);
+        await clearStaleOptionDisabled(frame.send, fetched, signal);
         const present = new Set(fetched.map(node => node?.nodeId).filter(Boolean));
         const prefixed = fetched.filter(node => node?.nodeId).map(node => {
           const parentInFrame = Boolean(node.parentId && present.has(node.parentId));
@@ -888,7 +958,7 @@ registerTool({
       const fetchDepth = snapshotScope === "viewport" ? undefined : rootBackendNodeId ? 40 : axDepth;
       const result = await send("Accessibility.getFullAXTree", fetchDepth == null ? {} : { depth: fetchDepth });
       const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
-      await clearStaleOptionDisabled(send, nodes);
+      await clearStaleOptionDisabled(send, nodes, _signal);
       _signal?.throwIfAborted();
       const snapshotOptions = {
         tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,
@@ -903,7 +973,7 @@ registerTool({
         const pending = [pendingFrames.length ? `child frames: ${pendingFrames.join(", ")}` : "",
           snapshotScope === "viewport" ? "viewport filtering" : "snapshot finalization"].filter(Boolean).join("; ");
         context.reportPartial?.({ ...resultFor(buildAccessibilitySnapshot(available, snapshotOptions), "full"), documentId }, pending);
-      } : undefined);
+      } : undefined, _signal);
       const viewportHeight = rootFrameId ? 0 : Number(record(overview?.viewport).height);
       const viewportBands = snapshotScope === "viewport"
         ? await readViewportBands(send, withFrames, viewportHeight) : undefined;

@@ -93,13 +93,13 @@ async function mapStrings<T>(input: T, matches: (value: string) => boolean, map:
   const slots: { value: string; holder: object | null; key: string; target: Record<string, unknown> }[] = [];
   function capture(value: unknown, holder: object | null, key: string, target: Record<string, unknown>) {
     if (typeof value === "string" && matches(value)) slots.push({ value, holder, key, target });
-    if (!value || typeof value !== "object") {
-      Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
-      return;
-    }
-    const copy = (Array.isArray(value) ? new Array(value.length) : {}) as Record<string, unknown>;
-    Object.defineProperty(target, key, { value: copy, writable: true, enumerable: true, configurable: true });
-    for (const [field, item] of Object.entries(value)) capture(item, value, field, copy);
+    const nested = value !== null && typeof value === "object";
+    // Ordinary JSON keys need no per-field descriptor allocation. Preserve the
+    // special __proto__ data key, sparse lengths and pre-await snapshot isolation.
+    const copy = nested ? (Array.isArray(value) ? new Array(value.length) : {}) : value;
+    if (key === "__proto__") Object.defineProperty(target, key, { value: copy, writable: true, enumerable: true, configurable: true });
+    else target[key] = copy;
+    if (nested) for (const [field, item] of Object.entries(value)) capture(item, value, field, copy as Record<string, unknown>);
   }
   // Capture the complete structure before yielding, without copying strings.
   // Writes/hash migrations stay sequential. Read boundaries overlap at most

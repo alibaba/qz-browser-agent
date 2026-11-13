@@ -635,3 +635,43 @@ test("absolute selectors equal the per-element document query result on ambiguou
   assert.ok(result.some(([selector]) => selector === ""), "ambiguous and shadow elements keep an empty selector");
   assert.ok(result.some(([selector]) => selector.includes(":nth-of-type(12)")));
 });
+
+test('image filtering preserves rounded sizes, natural sizes, scan order and per-call freshness', async () => {
+  await page.setContent(`<main><img hidden alt="hidden"><img alt="small" style="width:9.4px;height:9.4px">
+    <img alt="round-up" style="width:9.6px;height:9.6px"><img alt="large" style="width:20px;height:20px"></main>
+    <div id="shadow-images"></div><iframe srcdoc="<img alt='frame'>"></iframe>`);
+  await page.evaluate(() => {
+    document.querySelector('#shadow-images').attachShadow({ mode: 'open' }).innerHTML = '<img alt="shadow">';
+    Object.defineProperties(document.querySelector('img'), { naturalWidth: { value: 100 }, naturalHeight: { value: 100 } });
+  });
+  const scan = args => page.evaluate(args => callContent('listImageElements', args), args);
+  const visible = await scan({ selector: 'main, main img', minWidth: 10, minHeight: 10, limit: 1 });
+  assert.equal(visible.scanned, 3);
+  assert.equal(visible.count, 1);
+  assert.equal(visible.images[0].alt, 'round-up');
+  assert.equal(visible.images[0].index, 2);
+  assert.equal(visible.images[0].rank, 0);
+  assert.equal(visible.images[0].rect.w, 10);
+  const all = await scan({ selector: 'main, main img', minWidth: 10, minHeight: 10, visibleOnly: false });
+  assert.equal(all.scanned, 4);
+  assert.deepEqual(all.images.map(item => [item.alt, item.index, item.rank]), [['hidden',0,0],['round-up',2,1],['large',3,2]]);
+  assert.equal(all.images[0].visible, false);
+  assert.equal(all.images[0].naturalWidth, 100);
+  assert.equal((await scan({ visibleOnly: false, minWidth: 0, minHeight: 0 })).count, 4,
+    'listing must not start traversing shadow or iframe documents');
+  await page.evaluate(() => { document.querySelector('img').hidden = false; document.querySelector('img').style.cssText='width:20px;height:20px'; });
+  assert.equal((await scan({ limit: 1 })).images[0].alt, 'hidden');
+});
+
+test('limited regex discovery retains exact totals and ranking without summarizing discarded candidates', async () => {
+  await page.setContent('<main>' + Array.from({ length: 60 }, (_, i) => `<button data-testid="needle-${i}">${i % 2 ? 'prefix Needle' : 'Needle'}</button>`).join('') + '</main>');
+  const scan = args => page.evaluate(args => callContent('findElements', args), args);
+  const full = await scan({ tags: ['button'], pattern: 'Needle', flags: 'ig', all: true });
+  const limited = await scan({ tags: ['button'], pattern: 'Needle', flags: 'ig', limit: 20 });
+  const strip = ({ _elementRef, ...rest }) => rest;
+  assert.equal(limited.matches, 60);
+  assert.equal(limited.resultTruncated, true);
+  assert.deepEqual(limited.results.map(strip), full.results.slice(0, 20).map(strip));
+  await page.evaluate(() => { document.querySelector('button').setAttribute('aria-label', 'Changed'); });
+  assert.equal((await scan({ roles: ['button'], name: 'Changed' })).results[0].name, 'Changed', 'ARIA cache ends at the call boundary');
+});

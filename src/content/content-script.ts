@@ -79,6 +79,13 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   // Content actions share one reply channel; asynchronous handlers must keep it open.
 
+  function runHandler(handler: (message: ContentRequest) => unknown, message: ContentRequest) {
+    // Only synchronous observations share ARIA caches. Actions can mutate the DOM
+    // (including through page event handlers) before observing it again.
+    return ["findElements", "resolveLocator", "pageOverview", "listImageElements", "readDom", "elementPresence"].includes(message.action)
+      ? withDomSemantics(() => handler(message)) : handler(message);
+  }
+
   const onMessage: ContentMessageListener = (raw: unknown, _sender, sendResponse) => {
     const msg = (raw && typeof raw === "object" ? raw : {}) as ContentRequest;
     const handler = handlers[msg.action];
@@ -92,7 +99,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return;
     }
 
-    Promise.resolve().then(() => handler(msg))
+    Promise.resolve().then(() => runHandler(handler, msg))
       .then((result) => sendResponse(normalizeResponse(result, msg.action)))
       .catch((err) => sendResponse(toolError(
         "ACTION_FAILED",
@@ -1044,6 +1051,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const minH = clampNumber(minHeight, 0, 100000, 1);
     const max = clampNumber(limit, 1, 1000, 100);
 
+    const selectorCache = createSelectorCache();
     let rawIndex = 0;
     for (const root of roots) {
       const candidates = root instanceof HTMLImageElement
@@ -1053,13 +1061,13 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         if (!img || seen.has(img)) continue;
         seen.add(img);
         const candidateIndex = rawIndex++;
-        const meta = imageMetadata(img);
-        const displayWidth = Number(meta.rect?.w || 0);
-        const displayHeight = Number(meta.rect?.h || 0);
-        const bitmapWidth = Number(meta.naturalWidth || 0);
-        const bitmapHeight = Number(meta.naturalHeight || 0);
-        if (visibleOnly && !meta.visible) continue;
-        if (Math.max(displayWidth, bitmapWidth) < minW || Math.max(displayHeight, bitmapHeight) < minH) continue;
+        const visible = isVisible(img);
+        if (visibleOnly && !visible) continue;
+        const rect = img.getBoundingClientRect();
+        // Keep the metadata's rounded display-size thresholds, including hidden bitmaps.
+        if (Math.max(Math.round(rect.width), img.naturalWidth) < minW
+          || Math.max(Math.round(rect.height), img.naturalHeight) < minH) continue;
+        const meta = imageMetadata(img, {}, { rect, visible, selectorCache });
         images.push({
           index: candidateIndex,
           rank: images.length,
@@ -1100,11 +1108,12 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       || Math.max(0, img.naturalWidth) * Math.max(0, img.naturalHeight);
   }
 
-  function imageMetadata(img: HTMLImageElement, meta: object = {}) {
-    const rect = img.getBoundingClientRect();
+  function imageMetadata(img: HTMLImageElement, meta: object = {}, {
+    rect = img.getBoundingClientRect(), visible = isVisible(img), selectorCache = undefined as SelectorCache | undefined,
+  } = {}) {
     return {
       ...meta,
-      selector: getAbsoluteSelector(img),
+      selector: getAbsoluteSelector(img, selectorCache),
       src: boundedImageSource(img),
       alt: img.getAttribute("alt") || "",
       title: img.getAttribute("title") || "",
@@ -1118,7 +1127,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         w: Math.round(rect.width),
         h: Math.round(rect.height),
       },
-      visible: isVisible(img),
+      visible,
     };
   }
 
@@ -1794,23 +1803,25 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const matches = [];
       const selectorCache = createSelectorCache();
       for (const el of queried) {
-        const summary = getElementSummary(el, { selectorCache });
-        const matchInfo = matchElementSearch(regex, regex ? getElementSearchParts(el, summary) : []);
+        const matchInfo = matchElementSearch(regex, regex ? getElementSearchParts(el) : []);
         if (regex && !matchInfo.matched) continue;
-        matches.push({ el, summary, ...matchInfo });
+        matches.push({ el, ...matchInfo });
       }
 
       const ordered = orderElementMatches(matches, item => item.tier).slice(0, maxResults);
       const locations = getDomLocations(ordered.map(item => item.el), selector);
       const results = ordered
-        .map(({ el, summary, match, matchKind }) => ({
-          ...summary,
-          _elementRef: rememberElement(el),
-          ...locations.get(el),
-          match,
-          matchKind,
-          obscuredAtCenter: summary.visible ? isObscuredAtCenter(el) : false,
-        }));
+        .map(({ el, match, matchKind }) => {
+          const summary = getElementSummary(el, { selectorCache });
+          return {
+            ...summary,
+            _elementRef: rememberElement(el),
+            ...locations.get(el),
+            match,
+            matchKind,
+            obscuredAtCenter: summary.visible ? isObscuredAtCenter(el) : false,
+          };
+        });
       if (all) return { results };
 
       return {
@@ -2823,8 +2834,16 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     };
   }
 
-  function getElementSearchParts(el: Element, summary = getElementSummary(el)) {
+  function getElementSearchParts(el: Element) {
     const attrs = getElementAttrs(el);
+    // Search exactly the same bounded semantic fields as the public summary,
+    // without selectors, hit testing or presentation-only geometry for discarded matches.
+    const summary = {
+      name: getAccessibleName(el),
+      text: el.textContent?.trim().replace(/\s+/g, " ").slice(0, 160) || "",
+      placeholder: el.getAttribute("placeholder") || "",
+      value: getElementValue(el), href: getHref(el), role: getElementRole(el), tag: el.tagName.toLowerCase(),
+    };
     // Equal-tier matches report the first matching kind in this list.
     return [
       { kind: "name", value: summary.name },
@@ -3328,7 +3347,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const handler = handlers[payload?.action];
     if (!handler) return toolError("UNKNOWN_ACTION", `Unknown content action: ${payload?.action}`, { action: payload?.action });
     const scope = payload.action === "resolveLocator" && node === document ? document : element;
-    const result = await handler({ ...payload, selector: scope } as unknown as ContentRequest);
+    const result = await runHandler(handler, { ...payload, selector: scope } as unknown as ContentRequest);
     const encoded = JSON.stringify(result, (_key, value) => value instanceof Node ? "" : value);
     return encoded === undefined ? {} : JSON.parse(encoded);
   };

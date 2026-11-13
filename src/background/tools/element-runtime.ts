@@ -34,6 +34,22 @@ import { getLanguage } from "../../shared/i18n/index.js";
 import { t } from "./messages.js";
 
 const OBJECT_GROUP = "qz-uid";
+
+/** Validate the complete batch before registering anything. Unsupported shapes,
+ * including shared-value references, use the same retained objects below. */
+function deepNodeIdentities(input: unknown, length: number, loaderId: string): number[] | null {
+  const serialized = record(input);
+  if (serialized.type !== "array" || !Array.isArray(serialized.value) || serialized.value.length !== length) return null;
+  const ids: number[] = [];
+  for (const item of serialized.value) {
+    const entry = record(item), node = record(entry.value);
+    if (entry.type === "null") { ids.push(0); continue; }
+    if (entry.type !== "node" || node.nodeType !== 1 || !Number.isInteger(node.backendNodeId)
+      || Number(node.backendNodeId) <= 0 || node.loaderId !== loaderId) return null;
+    ids.push(Number(node.backendNodeId));
+  }
+  return ids;
+}
 // One table per tab while its debugger connection is alive. A same-process frame
 // is keyed by its CDP frame id. A cross-process frame is keyed by session id plus
 // frame id. Detach of a child session drops that session's keys and unique ids.
@@ -360,6 +376,28 @@ async function bindContentElementRefs(tabId: number, tokens: string[], context: 
           const object = record(remote.result);
           if (object.subtype !== "array" || !object.objectId) {
             if (mode === "required") throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Element binding returned an invalid node list.", pageErrorDetails(context));
+            continue;
+          }
+          // Serialize the already-consumed node array, never replay the one-shot
+          // Content lookup. Chrome returns original backend identities in one call.
+          // Older CDP hosts (including Firefox's adapter) keep the object fallback.
+          let serialized: unknown;
+          try {
+            const response = record(await nodeSend("Runtime.callFunctionOn", {
+              objectId: object.objectId, objectGroup,
+              functionDeclaration: "function() { return this; }",
+              serializationOptions: { serialization: "deep", maxDepth: 1, additionalParameters: { maxNodeDepth: 0 } },
+            }));
+            if (!response.exceptionDetails) serialized = record(response.result).deepSerializedValue;
+          } catch (error) {
+            if (isCdpFallbackForbiddenError(error)) throw error;
+          }
+          context.signal?.throwIfAborted();
+          const identities = deepNodeIdentities(serialized, chunk.length, loaderId);
+          if (identities) {
+            identities.forEach((backendNodeId, index) => {
+              if (backendNodeId) bound.set(chunk[index], { backendNodeId, loaderId, ...(child ? { frameId } : {}) });
+            });
             continue;
           }
           const properties = record(await nodeSend("Runtime.getProperties", { objectId: object.objectId, ownProperties: true }));

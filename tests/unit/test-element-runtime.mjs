@@ -15,6 +15,7 @@ let navigateDuringBind = false;
 let childDocumentAvailable = true;
 let findBindingError = null;
 let bindingTokens = [];
+let serializeBinding = null;
 const scriptCalls = [];
 globalThis.chrome = {
   runtime: { id: "extension-id" },
@@ -119,6 +120,7 @@ const runtime = createElementRuntime({
         return { result: { value: { extensionId: "extension-id", bridge, elementRefs: true } } };
       }
       if (method === "Runtime.callFunctionOn") {
+        if (params.serializationOptions && serializeBinding) return serializeBinding(params);
         if (params.arguments?.[0]?.value?.action === 'resolveElementRefs') {
           if (findBindingError) throw findBindingError;
           bindingTokens = params.arguments[0].value.elementRefs;
@@ -269,10 +271,47 @@ assert.deepEqual(bound.ids, [0, 44], "a selector that matches two nodes must not
   const result = await runtime.addElementTargetsToFindResult({ results: Array.from({ length: 100 }, (_, index) => ({ selector: `.item-${index}`, _elementRef: `batch-${index}` })) }, 5, context);
   assert.equal(new Set(result.results.map(item => item.target)).size, 100);
   const issued = commands.slice(before);
-  assert.equal(issued.filter(item => item.method === 'Runtime.callFunctionOn').length, 1);
+  assert.equal(issued.filter(item => item.method === 'Runtime.callFunctionOn').length, 2);
   assert.equal(issued.filter(item => item.method === 'Runtime.getProperties').length, 1);
   assert.equal(issued.filter(item => item.method === 'DOM.describeNode').length, 100);
   assert.equal(issued.filter(item => item.method === 'DOM.querySelectorAll').length, 0);
+}
+
+// Deep serialization binds the same consumed array in O(chunks) protocol calls.
+{
+  const input = { results: Array.from({ length: 101 }, (_, i) => ({ _elementRef: `batch-${i}` })) };
+  const deep = () => ({ result: { deepSerializedValue: { type: 'array', value: bindingTokens.map(token => ({
+    type: 'node', value: { nodeType: 1, backendNodeId: 1000 + Number(token.slice(6)), loaderId: 'loader-live' },
+  })) } } });
+  try {
+    serializeBinding = deep;
+    const before = commands.length;
+    const found = await runtime.addElementTargetsToFindResult(input, 5, context);
+    assert.equal(new Set(found.results.map(item => item.target)).size, 101);
+    const issued = commands.slice(before);
+    assert.equal(issued.filter(item => item.params.arguments?.[0]?.value?.action === 'resolveElementRefs').length, 2);
+    assert.equal(issued.filter(item => item.method === 'DOM.describeNode' || item.method === 'Runtime.getProperties').length, 0);
+    assert.equal((await runtime.resolveElementReference(5, { target: found.results[100].target }, context)).ref.backendNodeId, 1100);
+    for (const invalid of [undefined, { type: 'array', value: [] }, { type: 'array', value: [
+      { type: 'node', value: { nodeType: 1, backendNodeId: 1000, loaderId: 'another-document' } },
+    ] }]) {
+      serializeBinding = () => ({ result: { deepSerializedValue: invalid } });
+      const before = commands.length;
+      const fallback = await runtime.addElementTargetsToFindResult({ results: input.results.slice(0, 1) }, 5, context);
+      assert.ok(fallback.results[0].target);
+      assert.equal(commands.slice(before).filter(item => item.params.arguments?.[0]?.value?.action === 'resolveElementRefs').length, 1,
+        'fallback must not consume tokens again');
+      assert.equal(commands.slice(before).filter(item => item.method === 'DOM.describeNode').length, 1);
+    }
+    serializeBinding = () => ({ result: { deepSerializedValue: { type: 'array', value: [{ type: 'null' }] } } });
+    const removed = await runtime.addElementTargetsToFindResult({ results: [{ _elementRef: 'removed' }] }, 5, context);
+    assert.equal(removed.results[0].target, undefined);
+    const controller = new AbortController();
+    serializeBinding = () => { controller.abort(new Error('cancel during serialization')); return deep(); };
+    const beforeAbort = commands.length;
+    await assert.rejects(runtime.addElementTargetsToFindResult(input, 5, { ...context, signal: controller.signal }), /cancel during serialization/);
+    assert.ok(commands.slice(beforeAbort).some(item => item.method === 'Runtime.releaseObjectGroup'));
+  } finally { serializeBinding = null; }
 }
 
 const beforeChildBind = commands.length;
