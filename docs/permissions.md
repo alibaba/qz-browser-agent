@@ -47,7 +47,7 @@ your question; keep credentials and personal task content out of public issues.
 
 ## Browser access
 
-This guide explains the 19 permissions and host permission in [manifest.json](../src/manifest.json).
+This guide explains the 20 permissions and host permission in [manifest.json](../src/manifest.json).
 `history`, `bookmarks`, `desktopCapture`, and `downloads.open` are optional: Chrome requests them
 when the user activates the feature. All other permissions, including `geolocation`, are declared
 at installation. Chrome, operating system, and website restrictions still apply.
@@ -60,6 +60,7 @@ at installation. Chrome, operating system, and website restrictions still apply.
 | `storage` | Store model settings, Sessions, Skills, and versioned repository records | Core state |
 | `unlimitedStorage` | Persist conversations, documents, Data tables, and resources locally; disk space can still run out | Core state |
 | `tabs` | Read URLs, titles, and status of task-owned tabs; `background/session/tabs.ts` | Page operations |
+| `webNavigation` | Confirm whether a page action committed or failed a navigation, including history and fragment changes, and assign a tab that a task page opens during a tool action to that task; events from other tabs are ignored; `background/tools/page-navigation.ts`, `background/session/tabs.ts` | Page operations |
 | `tabGroups` | Group task tabs; `shared/tab-groups.ts` | Task organization |
 | `scripting` | Inject Content features and self-contained functions into task pages; `background/tools/runtime.ts` | Page operations |
 | `debugger` | Use CDP to operate pages, capture screenshots, inspect requests, and print PDFs; `background/tools/cdp-runtime.ts` and tools | Page operations |
