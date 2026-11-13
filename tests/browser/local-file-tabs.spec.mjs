@@ -76,8 +76,8 @@ test("task-owned local HTML supports page tools, scripts and tab cleanup", async
     expect(Object.keys(opened).sort()).toEqual(["active", "tabRef", "title", "url"]);
     const listed = succeeded(await call("list_tabs", { scope: "owned" }));
     const localTab = listed.tabs.find(tab => tab.tabRef === tabRef);
-    expect(localTab).toMatchObject({ tabRef, url: fileUrl, active: false });
-    expect(Object.keys(localTab).sort()).toEqual(["active", "tabRef", "title", "url"]);
+    expect(localTab).toMatchObject({ tabRef, url: fileUrl, active: false, ownership: "owned" });
+    expect(Object.keys(localTab).sort()).toEqual(["active", "ownership", "tabRef", "title", "url"]);
     expect(succeeded(await call("read_article", { tabRef, limit: 2000 })).text).toContain("Local hiring report");
     expect(JSON.stringify(succeeded(await call("read_dom", { tabRef })))).toContain("Show remote roles");
     expect(JSON.stringify(succeeded(await call("inspect_element", { tabRef, target: "css:#filter" })))).toContain("Show remote roles");

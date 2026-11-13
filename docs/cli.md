@@ -446,6 +446,8 @@ Further execution returns `DRIVE_SESSION_ENDED`.
 `qz script --session ID [FILE|-] [--args JSON]` runs JavaScript outside the page. It reads a local
 file or stdin; `--args` supplies the script's `args` value. Use the `qz` SDK: `qz.openTab(options)`
 returns a Tab, `qz.tab(tabRef)` binds a Page, and `page.locator(targetOrQuery)` creates an element query.
+`qz.listTabs()` lists the session's tabs and unclaimed tabs, such as the page the user is viewing, with
+each row's `ownership`. The first action, navigation, or `page.evaluate` on an unclaimed tab claims it.
 Locator actions resolve a unique match and wait for it to become usable within one call budget.
 Awaited SDK calls return business values directly and throw on failure.
 For additional capabilities and active Skill tools, discover compact signatures with `qz.listTools()`

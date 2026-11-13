@@ -137,8 +137,8 @@ test("mobile tabs use mobile headers from the first request, persist across runs
     expect(await pageMode(tabId)).toBe("mobile");
     const listed = await call("list_tabs", { scope: "owned" });
     const listedMobile = listed.tabs.find(tab => tab.tabRef === tabId);
-    expect(Object.keys(listedMobile).sort()).toEqual(["active", "tabRef", "title", "url"]);
-    expect(listedMobile).toMatchObject({ tabRef: tabId, url: `${url}/mobile`, active: false });
+    expect(Object.keys(listedMobile).sort()).toEqual(["active", "ownership", "tabRef", "title", "url"]);
+    expect(listedMobile).toMatchObject({ tabRef: tabId, url: `${url}/mobile`, active: false, ownership: "owned" });
 
     const inputEvents = () => worker.evaluate(async tabId => (await chrome.scripting.executeScript({target:{tabId}, world:"MAIN", func:()=>window.inputEvents}))[0].result, tabId);
     expect(await call("act_on_element", {tabRef:tabId,target:"css:#target", action:"click"})).toEqual({});

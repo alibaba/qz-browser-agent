@@ -574,7 +574,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   }
   const sessions = getToolRuntimeDependencies(context).sessions;
   if (currentSessionId && typeof sessions?.resolveTargetTab === "function") {
-    const resolved = await sessions.resolveTargetTab({
+    const target = {
       sessionId: currentSessionId,
       runId: context.runId,
       signal: context.signal,
@@ -582,7 +582,11 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       source: "element_uid_reference",
       checkOnly: context.preserveWorkingTab === true || context.deferToolCommit === true,
       readOnly: observationOnly,
-    });
+    };
+    let resolved = await sessions.resolveTargetTab(target);
+    if (resolved?.ok && resolved.claimRequired && !resolved.readOnlyAccess && context.preserveWorkingTab !== true) {
+      resolved = await sessions.resolveTargetTab({ ...target, checkOnly: false });
+    }
     if (!resolved?.ok) {
       throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {
         toolName: "element",

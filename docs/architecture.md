@@ -264,6 +264,10 @@ reads and writes. Use the [Data](../src/sdk/shared/data.ts) and
 Active tabs describe user visibility; recent-page state supports presentation, never default targeting.
 Parent and child Sessions have separate runs and tabs; creating,
 claiming, and updating a tab requires the current run's authority.
+`list_tabs` lists the Session's tabs and unclaimed tabs by default and marks each row's `ownership`;
+listing never claims. The first mutating or `page:"owned"` use of an unclaimed tab claims it in
+preflight, including staged calls whose other page state publishes at ordered commit. Tabs owned by
+another Session stay read-only and appear only with `scope:"all"`.
 
 [CDP runtime](../src/background/tools/cdp-runtime.ts) manages debugger connections and operation
 leases. CLI and Agent tools keep connections while executing, including outer-script waits and

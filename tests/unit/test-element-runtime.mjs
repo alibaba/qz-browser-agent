@@ -515,8 +515,11 @@ assert.equal(targetResolutions.at(-1).runId, context.runId);
 assert.equal(targetResolutions.at(-1).signal, uidSignal);
 assert.equal(targetResolutions.at(-1).checkOnly, true, 'parallel uid calls must not select a working tab during execution');
 targetResolution = { ok: true, claimRequired: true };
+const beforeClaim = targetResolutions.length;
 await assert.rejects(runtime.resolveElementReference(undefined, { target: 'uid:t5.00000c.1' }, { ...context, deferToolCommit: true }),
-  { code: 'SESSION_TAB_UNOWNED' }, 'a speculative uid call cannot operate on a merely claimable tab');
+  { code: 'SESSION_TAB_UNOWNED' }, 'a uid call cannot operate on a tab its claim did not secure');
+assert.deepEqual(targetResolutions.slice(beforeClaim).map(input => input.checkOnly), [true, false],
+  'a staged uid call requests claim-on-use for an unclaimed tab');
 targetResolution = { ok: true };
 securityFailure = true;
 await assert.rejects(runtime.resolveElementReference(undefined, { target: 'uid:t5.00000c.1' }, context),

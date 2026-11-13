@@ -6,6 +6,14 @@ export interface PageObservation {
   active: boolean;
 }
 
+/** Ownership seen by the listing Session; an unclaimed tab is claimed by its first mutating use. */
+export type TabOwnership = "owned" | "unclaimed" | "foreign";
+
+/** list_tabs row. Listing is discovery only and never claims a tab. */
+export interface TabListing extends PageObservation {
+  ownership: TabOwnership;
+}
+
 const createdPages = new WeakMap<object, number>();
 /** Native creation receipts keep browser identity out of the serialized observation. */
 export function bindCreatedTabResult<T extends object>(result: T, id: number): T {

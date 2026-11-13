@@ -132,7 +132,7 @@ async function round(browser, number) {
   for (const other of browsers.filter(item => item !== browser)) {
     assert.ok(!content.includes(`QZ_MULTI_${other.name.toUpperCase()}_`), "cross-profile transcript contamination");
   }
-  const tabs = await mcp(browser, "qingzhou_execute_tool", { sessionId: id, name: "list_tabs", args: {}, wait: true });
+  const tabs = await mcp(browser, "qingzhou_execute_tool", { sessionId: id, name: "list_tabs", args: { scope: "owned" }, wait: true });
   const list = Array.isArray(tabs.result) ? tabs.result : tabs.result?.tabs || [];
   for (const tab of list.filter(item => item.url?.startsWith(fixture.endpoint))) {
     await mcp(browser, "qingzhou_execute_tool", { sessionId: id, name: "close_tab", args: { tabRef: tab.tabRef }, wait: true });

@@ -8,8 +8,8 @@ const messages = defineMessages("accessibility-tools", {
     en: "Get a semantic snapshot of the page specified by tabRef. Returns compact snapshot text similar to Chrome DevTools MCP, one node per line, with fields such as target, role, name, and url. Omit target for the whole page, or pass a uid:/css: target to expand only that element's subtree. scope is only viewport or full. When target is omitted, the default is scope:\"viewport\": vertical viewport detail, structural ancestors and bounded off-screen structure, keeping horizontally overflowing nodes and nodes with unknown geometry; AX nodes omitted above or below the viewport and content folded inside a block appear as ↑/↓ markers with counts and a read path (scope:\"full\", or a tree target passed as target), and counts cover loaded content; items=N on a list line counts its direct list items. limit allocates the node budget breadth-first to cover more sibling branches first, while output stays in tree order; a trailing (truncated, N more) means N more lines under that node were not expanded. Also returns larger visible canvases(name/rect/inViewport/bitmapSize) under that root and ignores small canvases; rect is only a CSS position hint, and visual action coordinates must come from the original image returned by screenshot({tabRef,actionable:true}). Once you understand the page, pass tabRef together with a line's unchanged target (such as uid:...) to act_on_element (click, fill, etc.), inspect_element, screenshot, or read_image; use find_elements/inspect_element when precise CSS targeting is needed. {targetGrammar}.",
   },
   getAxTreeTabId: {
-    "zh-CN": "当前任务拥有的目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",
-    en: "Target tabRef owned by the current task: an alias or the tabRef returned by open_tab/list_tabs.",
+    "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",
+    en: "Target tabRef: an alias or the tabRef returned by open_tab/list_tabs.",
   },
   getAxTreeRoot: {
     "zh-CN": "省略 target 查看整页；传 uid:... 或 css:... 只展开某个元素子树。scope 只能是 viewport 或 full。",

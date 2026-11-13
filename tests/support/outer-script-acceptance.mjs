@@ -307,7 +307,7 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
         const child=await tools.wait_for_popup({tabRef:'main',tabAlias:'child',timeout:10,trigger:{name:'act_on_element',args:{tabRef:'main',target:'css:#popup',action:'click'}}});
         await tools.wait_for_url({tabRef:child.tabRef,urlPattern:'/popup$',timeout:10});
         await tools.wait_for_load({tabRef:child.tabRef,timeout:10});
-        return {child,document:await tools.evaluate({tabRef:child.tabRef,code:()=>({path:location.pathname,title:document.title})}),owned:await tools.list_tabs({})};
+        return {child,document:await tools.evaluate({tabRef:child.tabRef,code:()=>({path:location.pathname,title:document.title})}),owned:await tools.list_tabs({scope:'owned'})};
       }`);
       expect(Object.keys(popup.child).sort()).toEqual(['active', 'tabRef', 'title', 'url']);
       expect(popup.child.tabRef).toBe('child'); expect(popup.document.path).toBe('/popup');
@@ -316,7 +316,7 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
         const child=await tools.wait_for_popup({tabRef:'main',tabAlias:'evaluated-child',timeout:10,trigger:{name:'evaluate',args:{tabRef:'main',code:"url=>{window.open(url,'_blank');return true;}",args:input.url}}});
         await tools.wait_for_url({tabRef:child.tabRef,urlPattern:'/popup-evaluate$',timeout:10});
         await tools.wait_for_load({tabRef:child.tabRef,timeout:10});
-        return {child,path:await tools.evaluate({tabRef:child.tabRef,code:()=>location.pathname}),owned:await tools.list_tabs({})};
+        return {child,path:await tools.evaluate({tabRef:child.tabRef,code:()=>location.pathname}),owned:await tools.list_tabs({scope:'owned'})};
       }`, {url:`${fixture.origin}/popup-evaluate`});
       expect(evaluatedPopup.child.tabRef).toBe('evaluated-child');
       expect(evaluatedPopup.path).toBe('/popup-evaluate');

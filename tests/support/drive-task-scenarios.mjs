@@ -12,7 +12,7 @@ export const driveTaskScenarios = [
     const failed = await run(`return await tools.act_on_element({tabRef:'missing',target:'css:#edit',action:'fill',value:'wrong'});`, {}, 1);
     expect(failed.result.code).toBe('BATCH_TAB_REFERENCE_ERROR');
     expect(await page.locator('#edit').inputValue()).toBe('0');
-    const recovered = await run(`const {tabs}=await tools.list_tabs();
+    const recovered = await run(`const {tabs}=await tools.list_tabs({scope:'owned'});
       await tools.act_on_element({tabRef:tabs[0].tabRef,target:'css:#edit',action:'fill',value:'recovered'});
       return tabs.map(tab=>tab.tabRef);`);
     expect(recovered.result).toEqual(['main']);
@@ -62,7 +62,7 @@ export const driveTaskScenarios = [
       await tools.wait_for_popup({tabRef:'child',tabAlias:'grandchild',trigger:{name:'act_on_element',args:{tabRef:'child',target:'css:#popup',action:'click'}}});
       await tools.wait_for_element({tabRef:'grandchild',target:'css:#edit'});
       await tools.act_on_element({tabRef:'grandchild',target:'css:#edit',action:'fill',value:'third generation'});
-      return (await tools.list_tabs()).tabs.map(tab=>tab.tabRef).sort();`);
+      return (await tools.list_tabs({scope:'owned'})).tabs.map(tab=>tab.tabRef).sort();`);
     expect(result.result).toEqual(['child', 'grandchild', 'main']);
     expect(await Promise.all(context.pages().filter(p => new URL(p.url()).pathname === '/popup').map(p => p.locator('#edit').inputValue()))).toEqual(['0', 'third generation']);
   }],
@@ -99,9 +99,10 @@ export const driveTaskScenarios = [
     const user = await context.newPage();
     try {
       await user.goto(url + '?user');
-      const listed = await run(`return (await tools.list_tabs({scope:'all'})).tabs.find(tab=>tab.url===input.url);`, { url: url + '?user' });
+      const listed = await run(`return (await tools.list_tabs()).tabs.find(tab=>tab.url===input.url);`, { url: url + '?user' });
+      expect(listed.result.ownership).toBe('unclaimed');
       const read = await run(`const url=(await tools.read_article({tabRef:input.ref,limit:500})).url;
-        return {url,owned:(await tools.list_tabs()).tabs.map(tab=>tab.tabRef)};`, { ref: listed.result.tabRef });
+        return {url,owned:(await tools.list_tabs({scope:'owned'})).tabs.map(tab=>tab.tabRef)};`, { ref: listed.result.tabRef });
       expect(read.result).toEqual({ url: url + '?user', owned: ['main'] });
       await cli(['session', 'cancel', sid, '--json']);
       expect(user.isClosed()).toBe(false);

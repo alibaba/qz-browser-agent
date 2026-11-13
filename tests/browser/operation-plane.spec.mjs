@@ -68,8 +68,8 @@ test('direct-drive tools discover capabilities and act on ready element targets'
     const clicked = await call('act_on_element', { target: 'css:#popup', action: 'click' });
     expect(clicked.popups, JSON.stringify(clicked)).toHaveLength(1);
     expect(Object.keys(clicked.popups[0]).sort()).toEqual(['active', 'tabRef', 'title', 'url']);
-    const tabs = await call('list_tabs');
-    expect(tabs.tabs.map(tab => tab.tabRef)).toContain(clicked.popups[0].tabRef);
+    const tabs = await call('list_tabs', { scope: 'owned' });
+    expect(tabs.tabs.find(tab => tab.tabRef === clicked.popups[0].tabRef)?.ownership).toBe('owned');
 
     const userPage = await environment.context.newPage();
     await userPage.goto(`${fixture.url}user`);

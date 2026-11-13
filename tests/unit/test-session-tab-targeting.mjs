@@ -392,22 +392,33 @@ assert.equal(tabOwners.has(3), false);
 resetCalls();
 const listedBeforeClaim = await tools.executeTool("list_tabs", {}, null, sessionA());
 assert.deepEqual(listedBeforeClaim, {
-  tabs: [{ tabRef: 1, url: "https://owned.example/a", title: "Owned", active: false }],
-  count: 1, foreign: 2,
+  tabs: [
+    { tabRef: 1, url: "https://owned.example/a", title: "Owned", active: false, ownership: "owned" },
+    { tabRef: 3, url: "https://unowned.example/a", title: "Unowned", active: false, ownership: "unclaimed" },
+  ],
+  count: 2, foreign: 1,
 });
-assert.deepEqual(state.queryCalls, [{}], "owned scope inspects browser tabs without exposing foreign rows");
+assert.deepEqual(state.queryCalls, [{}], "the default scope inspects browser tabs without exposing foreign rows");
 assert.deepEqual(
   state.resolveCalls.map(item => [item.tabId, item.checkOnly, item.readOnly]),
   [[1, true, false], [2, true, false], [3, true, false]],
   "list_tabs checks ownership without claiming tabs",
 );
 assert.deepEqual(state.workingTabUpdates, [], "list_tabs must not change session tab authority");
+assert.equal(tabOwners.has(3), false, "listing an unclaimed tab leaves it unclaimed");
+
+resetCalls();
+assert.deepEqual(await tools.executeTool("list_tabs", { scope: "owned" }, null, sessionA()), {
+  tabs: [{ tabRef: 1, url: "https://owned.example/a", title: "Owned", active: false, ownership: "owned" }],
+  count: 1, foreign: 1,
+});
 
 resetCalls();
 const allTabs = await tools.executeTool("list_tabs", { scope: "all" }, null, sessionA());
 assert.deepEqual(allTabs, {
-  tabs: state.tabs.map(({ id, url, title, active }) => ({ tabRef: id, url, title, active })),
-  count: 3, foreign: 2,
+  tabs: state.tabs.map(({ id, url, title, active }) => ({ tabRef: id, url, title, active,
+    ownership: ({ 1: "owned", 2: "foreign", 3: "unclaimed" })[id] })),
+  count: 3, foreign: 1,
 });
 assert.equal(allTabs.tabs[1].active, true, "active describes the user's visible page, including a foreign tab");
 assert.deepEqual(state.workingTabUpdates, [], "all scope must not claim or select a tab");

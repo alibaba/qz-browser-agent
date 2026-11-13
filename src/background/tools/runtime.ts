@@ -285,10 +285,17 @@ async function settleToolState(result: unknown, context: ToolContext, signal?: A
 }
 function withExecutionAuthority(context: ToolContext, authority: ToolRuntimeDependencies, reservation?: object, tabId?: number) {
   if (!authority.sessions?.resolveTargetTab) return withToolRuntimeContext(context, authority);
+  const resolve = authority.sessions.resolveTargetTab.bind(authority.sessions);
   return withToolRuntimeContext(context, { ...authority, sessions: { ...authority.sessions,
-    resolveTargetTab: input => authority.sessions!.resolveTargetTab!({ ...input,
-      ...(context.deferToolCommit ? { checkOnly: true } : {}),
-      ...(reservation && Number(input.tabId) === tabId ? { createdTabReservation: reservation } : {}) }),
+    resolveTargetTab: async input => {
+      const target = { ...input, ...(reservation && Number(input.tabId) === tabId ? { createdTabReservation: reservation } : {}) };
+      if (!context.deferToolCommit) return resolve(target);
+      const checked = await resolve({ ...target, checkOnly: true });
+      // Staged calls publish at commit. Claim-on-use of an unclaimed target is the only preflight write,
+      // matching unstaged calls; an owned target's page state still waits for the ordered commit.
+      return input.checkOnly === false && checked?.ok && checked.claimRequired && !checked.readOnlyAccess
+        ? resolve({ ...target, checkOnly: false }) : checked;
+    },
   } });
 }
 

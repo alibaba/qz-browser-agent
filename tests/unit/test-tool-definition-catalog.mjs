@@ -327,8 +327,8 @@ function assertPageRoleTerminologyContract() {
   const pluginRuntime = getSkillToolParameters({ script: "scripts/example.js", runtime: "page" }).properties.tabRef.description;
   assert.match(
     tabTools,
-    /返回 tabRef、url、title 和 active；active=true 表示用户正在看的标签页/,
-    "list_tabs should describe public page identity and user visibility",
+    /返回 tabRef、url、title、active 和 ownership。[\s\S]*active=true 表示用户正在看的标签页。ownership 为 owned（当前任务）、unclaimed（未占用）或 foreign（其他任务）/,
+    "list_tabs should describe public page identity, user visibility, and ownership",
   );
   for (const name of ["navigate", "close_tab", "set_page_mode"]) {
     assert.ok(resolveToolDefinition(name).parameters.required.includes("tabRef"), `${name} requires an explicit page reference`);

@@ -5,7 +5,7 @@ export { elementLocatorSchema, locatorReferences, validateElementLocator } from 
 export type { ElementLocator } from "../../shared/contracts/element-locator.js";
 export { pageReferenceForResult } from "../../shared/tab-reference.js";
 export { bindCreatedTabResult, createdTabResultId, copyCreatedTabResult } from "../../shared/contracts/page-observation.js";
-export type { PageObservation } from "../../shared/contracts/page-observation.js";
+export type { PageObservation, TabListing, TabOwnership } from "../../shared/contracts/page-observation.js";
 export { isElementReply, isPageOverview } from "../../shared/contracts/page-content.js";
 export type { ElementReply, PageAction, PageCanvas, PageOverview } from "../../shared/contracts/page-content.js";
 export { wrapRunScriptSource, isRunScriptCallableExpression } from "../../shared/run-script-source.js";

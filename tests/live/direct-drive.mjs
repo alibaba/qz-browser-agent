@@ -116,7 +116,7 @@ function observe(name, args, result) {
   // These are UI events with host page metadata; exact public Tab keys are covered
   // by the deterministic CLI acceptance, which reads the returned business value.
   if (name === "open_tab") for (const key of ["active", "tabRef", "title", "url"]) assert.ok(Object.hasOwn(result, key));
-  if (name === "list_tabs") for (const tab of result.tabs || []) assert.deepEqual(Object.keys(tab).sort(), ["active", "tabRef", "title", "url"]);
+  if (name === "list_tabs") for (const tab of result.tabs || []) assert.deepEqual(Object.keys(tab).sort(), ["active", "ownership", "tabRef", "title", "url"]);
   if (name === "find_elements") for (const item of result.results || []) if (item.target) targets.find_elements.add(item.target);
   if (name === "list_images") for (const item of result.images || []) if (item.target) targets.list_images.add(item.target);
   if (name === 'act_on_element' && ['click', 'fill'].includes(args.action)) {

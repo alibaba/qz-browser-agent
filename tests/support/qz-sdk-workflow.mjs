@@ -276,13 +276,15 @@ export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo,
         const inspected=await page.locator({role:'button',name:'Precise'}).inspect();
         const article=await page.locator('css:#state').read({limit:1000});
         const count=await page.locator({role:'button',name:'Duplicate'}).count();
-        const owned=await qz.listTabs();
-        return {tabRef:tab.tabRef,inspected,article,count,owned:owned.tabs.map(tab=>tab.tabRef)};
+        const owned=await qz.listTabs({scope:'owned'});
+        const listed=(await qz.listTabs()).tabs.find(row=>row.tabRef===tab.tabRef);
+        return {tabRef:tab.tabRef,inspected,article,count,owned:owned.tabs.map(tab=>tab.tabRef),ownership:[tab.ownership,listed?.ownership]};
       `, { url });
       expect(observed.inspected).toMatchObject({ target: expect.stringMatching(/^uid:/), role: 'button' });
       expect(JSON.stringify(observed.article)).toContain('Loading state');
       expect(observed.count).toBe(2);
       expect(observed.owned).not.toContain(observed.tabRef);
+      expect(observed.ownership).toEqual(['unclaimed', 'unclaimed']);
       expect(await userPage.locator('#precise').getAttribute('data-clicks')).toBeNull();
     });
 
