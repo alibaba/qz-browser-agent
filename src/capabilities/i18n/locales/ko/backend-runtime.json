@@ -179,6 +179,7 @@
   "backend.toolFailure.longPress": "길게 누르는 시간은 {min}~{max}밀리초여야 합니다.",
   "backend.toolFailure.scrollRepeat": "스크롤 횟수는 {min}~{max} 사이의 정수여야 합니다.",
   "backend.toolFailure.timeoutArgument": "{tool}의 제한 시간이 잘못되었습니다. 스크립트 제한 시간은 초 단위이며, <= 0이면 무기한 대기합니다.",
+  "backend.toolFailure.timeoutRange": "{tool}의 제한 시간은 초 단위이며 0보다 크고 {maximum} 이하여야 합니다.",
   "backend.toolFailure.requiredArguments": "{tool}의 필수 인수가 누락되었습니다{suffix}",
   "backend.toolFailure.missingFields": "{tool}의 필수 인수가 누락되었습니다: {fields}",
   "backend.toolFailure.notWebTab": "{tab}은(는) 일반 웹페이지가 아니므로 브라우저 작업 대상으로 사용할 수 없습니다.",

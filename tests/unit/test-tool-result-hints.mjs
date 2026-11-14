@@ -106,7 +106,7 @@ async function assertToolNotesAreCompact() {
   };
   try {
     const result = await definitions.get("list_tabs").execute({}, undefined, { sessionId: 'hints', runId: 'run' });
-    assert.deepEqual(result, { tabs: [{ tabRef: 42, active: false, title: "Background tab", url: "https://example.test/" }], count: 1, foreign: 0 });
+    assert.deepEqual(result, { tabs: [{ tabRef: 42, active: false, title: "Background tab", url: "https://example.test/", ownership: "owned" }], count: 1, foreign: 0 });
     assert.equal(definitions.has("use_tab"), false);
     assert.equal(definitions.has("get_working_tab"), false);
     assert.equal(visibleMutations, 0);

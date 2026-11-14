@@ -264,6 +264,10 @@ reads and writes. Use the [Data](../src/sdk/shared/data.ts) and
 Active tabs describe user visibility; recent-page state supports presentation, never default targeting.
 Parent and child Sessions have separate runs and tabs; creating,
 claiming, and updating a tab requires the current run's authority.
+`list_tabs` lists the Session's tabs and unclaimed tabs by default and marks each row's `ownership`;
+listing never claims. The first mutating or `page:"owned"` use of an unclaimed tab claims it in
+preflight, including staged calls whose other page state publishes at ordered commit. Tabs owned by
+another Session stay read-only and appear only with `scope:"all"`.
 
 [CDP runtime](../src/background/tools/cdp-runtime.ts) manages debugger connections and operation
 leases. CLI and Agent tools keep connections while executing, including outer-script waits and
@@ -583,12 +587,13 @@ Session permissions, scheduling, cancellation, deadlines, and result contracts. 
 legacy page bridge inject the same SDK; `evaluate` remains a self-contained DOM function. Legacy
 `tools` and `tool` bindings remain compatible, while new CLI and Skill scripts use `qz`.
 
-[Locator queries](../src/shared/contracts/element-locator.ts) distinguish precise role/name/text filters
-from exploratory `find_elements.pattern` matching. Element actions resolve one matching node and bind
+[Locator queries](../src/shared/contracts/element-locator.ts) define precise role/name/text filters.
+`find_elements` applies the same matcher to its candidates; `pattern` is its regex alternative, and the
+two cannot be combined. Element actions resolve one matching node and bind
 it through the existing registry before readiness checks and dispatch. Queries may re-resolve before
 input delivery; explicit UID targets retain their original identity. Ambiguous queries require
 narrowing or an explicit index. Scoped queries retain their frame and document authority.
-Element waits re-evaluate queries for the requested state or attached match count; reads preserve
+Element waits re-evaluate queries for the requested state or match count; reads preserve
 their observation semantics. An action is never replayed to confirm its outcome.
 MCP cancellation returns a control receipt rather than the private runtime snapshot. Public Session
 metadata drops implicit page-selection state and names page references with `tabRef`/`TabRefs`.

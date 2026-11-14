@@ -179,6 +179,7 @@
   "backend.toolFailure.longPress": "Die Dauer des langen Drückens muss zwischen {min} und {max} Millisekunden liegen.",
   "backend.toolFailure.scrollRepeat": "Die Anzahl der Scrollvorgänge muss eine ganze Zahl zwischen {min} und {max} sein.",
   "backend.toolFailure.timeoutArgument": "Ungültiges Zeitlimit für {tool}: Skript-Zeitlimits werden in Sekunden angegeben; <= 0 bedeutet unbegrenztes Warten.",
+  "backend.toolFailure.timeoutRange": "Das Zeitlimit für {tool} wird in Sekunden angegeben und muss größer als 0 und höchstens {maximum} sein.",
   "backend.toolFailure.requiredArguments": "Erforderliche Argumente für {tool} fehlen{suffix}",
   "backend.toolFailure.missingFields": "Erforderliche Argumente für {tool} fehlen: {fields}",
   "backend.toolFailure.notWebTab": "{tab} ist keine reguläre Webseite und kann nicht als Browserziel verwendet werden.",

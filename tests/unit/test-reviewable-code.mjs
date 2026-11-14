@@ -70,7 +70,7 @@ try {
     const scriptPath = bundle ? 'background/service-worker.js' : 'capabilities/script/tools.js';
     const scriptCode = await readFile(join(outputDir, scriptPath), 'utf8');
     const scriptFindings = cdpFindings(scriptCode, scriptPath);
-    assert.equal(scriptFindings.length, bundle ? 10 : 2);
+    assert.equal(scriptFindings.length, bundle ? 12 : 2);
     assert.ok(scriptFindings.every(item => item.reviewed));
     assert.ok(cdpFindings(scriptCode, 'unrelated.js').every(item => !item.reviewed));
     const mutatedScriptCode = scriptCode.replaceAll('context.toolExecutionId || ""', 'pageControlledParent');
@@ -86,16 +86,25 @@ try {
     assert.equal(cdpFindings(`${scriptCode}\nevaluateCdpScript(tabId, { expression: remoteCode });`, scriptPath).filter(item => !item.reviewed).length, 1);
 
     if (!bundle) {
+      const elementPath = 'background/tools/element-runtime.js';
+      const elementCode = await readFile(join(outputDir, elementPath), 'utf8');
+      const changedSerialization = elementCode.replace('function() { return this; }', 'function() { return pageControlledNodes; }');
+      assert.notEqual(changedSerialization, elementCode);
+      assert.equal(cdpFindings(changedSerialization, elementPath).filter(item => !item.reviewed).length, 2,
+        'the static identity serialization and original token bridge share a reviewed enclosing function');
       // The disabled-option repair is a fixed node predicate, not a general execution exemption.
       const axPath = 'capabilities/accessibility/tools.js';
       const axCode = await readFile(join(outputDir, axPath), 'utf8');
-      assert.equal(cdpFindings(axCode, axPath).length, 1);
+      assert.equal(cdpFindings(axCode, axPath).length, 2);
       assert.ok(cdpFindings(axCode, axPath)[0].reviewed);
       assert.ok(cdpFindings(axCode, 'background/service-worker.js')[0].reviewed);
       assert.equal(cdpFindings(axCode, 'unrelated.js')[0].reviewed, undefined);
-      const mutatedAxCode = axCode.replace("this.matches(':disabled')", "this.matches(pageControlledSelector)");
+      const mutatedAxCode = axCode.replace("element.matches(':disabled')", "element.matches(pageControlledSelector)");
       assert.notEqual(mutatedAxCode, axCode);
-      assert.equal(cdpFindings(mutatedAxCode, axPath)[0].reviewed, undefined);
+      assert.equal(cdpFindings(mutatedAxCode, axPath).filter(item => !item.reviewed).length, 2);
+      const staleDocument = axCode.replace('this.defaultView.document === this', 'true');
+      assert.notEqual(staleDocument, axCode);
+      assert.equal(cdpFindings(staleDocument, axPath).filter(item => !item.reviewed).length, 2, 'document revalidation belongs to the reviewed function');
       assert.equal(cdpFindings(`${axCode}\nsend('Runtime.callFunctionOn', { functionDeclaration: remoteCode });`, axPath).filter(item => !item.reviewed).length, 1);
     }
   }

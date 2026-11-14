@@ -121,6 +121,7 @@ registerPageElementTools({
   },
   resolveSelectorTarget: element.resolveSelectorTarget,
   resolveElementReference: element.resolveElementReference,
+  resolveElementInput: element.resolveElementInput,
   useElement: element.useElement,
   addElementTargetsToFindResult: element.addElementTargetsToFindResult,
   elementTargetForRef: element.elementTargetForRef,

@@ -179,6 +179,7 @@
   "backend.toolFailure.longPress": "La durée de l’appui long doit être comprise entre {min} et {max} millisecondes.",
   "backend.toolFailure.scrollRepeat": "Le nombre de défilements doit être un entier compris entre {min} et {max}.",
   "backend.toolFailure.timeoutArgument": "Délai non valide pour {tool} : les scripts utilisent des secondes ; <= 0 signifie attendre indéfiniment.",
+  "backend.toolFailure.timeoutRange": "Le délai de {tool} est en secondes et doit être supérieur à 0 et au plus {maximum}.",
   "backend.toolFailure.requiredArguments": "Des arguments obligatoires manquent pour {tool}{suffix}",
   "backend.toolFailure.missingFields": "Des arguments obligatoires manquent pour {tool} : {fields}",
   "backend.toolFailure.notWebTab": "{tab} n’est pas une page web classique et ne peut pas servir de cible au navigateur.",

@@ -13,7 +13,7 @@
   "script.theScriptHasAnUnsupportedShapeOrInvalidSyntax": "指令碼的結構不受支援，或語法無效。請檢查函式外的 return、IIFE，以及頂層 await／運算式的包裝邊界。",
   "script.theExecutionEnvironmentDoesNotMatchTheScriptPage": "指令碼執行環境不符，請使用瀏覽器 JavaScript 和 document/window。",
   "script.theTargetDomIsEmptyOrThePageHas": "目標 DOM 是空的，或頁面尚未完成繪製。請檢查選取器、虛擬清單、延遲載入和執行時機。",
-  "script.aToolsCallInsideRunScriptFailedCheckBridge": "run_script 中的 tools.* 呼叫失敗。請檢查橋接逾時、巢狀深度、參數和頁面生命週期。",
+  "script.aToolsCallInsideRunScriptFailedCheckBridge": "run_script 中的 qz SDK 呼叫失敗。請檢查橋接逾時、巢狀深度、參數和頁面生命週期。",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "瀏覽器不允許在此頁面注入指令碼。常見於 chrome://、擴充功能商店、內建頁面或缺少所需權限的頁面。",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "指令碼執行失敗。請根據錯誤和追蹤記錄，找出最後成功的階段。",
   "script.useTargetPageWithAWorkingTabForPage": "在 tabRef 指定的頁面執行指令碼，使用瀏覽器 JavaScript、input/args 和 tools/tool。",

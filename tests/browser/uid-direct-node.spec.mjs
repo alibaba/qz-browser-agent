@@ -136,7 +136,7 @@ async function createHarness({ reloadFixture = false, secondary = false } = {}) 
         injections: () => injections,
         tabId: () => tabId,
         async call(name, args, signal) {
-          try { return await runtime.execute(name, { tabId, ...args }, signal, { ...context, workingTabId: tabId, source: "run_script" }); }
+          try { return await runtime.execute(name, name === "open_tab" ? args : { tabId, ...args }, signal, { ...context, workingTabId: tabId, source: "run_script" }); }
           catch (error) { return { message: error.message, code: error.code, hint: error.hint, details: error.details }; }
         },
         async detach() {
@@ -402,7 +402,7 @@ test.describe("uid resolves the original node", () => {
     expect(dom.content, JSON.stringify(dom)).toContain("INSIDE-TOKEN");
     expect(dom.content).not.toContain("OUTSIDE-TOKEN");
     const found = await h.call("find_elements", { selector: scope, pattern: "OUTSIDE-TOKEN" });
-    expect(found.matches, JSON.stringify(found)).toBe(0);
+    expect(found.total, JSON.stringify(found)).toBe(0);
     const article = await h.call("read_article", { selector: scope, source: "selector", limit: 4000 });
     expect(article.text, JSON.stringify(article)).toContain("INSIDE-TOKEN");
     expect(article.text).not.toContain("OUTSIDE-TOKEN");

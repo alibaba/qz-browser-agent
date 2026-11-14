@@ -137,8 +137,8 @@ test("mobile tabs use mobile headers from the first request, persist across runs
     expect(await pageMode(tabId)).toBe("mobile");
     const listed = await call("list_tabs", { scope: "owned" });
     const listedMobile = listed.tabs.find(tab => tab.tabRef === tabId);
-    expect(Object.keys(listedMobile).sort()).toEqual(["active", "tabRef", "title", "url"]);
-    expect(listedMobile).toMatchObject({ tabRef: tabId, url: `${url}/mobile`, active: false });
+    expect(Object.keys(listedMobile).sort()).toEqual(["active", "ownership", "tabRef", "title", "url"]);
+    expect(listedMobile).toMatchObject({ tabRef: tabId, url: `${url}/mobile`, active: false, ownership: "owned" });
 
     const inputEvents = () => worker.evaluate(async tabId => (await chrome.scripting.executeScript({target:{tabId}, world:"MAIN", func:()=>window.inputEvents}))[0].result, tabId);
     expect(await call("act_on_element", {tabRef:tabId,target:"css:#target", action:"click"})).toEqual({});
@@ -191,7 +191,7 @@ test("mobile tabs use mobile headers from the first request, persist across runs
     expect(await inspect(tabId)).toMatchObject({ touch: 0, mobile: false });
     expect((await inspect(tabId)).ua).not.toContain("Android");
     await expect.poll(() => worker.evaluate(tabId => modeHarness.detached.includes(tabId), tabId)).toBe(true);
-    const stale = await call("act_on_screen", { tabRef: tabId, action: "click", screenshotId: shot.screenshotId, x: 20, y: 20, returnScreenshot: false });
+    const stale = await call("act_on_screen", { tabRef: tabId, action: "click", x: 20, y: 20, returnScreenshot: false });
     expect(stale.code).toMatch(/STALE|SCREENSHOT/);
     expect((await call("set_page_mode", { tabRef: tabId, mode: "mobile" }, "foreign-task")).code).toBe("SESSION_TAB_FOREIGN");
     expect(await call("set_page_mode", { tabRef: tabId, mode: "mobile" })).toMatchObject({ pageMode: "mobile" });

@@ -8,7 +8,7 @@ import { isTabAlias } from "../../shared/tab-reference.js";
 import { t } from "../../shared/i18n/backend.js";
 import { t as toolT } from "./messages.js";
 import { runToolWithTimeout, type ToolPartialResult } from "./tool-timeout.js";
-import { createToolOperation, withToolOperationFailure } from "./tool-operation.js";
+import { createToolOperation, notStartedToolFailure, withToolOperationFailure } from "./tool-operation.js";
 import { readPartialPageState } from "./partial-page-state.js";
 import { createToolPhaseTiming } from "./phase-timing.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
@@ -31,6 +31,7 @@ import type { ToolExtensionAPI, ToolExtensionRuntime, NetworkWatchOptions, Prepa
 import { withToolCallLifecycle } from "./call-lifecycle.js";
 import contributions from "#capabilities/tools";
 import type { ElementReply, PagePoint } from "../../shared/contracts/page-content.js";
+import { normalizeElementLocator } from "../../shared/contracts/element-locator.js";
 type Fields = Record<string, unknown>;
 type RuntimeTool = ToolDefinition<ToolSchema, unknown, ToolContext, AbortSignal> & ReturnType<typeof normalizeToolIdentity> & { source: "core" | "plugin"; plugin?: SkillManifest; selectionRenderer?: SkillRenderer; outputSchema?: SkillTool["outputSchema"] };
 type ToolOptions = NonNullable<Parameters<typeof getSkillToolDefinition>[1]>;
@@ -285,10 +286,17 @@ async function settleToolState(result: unknown, context: ToolContext, signal?: A
 }
 function withExecutionAuthority(context: ToolContext, authority: ToolRuntimeDependencies, reservation?: object, tabId?: number) {
   if (!authority.sessions?.resolveTargetTab) return withToolRuntimeContext(context, authority);
+  const resolve = authority.sessions.resolveTargetTab.bind(authority.sessions);
   return withToolRuntimeContext(context, { ...authority, sessions: { ...authority.sessions,
-    resolveTargetTab: input => authority.sessions!.resolveTargetTab!({ ...input,
-      ...(context.deferToolCommit ? { checkOnly: true } : {}),
-      ...(reservation && Number(input.tabId) === tabId ? { createdTabReservation: reservation } : {}) }),
+    resolveTargetTab: async input => {
+      const target = { ...input, ...(reservation && Number(input.tabId) === tabId ? { createdTabReservation: reservation } : {}) };
+      if (!context.deferToolCommit) return resolve(target);
+      const checked = await resolve({ ...target, checkOnly: true });
+      // Staged calls publish at commit. Claim-on-use of an unclaimed target is the only preflight write,
+      // matching unstaged calls; an owned target's page state still waits for the ordered commit.
+      return input.checkOnly === false && checked?.ok && checked.claimRequired && !checked.readOnlyAccess
+        ? resolve({ ...target, checkOnly: false }) : checked;
+    },
   } });
 }
 
@@ -436,7 +444,6 @@ export function getParallelReadTab(name: string, args: unknown, options: ToolOpt
 }
 
 function canonicalToolArgs(definition: RuntimeTool, input: Fields): Fields {
-  if (!definition.argumentAliases && !definition.argumentValueAliases) return input;
   const next = { ...input };
   for (const [alias, canonical] of Object.entries(definition.argumentAliases || {})) {
     if (!Object.hasOwn(next, canonical) && Object.hasOwn(next, alias)) next[canonical] = next[alias];
@@ -446,14 +453,30 @@ function canonicalToolArgs(definition: RuntimeTool, input: Fields): Fields {
     const value = next[field];
     if (typeof value === "string" && Object.hasOwn(aliases, value)) next[field] = aliases[value];
   }
-  return next;
+  if (Object.hasOwn(next, "locator")) next.locator = normalizeElementLocator(next.locator);
+  if (isRecord(next.destination) && Object.hasOwn(next.destination, "locator")) {
+    next.destination = { ...next.destination, locator: normalizeElementLocator(next.destination.locator) };
+  }
+  return definition.compatArgs ? definition.compatArgs(next) : next;
+}
+
+/** Explicit profile timeouts are seconds within the tool's range; the runtime never clamps them silently. */
+function assertTimeoutInRange(name: string, definition: RuntimeTool, args: Fields) {
+  if (args.timeout === undefined) return;
+  const policy = typeof definition.timeout === "function" ? definition.timeout(args, name) : definition.timeout ?? DEFAULT_TOOL_TIMEOUT;
+  if (typeof policy === "number") return;
+  const maximum = policy.maxMs / 1000;
+  if (typeof args.timeout === "number" && args.timeout > 0 && args.timeout <= maximum) return;
+  throw new ToolExecutionError("INVALID_TIMEOUT", t("toolFailure.timeoutRange", { tool: name, maximum: String(maximum) }), {
+    name, unit: "seconds", value: args.timeout, maximum,
+  });
 }
 
 /** Keep non-uid targets too: mixed calls cannot safely use a single uid's tab lane. */
 function elementTargetsOf(definition: RuntimeTool, input: Fields): unknown[] {
   if (definition.behavior?.orchestration) return [];
   input = canonicalToolArgs(definition, input);
-  const values = ["target", "selector", "root"]
+  const values = ["target", "within", "selector", "root"]
     .filter(key => definition.parameters.properties[key])
     .map(key => input[key])
     .filter(value => value != null && value !== "");
@@ -629,7 +652,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     }
     assertToolAllowedByPolicy(name, normalizeToolPolicy(context));
     if (isRecord(args)) args = canonicalToolArgs(definition, args);
-    if (!isRecord(args)) throw new ToolExecutionError("INVALID_ARGUMENTS", `Invalid arguments for ${name}: expected an object`);
+    if (!isRecord(args)) throw notStartedToolFailure(new ToolExecutionError("INVALID_ARGUMENTS", `Invalid arguments for ${name}: expected an object`), name);
     if (resolveTimeoutResult(definition, args)?.kind === "action") {
       operation.prepare({ ...operationErrorDetails(context, args), tool: name });
     }
@@ -667,10 +690,14 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       const { timeoutMs, ...canonicalArgs } = validationArgs;
       validationArgs = canonicalArgs;
     }
-    validateToolArgs(name, validationArgs, definition.parameters, definition.defaultableFields);
-    const validateArgs = definition.validateArgs;
-    if (validateArgs) withLanguage(language, () => validateArgs(effectiveArgs));
-    validateToolSchema(name, validationArgs, definition.parameters);
+    const validatedDefinition = definition;
+    try {
+      validateToolArgs(name, validationArgs, definition.parameters, definition.defaultableFields);
+      const validateArgs = definition.validateArgs;
+      if (validateArgs) withLanguage(language, () => validateArgs(effectiveArgs));
+      validateToolSchema(name, validationArgs, definition.parameters);
+      withLanguage(language, () => assertTimeoutInRange(name, validatedDefinition, effectiveArgs));
+    } catch (error) { throw notStartedToolFailure(error, name); }
     await assertToolAllowedForSession(definition, context);
     const executionArgs = await withSessionOwnedTarget(definition, effectiveArgs, parameters, context, signal,
       needsCommittedPage(definition, effectiveArgs));
@@ -741,7 +768,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
               // Firefox can report complete before its committed document finishes parsing.
               if (selectedDefinition.behavior?.targetLookup) {
                 await elementRuntime.prepareCssTargets(Number(args.tabId), elementTargetsOf(selectedDefinition, args), {
-                  index: parameters.properties.index ? Number(args.index) || 0 : 0,
+                  index: parameters.properties.nth ? Number(args.nth) || 0 : 0,
                   includeShadow: selectedDefinition.behavior?.targetLookup === "openShadow",
                 }, callContext);
               }

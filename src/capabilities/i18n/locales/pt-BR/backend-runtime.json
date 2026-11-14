@@ -179,6 +179,7 @@
   "backend.toolFailure.longPress": "A duração do toque longo deve ser de {min} a {max} milissegundos.",
   "backend.toolFailure.scrollRepeat": "O número de rolagens deve ser um inteiro entre {min} e {max}.",
   "backend.toolFailure.timeoutArgument": "Tempo limite inválido para {tool}: scripts usam segundos; <= 0 significa aguardar indefinidamente.",
+  "backend.toolFailure.timeoutRange": "O tempo limite de {tool} é em segundos e deve ser maior que 0 e no máximo {maximum}.",
   "backend.toolFailure.requiredArguments": "Faltam argumentos obrigatórios para {tool}{suffix}",
   "backend.toolFailure.missingFields": "Faltam argumentos obrigatórios para {tool}: {fields}",
   "backend.toolFailure.notWebTab": "{tab} não é uma página da web comum e não pode ser usada como alvo do navegador.",

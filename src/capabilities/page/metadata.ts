@@ -8,6 +8,7 @@ const tools = () => Object.freeze({
   read_dom: toolMeta(t("readHtml"), [], { profileFamily: "domRaw", resultFamily: "page-raw", familyId: "collect", pageContext: true }),
   select_element: elementTool(t("selectElement"), { shortTitle: t("selectElementShort") }),
   find_elements: elementTool(t("findElements"), { shortTitle: t("findElementsShort") }),
+  find_all_elements: elementTool(t("findElements"), { shortTitle: t("findElementsShort") }),
   inspect_element: elementTool(t("inspectElement"), { shortTitle: t("inspectElementShort") }),
   act_on_element: elementTool(t("interactWithElement"), { shortTitle: t("interactWithElementShort") }),
   click_element: elementTool(t("clickElement"), { shortTitle: t("clickElementShort") }),

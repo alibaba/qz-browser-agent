@@ -13,7 +13,7 @@
   "script.theScriptHasAnUnsupportedShapeOrInvalidSyntax": "स्क्रिप्ट की संरचना समर्थित नहीं है या सिंटैक्स गलत है। फ़ंक्शन के बाहर return, IIFE और शीर्ष स्तर के await या एक्सप्रेशन की सीमाएँ जाँचें।",
   "script.theExecutionEnvironmentDoesNotMatchTheScriptPage": "स्क्रिप्ट निष्पादन परिवेश से मेल नहीं खाती। ब्राउज़र JavaScript और document/window इस्तेमाल करें।",
   "script.theTargetDomIsEmptyOrThePageHas": "लक्षित DOM खाली है या पेज पूरी तरह रेंडर नहीं हुआ है। सिलेक्टर, वर्चुअल सूची, लेज़ी लोडिंग और समय जाँचें।",
-  "script.aToolsCallInsideRunScriptFailedCheckBridge": "run_script के भीतर tools.* कॉल विफल हुआ। ब्रिज का टाइमआउट, नेस्टिंग की गहराई, आर्ग्युमेंट और पेज का जीवनचक्र जाँचें।",
+  "script.aToolsCallInsideRunScriptFailedCheckBridge": "run_script के भीतर qz SDK कॉल विफल हुआ। ब्रिज का टाइमआउट, नेस्टिंग की गहराई, आर्ग्युमेंट और पेज का जीवनचक्र जाँचें।",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "ब्राउज़र इस पेज में स्क्रिप्ट डालने से रोकता है। ऐसा chrome:// पेज, एक्सटेंशन स्टोर, ब्राउज़र के अपने पेज या ज़रूरी अनुमति के बिना खुले पेज पर हो सकता है।",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "स्क्रिप्ट चलाना विफल हुआ। गलती और ट्रेस से पता लगाएँ कि आख़िरी सफल चरण कौन-सा था।",
   "script.useTargetPageWithAWorkingTabForPage": "tabRef से बताए गए पेज पर स्क्रिप्ट चलाएँ और ब्राउज़र JavaScript, input/args और tools/tool इस्तेमाल करें।",

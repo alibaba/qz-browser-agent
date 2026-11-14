@@ -6,8 +6,8 @@ export function elementAriaRole(element: Element): string {
   return getAriaRole(element) || "";
 }
 
-export function elementAccessibleName(element: Element): string {
-  return getElementAccessibleName(element, false);
+export function elementAccessibleName(element: Element, includeHidden = false): string {
+  return getElementAccessibleName(element, includeHidden);
 }
 
 export const elementIsVisible = isElementVisible;

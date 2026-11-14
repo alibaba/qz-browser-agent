@@ -179,6 +179,7 @@
   "backend.toolFailure.longPress": "La pulsación prolongada debe durar entre {min} y {max} milisegundos.",
   "backend.toolFailure.scrollRepeat": "El número de desplazamientos debe ser un entero entre {min} y {max}.",
   "backend.toolFailure.timeoutArgument": "Tiempo de espera no válido para {tool}: los scripts usan segundos; <= 0 significa esperar sin límite.",
+  "backend.toolFailure.timeoutRange": "El tiempo de espera de {tool} se expresa en segundos y debe ser mayor que 0 y como máximo {maximum}.",
   "backend.toolFailure.requiredArguments": "Faltan argumentos obligatorios para {tool}{suffix}",
   "backend.toolFailure.missingFields": "Faltan argumentos obligatorios para {tool}: {fields}",
   "backend.toolFailure.notWebTab": "{tab} no es una página web normal y no puede usarse como destino del navegador.",

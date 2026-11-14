@@ -29,12 +29,14 @@ function runtimeFixture() {
 test('public element schemas hide selector, while legacy input is canonicalized before scheduling and validation', async () => {
   const f = runtimeFixture(), registry = createToolRegistry(), seen = [];
   const names = ['read_article', 'read_dom', 'find_elements', 'list_images', 'wait_for_element'];
+  const searchRoot = name => name === 'find_elements' || name === 'list_images' ? 'within' : 'target';
   const schemas = getToolSchemas();
   for (const name of names) {
     const definition = resolveToolDefinition(name);
     const schema = schemas.find(item => item.function.name === name).function.parameters;
     assert.equal(schema.properties.selector, undefined, name);
-    assert.equal(schema.properties.target.type, 'string', name);
+    assert.equal(schema.properties[searchRoot(name)].type, 'string', name);
+    if (searchRoot(name) === 'within') assert.equal(schema.properties.target, undefined, `${name} target only names an element`);
     if (name === 'wait_for_element') {
       const validator = new Validator(structuredClone(schema));
       for (const reference of [{ target: 'css:#chosen' }, { locator: { role: 'button' } }]) {
@@ -53,15 +55,21 @@ test('public element schemas hide selector, while legacy input is canonicalized 
   assert.equal(seen.at(-1).source, 'target');
   assert.equal(seen.at(-1).target, ref.target);
   for (const name of names) {
-    await f.runtime.execute(name, { tabRef: 5, selector: ref.target, limit: 100 }, undefined, context);
-    assert.equal(seen.at(-1).target, ref.target);
+    const field = searchRoot(name), limit = name === 'wait_for_element' ? {} : { limit: 100 };
+    await f.runtime.execute(name, { tabRef: 5, selector: ref.target, ...limit }, undefined, context);
+    assert.equal(seen.at(-1)[field], ref.target);
     assert.equal(Object.hasOwn(seen.at(-1), 'selector'), false);
-    await f.runtime.execute(name, { tabRef: 5, target: '#chosen', selector: 'uid:unknown', limit: 100 }, undefined, context);
-    assert.equal(seen.at(-1).target, '#chosen', 'canonical target wins over a legacy alias');
+    await f.runtime.execute(name, { tabRef: 5, [field]: '#chosen', selector: 'uid:unknown', ...limit }, undefined, context);
+    assert.equal(seen.at(-1)[field], '#chosen', `canonical ${field} wins over a legacy alias`);
+    if (field === 'within') {
+      await f.runtime.execute(name, { tabRef: 5, target: ref.target, ...limit }, undefined, context);
+      assert.equal(seen.at(-1).within, ref.target, 'the retired target spelling resolves to within');
+      assert.equal(Object.hasOwn(seen.at(-1), 'target'), false);
+    }
     const policy = f.runtime.getBatchTabPolicy(name, { tabRef: 5, selector: ref.target }, context);
     if (name === "wait_for_element") assert.equal(policy.kind, "observe", "state waits release the mutation lane");
     else assert.equal(policy.tabId, 5);
-    await assert.rejects(f.runtime.execute(name, { tabRef: 5, target: 'uid:unknown', limit: 100 }, undefined, context), { code: 'STALE_ELEMENT_UID' });
+    await assert.rejects(f.runtime.execute(name, { tabRef: 5, [field]: 'uid:unknown', ...limit }, undefined, context), { code: 'STALE_ELEMENT_UID' });
   }
 });
 
@@ -114,10 +122,10 @@ test('UID waits retain opaque host authority, distinguish removal from unknown r
   const found = await wait.execute({ target: 'uid:node', timeout: 1 }, controller.signal, context);
   assert.equal(found.element.target, 'uid:fresh');
   unavailable = true;
-  assert.equal((await wait.execute({ target: 'uid:node', absent: true, timeout: 1 }, controller.signal, context)).timedOut, undefined);
-  await assert.rejects(wait.execute({ target: 'uid:unknown', absent: true, timeout: 1 }, controller.signal, context), { code: 'STALE_ELEMENT_UID' });
+  assert.equal((await wait.execute({ target: 'uid:node', state: 'hidden', timeout: 1 }, controller.signal, context)).timedOut, undefined);
+  await assert.rejects(wait.execute({ target: 'uid:unknown', state: 'hidden', timeout: 1 }, controller.signal, context), { code: 'STALE_ELEMENT_UID' });
   unavailable = false;
-  const polling = wait.execute({ target: 'uid:node', absent: true, timeout: 10, intervalSeconds: 1 }, controller.signal, context);
+  const polling = wait.execute({ target: 'uid:node', state: 'hidden', timeout: 10, intervalSeconds: 1 }, controller.signal, context);
   await new Promise(resolve => setImmediate(resolve)); controller.abort();
   await assert.rejects(polling, error => error.code === 'OPERATION_ABORTED' || error.name === 'AbortError');
   const settledCalls = calls; await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(calls, settledCalls);

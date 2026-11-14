@@ -3,7 +3,7 @@ import { t } from "./i18n.js";
 import { createPageModeRuntime, pageModeStates } from "./page-mode.js";
 import { navigateTab } from "./navigation.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
-import type { TabReference, PageObservation } from '#sdk/shared/browser';
+import type { TabReference, PageObservation, TabListing, TabOwnership } from '#sdk/shared/browser';
 import type { ToolContext } from '#sdk/background';
 type TabsHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "getToolRuntimeDependencies" | "makeSessionTabTargetError"
@@ -37,25 +37,34 @@ registerTool({
     type: "object",
     properties: { scope: { type: "string", enum: ["owned", "all"], description: toolT("listTabsScope") } },
   } as const; },
-  execute: async ({ scope = "owned" }, _signal, context = {}) => {
+  execute: async ({ scope }, _signal, context = {}) => {
     const tabs = (await chrome.tabs.query({})).filter(isPageTab).map(tab => formatTab(tab));
-    const sessions = getToolRuntimeDependencies(context).sessions;
     const sessionId = String(context.sessionId || "").trim();
-    const aliases = sessions?.getTabAliases?.(sessionId) || {};
-    const described: PageObservation[] = [];
+    const aliases = getToolRuntimeDependencies(context).sessions?.getTabAliases?.(sessionId) || {};
+    const listed: TabListing[] = [];
     let foreign = 0;
     for (const tab of tabs) {
-      const ownership = sessionId ? await sessions?.resolveTargetTab?.({
-        sessionId, tabId: Number(tab.id), source: "tool:list_tabs", checkOnly: true,
-      }) : null;
-      const owned = ownership?.ok === true && ownership.ownedByCurrentTask !== false;
-      if (!owned) foreign += 1;
-      if (scope === "all" || owned) described.push(describeToolTab(tab,
-        Object.keys(aliases).find(alias => aliases[alias] === Number(tab.id))));
+      const ownership = await listedTabOwnership(sessionId, Number(tab.id), context);
+      if (!ownership) continue;
+      if (ownership === "foreign") foreign += 1;
+      if (scope === "all" || ownership === "owned" || (scope !== "owned" && ownership === "unclaimed")) {
+        listed.push({ ...describeToolTab(tab, Object.keys(aliases).find(alias => aliases[alias] === Number(tab.id))), ownership });
+      }
     }
-    return { tabs: described, count: described.length, foreign };
+    return { tabs: listed, count: listed.length, foreign };
   },
 });
+
+/** Classifies through the claim gate without claiming, so each row predicts its tab's first mutating use. */
+async function listedTabOwnership(sessionId: string, tabId: number, context: ToolContext): Promise<TabOwnership | null> {
+  if (!sessionId) return null;
+  const resolved = await getToolRuntimeDependencies(context).sessions?.resolveTargetTab?.({
+    sessionId, tabId, source: "tool:list_tabs", checkOnly: true, tabOnly: true,
+  });
+  if (resolved?.ok && resolved.ownedByCurrentTask !== false) return "owned";
+  if (resolved?.ok && resolved.claimRequired === true) return "unclaimed";
+  return resolved?.code === "SESSION_TAB_FOREIGN" ? "foreign" : null;
+}
 
 function describeToolTab(tab: TabReference, requested?: string | number): PageObservation {
   return {

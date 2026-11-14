@@ -16,6 +16,32 @@ benchmark -- <target> --help` prints the common options. For specialized article
 the linked argument parser before invoking them. Keep generated evidence under ignored
 `tests/results/` or outside the checkout.
 
+## Algorithm hotspots
+
+Run the synthetic Content, Session and CDP measurements in an isolated Chromium:
+
+```bash
+QZ_PERF_OUTPUT=/tmp/qz-perf-before node --import ./tests/support/typescript-loader.mjs tests/benchmarks/perf-hotspots.mjs
+QZ_PERF_OUTPUT=/tmp/qz-binding-before QZ_PERF_REF=<commit> node --import ./tests/support/typescript-loader.mjs tests/benchmarks/element-binding.mjs
+QZ_PERF_OUTPUT=/tmp/qz-binding-after node --import ./tests/support/typescript-loader.mjs tests/benchmarks/element-binding.mjs
+QZ_PERF_OUTPUT=/tmp/qz-ax-costs node --import ./tests/support/typescript-loader.mjs tests/benchmarks/ax-costs.mjs
+```
+
+Use separate output directories and redirect stdout to adjacent log files. The first two runners
+measure 500, 1000 and 5000 nodes with one warmup and five measured trials. The Session fixture runs
+five fresh histories of 1000 nested start/end pairs using production commands, transcript reduction
+and repositories, but structured-clone **memory storage**, not Chrome disk or MCP transport. Its
+summary includes transcript data only, not resource-store scans. `QZ_PERF_REPEATS` changes the first
+runner's trial count. The binding runner loads an optional Git revision into memory without switching
+the checkout; it times binding after Content observation, not the whole `page.find` call.
+
+All CDP timings use actual isolated Chromium sessions, with no simulated RPC delay. The protocol-only
+experiment and production binding fixture have different enabled domains and cannot substitute for
+one another. AX costs use three measured trials and record native command counts and duration sums;
+concurrent duration sums can exceed wall time. That harness uses selector fallback for overview
+anchors, so its total is not production end-to-end latency. The disabled-option fixture can take
+several minutes. JSON files preserve individual trials, counts and full AX results.
+
 ## AX viewport and BFS budgets
 
 Measure snapshot sizes on four synthetic pages and the public Wikipedia River article:

@@ -412,6 +412,7 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
         backendDOMNodeId: idFor(doc),
       };
       nodes.push(root);
+      const parents = new Map<string, Ax>([[rootId, root]]);
       let visited = 0;
       const visit = (node: DomNode, depth: number, parentId: string, textAllowed = false, domDepth = 0) => {
         // Hidden and generic nodes still consume traversal budget even when omitted from AX.
@@ -423,7 +424,7 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
           const id = `ax-${nodes.length}`;
           nodes.push({ nodeId: id, parentId, role: { value: "StaticText" }, name: { value: text },
             backendDOMNodeId: idFor(node), childIds: [] });
-          nodes.find(item => item.nodeId === parentId)?.childIds?.push(id);
+          parents.get(parentId)?.childIds?.push(id);
           return;
         }
         const hidden = semantics.hidden(node);
@@ -467,8 +468,9 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
             properties,
           };
           nodes.push(axNode);
+          parents.set(id, axNode);
           marked = axNode;
-          const parent = nodes.find(item => item.nodeId === parentId);
+          const parent = parents.get(parentId);
           parent?.childIds?.push(id);
         }
         const nested = frameDocument(node);

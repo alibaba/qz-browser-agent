@@ -39,7 +39,7 @@ test('list_tabs constructs public discovery rows and preserves active independen
     withDebugger:async()=>{},getDebuggerConnectionId:()=>null,setDebuggerRetention(){},releaseDebugger:async()=>{}});
   const context={sessionId:'surface',runId:'opaque-operation-run',externalDrive:true,workingTabId:5};
   const rows=await definitions.get('list_tabs').execute({},undefined,context);
-  assertPublic(rows); assert.deepEqual(rows, {tabs:[{tabRef:'page',title:'Page',url:'https://example.test',active:true}],count:1,foreign:0});
+  assertPublic(rows); assert.deepEqual(rows, {tabs:[{tabRef:'page',title:'Page',url:'https://example.test',active:true,ownership:'owned'}],count:1,foreign:0});
   assert.equal(Object.hasOwn(rows.tabs[0],'isWorkingTab'),false);assert.equal(Object.hasOwn(rows.tabs[0],'windowId'),false);
   for(const args of [{},{scope:'all'},{verbose:true}]) {
     const {value}=projectDriveResult(rows);

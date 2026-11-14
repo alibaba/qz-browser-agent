@@ -13,7 +13,7 @@
   "script.theScriptHasAnUnsupportedShapeOrInvalidSyntax": "بنية البرنامج النصي غير مدعومة أو صيغته غير صالحة. تحقّق من return خارج الدوال، وIIFE، وحدود await أو التعبيرات في المستوى الأعلى.",
   "script.theExecutionEnvironmentDoesNotMatchTheScriptPage": "السكربت لا يتوافق مع بيئة التنفيذ. استخدم JavaScript المتصفح وdocument/window.",
   "script.theTargetDomIsEmptyOrThePageHas": "DOM المستهدف فارغ أو لم يكتمل عرض الصفحة. تحقّق من المحدّدات والقوائم الافتراضية والتحميل الكسول وتوقيت التنفيذ.",
-  "script.aToolsCallInsideRunScriptFailedCheckBridge": "فشل استدعاء tools.* داخل run_script. تحقّق من مهلة الجسر وعمق التداخل والوسائط ودورة حياة الصفحة.",
+  "script.aToolsCallInsideRunScriptFailedCheckBridge": "فشل استدعاء qz SDK داخل run_script. تحقّق من مهلة الجسر وعمق التداخل والوسائط ودورة حياة الصفحة.",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "يحظر المتصفح حقن البرامج النصية في هذه الصفحة. قد يحدث ذلك في صفحات chrome:// أو متجر الإضافات أو الصفحات المدمجة أو الصفحات التي تفتقر إلى الأذونات المطلوبة.",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "فشل تنفيذ البرنامج النصي. استخدم الخطأ وسجل التتبّع لتحديد آخر مرحلة ناجحة.",
   "script.useTargetPageWithAWorkingTabForPage": "شغّل السكربت في الصفحة المحددة عبر tabRef باستخدام JavaScript المتصفح وinput/args وtools/tool.",

@@ -29,7 +29,7 @@ registerAccessibilityTools({
     const bound = { ...ref, uid, target: uid ? `uid:${uid}` : ref.selector ? `css:${ref.selector}` : '' };
     refs.push(bound); return bound;
   },
-  resolveElementReference: async () => ({ tabId: 8, target: "css:button", selector: "button", index: 0 }),
+  resolveElementInput: async () => ({ tabId: 8, target: "css:button", selector: "button", index: 0 }),
   backendNodeIdForSelector: async () => 2,
   bindElementReferences: async (_tabId, candidates) => candidates.map(ref => ({ ...ref, backendNodeId: ref.selector ? 2 : 0, target: ref.selector ? `css:${ref.selector}` : '' })),
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),

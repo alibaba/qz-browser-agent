@@ -15,15 +15,13 @@ test("the toolbar button and sidebar switcher draw the glyph in the light or dar
     for (const theme of THEMES) {
       const drawn = await firefoxSidebar.chrome(`
         const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
-        // Firefox 151 keeps the launcher strip off until revamp is set, then hides it until a panel is shown.
-        if (!Services.prefs.getBoolPref("sidebar.revamp")) Services.prefs.setBoolPref("sidebar.revamp", true);
-        const revampReady = Date.now();
-        while (Date.now() - revampReady < 2000 && Services.prefs.getStringPref("sidebar.visibility", "") !== "hide-sidebar") {
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
+        // The icon fixture needs the launcher, not Firefox's version-dependent
+        // hidden-launcher default (hide-on-close in Firefox 160).
+        Services.prefs.setBoolPref("sidebar.revamp", true);
+        Services.prefs.setStringPref("sidebar.visibility", "always-show");
         await (await AddonManager.getAddonByID(${JSON.stringify(theme.id)})).enable();
         const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
-        win.SidebarController.show("viewCustomizeSidebar");
+        await win.SidebarController.show("viewCustomizeSidebar");
         const find = (root, selector) => {
           if (!root) return null;
           for (const el of root.querySelectorAll("*")) {

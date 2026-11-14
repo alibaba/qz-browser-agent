@@ -961,9 +961,9 @@ test("tab discovery keeps guarded pages visible without exposing execution metad
   const session = installSessionTabResolver(tools);
   const runtime = session.createRuntime();
   const listed = await runtime.execute("list_tabs", { scope: "all" }, null, session.context);
-  assert.deepEqual(listed.tabs, mockTabs.map(({ id, url, title, active }) => ({ tabRef: id, url, title, active })));
+  assert.deepEqual(listed.tabs.map(({ ownership, ...tab }) => tab), mockTabs.map(({ id, url, title, active }) => ({ tabRef: id, url, title, active })));
   assert.equal(listed.count, 2);
-  for (const tab of listed.tabs) assert.deepEqual(Object.keys(tab).sort(), ['active', 'tabRef', 'title', 'url']);
+  for (const tab of listed.tabs) assert.deepEqual(Object.keys(tab).sort(), ['active', 'ownership', 'tabRef', 'title', 'url']);
 });
 
 test("tool content and navigation APIs are blocked before touching guarded URLs", async () => {

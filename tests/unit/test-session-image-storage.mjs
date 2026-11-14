@@ -271,6 +271,23 @@ test("image persistence captures a snapshot before awaiting asset writes", async
   assert.equal(saved[1].content, "before");
 });
 
+test("image resolution captures detached history before awaiting assets", async () => {
+  const reference = 'qz-history-image:v1:' + 'a'.repeat(64);
+  let release;
+  const input = { transcript: [{ type: 'tool', args: { query: 'original' }, result: { image: reference } }] };
+  const pending = resolveSessionImages(input, () => new Promise(resolve => { release = resolve; }));
+  input.transcript[0].args.query = 'changed';
+  input.transcript.push({ type: 'user', text: 'late event' });
+  release(image);
+  const restored = await pending;
+  assert.equal(restored.transcript.length, 1);
+  assert.equal(restored.transcript[0].args.query, 'original');
+  assert.equal(restored.transcript[0].result.image, image);
+  assert.equal(input.transcript[0].result.image, reference);
+  restored.transcript[0].args.query = 'reader mutation';
+  assert.equal(input.transcript[0].args.query, 'changed');
+});
+
 test("snapshot capture preserves arbitrary JSON keys and sparse array lengths", async () => {
   const persist = createSessionImageStorage(async () => "reference");
   const input = JSON.parse('{"__proto__":{"image":"' + image + '"},"constructor":"text"}');

@@ -186,7 +186,8 @@ export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo,
 
     await step('count observes every attached match and can wait for an exact list size', async () => {
       const result = await script(`
-        const page=qz.tab('page'),items=page.locator({scope:'css:#counted',role:'option'});
+        const page=qz.tab('page'),items=page.locator({scope:'css:#counted',role:'option',includeHidden:true});
+        const visible=page.locator({scope:'css:#counted',role:'option'});
         const before=await items.count();
         await page.evaluate(()=>setTimeout(()=>{
           for(let index=0;index<3;index++){
@@ -195,9 +196,11 @@ export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo,
           }
         },300));
         await items.wait({count:3,timeout:5});
-        return {before,after:await items.count(),selected:await items.nth(1).count(),missing:await items.nth(3).count()};
+        await visible.wait({count:2,timeout:5});
+        return {before,after:await items.count(),visible:await visible.count(),selected:await items.nth(1).count(),
+          hidden:await items.nth(2).count(),visibleMissing:await visible.nth(2).count(),missing:await items.nth(3).count()};
       `);
-      expect(result).toEqual({ before: 0, after: 3, selected: 1, missing: 0 });
+      expect(result).toEqual({ before: 0, after: 3, visible: 2, selected: 1, hidden: 1, visibleMissing: 0, missing: 0 });
     });
 
     await step('timeouts and completed scripts never leave a delayed action behind', async () => {
@@ -276,13 +279,15 @@ export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo,
         const inspected=await page.locator({role:'button',name:'Precise'}).inspect();
         const article=await page.locator('css:#state').read({limit:1000});
         const count=await page.locator({role:'button',name:'Duplicate'}).count();
-        const owned=await qz.listTabs();
-        return {tabRef:tab.tabRef,inspected,article,count,owned:owned.tabs.map(tab=>tab.tabRef)};
+        const owned=await qz.listTabs({scope:'owned'});
+        const listed=(await qz.listTabs()).tabs.find(row=>row.tabRef===tab.tabRef);
+        return {tabRef:tab.tabRef,inspected,article,count,owned:owned.tabs.map(tab=>tab.tabRef),ownership:[tab.ownership,listed?.ownership]};
       `, { url });
       expect(observed.inspected).toMatchObject({ target: expect.stringMatching(/^uid:/), role: 'button' });
       expect(JSON.stringify(observed.article)).toContain('Loading state');
       expect(observed.count).toBe(2);
       expect(observed.owned).not.toContain(observed.tabRef);
+      expect(observed.ownership).toEqual(['unclaimed', 'unclaimed']);
       expect(await userPage.locator('#precise').getAttribute('data-clicks')).toBeNull();
     });
 

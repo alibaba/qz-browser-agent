@@ -34,6 +34,22 @@ import { getLanguage } from "../../shared/i18n/index.js";
 import { t } from "./messages.js";
 
 const OBJECT_GROUP = "qz-uid";
+
+/** Validate the complete batch before registering anything. Unsupported shapes,
+ * including shared-value references, use the same retained objects below. */
+function deepNodeIdentities(input: unknown, length: number, loaderId: string): number[] | null {
+  const serialized = record(input);
+  if (serialized.type !== "array" || !Array.isArray(serialized.value) || serialized.value.length !== length) return null;
+  const ids: number[] = [];
+  for (const item of serialized.value) {
+    const entry = record(item), node = record(entry.value);
+    if (entry.type === "null") { ids.push(0); continue; }
+    if (entry.type !== "node" || node.nodeType !== 1 || !Number.isInteger(node.backendNodeId)
+      || Number(node.backendNodeId) <= 0 || node.loaderId !== loaderId) return null;
+    ids.push(Number(node.backendNodeId));
+  }
+  return ids;
+}
 // One table per tab while its debugger connection is alive. A same-process frame
 // is keyed by its CDP frame id. A cross-process frame is keyed by session id plus
 // frame id. Detach of a child session drops that session's keys and unique ids.
@@ -195,20 +211,21 @@ function nodeKey(ref: ElementReference) {
 
 function registerElementRef(ref: ElementReference) {
   if (!ref?.uid) return;
-  cleanupElementRefs();
   const previous = elementRefRegistry.get(ref.uid);
   if (previous && nodeRefRegistry.get(nodeKey(previous)) === ref.uid) nodeRefRegistry.delete(nodeKey(previous));
   elementRefRegistry.set(ref.uid, { ...ref, createdAt: Date.now() });
   if (Number(ref.backendNodeId) > 0) nodeRefRegistry.set(nodeKey(ref), ref.uid);
 }
 
-/** All producers use this registration path; a CSS fallback is never advertised as a node UID. */
+/**
+ * All producers use this registration path; a CSS fallback is never advertised as a node UID.
+ * Callers run cleanupElementRefs once before and after a batch, keeping batch registration linear.
+ */
 function registerElementBinding(ref: ElementReference): ElementReference & { target: string } {
   const backendNodeId = Number(ref.backendNodeId);
   if (!Number.isInteger(backendNodeId) || backendNodeId <= 0) {
     return { ...ref, uid: undefined, target: elementTargetForSelector(ref.selector) };
   }
-  cleanupElementRefs();
   const snapshotId = String(ref.snapshotId || makeSnapshotId(Number(ref.tabId), { sessionId: ref.sessionId }));
   const scoped = { ...ref, snapshotId };
   const existing = nodeRefRegistry.get(nodeKey(scoped));
@@ -219,18 +236,18 @@ function registerElementBinding(ref: ElementReference): ElementReference & { tar
 
 function cleanupElementRefs() {
   const now = Date.now();
-  for (const [uid, ref] of elementRefRegistry.entries()) {
-    if (now - Number(ref.createdAt || 0) > ELEMENT_REF_TTL_MS) {
-      elementRefRegistry.delete(uid);
-      if (nodeRefRegistry.get(nodeKey(ref)) === uid) nodeRefRegistry.delete(nodeKey(ref));
-    }
+  const evict = (uid: string, ref: ElementReference) => {
+    elementRefRegistry.delete(uid);
+    if (nodeRefRegistry.get(nodeKey(ref)) === uid) nodeRefRegistry.delete(nodeKey(ref));
+  };
+  for (const [uid, ref] of elementRefRegistry) {
+    if (now - Number(ref.createdAt || 0) > ELEMENT_REF_TTL_MS) evict(uid, ref);
   }
-  while (elementRefRegistry.size > ELEMENT_REF_MAX) {
-    const first = elementRefRegistry.keys().next().value;
-    if (!first) break;
-    const ref = elementRefRegistry.get(first)!;
-    elementRefRegistry.delete(first);
-    if (nodeRefRegistry.get(nodeKey(ref)) === first) nodeRefRegistry.delete(nodeKey(ref));
+  // One iterator evicts the oldest entries; restarting keys() per eviction rescans deleted slots.
+  let excess = elementRefRegistry.size - ELEMENT_REF_MAX;
+  for (const [uid, ref] of elementRefRegistry) {
+    if (excess-- <= 0) break;
+    evict(uid, ref);
   }
 }
 
@@ -320,7 +337,8 @@ async function bindElementReferences(tabId: number, candidates: readonly Element
   const selectorBindings = new Map(selectorCandidates.map((item, index) => [item, selected.ids[index] || 0]));
   context.signal?.throwIfAborted();
   const snapshotId = makeSnapshotId(tabId, context);
-  return candidates.map(item => {
+  cleanupElementRefs();
+  const registered = candidates.map(item => {
     const binding = typeof item._elementRef === "string" ? bound.get(item._elementRef) : null;
     return registerElementBinding({ ...item, ...binding, tabId, sessionId: context.sessionId, pageUrl, documentId, snapshotId,
       frameId: binding?.frameId || scope?.frameId,
@@ -328,6 +346,8 @@ async function bindElementReferences(tabId: number, candidates: readonly Element
       backendNodeId: mode === "required" && item._elementRef ? binding?.backendNodeId
         : binding?.backendNodeId || item.backendNodeId || selectorBindings.get(item) || undefined });
   });
+  cleanupElementRefs();
+  return registered;
 }
 
 async function bindContentElementRefs(tabId: number, tokens: string[], context: ToolContext, scope?: ElementReference, mode: "bestEffort" | "required" = "bestEffort") {
@@ -356,6 +376,28 @@ async function bindContentElementRefs(tabId: number, tokens: string[], context: 
           const object = record(remote.result);
           if (object.subtype !== "array" || !object.objectId) {
             if (mode === "required") throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Element binding returned an invalid node list.", pageErrorDetails(context));
+            continue;
+          }
+          // Serialize the already-consumed node array, never replay the one-shot
+          // Content lookup. Chrome returns original backend identities in one call.
+          // Older CDP hosts (including Firefox's adapter) keep the object fallback.
+          let serialized: unknown;
+          try {
+            const response = record(await nodeSend("Runtime.callFunctionOn", {
+              objectId: object.objectId, objectGroup,
+              functionDeclaration: "function() { return this; }",
+              serializationOptions: { serialization: "deep", maxDepth: 1, additionalParameters: { maxNodeDepth: 0 } },
+            }));
+            if (!response.exceptionDetails) serialized = record(response.result).deepSerializedValue;
+          } catch (error) {
+            if (isCdpFallbackForbiddenError(error)) throw error;
+          }
+          context.signal?.throwIfAborted();
+          const identities = deepNodeIdentities(serialized, chunk.length, loaderId);
+          if (identities) {
+            identities.forEach((backendNodeId, index) => {
+              if (backendNodeId) bound.set(chunk[index], { backendNodeId, loaderId, ...(child ? { frameId } : {}) });
+            });
             continue;
           }
           const properties = record(await nodeSend("Runtime.getProperties", { objectId: object.objectId, ownProperties: true }));
@@ -425,7 +467,7 @@ async function scanLocator(tabId: number | undefined, locator: ElementLocator, c
   try { validateElementLocator(locator); }
   catch (error) {
     throw Object.assign(new ToolExecutionError("INVALID_ELEMENT_LOCATOR", String(record(error).message || error), pageErrorDetails(context)), {
-      hint: "Pass a CSS/UID target or a role, name, or text query; use scope to narrow the search.",
+      hint: "Pass a CSS/UID target or a role, name, or text query; use within to narrow the search.",
     });
   }
   context.signal?.throwIfAborted();
@@ -435,13 +477,13 @@ async function scanLocator(tabId: number | undefined, locator: ElementLocator, c
   const id = Number(tabId);
   const pinned = isUidElementTarget(locator.target);
   const root = pinned ? await resolveElementReference(id, { target: locator.target }, context)
-    : isUidElementTarget(locator.scope) ? await resolveElementReference(id, { target: locator.scope }, context) : null;
+    : isUidElementTarget(locator.within) ? await resolveElementReference(id, { target: locator.within }, context) : null;
   if (pinned && !options.countOnly && !options.all && !locator.role && !locator.name && !locator.text) {
     return { id, pinned, root, matched: 1, element: undefined, results: [] as unknown[] };
   }
   // CSS scopes are resolved strictly in the same Content scan. Only UID roots need host binding.
   const queryInput = { ...locator };
-  if (root) delete queryInput.scope;
+  if (root) delete queryInput.within;
   if (pinned) delete queryInput.target;
   const params = { locator: queryInput, ...options, ...(pinned ? { matchSelf: true } : {}) };
   let response: Record<string, unknown>;
@@ -470,7 +512,7 @@ async function scanLocator(tabId: number | undefined, locator: ElementLocator, c
     results: Array.isArray(response.results) ? response.results : [] };
 }
 
-/** Count attached matches, including hidden nodes. An explicit nth selects at most one. */
+/** Count the locator's matches (visible unless includeHidden). An explicit nth selects at most one. */
 async function countLocatorMatches(tabId: number | undefined, locator: ElementLocator, context: ToolContext = {}) {
   const { matched } = await scanLocator(tabId, locator, context, { countOnly: true });
   return locator.nth === undefined ? matched : locator.nth < matched ? 1 : 0;
@@ -493,7 +535,7 @@ async function resolveLocatorTarget(tabId: number | undefined, locator: ElementL
   if (matched === 0 || locator.nth !== undefined && locator.nth >= matched) return null;
   if (matched > 1 && locator.nth === undefined) throw Object.assign(
     new ToolExecutionError("AMBIGUOUS_ELEMENT", "The locator matches more than one element.", { ...pageErrorDetails(context, locator.target), matched }),
-    { hint: "Narrow the locator or its scope, or select an explicit nth match." },
+    { hint: "Narrow the locator or its within element, or select an explicit nth match." },
   );
   if (pinned) return root;
   if (!isRecord(element)) throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Element query returned no selected node.", pageErrorDetails(context));
@@ -505,6 +547,20 @@ async function resolveLocatorTarget(tabId: number | undefined, locator: ElementL
     { hint: "Retry the query before dispatching an action; an explicit UID cannot be retargeted." },
   );
   return resolveElementReference(id, { target: binding.target }, context);
+}
+
+/** The element input every element tool shares: a target string with an optional nth, or a locator query. */
+async function resolveElementInput(tabId: number | undefined, { target = "", locator, nth = 0, readOnly = false }: {
+  target?: string; locator?: ElementLocator; nth?: number; readOnly?: boolean;
+} = {}, context: ToolContext = {}): Promise<ElementTarget & { index?: number }> {
+  if (locator === undefined) return resolveElementReference(tabId, { target, index: nth, readOnly }, context);
+  const binding = await resolveLocatorTarget(tabId, locator, context);
+  if (!binding) throw Object.assign(new ToolExecutionError("ELEMENT_NOT_FOUND", "No element matches the locator.", pageErrorDetails(context)), {
+    hint: locator.target === undefined
+      ? "Inspect the page or refine the locator, then retry. A hidden element matches a role/name/text query only with includeHidden: true."
+      : "Inspect the page or refine the locator, then retry.",
+  });
+  return binding;
 }
 
 async function resolveElementReference(tabId: number | undefined, { target = "", index = 0, readOnly = false } = {}, context: ToolContext = {}) {
@@ -574,7 +630,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   }
   const sessions = getToolRuntimeDependencies(context).sessions;
   if (currentSessionId && typeof sessions?.resolveTargetTab === "function") {
-    const resolved = await sessions.resolveTargetTab({
+    const target = {
       sessionId: currentSessionId,
       runId: context.runId,
       signal: context.signal,
@@ -582,7 +638,11 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       source: "element_uid_reference",
       checkOnly: context.preserveWorkingTab === true || context.deferToolCommit === true,
       readOnly: observationOnly,
-    });
+    };
+    let resolved = await sessions.resolveTargetTab(target);
+    if (resolved?.ok && resolved.claimRequired && !resolved.readOnlyAccess && context.preserveWorkingTab !== true) {
+      resolved = await sessions.resolveTargetTab({ ...target, checkOnly: false });
+    }
     if (!resolved?.ok) {
       throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {
         toolName: "element",
@@ -960,6 +1020,7 @@ function samePageUrl(a: unknown, b: unknown) {
     prepareCssTargets,
     resolveSelectorTarget,
     resolveElementReference,
+    resolveElementInput,
     resolveLocatorTarget,
     countLocatorMatches,
     findLocatorElements,

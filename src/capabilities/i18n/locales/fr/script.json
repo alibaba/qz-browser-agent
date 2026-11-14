@@ -13,7 +13,7 @@
   "script.theScriptHasAnUnsupportedShapeOrInvalidSyntax": "La structure du script n’est pas prise en charge ou sa syntaxe est invalide. Vérifiez les return hors fonction, les IIFE et les limites des await ou expressions au niveau supérieur.",
   "script.theExecutionEnvironmentDoesNotMatchTheScriptPage": "Le script ne correspond pas à son environnement. Utilisez JavaScript du navigateur et document/window.",
   "script.theTargetDomIsEmptyOrThePageHas": "Le DOM cible est vide ou la page n’a pas fini de s’afficher. Vérifiez les sélecteurs, les listes virtuelles, le chargement différé et le moment de l’exécution.",
-  "script.aToolsCallInsideRunScriptFailedCheckBridge": "Un appel tools.* dans run_script a échoué. Vérifiez les délais du pont, la profondeur d’imbrication, les arguments et le cycle de vie de la page.",
+  "script.aToolsCallInsideRunScriptFailedCheckBridge": "Un appel au SDK qz dans run_script a échoué. Vérifiez les délais du pont, la profondeur d’imbrication, les arguments et le cycle de vie de la page.",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "Le navigateur bloque l’injection de scripts sur cette page. Cela peut se produire sur les pages chrome://, la boutique d’extensions, les pages intégrées ou celles sans les autorisations requises.",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "L’exécution du script a échoué. Utilisez l’erreur et la trace pour repérer la dernière étape réussie.",
   "script.useTargetPageWithAWorkingTabForPage": "Exécutez le script sur la page indiquée par tabRef avec JavaScript du navigateur, input/args et tools/tool.",

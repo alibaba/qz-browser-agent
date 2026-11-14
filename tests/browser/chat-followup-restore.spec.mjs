@@ -322,6 +322,7 @@ function installRecallTransport() {
         }
         if (message.type === "restore_queued_message") {
           window.__recall.recallRequests = (window.__recall.recallRequests || 0) + 1;
+          window.__recall.recallGate?.requests.push({ id: message.clientMessageId, kind: message.queueKind, text: message.draft?.text });
           if (window.__recall.delayMs) await new Promise(resolve => setTimeout(resolve, window.__recall.delayMs));
         }
         return window.__recallTransport.dispatch(message, { postMessage: value => {
@@ -422,14 +423,16 @@ async function runQueuedRecallFuzz(page, testInfo, { width, colorScheme }) {
       const documents = item.documents ? await store.copyMessageDocuments({ sessionId: "recall", messageId: "queued", targetMessageId: item.id, documents: source.documents }) : [];
       await agent.followUp(item.text, item.images ? [image] : [], item.id, documents);
     }
-    const probe = window.__recallProbe = { phase: "interaction", frames: [], inputs: [], seq: 1, content: "正在整理行程。".repeat(130) };
+    const probe = window.__recallProbe = { phase: "interaction", frames: [], inputs: [], gates: [], seq: 1, content: "正在整理行程。".repeat(130) };
     const publish = () => window.qingzhouConversationBenchmark.dispatchBackgroundEvent({ type: "message_update", sessionId: "recall", runId: "benchmark-visual-run",
       eventSeq: ++probe.seq, spanId: "recall-stream", content: probe.content });
     window.qingzhouConversationBenchmark.dispatchBackgroundEvent({ type: "message_start", sessionId: "recall", runId: "benchmark-visual-run", eventSeq: 1,
       spanId: "recall-stream", message: { role: "assistant", content: probe.content } });
     probe.timer = setInterval(() => { probe.content += "继续核对。"; publish(); }, 65);
     for (const type of ["click", "wheel"]) document.addEventListener(type, event => {
-      if (event.isTrusted) probe.inputs.push({ type, seq: probe.seq, time: performance.now() });
+      if (event.isTrusted) probe.inputs.push({ type, seq: probe.seq, time: performance.now(),
+        messageId: event.target.closest?.('.queued-followup')?.dataset.clientMessageId,
+        readOnly: document.querySelector('#input').readOnly });
     }, { capture: true });
     const sample = () => {
       const messages = document.querySelector("#messages");
@@ -451,17 +454,41 @@ async function runQueuedRecallFuzz(page, testInfo, { width, colorScheme }) {
         actions.push({ kind: "steer", id: item.id });
       }
       const doubleClick = random() > 0.4;
-      const before = await page.evaluate(() => {
-        window.__recall.delayMs = 130;
-        return window.__recall.recallRequests || 0;
-      });
+      await expect(page.locator("#input")).toBeEditable();
+      const nextText = [item.text, text].filter(Boolean).join("\n\n");
+      const before = await page.evaluate(({ id, nextText }) => {
+        const b = window.__recall;
+        const gate = b.recallGate = { id, phase: "armed", requests: [] };
+        window.__recallProbe.gates.push(gate);
+        // Hold the actual transaction, rather than guessing that a 130ms transport
+        // delay outlasts a double-click. Recovery reads stay ordered behind it.
+        b.persistHook = async () => {
+          if (b.runtime.composerDrafts?.[7]?.text !== nextText) return;
+          b.persistHook = null;
+          gate.phase = "persisting";
+          await new Promise(resolve => { b.releaseRecall = resolve; });
+          gate.phase = "released";
+        };
+        return b.recallRequests || 0;
+      }, { id: item.id, nextText });
       if (doubleClick) await row.locator(".queued-followup-delete").dblclick({ delay: 18 });
       else await row.locator(".queued-followup-delete").click();
-      text = [item.text, text].filter(Boolean).join("\n\n");
+      await page.waitForFunction(() => window.__recall.recallGate.phase === "persisting");
+      const held = await page.evaluate(() => {
+        const b = window.__recall, input = document.querySelector("#input");
+        return b.recallGate.held = { text: input.value, readOnly: input.readOnly,
+          queued: !!b.agent.findPendingUserMessage(b.recallGate.id), requests: b.recallGate.requests };
+      });
+      expect(held).toEqual({ text, readOnly: true, queued: true,
+        requests: [{ id: item.id, kind: await row.getAttribute("data-queue-kind"), text }] });
+      await expect(row.locator(".queued-followup-delete")).toBeDisabled();
+      await page.evaluate(() => window.__recall.releaseRecall());
+      text = nextText;
       imageCount += item.images;
       documentCount += item.documents;
       actions.push({ kind: doubleClick ? "double-recall" : "recall", id: item.id });
       await expect(page.locator("#input")).toHaveValue(text);
+      await expect(page.locator("#input")).toBeEditable();
       await expect(page.locator("#input")).toBeFocused();
       await expect(page.locator(".input-image-attachment")).toHaveCount(imageCount);
       await expect(page.locator(".input-document-attachment.is-ready")).toHaveCount(documentCount);
@@ -536,7 +563,8 @@ async function runQueuedRecallFuzz(page, testInfo, { width, colorScheme }) {
     const evidence = await page.evaluate(() => {
       const probe = window.__recallProbe;
       clearInterval(probe.timer); probe.stop = true;
-      return { frames: probe.frames, inputs: probe.inputs, input: document.querySelector("#input").value,
+      window.__recall.releaseRecall?.();
+      return { frames: probe.frames, inputs: probe.inputs, gates: probe.gates, input: document.querySelector("#input").value,
         queue: [...window.__recall.agent.getPendingFollowUps(), ...window.__recall.agent.getPendingSteerings()] };
     });
     await testInfo.attach("queued-recall-fuzz.json", { body: Buffer.from(JSON.stringify({ seed: seedValue, width, colorScheme, existingDraft, actions, ...evidence })), contentType: "application/json" });

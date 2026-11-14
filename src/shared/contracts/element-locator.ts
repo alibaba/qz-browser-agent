@@ -5,8 +5,9 @@ export interface ElementLocator {
   name?: string;
   text?: string;
   exact?: boolean;
-  scope?: string;
+  within?: string;
   nth?: number;
+  includeHidden?: boolean;
 }
 
 export const elementLocatorSchema = {
@@ -17,16 +18,29 @@ export const elementLocatorSchema = {
     name: { type: "string", description: "Accessible name, matched exactly by default." },
     text: { type: "string", description: "Element text, matched exactly by default." },
     exact: { type: "boolean", description: "Exact normalized text/name match (default true); false matches a substring." },
-    scope: { type: "string", description: "A uid: or css: search root. Frame document references scope the query to that frame." },
+    within: { type: "string", description: "Search only inside this uid: or css: element. A frame document reference limits the query to that frame." },
     nth: { type: "integer", minimum: 0, description: "Explicit zero-based match index; otherwise a single match is required." },
+    includeHidden: { type: "boolean", description: "Also match hidden elements in role/name/text queries, including in nth and counts; a target always matches them. Default: false." },
   },
   additionalProperties: false,
 } as const;
 
+export const elementNthSchema = {
+  type: "integer", minimum: 0,
+  description: "0-based match index when a css: target matches multiple elements. Default: 0. With locator, use locator.nth.",
+} as const;
+
+/** Hidden compatibility: the retired locator field scope is within. */
+export function normalizeElementLocator<T>(value: T): T {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !Object.hasOwn(value, "scope")) return value;
+  const { scope, ...query } = value as Record<string, unknown>;
+  return (Object.hasOwn(query, "within") ? query : { ...query, within: scope }) as T;
+}
+
 export function locatorReferences(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-  const query = value as ElementLocator;
-  return [query.target, query.scope].filter((item): item is string => typeof item === "string" && !!item);
+  const query = normalizeElementLocator(value) as ElementLocator;
+  return [query.target, query.within].filter((item): item is string => typeof item === "string" && !!item);
 }
 
 export function validateElementLocator(value: unknown): asserts value is ElementLocator {
@@ -37,7 +51,7 @@ export function validateElementLocator(value: unknown): asserts value is Element
   if (invalidFields.length) throw Object.assign(new Error(
     `Unknown element locator field${invalidFields.length === 1 ? "" : "s"}: ${invalidFields.map(key => JSON.stringify(key)).join(", ")}. Supported fields: ${allowedFields.join(", ")}.`,
   ), { details: { invalidFields, allowedFields } });
-  for (const key of ["target", "role", "name", "text", "scope"]) {
+  for (const key of ["target", "role", "name", "text", "within"]) {
     if (query[key] !== undefined && (typeof query[key] !== "string" || !query[key].trim())) {
       throw new Error(`Locator ${key} must be a non-empty string.`);
     }
@@ -46,10 +60,11 @@ export function validateElementLocator(value: unknown): asserts value is Element
     throw new Error("A locator requires target, role, name, or text.");
   }
   if (query.exact !== undefined && typeof query.exact !== "boolean") throw new Error("Locator exact must be a boolean.");
+  if (query.includeHidden !== undefined && typeof query.includeHidden !== "boolean") throw new Error("Locator includeHidden must be a boolean.");
   if (query.nth !== undefined && (!Number.isInteger(query.nth) || Number(query.nth) < 0)) {
     throw new Error("Locator nth must be a non-negative integer.");
   }
-  if (query.scope !== undefined && typeof query.target === "string" && /^uid:/i.test(query.target.trim())) {
-    throw new Error("A uid already identifies its node and frame; omit locator scope.");
+  if (query.within !== undefined && typeof query.target === "string" && /^uid:/i.test(query.target.trim())) {
+    throw new Error("A uid already identifies its node and frame; omit locator within.");
   }
 }

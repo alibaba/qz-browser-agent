@@ -69,10 +69,11 @@ for (const action of definition.parameters.properties.action.enum) {
   assert.deepEqual(await runtime.execute("manage_goal", input, undefined, context), { action, saved: true });
   assert.deepEqual(calls.at(-1), { ...input, sessionId: "parent", runId: "run-1", signal: calls.at(-1).signal });
 }
-await runtime.execute("manage_goal", { action: "get", sessionId: "injected", runId: "injected" }, undefined,
-  { ...context, sessionId: "sibling", runId: "run-2" });
-assert.equal(calls.at(-1).sessionId, "sibling", "arguments cannot override the caller's session");
-assert.equal(calls.at(-1).runId, "run-2", "arguments cannot override the current run");
+const before = calls.length;
+await assert.rejects(runtime.execute("manage_goal", { action: "get", sessionId: "injected", runId: "injected" }, undefined,
+  { ...context, sessionId: "sibling", runId: "run-2" }), error => error.code === "INVALID_ARGUMENTS"
+  && error.details?.mayHaveTakenEffect === false, "arguments cannot override the caller's session or run");
+assert.equal(calls.length, before);
 
 let failOnce = true;
 const recovering = createToolRuntime({ sessions: { async updateGoal() {

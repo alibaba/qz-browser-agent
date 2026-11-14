@@ -255,7 +255,7 @@ assert.match(siteSkillAuthorBuiltin.content, /首次创建带工具的站点 Ski
 assert.match(siteSkillAuthorBuiltin.content, /qingzhou_skill_author__edit_skill_resource/);
 assert.match(siteSkillAuthorBuiltin.content, /一次调用只改一个资源/);
 assert.doesNotMatch(siteSkillAuthorBuiltin.content, /resourceEdits:\[\{ action:"set"/);
-assert.match(siteSkillAuthorBuiltin.content, /正式 runtime smoke 必须调用生成后的工具[\s\S]*`tools.evaluate` 使用匹配的页面[\s\S]*manifest 许可的外层 fetch/);
+assert.match(siteSkillAuthorBuiltin.content, /正式 runtime smoke 必须调用生成后的工具[\s\S]*`page.evaluate` 使用匹配的页面[\s\S]*manifest 许可的外层 fetch/);
 assert.deepEqual(siteSkillAuthorBuiltin.resources, []);
 
 assert.match(SYSTEM_PROMPT, /Durable 产物协议/);

@@ -179,6 +179,7 @@
   "backend.toolFailure.longPress": "長按時間必須介於 {min}–{max} 毫秒。",
   "backend.toolFailure.scrollRepeat": "捲動次數必須是 {min} 到 {max} 之間的整數。",
   "backend.toolFailure.timeoutArgument": "{tool} 的逾時參數無效：指令碼逾時以秒為單位；<= 0 表示無限期等待。",
+  "backend.toolFailure.timeoutRange": "{tool} 的 timeout 以秒為單位，必須大於 0 且不超過 {maximum}。",
   "backend.toolFailure.requiredArguments": "{tool} 缺少必要參數{suffix}",
   "backend.toolFailure.missingFields": "{tool} 缺少必要參數：{fields}",
   "backend.toolFailure.notWebTab": "{tab} 不是一般網頁，無法作為瀏覽器操作目標。",

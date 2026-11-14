@@ -199,20 +199,35 @@ test("external drive runs page tools, preserves user tabs, and refuses occupied 
       return tab.id;
     }, `${fixture}/user`);
     openedTabs.push(userTab);
+    await expect.poll(() => environment.page.evaluate(async id => (await chrome.tabs.get(id)).title, userTab), { timeout: 15_000 }).toBe('drive');
     const claimId = await createDrive();
+    const listed = await scriptTool(dependencies, stdout, stderr, { sessionId: claimId, name: "list_tabs", args: {} });
+    expect(listed.code, listed.text || stderr.text).toBe(0);
+    expect(listed.body.tabs.find(tab => tab.tabRef === userTab)?.ownership).toBe("unclaimed");
     const claimed = await scriptTool(dependencies, stdout, stderr, {
       sessionId: claimId,
       name: "act_on_element",
       args: { tabRef: userTab, target: "css:#go", action: "click" },
     }, "60");
-    expect(claimed.code).toBe(1);
-    expect(claimed.body.code).toBe('SESSION_TAB_UNOWNED');
-    await expect.poll(() => environment.page.evaluate(async id => (await chrome.tabs.get(id)).title, userTab), { timeout: 15_000 }).toBe('drive');
-    const readUserPage = await scriptTool(dependencies, stdout, stderr, { sessionId: claimId, name: 'read_article', args: { tabRef: userTab, limit: 100 } }, '60');
+    expect(claimed.code, claimed.text || stderr.text).toBe(0);
+    await expect.poll(() => environment.page.evaluate(async id => (await chrome.tabs.get(id)).title, userTab), { timeout: 15_000 }).toBe('clicked');
+    const rival = await createDrive();
+    const rivalList = await scriptTool(dependencies, stdout, stderr, { sessionId: rival, name: "list_tabs", args: { scope: "all" } });
+    expect(rivalList.body.tabs.find(tab => tab.tabRef === userTab)?.ownership).toBe("foreign");
+    const refused = await scriptTool(dependencies, stdout, stderr, {
+      sessionId: rival,
+      name: "act_on_element",
+      args: { tabRef: userTab, target: "css:#go", action: "click" },
+    }, "60");
+    expect(refused.code).toBe(1);
+    expect(refused.body.code).toBe('SESSION_TAB_FOREIGN');
+    const readUserPage = await scriptTool(dependencies, stdout, stderr, { sessionId: rival, name: 'read_article', args: { tabRef: userTab, limit: 100 } }, '60');
     expect(readUserPage.code, readUserPage.text || stderr.text).toBe(0);
-    await callTool(environment.bridge.endpoint, "qingzhou_stop_session", {
-      sessionId: claimId, timeoutSeconds: 20,
-    }, { timeoutMs: 25_000 });
+    for (const id of [rival, claimId]) {
+      await callTool(environment.bridge.endpoint, "qingzhou_stop_session", {
+        sessionId: id, timeoutSeconds: 20,
+      }, { timeoutMs: 25_000 });
+    }
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(await tabExists(environment.page, userTab)).toBe(true);
 

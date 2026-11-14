@@ -305,15 +305,12 @@ function findThinkTag(text: string, kind: "open" | "close") {
 
 function trailingPartialThinkTagLength(text: string, kind: "open" | "close") {
   const lower = String(text || "").toLowerCase();
-  for (let index = lower.lastIndexOf("<"); index >= 0; index = lower.lastIndexOf("<", index - 1)) {
-    const suffix = lower.slice(index);
-    if (kind === "close") {
-      if ("</think".startsWith(suffix) || /^<\/think\s*$/.test(suffix)) return suffix.length;
-    } else if ("<think".startsWith(suffix) || /^<think\s*$/.test(suffix)) {
-      return suffix.length;
-    }
-  }
-  return 0;
+  // A partial tag contains exactly one "<", so only the last one can start it.
+  const index = lower.lastIndexOf("<");
+  if (index < 0) return 0;
+  const suffix = lower.slice(index);
+  if (kind === "close") return "</think".startsWith(suffix) || /^<\/think\s*$/.test(suffix) ? suffix.length : 0;
+  return "<think".startsWith(suffix) || /^<think\s*$/.test(suffix) ? suffix.length : 0;
 }
 
 export async function chatOpenAi(messages: ModelMessage[], tools: object[], signal: AbortSignal | undefined, options: ModelOptions, config: RuntimeConfig) {
@@ -790,7 +787,7 @@ function providerErrorEnvelopeFromAssistantContent(value: unknown) {
   const directEnvelope = providerErrorEnvelope(parseJsonObject(text));
   if (directEnvelope) return directEnvelope;
 
-  for (let index = value.lastIndexOf("\n{"); index >= 0; index = value.lastIndexOf("\n{", index - 1)) {
+  for (let index = value.lastIndexOf("\n{"); index >= 0; index = index > 0 ? value.lastIndexOf("\n{", index - 1) : -1) {
     const suffix = value.slice(index + 1).trim();
     const envelope = providerErrorEnvelope(parseJsonObject(suffix));
     if (envelope) return envelope;

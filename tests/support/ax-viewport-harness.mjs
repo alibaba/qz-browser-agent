@@ -77,7 +77,7 @@ export async function createAxViewportHarness({ baseline = false } = {}) {
       const bound = await bind(candidates.map(item => item.selector || ''));
       return candidates.map((ref, index) => ({ ...ref, backendNodeId: bound.ids[index], target: ref.selector ? `css:${ref.selector}` : '' }));
     },
-    resolveElementReference: async (_tab, { target }) => {
+    resolveElementInput: async (_tab, { target }) => {
       const ref = refs.get(target.replace(/^uid:/, ''));
       const selector = target.startsWith('css:') ? target.slice(4) : !ref?.backendNodeId ? ref?.selector || '' : '';
       return { tabId: 1, target, uid: ref?.uid, selector, index: ref?.index || 0, ref };

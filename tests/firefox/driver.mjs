@@ -209,13 +209,17 @@ export async function setColorScheme(session, name) {
   await new Promise(resolve => setTimeout(resolve, 250));
 }
 
-/** Resize the sidebar box the way dragging its splitter does and return the panel's width. */
+/** Resize via the native splitter's box, compensating for browser chrome around the content viewport. */
 export async function setSidebarWidth(session, width) {
   return session.chrome(`
     const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
     const box = win.document.getElementById("sidebar-box");
     box.style.width = ${JSON.stringify(`${width}px`)};
     const panel = win.document.getElementById("sidebar")?.contentDocument?.getElementById("webext-panels-browser");
+    // Native padding/borders vary by Firefox version and launcher visibility.
+    // Target the extension viewport, rather than assuming it fills the outer box.
+    const chromeInset = parseFloat(win.getComputedStyle(box).width) - panel.getBoundingClientRect().width;
+    box.style.width = (${width} + chromeInset) + "px";
     const started = Date.now();
     while (Date.now() - started < 3000) {
       await new Promise(resolve => setTimeout(resolve, 100));

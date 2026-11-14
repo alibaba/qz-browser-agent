@@ -13,37 +13,14 @@ in [Commands](commands.md).
 
 ## Quick start
 
-Install [qz from the Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm)
-with **Add to Chrome**. Open the qz side panel, accept the data notice shown on first use, and configure
-your provider and model in Settings. A development build in Firefox uses
-[Load qz in Firefox](#load-qz-in-firefox) instead of the store.
+Use Node.js 22+ on the computer running your browser. Reuse `qz` if it is already on PATH; otherwise, install it once for ongoing use with `npm install -g qz-browser-agent`. Use `npx -y qz-browser-agent@latest` in place of `qz` only as a temporary fallback. Run `qz skill` with that same CLI and read its matching-version guide rather than copying instructions from another version.
 
-Run the published package with npx:
+Start with `qz session create --title "Read a page" --json`. qz prepares its local service and reuses a responding browser connection, or opens a connection page in your default browser. Ask the user to review and accept the first-use data notice in the qz side panel and approve the connection when prompted. If the extension is missing, `qz install` opens the Chrome Web Store; the user adds the extension, completes setup, and you retry the session command if needed. If qz is installed in another browser profile, open the connection page’s copyable link there. This direct-drive path needs no manual port, service, or qz model setup.
 
-```bash
-npx qz-browser-agent@latest create "Summarize the current page." --stream
-```
+Use the returned `result.sessionId` in every `qz script --session ID task.js` call, following the guide and binding pages with `qz.tab(tabRef)`. You plan and drive the task; finish with `qz session cancel ID`. Use `qz create "TASK" --stream` only when the user wants qz’s built-in agent to plan and execute the task, including human–agent collaboration; that path uses the provider and model configured in qz.
 
-`npx qz-browser-agent@latest install` opens the same Chrome Web Store page. For a manual ZIP
-installation, download the [latest GitHub release](https://github.com/alibaba/qz-browser-agent/releases/latest)
-and follow the [manual installation steps](https://github.com/alibaba/qz-browser-agent/blob/main/README.md#manual-installation).
-
-Browser operations prepare their connection automatically. They reuse a responding online browser,
-or open the connection page once in the system default browser, then wait for its extension to
-respond. When qz does not respond there, the page links to the Chrome Web Store and shows its URL
-with a copy button for a browser profile that already has qz. A pending connection error includes
-the same URL; open it in that profile and retry, or use `qz connect uri` to pair a specific profile.
-Complete the first-use notice and connection prompt when needed. Use `qz connect uri` to print a URL
-for a specific profile without opening it.
-The first new profile is named `default`; an existing profile retains its name.
-
-The examples and suggested next commands use `qz`. Replace it with
-`npx qz-browser-agent@latest`, or install the command globally:
-
-```sh
-npm install --global qz-browser-agent@latest
-qz --version
-```
+For Firefox, see [Load qz in Firefox](#load-qz-in-firefox). For a manual ZIP installation,
+follow the [manual installation steps](../README.md#manual-installation).
 
 On Windows, use PowerShell 7.3 or newer with its default native argument passing. After a global
 install, use `qz.ps1` for commands containing JSON or quoted names; Windows command suggestions
@@ -446,6 +423,8 @@ Further execution returns `DRIVE_SESSION_ENDED`.
 `qz script --session ID [FILE|-] [--args JSON]` runs JavaScript outside the page. It reads a local
 file or stdin; `--args` supplies the script's `args` value. Use the `qz` SDK: `qz.openTab(options)`
 returns a Tab, `qz.tab(tabRef)` binds a Page, and `page.locator(targetOrQuery)` creates an element query.
+`qz.listTabs()` lists the session's tabs and unclaimed tabs, such as the page the user is viewing, with
+each row's `ownership`. The first action, navigation, or `page.evaluate` on an unclaimed tab claims it.
 Locator actions resolve a unique match and wait for it to become usable within one call budget.
 Awaited SDK calls return business values directly and throw on failure.
 For additional capabilities and active Skill tools, discover compact signatures with `qz.listTools()`
@@ -473,10 +452,10 @@ qz session cancel SESSION_ID
 
 stdout is JSON `{ok,result,trace}` on success and failure. `ok` reports execution success; `trace` is an ordered string array of errors and explicit `trace()`/`console` diagnostics without levels. `result` is the returned business value, `null` for `undefined`, or a failure in `{code,message,hint?,details?}` form. Business `trace`/`traces` fields stay inside `result`. Script locations are in `details`. Exit codes are `0` for success, `1` for execution or connection failure, and `2` for invalid arguments. `--timeout` defaults to `120` seconds, accepts `>0` through `3600`, and the request waits 60 seconds longer. The caller's deadline must allow that request to finish. A timeout does not undo completed browser actions.
 
-For action-dependent navigation or popups, use `locator.click({waitFor:"navigation"})` or
-`locator.click({waitFor:"popup"})`. The wait listens before dispatching the action once; failure
+For action-dependent navigation or popups, use `locator.click({expect:"navigation"})` or
+`locator.click({expect:"popup"})`. The wait listens before dispatching the action once; failure
 never replays it. For current element state, use `locator.wait({state:"visible"})`; for an exact
-attached match count, use `locator.wait({count:3})`. `locator.count()` reads the current count.
+match count, use `locator.wait({count:3})`. `locator.count()` reads the current count.
 Use `page.waitForFunction(code,args?,options?)` for application-specific completion conditions.
 
 MCP clients can call `qingzhou_execute_tool` directly. Its single-call transport returns

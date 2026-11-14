@@ -150,7 +150,7 @@ test("uid and css input succeed once on a page without a content CSP", async ({ 
     expect(page.url()).toBe(safeUrl);
     expect(await page.evaluate(() => imageClicks)).toEqual([]);
     const images = await callTool(firefoxSidebar, 'list_images', {
-      tabRef: tabId, target: 'css:#image', visibleOnly: false, minWidth: 0, minHeight: 0,
+      tabRef: tabId, within: 'css:#image', includeHidden: true, minWidth: 0, minHeight: 0,
     });
     expect(images.images).toEqual([expect.objectContaining({ src: new URL('/icon.svg', safeUrl).href })]);
     await page.evaluate(() => { document.querySelector('#image-button').hidden = false; });

@@ -7,10 +7,10 @@ import type { SkillManifest, SkillMcpServer } from "#sdk/shared/skills";
 type AnalysisSkillsHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampNumber" | "getToolRuntimeDependencies"
   | "publishSkillRegistryChange" | "summarizeToolArgsForTrace" | "models" | "skills">;
-type ManageSkillInput = Omit<Partial<ToolArguments<typeof SKILL_AUTHOR_TOOL_PARAMETERS.update> & ToolArguments<typeof SKILL_AUTHOR_TOOL_PARAMETERS.create>>, "scope"> & { action?: string; operation?: string; scope?: string; contentEdits?: ToolArguments<typeof SKILL_CONTENT_EDIT_SCHEMA>[]; resourceEdits?: ToolArguments<typeof SKILL_RESOURCE_EDIT_SCHEMA>[] };
+type ManageSkillInput = Omit<Partial<ToolArguments<typeof SKILL_AUTHOR_TOOL_PARAMETERS.update> & ToolArguments<typeof SKILL_AUTHOR_TOOL_PARAMETERS.create>>, "scope"> & { action?: string; operation?: string; scope?: string; contentEdits?: ToolArguments<typeof SKILL_CONTENT_EDIT_SCHEMA>[]; resourceEdits?: Record<string, unknown>[] };
 import { requireToolFields, toolError } from "#sdk/background/tools";
 import { isBuiltinSkillName } from "#sdk/shared/skills";
-import { SKILL_AUTHOR_TOOL_PARAMETERS, SKILL_CONTENT_EDIT_SCHEMA, SKILL_RESOURCE_EDIT_SCHEMA } from "./workbench.js";
+import { SKILL_AUTHOR_TOOL_PARAMETERS, SKILL_CONTENT_EDIT_SCHEMA } from "./workbench.js";
 import { getSkillDisplayName, isBase64SkillResource, isDiscoverableUserSkill, isSkillDocumentResource, matchSkillUrl, skillResourceByteSize, summarizeSkill } from "#sdk/shared/skills";
 
 import { findSkillManifestResource, parseSkillManifest } from "#sdk/shared/skills";
@@ -462,6 +462,7 @@ registerTool({
       ...SKILL_AUTHOR_TOOL_PARAMETERS.update.properties,
       scope: { type: "string", enum: ["all", "global", "site", "resident"], description: modelT("manageSkillScope") },
       content: SKILL_AUTHOR_TOOL_PARAMETERS.create.properties.content,
+      resourceEdits: { type: "array", items: { type: "object" } },
     },
     required: ["action"],
   } as const; },

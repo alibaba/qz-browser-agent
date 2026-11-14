@@ -157,7 +157,7 @@ tools.defineTool({ name: '__nested_braid', description: 'Interleaved creation, p
   })),
 });
 tools.defineTool({ name: '__nested_business_value', description: 'Return caller-authored data.',
-  model: { preserveResult: true }, parameters: { type: 'object', properties: {} },
+  model: { preserveResult: true }, parameters: { type: 'object', properties: { fixture: { type: 'string' } } },
   execute: () => markToolValue({ code: 'BUSINESS_CODE', message: 'Business text', ok: false, error: 'A data field',
     _plugin: { tabId: 'business' }, result: '{"type":"string"}' }),
 });
@@ -268,7 +268,7 @@ function fixture(hold = true, budget = 10, externalDrive = true) {
     collectArtifacts: () => [],
   });
   return { id, state, controller, runtime, bridge, aliases,
-    call: (name, args) => bridge.handleToolCall({ sessionId: id, runId: `run-${id}`, toolName: name, args: { fixture: id, ...args } }),
+    call: (name, args) => bridge.handleToolCall({ sessionId: id, runId: `run-${id}`, toolName: name, args: name.startsWith('__') ? { fixture: id, ...args } : args }),
   };
 }
 

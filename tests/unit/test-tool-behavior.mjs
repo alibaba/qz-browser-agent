@@ -326,14 +326,17 @@ test('UID targets retain their batch lanes while runtime requires an agreeing ex
 
 test('undeclared uid-looking arguments cannot bypass page ownership', async () => {
   let calls = 0;
-  tools.defineTool({ name: '__page_without_elements', description: 'Fixture', page: 'owned',
-    parameters: { type: 'object', properties: { tabId: { type: 'number' } } },
-    execute: () => { calls++; return {}; },
-  });
-  for (const key of ['target', 'selector', 'root']) {
-    const args = { tabId: 99, [key]: 'uid:t41.0000a1.1' };
-    assert.equal(tools.hasUidElementTargets('__page_without_elements', args), false);
-    await assert.rejects(runtime.execute('__page_without_elements', args, undefined, context), { code: 'SESSION_TAB_FOREIGN' });
+  for (const [name, additionalProperties, code] of [['__page_without_elements', undefined, 'INVALID_ARGUMENTS'],
+    ['__open_page_without_elements', true, 'SESSION_TAB_FOREIGN']]) {
+    tools.defineTool({ name, description: 'Fixture', page: 'owned',
+      parameters: { type: 'object', properties: { tabId: { type: 'number' } }, ...(additionalProperties ? { additionalProperties } : {}) },
+      execute: () => { calls++; return {}; },
+    });
+    for (const key of ['target', 'within', 'selector', 'root']) {
+      const args = { tabId: 99, [key]: 'uid:t41.0000a1.1' };
+      assert.equal(tools.hasUidElementTargets(name, args), false);
+      await assert.rejects(runtime.execute(name, args, undefined, context), { code }, `${name} ${key}`);
+    }
   }
   assert.equal(calls, 0, 'unconsumed uid-looking arguments must not skip the page:owned preflight');
 });

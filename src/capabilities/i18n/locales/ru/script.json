@@ -13,7 +13,7 @@
   "script.theScriptHasAnUnsupportedShapeOrInvalidSyntax": "Структура скрипта не поддерживается либо синтаксис неверен. Проверьте return вне функций, IIFE и границы await или выражений верхнего уровня.",
   "script.theExecutionEnvironmentDoesNotMatchTheScriptPage": "Скрипт не соответствует среде выполнения. Используйте JavaScript браузера и document/window.",
   "script.theTargetDomIsEmptyOrThePageHas": "Целевой DOM пуст или страница ещё не отрисована. Проверьте селекторы, виртуальные списки, отложенную загрузку и момент выполнения.",
-  "script.aToolsCallInsideRunScriptFailedCheckBridge": "Вызов tools.* внутри run_script завершился ошибкой. Проверьте тайм-ауты моста, глубину вложенности, аргументы и жизненный цикл страницы.",
+  "script.aToolsCallInsideRunScriptFailedCheckBridge": "Вызов qz SDK внутри run_script завершился ошибкой. Проверьте тайм-ауты моста, глубину вложенности, аргументы и жизненный цикл страницы.",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "Браузер запрещает внедрение скриптов на этой странице. Это бывает на страницах chrome://, в магазине расширений, на встроенных страницах и при нехватке разрешений.",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "Выполнение скрипта завершилось ошибкой. По ошибке и трассировке определите последний успешный этап.",
   "script.useTargetPageWithAWorkingTabForPage": "Запускайте скрипт на странице, указанной в tabRef, используя JavaScript браузера, input/args и tools/tool.",

@@ -110,7 +110,7 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
         abort() { controller?.abort(); },
         async call(name, args) {
           controller = new AbortController();
-          try { return await runtime.execute(name, { tabId, ...args }, controller.signal, { ...context, workingTabId: tabId, source: "run_script" }); }
+          try { return await runtime.execute(name, name === "open_tab" ? args : { tabId, ...args }, controller.signal, { ...context, workingTabId: tabId, source: "run_script" }); }
           catch (error) { return { message: error.message, code: error.code, hint: error.hint, details: error.details }; }
         },
       };

@@ -62,7 +62,7 @@ async def snapshot(session: ClientSession, session_id: str) -> dict[str, Any]:
 
 
 async def owned_tabs(session: ClientSession, session_id: str) -> list[int]:
-    result = await execute(session, session_id, "list_tabs", {})
+    result = await execute(session, session_id, "list_tabs", {"scope": "owned"})
     return sorted(int(tab["tabRef"]) for tab in result["tabs"])
 
 
@@ -103,7 +103,7 @@ async def amain(args: argparse.Namespace) -> int:
 
             await expect_denied(session, root_a, "navigate", {
                 "tabRef": tab_b, "url": f"{base_url}/must-not-win",
-            }, {"SESSION_TAB_FOREIGN", "SESSION_TAB_UNOWNED"})
+            }, {"SESSION_TAB_FOREIGN"})
             for owner, reference in [(root_a, tab_child), (child, tab_a)]:
                 await expect_denied(session, owner, "close_tab", {"tabRef": reference}, {"SESSION_TAB_FOREIGN", "SESSION_TAB_UNOWNED"})
             for name in ["use_tab", "get_working_tab"]:
@@ -118,7 +118,13 @@ async def amain(args: argparse.Namespace) -> int:
             listed = await execute(session, root_a, "list_tabs", {"scope": "all"})
             free_url = f"{base_url}/free"
             free = next((item for item in listed["tabs"] if str(item.get("url") or "").rstrip("/") == free_url), None)
-            assert free and set(free) == {"tabRef", "url", "title", "active"}, listed
+            assert free and set(free) == {"tabRef", "url", "title", "active", "ownership"}, listed
+            assert free["ownership"] == "unclaimed", free
+            assert next(item for item in listed["tabs"] if item["tabRef"] == tab_b)["ownership"] == "foreign", listed
+            default_listed = await execute(session, root_a, "list_tabs", {})
+            assert {item["tabRef"]: item["ownership"] for item in default_listed["tabs"] if item["tabRef"] in {tab_a, tab_b, free["tabRef"]}} == {
+                tab_a: "owned", free["tabRef"]: "unclaimed",
+            }, default_listed
             free_tab_ref = int(free["tabRef"])
             free_article = await execute(session, root_a, "read_article", {"tabRef": free_tab_ref, "limit": 4000})
             assert "free" in json.dumps(free_article), free_article
@@ -129,11 +135,12 @@ async def amain(args: argparse.Namespace) -> int:
             assert await owned_tabs(session, root_a) == sorted([tab_a, tab_a2, free_tab_ref])
             claimed_tabs = await execute(session, root_a, "list_tabs", {})
             claimed_free = next(item for item in claimed_tabs["tabs"] if item["tabRef"] == free_tab_ref)
+            assert claimed_free["ownership"] == "owned", claimed_free
             assert claimed_free["url"] == claimed_url, claimed_free
             assert claimed_free["active"] == free["active"], "ownership must not change the user's active tab"
             await expect_denied(session, root_b, "navigate", {
                 "tabRef": free_tab_ref, "url": f"{base_url}/must-not-steal",
-            }, {"SESSION_TAB_FOREIGN", "SESSION_TAB_UNOWNED"})
+            }, {"SESSION_TAB_FOREIGN"})
             assert await execute(session, root_a, "close_tab", {"tabRef": free_tab_ref}) == {"closed": True}
             assert await owned_tabs(session, root_a) == sorted([tab_a, tab_a2])
 

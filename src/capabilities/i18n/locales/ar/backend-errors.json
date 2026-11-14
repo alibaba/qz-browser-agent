@@ -12,6 +12,7 @@
   "backend.toolError.ABORTED.label": "متوقف",
   "backend.toolError.ABORTED.message": "أوقف المستخدم استدعاء الأداة؛ لم تُعد أي نتيجة.",
   "backend.toolError.AMBIGUOUS_ELEMENT.label": "تطابق عدة عناصر",
+  "backend.toolError.ELEMENT_NOT_FOUND.label": "لا يوجد عنصر مطابق",
   "backend.toolError.AGENT_ALREADY_RUNNING.label": "المهمة قيد التشغيل",
   "backend.toolError.SESSION_PERSIST_FAILED.label": "تعذّر حفظ المهمة",
   "backend.toolError.STALE_AGENT_LEASE.label": "لم يعد بإمكان هذا التشغيل إجراء تغييرات",

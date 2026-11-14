@@ -26,6 +26,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   BATCH_TAB_REFERENCE_ERROR: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.message" },
   BATCH_TAB_DEPENDENCY_FAILED: { label: "toolError.BATCH_TAB_DEPENDENCY_FAILED.label", message: "toolError.BATCH_TAB_DEPENDENCY_FAILED.message" },
   AMBIGUOUS_ELEMENT: { label: "toolError.AMBIGUOUS_ELEMENT.label" },
+  ELEMENT_NOT_FOUND: { label: "toolError.ELEMENT_NOT_FOUND.label" },
   AGENT_ALREADY_RUNNING: { label: "toolError.AGENT_ALREADY_RUNNING.label" },
   SESSION_PERSIST_FAILED: { label: "toolError.SESSION_PERSIST_FAILED.label" },
   STALE_AGENT_LEASE: { label: "toolError.STALE_AGENT_LEASE.label" },
@@ -551,7 +552,9 @@ function localizeByCode(code: string, details: Record<string, unknown> = {}) {
     case "INVALID_SCROLL_REPEAT":
       return t("toolFailure.scrollRepeat", { min: String(details.min || 1), max: String(details.max || 20) });
     case "INVALID_TIMEOUT":
-      return t("toolFailure.timeoutArgument", { tool: String(tool) });
+      return typeof details.maximum === "number"
+        ? t("toolFailure.timeoutRange", { tool: String(tool), maximum: String(details.maximum) })
+        : t("toolFailure.timeoutArgument", { tool: String(tool) });
     case "MISSING_REQUIRED_ARGUMENTS":
       return t("toolFailure.requiredArguments", { tool: String(tool), suffix: detailSuffix(missing) });
     case "NOT_WEB_TAB":

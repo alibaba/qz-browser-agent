@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 
 let pending;
 const capabilityBuilds = new Map();
+const capabilityDirectories = new Set();
+const reportedCapabilityBuilds = new Set();
 let exampleAssets;
 let pendingExampleAssets;
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -51,9 +53,22 @@ export function ensureCapabilityExtension({ omit = [], example = false } = {}) {
   const omitted = [...new Set(omit)].sort();
   if (omitted.some(name => !/^[a-z][a-z0-9-]*$/.test(name))) throw new Error("Invalid capability package name");
   const key = JSON.stringify({ omitted, example });
+  const prepared = process.env.QINGZHOU_TEST_CAPABILITY_BUILDS;
+  if (prepared) {
+    const directory = JSON.parse(prepared)[key];
+    if (!directory) throw new Error(`Capability variant was not prepared by global setup: ${key}`);
+    if (!reportedCapabilityBuilds.has(key)) {
+      reportedCapabilityBuilds.add(key);
+      console.log(`Capability fixture reused pid=${process.pid} variant=${key} dir=${directory}`);
+    }
+    return Promise.resolve(directory);
+  }
   if (!capabilityBuilds.has(key)) {
     const directory = mkdtempSync(join(tmpdir(), "qingzhou-capability-variant-"));
-    process.once("exit", () => rmSync(directory, { recursive: true, force: true }));
+    if (!capabilityDirectories.size) process.once("exit", () => {
+      for (const path of capabilityDirectories) rmSync(path, { recursive: true, force: true });
+    });
+    capabilityDirectories.add(directory);
     const pendingBuild = (async () => {
       const sourceDir = join(directory, "src");
       await cp(join(ROOT, "src"), sourceDir, { recursive: true });

@@ -15,7 +15,7 @@ import { describeAutomationSchedule, computeNextRunAt } from "../../src/shared/a
 import { qingzhouTabGroupPatch, ensureQingzhouTabGroupForWindow } from "../../src/shared/tab-groups.js";
 import { formatBeijingDateTime, parseBeijingDateTime } from "../../src/shared/time-utils.js";
 import { t as contentText } from "../../src/content/i18n.js";
-import { appendErrorSection } from "../../src/sidepanel/tools/generic-result-renderer.js";
+import { appendErrorSection, localizeToolDisplayValue } from "../../src/sidepanel/tools/generic-result-renderer.js";
 
 async function inLanguage(language, run) {
   const chrome = globalThis.chrome;
@@ -166,6 +166,23 @@ test("script error rendering preserves canonical messages, recovery hints and tr
     if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
     else delete globalThis.document;
   }
+});
+
+test("tool display localizes a failure once and keeps trace rows that name the timeout field", async () => {
+  const message = "Unknown fields for find_elements: exat. Supported fields: tabRef, text, exact, pattern, waitFor, timeout.";
+  const failure = { ok: false, code: "INVALID_ARGUMENTS", error: message, details: { name: "find_elements", path: "$",
+    invalidFields: ["exat"], allowedFields: ["tabRef", "text", "exact", "pattern", "waitFor", "timeout"],
+    tool: "find_elements", status: "not_started", executed: false, mayHaveTakenEffect: false, automaticReplay: false } };
+  const trace = [{ traceIndex: 0, level: "error", message: `INVALID_ARGUMENTS: ${message}` }];
+  for (const language of ["en", "zh-CN"]) await inLanguage(language, () => {
+    const shown = localizeToolDisplayValue({ error: failure, trace });
+    assert.doesNotMatch(JSON.stringify(shown), /timed out|超时/);
+    assert.match(shown.error.error, /exat/);
+    assert.deepEqual(shown.trace, trace);
+    const timeout = localizeToolDisplayValue({ result: { code: "TOOL_TIMEOUT", error: "find_elements timed out after 10000ms",
+      details: { timeoutMs: 10000 } } });
+    assert.match(timeout.result.error, language === "en" ? /timed out/i : /超时/);
+  });
 });
 
 test("tool failures interpolate fields without translating caller values", async () => {

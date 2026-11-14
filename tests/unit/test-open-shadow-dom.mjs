@@ -165,6 +165,28 @@ test("find_elements matches text inside nested open shadows and ignores closed s
   assert.equal(invalid.code, "INVALID_SELECTOR");
 });
 
+test("find_elements name, text and exact use the locator matcher, including nested open shadows", async () => {
+  const exact = await findElements({ selector: "#light-block", text: "Light paragraph remains." });
+  assert.equal(exact.code, undefined, exact.error);
+  assert.deepEqual(exact.results.map(item => item.tag), ["p"]);
+  assert.equal((await findElements({ selector: "#light-block", text: "Light paragraph" })).matches, 0);
+  const substring = await findElements({ selector: "#light-block", text: " Light   paragraph ", exact: false });
+  assert.deepEqual(substring.results.map(item => item.tag), ["p"], "text-only matches keep the smallest element, not its ancestors");
+  assert.equal((await findElements({ selector: "#light-block", text: "light paragraph", exact: false })).matches, 0);
+
+  const cell = await findElements({ selector: "#story", text: "117", tags: ["td"] });
+  assert.deepEqual(cell.results.map(item => [item.tag, item.text]), [["td", "117"]]);
+  const heading = await findElements({ selector: "#story", roles: ["heading"], name: "Support matrix" });
+  assert.deepEqual(heading.results.map(item => item.tag), ["h3"]);
+  assert.equal((await findElements({ selector: "#story", roles: ["heading"], name: "Support" })).matches, 0);
+  const partial = await findElements({ selector: "#story", roles: ["heading"], name: "Support", exact: false });
+  assert.deepEqual(partial.results.map(item => item.name), ["Support matrix"]);
+  assert.equal((await findElements({ selector: "#story", text: "CLOSED-SHADOW-SECRET" })).matches, 0);
+
+  const regex = await findElements({ selector: "#story", pattern: "^support matrix$" });
+  assert.deepEqual(regex.results.map(item => item.tag), ["h3"], "pattern keeps case-insensitive regex matching");
+});
+
 test("readiness reads state without rich descriptions or missing-target page scans", async () => {
   const result = await page.evaluate(async () => {
     const root = document.createElement("div");

@@ -44,8 +44,8 @@ const messages = defineMessages("skill-tools", {
     "en": "MCP: {server} / {tool} (runs via remote HTTP MCP; no web tab needed)."
   },
   "innerRuntime": {
-    "zh-CN": "脚本在页面外执行，可调用工具、读取 Skill 设置并访问其声明允许的网络来源；页面操作须显式传 tabRef，页面内 DOM 求值使用 tools.evaluate。",
-    "en": "Runs outside web pages with access to tools, Skill settings, and declared network origins; pass tabRef explicitly to page tools and use tools.evaluate for in-page DOM execution."
+    "zh-CN": "脚本在页面外执行，可调用工具、读取 Skill 设置并访问其声明允许的网络来源；页面操作须显式传 tabRef，页面内 DOM 求值使用 qz.tab(tabRef).evaluate。",
+    "en": "Runs outside web pages with access to tools, Skill settings, and declared network origins; pass tabRef explicitly to page tools and use qz.tab(tabRef).evaluate for in-page DOM execution."
   },
   "pageTarget": {
     "zh-CN": "页面目标：必须传 tabRef，指定当前任务拥有的标签页别名或 open_tab、list_tabs 返回的引用。",

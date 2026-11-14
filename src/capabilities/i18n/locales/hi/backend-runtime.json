@@ -179,6 +179,7 @@
   "backend.toolFailure.longPress": "लंबे प्रेस की अवधि {min}–{max} मिलीसेकंड होनी चाहिए।",
   "backend.toolFailure.scrollRepeat": "स्क्रॉल की संख्या {min} और {max} के बीच पूर्णांक होनी चाहिए।",
   "backend.toolFailure.timeoutArgument": "{tool} की समय सीमा अमान्य है: स्क्रिप्ट की समय सीमा सेकंड में होती है; <= 0 का अर्थ अनिश्चित समय तक इंतज़ार है।",
+  "backend.toolFailure.timeoutRange": "{tool} की समय सीमा सेकंड में है और 0 से अधिक तथा अधिकतम {maximum} होनी चाहिए।",
   "backend.toolFailure.requiredArguments": "{tool} के ज़रूरी आर्ग्युमेंट मौजूद नहीं हैं{suffix}",
   "backend.toolFailure.missingFields": "{tool} के ज़रूरी आर्ग्युमेंट मौजूद नहीं हैं: {fields}",
   "backend.toolFailure.notWebTab": "{tab} सामान्य वेब पेज नहीं है और ब्राउज़र के लक्ष्य के रूप में इस्तेमाल नहीं किया जा सकता।",

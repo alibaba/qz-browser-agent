@@ -179,6 +179,7 @@
   "backend.toolFailure.longPress": "Длительность удержания должна составлять от {min} до {max} миллисекунд.",
   "backend.toolFailure.scrollRepeat": "Число прокруток должно быть целым числом от {min} до {max}.",
   "backend.toolFailure.timeoutArgument": "Недопустимый тайм-аут для {tool}: для скриптов он задаётся в секундах; <= 0 означает ожидание без ограничения.",
+  "backend.toolFailure.timeoutRange": "Тайм-аут {tool} задаётся в секундах и должен быть больше 0 и не больше {maximum}.",
   "backend.toolFailure.requiredArguments": "Отсутствуют обязательные аргументы для {tool}{suffix}",
   "backend.toolFailure.missingFields": "Отсутствуют обязательные аргументы для {tool}: {fields}",
   "backend.toolFailure.notWebTab": "{tab} не является обычной веб-страницей и не может использоваться как цель браузерных действий.",

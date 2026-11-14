@@ -532,12 +532,24 @@ function hasRawToolData({ args, rawArgsText = "", result }: RawToolData) {
     || (result !== undefined && result !== "");
 }
 
+/**
+ * A failure localizes its own text once, with its code and details. Other records fall back to
+ * text localization; recorded script trace rows stay verbatim.
+ */
+function localizeRecordText(value: object, key: string): object {
+  if (isErrorLike(value)) return localizeToolFailurePayload(value, { isError: true }) as object;
+  const source = record(value);
+  if (key === "trace") return source;
+  const out = { ...source };
+  for (const field of ["error", "message"]) {
+    if (typeof source[field] === "string") out[field] = localizeToolFailureText(source[field]);
+  }
+  return out;
+}
+
 function compactRawToolValue(value: unknown, depth = 0, key = ""): unknown {
   const keyText = String(key || "");
   if (keyText === "code" && typeof value === "string") return localizeToolFailureCode(value) || value;
-  if ((keyText === "error" || keyText === "message") && typeof value === "string") {
-    return localizeToolFailureText(value);
-  }
   if (typeof value === "string") {
     if (value.length <= RAW_TOOL_PREVIEW_CHAR_LIMIT) return value;
     return `${value.slice(0, RAW_TOOL_PREVIEW_CHAR_LIMIT)}\n… omitted ${value.length - RAW_TOOL_PREVIEW_CHAR_LIMIT} chars`;
@@ -550,7 +562,7 @@ function compactRawToolValue(value: unknown, depth = 0, key = ""): unknown {
     return rows;
   }
   if (!value || typeof value !== "object") return value;
-  if (isErrorLike(value)) value = localizeToolFailurePayload(value, { isError: true });
+  value = localizeRecordText(value, keyText);
   if (depth >= 4) return summarizeValue(value, 240);
   const out: Data = {};
   for (const [key, item] of Object.entries(record(value))) {
@@ -563,14 +575,11 @@ function compactRawToolValue(value: unknown, depth = 0, key = ""): unknown {
 export function localizeToolDisplayValue(value: unknown, depth = 0, key = ""): unknown {
   const keyText = String(key || "");
   if (keyText === "code" && typeof value === "string") return localizeToolFailureCode(value) || value;
-  if ((keyText === "error" || keyText === "message") && typeof value === "string") {
-    return localizeToolFailureText(value);
-  }
   if (Array.isArray(value)) {
     return value.map(item => localizeToolDisplayValue(item, depth + 1, keyText));
   }
   if (!value || typeof value !== "object") return value;
-  const source = isErrorLike(value) ? localizeToolFailurePayload(value, { isError: true }) : value;
+  const source = localizeRecordText(value, keyText);
   const out: Data = {};
   for (const [childKey, childValue] of Object.entries(record(source))) {
     if (RAW_FAILURE_DEBUG_KEYS.has(childKey)) continue;
