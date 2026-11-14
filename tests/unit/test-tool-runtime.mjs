@@ -119,6 +119,11 @@ for (const schema of providerFacingSchemas) {
   const name = String(schema.function?.name || "unknown");
   const parameters = schema.function?.parameters || {};
   assert.equal(parameters.type, "object", `${name} must expose an object parameter schema`);
+  for (const keyword of ["anyOf", "oneOf"]) {
+    for (const branch of parameters[keyword] || []) {
+      assert.equal(branch.type, "object", `${name}.${keyword} alternatives must explicitly declare object types for strict providers`);
+    }
+  }
   assert.deepEqual(
     schemaKeywordPaths(parameters, "anyOf"),
     ['read_image', 'collect_images'].includes(name) ? ['$.anyOf'] : [],

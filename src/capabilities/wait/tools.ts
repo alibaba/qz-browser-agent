@@ -508,8 +508,8 @@ registerTool({
     state: { type: "string", enum: ["attached", "visible", "hidden", "detached"], description: toolT("waitForElementState") },
     intervalSeconds: { type: "number", description: toolT("waitForElementIntervalSeconds") },
   }, required: ["tabRef"], oneOf: [
-    { required: ["target"], not: { required: ["locator"] } },
-    { required: ["locator"], not: { required: ["target"] } },
+    { type: "object", required: ["target"], not: { required: ["locator"] } },
+    { type: "object", required: ["locator"], not: { required: ["target"] } },
   ] } as const; },
   page: "readOnly", timeout: pageWaitTimeout,
   validateArgs: args => {

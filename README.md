@@ -141,17 +141,11 @@ The agent opens a qz session in your browser, reads pages, and acts through `qz 
 
 ## Make your agents actually good at browsing
 
-Agents like Grok Bot, Claude Code, Codex, and pi can drive your connected browser directly. This one Skill is the direct-drive guide: open a tab, read the page, and act with `qz script` or MCP. When you want qz's built-in agent to plan the task, that same Skill points at `references/create-task.md`.
+Use Node.js 22+ on the computer running your browser. Reuse `qz` if it is already on PATH; otherwise, install it once for ongoing use with `npm install -g qz-browser-agent`. Use `npx -y qz-browser-agent@latest` in place of `qz` only as a temporary fallback. Run `qz skill` with that same CLI and read its matching-version guide rather than copying instructions from another version.
 
-1. **Install this Skill.** It is the direct-drive guide.
-   ```bash
-   npx skills add alibaba/qz-browser-agent -g
-   ```
-2. **Choose a browser (optional).** Requires Node.js 22 or later. The first CLI command opens a connection page in your default browser and connects automatically. If qz isn't installed there, the page links to the Chrome Web Store and shows a link to copy into the browser that has qz. To pair a particular browser profile, run this command and open the printed URL in that profile:
-   ```bash
-   npx qz-browser-agent@latest connect uri
-   ```
-3. **Just ask.** Tell your agent: "Use qz to compare open-weight LLMs released in the last 6 months and put them in a table with sources."
+Start with `qz session create --title "Read a page" --json`. qz prepares its local service and reuses a responding browser connection, or opens a connection page in your default browser. Ask the user to review and accept the first-use data notice in the qz side panel and approve the connection when prompted. If the extension is missing, `qz install` opens the Chrome Web Store; the user adds the extension, completes setup, and you retry the session command if needed. If qz is installed in another browser profile, open the connection page’s copyable link there. This direct-drive path needs no manual port, service, or qz model setup.
+
+Use the returned `result.sessionId` in every `qz script --session ID task.js` call, following the guide and binding pages with `qz.tab(tabRef)`. You plan and drive the task; finish with `qz session cancel ID`. Use `qz create "TASK" --stream` only when the user wants qz’s built-in agent to plan and execute the task, including human–agent collaboration; that path uses the provider and model configured in qz.
 
 <details>
 <summary>Use the CLI or MCP directly</summary>

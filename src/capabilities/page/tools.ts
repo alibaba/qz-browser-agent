@@ -129,7 +129,11 @@ async function sendToContent(tabId: number | undefined, action: string, params: 
   if (!isElementReply(result)) throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED", t("contentScriptReturnedAnInvalidResponse", { action: String(action) }), { action });
   return result;
 }
-const elementInputChoice = [{ required: ["target"], not: { required: ["locator"] } }, { required: ["locator"], not: { required: ["target"] } }];
+// Strict providers inspect each alternative's type independently of the parent schema.
+const elementInputChoice = [
+  { type: "object", required: ["target"], not: { required: ["locator"] } },
+  { type: "object", required: ["locator"], not: { required: ["target"] } },
+];
 function inputNotDelivered(details: Record<string, unknown>) {
   return { ...toolError("INPUT_NOT_DELIVERED", t("inputNotDelivered"), {
     hint: "Use find_elements to refresh the target before retrying the action.",

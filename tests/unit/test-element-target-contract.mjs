@@ -64,7 +64,7 @@ function assertElementToolSchemasUseTarget() {
   assertToolUsesTargetOnly("screenshot");
   assertToolUsesTargetOnly("read_image");
   assert.match(resolveToolDefinition("read_image").description, /url 或页面元素二选一/, "read_image should state its simple alternative-input contract");
-  assert.deepEqual(resolveToolDefinition("read_image").parameters.anyOf, [{ required: ["url"] }, { required: ["tabRef", "target"] }, { required: ["tabRef", "locator"] }], "image URLs are page-free, while element reads require an explicit page and element");
+  assert.deepEqual(resolveToolDefinition("read_image").parameters.anyOf, [{ type: "object", required: ["url"] }, { type: "object", required: ["tabRef", "target"] }, { type: "object", required: ["tabRef", "locator"] }], "image URLs are page-free, while element reads require an explicit page and element");
 }
 
 function assertToolUsesTargetOnly(name, { required = null, locator = false } = {}) {
@@ -77,8 +77,8 @@ function assertToolUsesTargetOnly(name, { required = null, locator = false } = {
   if (locator) {
     assert.equal(definition.parameters.properties.locator.type, "object");
     assert.deepEqual(definition.parameters.oneOf, [
-      { required: ["target"], not: { required: ["locator"] } },
-      { required: ["locator"], not: { required: ["target"] } },
+      { type: "object", required: ["target"], not: { required: ["locator"] } },
+      { type: "object", required: ["locator"], not: { required: ["target"] } },
     ], `${name} schema requires exactly one public element input`);
     const base = { tabRef: "page", ...(name === "act_on_element" ? { action: "click" } : {}) };
     for (const args of [{ target: "uid:t7.000001.1" }, { target: "css:button" }, { locator: { role: "button", name: "Save" } }]) {

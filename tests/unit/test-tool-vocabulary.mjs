@@ -105,6 +105,50 @@ test('element tools accept target or locator, reject both, and reject unknown fi
   assert.equal(f.seen.length, before, 'invalid input never reaches the executor');
 });
 
+test('read_image retains URL, target and locator input behavior through the runtime boundary', async () => {
+  const f = capturing(['read_image']);
+  const url = 'https://example.test/image.png';
+  for (const input of [
+    { url },
+    { url: 'data:image/png;base64,aW1hZ2U=', detail: 'high', format: 'webp', quality: 0.7, maxBytes: 1024, maxWidth: 100, maxHeight: 100 },
+    { tabRef: 'page', target: 'css:img', nth: 0 },
+    { tabRef: 7, locator: { role: 'img', name: 'Portrait' } },
+    { tabId: 7, selector: 'css:img', index: 0 },
+    { url: ' ', tabRef: 'page', target: 'css:img' },
+    { url, target: 'css:img', locator: { role: 'img' } }, // The URL path retains precedence.
+  ]) {
+    await f.execute('read_image', input);
+    const args = f.seen.at(-1).args;
+    assert.equal(args.url, input.url);
+    if (input.tabRef !== undefined || input.tabId !== undefined) assert.equal(args.tabId, 7);
+    if (input.locator) assert.deepEqual(args.locator, input.locator);
+    if (input.selector) assert.equal(args.target, input.selector);
+    if (input.format) assert.equal(args.format, input.format);
+  }
+  assert.equal(f.seen.length, 7);
+});
+
+test('read_image rejects invalid input before image execution', async () => {
+  const f = capturing(['read_image']);
+  for (const [input, code] of [
+    [null, 'INVALID_ARGUMENTS'], [[], 'INVALID_ARGUMENTS'], ['image', 'INVALID_ARGUMENTS'],
+    [{}, 'TAB_REF_REQUIRED'], [{ url: ' ' }, 'TAB_REF_REQUIRED'],
+    [{ target: 'css:img' }, 'TAB_REF_REQUIRED'], [{ locator: { role: 'img' } }, 'TAB_REF_REQUIRED'],
+    [{ tabRef: 'page' }, 'MISSING_REQUIRED_ARGUMENTS'],
+    [{ tabRef: 'page', target: '' }, 'MISSING_REQUIRED_ARGUMENTS'],
+    [{ tabRef: 'page', target: null }, 'MISSING_REQUIRED_ARGUMENTS'],
+    [{ tabRef: 'page', target: 'css:img', locator: { role: 'img' } }, 'INVALID_ELEMENT_TARGET'],
+    [{ tabRef: 'page', locator: { role: 'img' }, nth: 0 }, 'INVALID_ELEMENT_TARGET'],
+    [{ tabRef: 'page', locator: {} }, 'INVALID_ELEMENT_LOCATOR'],
+    [{ url: 123 }, 'INVALID_ARGUMENTS'],
+    [{ url: 'https://example.test/image.png', format: 'gif' }, 'INVALID_ARGUMENTS'],
+    [{ url: 'https://example.test/image.png', detail: 'invalid' }, 'INVALID_ARGUMENTS'],
+    [{ url: 'https://example.test/image.png', maxWidth: '100' }, 'INVALID_ARGUMENTS'],
+    [{ url: 'https://example.test/image.png', bogus: true }, 'INVALID_ARGUMENTS'],
+  ]) await assert.rejects(f.execute('read_image', input), { code }, JSON.stringify(input));
+  assert.deepEqual(f.seen, [], 'invalid arguments never reach image execution');
+});
+
 test('timeouts are seconds everywhere and out-of-range values fail instead of clamping', async () => {
   const names = ['inspect_element', 'act_on_element', 'read_article', 'wait_for_element', 'screenshot'];
   const f = capturing(names);

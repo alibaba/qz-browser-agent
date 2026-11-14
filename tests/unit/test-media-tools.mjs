@@ -1610,10 +1610,14 @@ assert.equal(listImagesSchema.properties.tabId, undefined);
 assert.deepEqual(listImagesSchema.required, ["tabRef"], "image discovery requires an explicit page reference");
 assert.deepEqual(collectImagesSchema.required, ["table"]);
 assert.deepEqual(collectImagesSchema.anyOf, [
-  { required: ["urls"], properties: { urls: { minItems: 1 }, targets: { maxItems: 0 } } },
-  { required: ["tabRef", "targets"], properties: { targets: { minItems: 1 } } },
+  { type: "object", required: ["urls"], properties: { urls: { minItems: 1 }, targets: { maxItems: 0 } } },
+  { type: "object", required: ["tabRef", "targets"], properties: { targets: { minItems: 1 } } },
 ]);
-assert.deepEqual(readImageSchema.anyOf, [{ required: ["url"] }, { required: ["tabRef", "target"] }, { required: ["tabRef", "locator"] }]);
+assert.deepEqual(readImageSchema.anyOf, [
+  { type: "object", required: ["url"] },
+  { type: "object", required: ["tabRef", "target"] },
+  { type: "object", required: ["tabRef", "locator"] },
+]);
 assert.equal(collectImagesSchema.properties.targets.items.type, "string");
 assert.equal(collectImagesSchema.properties.urls.items.type, "string");
 assert.equal(readImageSchema.properties.target.type, "string");

@@ -475,7 +475,11 @@ registerTool({
       quality: { type: "number", description: toolT("collectImagesQuality") },
     },
     required: ["table"],
-    anyOf: [{ required: ["urls"], properties: { urls: { minItems: 1 }, targets: { maxItems: 0 } } }, { required: ["tabRef", "targets"], properties: { targets: { minItems: 1 } } }],
+    // Strict providers require an explicit object type on every root alternative.
+    anyOf: [
+      { type: "object", required: ["urls"], properties: { urls: { minItems: 1 }, targets: { maxItems: 0 } } },
+      { type: "object", required: ["tabRef", "targets"], properties: { targets: { minItems: 1 } } },
+    ],
   } as const; },
   page: args => Array.isArray(args.urls) && args.urls.some(url => String(url || "").trim()) && !(Array.isArray(args.targets) && args.targets.some(target => String(target || "").trim())) ? false : "owned",
   timeout: { defaultMs: 120000, maxMs: 600000 },
@@ -698,7 +702,12 @@ registerTool({
       format: { type: "string", enum: ["jpeg", "png", "webp"], description: toolT("readImageFormat") },
       quality: { type: "number", description: toolT("readImageQuality") },
     },
-    anyOf: [{ required: ["url"] }, { required: ["tabRef", "target"] }, { required: ["tabRef", "locator"] }],
+    // Keep the branch types explicit as well as the parent type for strict providers.
+    anyOf: [
+      { type: "object", required: ["url"] },
+      { type: "object", required: ["tabRef", "target"] },
+      { type: "object", required: ["tabRef", "locator"] },
+    ],
   } as const; },
   page: args => String(args.url || "").trim() ? false : "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },

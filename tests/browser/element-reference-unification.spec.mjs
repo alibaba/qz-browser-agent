@@ -202,7 +202,7 @@ test('all element readers share node UIDs, consumers accept target/legacy select
       expect(schema.parameters.properties.tabId).toBeUndefined();
       expect(schema.parameters.properties.tabRef).toBeTruthy();
       if (schema.name === 'act_on_screen') expect(schema.parameters.required).toContain('tabRef');
-      else expect(schema.parameters.anyOf).toContainEqual({ required: ['tabRef', 'targets'], properties: { targets: { minItems: 1 } } });
+      else expect(schema.parameters.anyOf).toContainEqual({ type: 'object', required: ['tabRef', 'targets'], properties: { targets: { minItems: 1 } } });
     }
     expect(native.missingReference).toBe('TAB_REF_REQUIRED');
     expect(native.press.status).toBe('completed');

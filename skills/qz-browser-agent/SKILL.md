@@ -3,20 +3,12 @@ name: qz-browser-agent
 description: Drive the connected browser through qz (轻舟) scripts. Create one titled session per task, pass its sessionId to every script, and bind each page with qz.tab(tabRef). Read qz skill for the installed CLI's guide. Read references/create-task.md only when the built-in agent should plan the task.
 ---
 
-Use the installed `qz` command. If unavailable, use `npx -y qz-browser-agent@latest` in place of `qz` in the commands below. Run `qz skill` once at the start of a task for the matching guide. `qz --version` prints its version.
+Use Node.js 22+ on the computer running your browser. Reuse `qz` if it is already on PATH; otherwise, install it once for ongoing use with `npm install -g qz-browser-agent`. Use `npx -y qz-browser-agent@latest` in place of `qz` only as a temporary fallback. Run `qz skill` with that same CLI and read its matching-version guide rather than copying instructions from another version.
 
 <!-- qz-drive-guide:en -->
-The external agent plans the work and drives the connected browser through qz (轻舟). Do not configure a qz model or call `qz create`. Read references/create-task.md only when the built-in agent should plan and execute the task.
+Start with `qz session create --title "Read a page" --json`. qz prepares its local service and reuses a responding browser connection, or opens a connection page in your default browser. Ask the user to review and accept the first-use data notice in the qz side panel and approve the connection when prompted. If the extension is missing, `qz install` opens the Chrome Web Store; the user adds the extension, completes setup, and you retry the session command if needed. If qz is installed in another browser profile, open the connection page’s copyable link there. This direct-drive path needs no manual port or service setup. Do not configure a qz model for direct-drive.
 
-## Connect
-
-Run commands with Node.js 22+ on the machine running the browser extension:
-
-```sh
-qz status --json
-```
-
-Session and script commands prepare the connection automatically: they reuse a responding online browser, or open the connection page once in the system default browser and wait for its extension to respond. Complete the extension's first-use notice and connection prompt when shown. If the extension is missing, `qz install` opens the store; ask the user to install it. When qz does not respond in that browser, the page offers the store and a copyable connection link, and a pending connection error carries the same link in `details.url`: ask the user which browser has qz installed, open the link there, and retry. Do not search browser profiles for the extension.
+Use the returned `result.sessionId` in every `qz script --session ID task.js` call, following the guide and binding pages with `qz.tab(tabRef)`. You plan and drive the task; finish with `qz session cancel ID`. Use `qz create "TASK" --stream` and read `references/create-task.md` only when the user wants qz’s built-in agent to plan and execute the task, including human–agent collaboration; that path uses the provider and model configured in qz.
 
 When multiple browsers are registered, run `qz browsers --json` and pass `--client CLIENT_UUID` to select a profile explicitly. Existing sessions are located via read-only queries before execution; ambiguous or unavailable ownership requires explicit selection. To pair a specific profile without launching a browser, run `qz connect uri --name work --json` and open `result.url` in that profile. An incompatible local service is restarted once before browser operations; an incompatible extension requires updating the CLI and extension together.
 
